@@ -28,6 +28,30 @@ impl NearString {
     }
 }
 
+pub fn token_levenshtein(a: &[String], b: &[String]) -> usize {
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
+/// Java `FuzzyMatcher.calcSimilarity`: percent remaining after token Levenshtein.
+pub fn token_similarity(a: &[String], b: &[String]) -> i32 {
+    if a.is_empty() && b.is_empty() {
+        return 0;
+    }
+    let max = a.len().max(b.len());
+    let ld = token_levenshtein(a, b);
+    ((max - ld) * 100 / max) as i32
+}
+
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
@@ -56,35 +80,21 @@ pub fn similarity(a: &str, b: &str) -> i32 {
     ((max - dist) * 100 / max) as i32
 }
 
-pub fn token_score(a: &str, b: &str, lang: &str, use_stem: bool) -> i32 {
-    let ta = tokenize(a, lang);
-    let tb = tokenize(b, lang);
-    if ta.is_empty() || tb.is_empty() {
-        return 0;
-    }
-    let set_a: std::collections::HashSet<_> = ta
-        .iter()
-        .map(|t| if use_stem { t.stem.as_str() } else { t.text.as_str() })
-        .collect();
-    let set_b: std::collections::HashSet<_> = tb
-        .iter()
-        .map(|t| if use_stem { t.stem.as_str() } else { t.text.as_str() })
-        .collect();
-    let inter = set_a.intersection(&set_b).count();
-    let union = set_a.union(&set_b).count();
-    if union == 0 {
-        0
-    } else {
-        (inter * 100 / union) as i32
-    }
+fn tokens(text: &str, lang: &str, use_stem: bool) -> Vec<String> {
+    tokenize(text, lang)
+        .into_iter()
+        .map(|t| if use_stem { t.stem } else { t.text })
+        .collect()
 }
 
 pub fn score_pair(query: &str, candidate: &str, lang: &str) -> (i32, i32, i32) {
-    let char_s = similarity(query, candidate);
-    let stem_s = token_score(query, candidate, lang, true);
-    let no_stem = token_score(query, candidate, lang, false);
-    let adjusted = (char_s * 2 + stem_s + no_stem) / 4;
-    (stem_s.max(char_s), no_stem.max(char_s), adjusted)
+    if query == candidate {
+        return (100, 100, 100);
+    }
+    let stem_s = token_similarity(&tokens(query, lang, true), &tokens(candidate, lang, true));
+    let no_stem = token_similarity(&tokens(query, lang, false), &tokens(candidate, lang, false));
+    let adjusted = (stem_s * 2 + no_stem) / 3;
+    (stem_s, no_stem, adjusted)
 }
 
 pub fn find_matches(
@@ -154,13 +164,28 @@ pub fn find_matches_threshold(
     out
 }
 
+/// Token-level alignment bytes for match highlighting (Java `buildSimilarityData`).
+pub fn similarity_data(source: &str, r#match: &str, lang: &str) -> Vec<u8> {
+    let src = tokens(source, lang, false);
+    let cand = tokens(r#match, lang, false);
+    cand.iter()
+        .map(|t| if src.contains(t) { 1 } else { 0 })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn exact_is_100() {
-        assert_eq!(similarity("abc", "abc"), 100);
+        assert_eq!(score_pair("abc", "abc", "en").0, 100);
+    }
+
+    #[test]
+    fn token_edit_hello_word() {
+        let (s, _, _) = score_pair("Hello world", "Hello word", "en");
+        assert_eq!(s, 50);
     }
 
     #[test]
@@ -172,7 +197,7 @@ mod tests {
         }];
         let hits = find_matches("Hello word", &mem, &[], "en");
         assert!(!hits.is_empty());
-        assert!(hits[0].score >= 30);
+        assert_eq!(hits[0].score, 50);
     }
 
     #[test]

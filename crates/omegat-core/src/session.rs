@@ -132,13 +132,31 @@ impl ProjectSession {
         Ok(())
     }
 
-    fn reload_sources(&mut self) -> Result<()> {
-        self.entries.clear();
-        let ctx = FilterContext {
+    fn filter_ctx(&self) -> FilterContext {
+        let mut options = HashMap::new();
+        for (k, v) in &self.prefs.extra {
+            if let Some(rest) = k.strip_prefix("filter.") {
+                if let Some((_, opt)) = rest.split_once('.') {
+                    options.insert(opt.to_string(), v.clone());
+                }
+            } else if matches!(
+                k.as_str(),
+                "segmentOn" | "skipHeader" | "monolingualFormat" | "remove_tags" | "preserve_spaces"
+            ) {
+                options.insert(k.clone(), v.clone());
+            }
+        }
+        FilterContext {
             source_lang: self.props.source_lang.clone(),
             target_lang: self.props.target_lang.clone(),
             remove_tags: self.props.remove_tags,
-        };
+            options,
+        }
+    }
+
+    fn reload_sources(&mut self) -> Result<()> {
+        self.entries.clear();
+        let ctx = self.filter_ctx();
         let excludes = build_excludes(&self.props.source_dir_excludes);
         for file in walk_sources(&self.props.source_dir, &excludes) {
             let rel = file
@@ -325,11 +343,7 @@ impl ProjectSession {
             }
         }
         self.save()?;
-        let ctx = FilterContext {
-            source_lang: self.props.source_lang.clone(),
-            target_lang: self.props.target_lang.clone(),
-            remove_tags: self.props.remove_tags,
-        };
+        let ctx = self.filter_ctx();
         let mut by_file: HashMap<String, Vec<&Entry>> = HashMap::new();
         for e in &self.entries {
             if let Some(pat) = source_pattern {

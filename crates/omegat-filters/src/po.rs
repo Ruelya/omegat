@@ -17,25 +17,25 @@ impl Filter for PoFilter {
     fn default_masks(&self) -> &'static [&'static str] {
         &["*.po", "*.pot"]
     }
-    fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
-        parse_po(&read_to_string(path)?)
+    fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
+        parse_po(&read_to_string(path)?, ctx)
     }
     fn write(
         &self,
         source_path: &Path,
         dest_path: &Path,
         translations: &HashMap<String, String>,
-        _ctx: &FilterContext,
+        ctx: &FilterContext,
     ) -> Result<()> {
         let raw = read_to_string(source_path)?;
-        let out = rewrite_po(&raw, translations);
+        let out = rewrite_po(&raw, translations, ctx);
         ensure_parent(dest_path)?;
         std::fs::write(dest_path, out)?;
         Ok(())
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct PoEntry {
     comments: Vec<String>,
     msgctxt: Option<String>,
@@ -44,11 +44,48 @@ struct PoEntry {
     msgstr: Vec<String>,
 }
 
-fn parse_po(raw: &str) -> Result<ParsedFile> {
+fn nplurals_from_header(entries: &[PoEntry]) -> usize {
+    for e in entries {
+        if e.msgid.is_empty() {
+            let hdr = e.msgstr.first().cloned().unwrap_or_default();
+            if let Some(rest) = hdr.split("nplurals=").nth(1) {
+                let n: usize = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(2);
+                return n.max(1);
+            }
+        }
+    }
+    2
+}
+
+fn parse_po(raw: &str, ctx: &FilterContext) -> Result<ParsedFile> {
     let entries = collect_entries(raw);
+    let skip_header = ctx.option_flag("skipHeader");
+    let monolingual = ctx.option_flag("monolingualFormat");
+    let nplurals = nplurals_from_header(&entries);
     let mut segments = Vec::new();
     for (i, e) in entries.iter().enumerate() {
         if e.msgid.is_empty() {
+            if skip_header || monolingual {
+                continue;
+            }
+            continue;
+        }
+        if monolingual {
+            let source = e.msgstr.first().cloned().unwrap_or_default();
+            segments.push(ExtractedSegment {
+                id: e.msgid.clone(),
+                source,
+                existing_translation: None,
+                note: None,
+                comment: None,
+                path: e.msgctxt.clone(),
+                protected_parts: vec![],
+            });
             continue;
         }
         let existing = e.msgstr.first().cloned().filter(|s| !s.is_empty());
@@ -72,16 +109,19 @@ fn parse_po(raw: &str) -> Result<ParsedFile> {
                 })
                 .collect(),
         });
-        if let Some(plural) = &e.msgid_plural {
-            segments.push(ExtractedSegment {
-                id: format!("{i}-plural"),
-                source: plural.clone(),
-                existing_translation: e.msgstr.get(1).cloned().filter(|s| !s.is_empty()),
-                note: None,
-                comment: None,
-                path: e.msgctxt.clone(),
-                protected_parts: vec![],
-            });
+        if e.msgid_plural.is_some() {
+            for p in 1..nplurals {
+                let src = e.msgid_plural.clone().unwrap_or_else(|| e.msgid.clone());
+                segments.push(ExtractedSegment {
+                    id: format!("{i}-plural-{p}"),
+                    source: src,
+                    existing_translation: e.msgstr.get(p).cloned().filter(|s| !s.is_empty()),
+                    note: None,
+                    comment: None,
+                    path: e.msgctxt.as_ref().map(|c| format!("{c}[{p}]")),
+                    protected_parts: vec![],
+                });
+            }
         }
     }
     Ok(ParsedFile {
@@ -96,31 +136,16 @@ fn collect_entries(raw: &str) -> Vec<PoEntry> {
     let mut field = String::new();
     let mut started = false;
 
-    let flush_field = |cur: &mut PoEntry, field: &str, value: String| {
-        match field {
-            "msgctxt" => cur.msgctxt = Some(value),
-            "msgid" => cur.msgid = value,
-            "msgid_plural" => cur.msgid_plural = Some(value),
-            other if other.starts_with("msgstr") => cur.msgstr.push(value),
-            _ => {}
-        }
-    };
-
     for line in raw.lines() {
         if line.starts_with('#') {
-            if started && !cur.msgid.is_empty() && field == "done" {
-                entries.push(std::mem::take(&mut cur));
-                field.clear();
-                started = false;
+            if started && !cur.msgid.is_empty() && !field.is_empty() && line.starts_with("#,") {
+                // continue
             }
             cur.comments.push(line.to_string());
             continue;
         }
         if line.trim().is_empty() {
             if started {
-                if !field.is_empty() && field != "done" {
-                    // nothing
-                }
                 entries.push(std::mem::take(&mut cur));
                 field.clear();
                 started = false;
@@ -166,7 +191,6 @@ fn collect_entries(raw: &str) -> Vec<PoEntry> {
                 _ => {}
             }
         }
-        let _ = flush_field;
     }
     if started || !cur.msgid.is_empty() || !cur.comments.is_empty() {
         entries.push(cur);
@@ -174,14 +198,24 @@ fn collect_entries(raw: &str) -> Vec<PoEntry> {
     entries
 }
 
-fn rewrite_po(raw: &str, translations: &HashMap<String, String>) -> String {
-    let entries = collect_entries(raw);
-    let mut trans_by_msgid: HashMap<String, String> = HashMap::new();
-    for (i, e) in entries.iter().enumerate() {
-        if let Some(t) = translations.get(&i.to_string()) {
-            trans_by_msgid.insert(e.msgid.clone(), t.clone());
+fn rewrite_po(raw: &str, translations: &HashMap<String, String>, ctx: &FilterContext) -> String {
+    let parsed = parse_po(raw, ctx).ok();
+    let mut by_source: HashMap<String, String> = HashMap::new();
+    if let Some(p) = &parsed {
+        for (i, seg) in p.segments.iter().enumerate() {
+            if let Some(t) = translations
+                .get(&seg.id)
+                .or_else(|| translations.get(&seg.source))
+                .or_else(|| translations.get(&i.to_string()))
+            {
+                if !t.is_empty() {
+                    by_source.insert(seg.source.clone(), t.clone());
+                    by_source.insert(seg.id.clone(), t.clone());
+                }
+            }
         }
     }
+    let entries = collect_entries(raw);
     let mut out = String::new();
     let mut idx = 0usize;
     let mut in_msgstr = false;
@@ -201,11 +235,17 @@ fn rewrite_po(raw: &str, translations: &HashMap<String, String>) -> String {
             in_msgstr = true;
             skipping_msgstr_cont = true;
             let msgid = entries.get(idx).map(|e| e.msgid.as_str()).unwrap_or("");
+            let original = entries
+                .get(idx)
+                .and_then(|e| e.msgstr.first())
+                .cloned()
+                .unwrap_or_default();
             let t = translations
                 .get(&idx.to_string())
                 .cloned()
-                .or_else(|| trans_by_msgid.get(msgid).cloned())
-                .unwrap_or_default();
+                .or_else(|| by_source.get(msgid).cloned())
+                .or_else(|| translations.get(msgid).cloned())
+                .unwrap_or_else(|| original.clone());
             if msgid.is_empty() {
                 out.push_str(line);
                 out.push('\n');

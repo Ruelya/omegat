@@ -1,10 +1,14 @@
-//! SRX 2.0 sentence segmentation. Rules load from OmegaT `defaultRules.srx`.
-//! Lookahead is implemented by scanning candidate break points (not ICU).
+//! SRX 2.0 sentence segmentation, ported from Java `org.omegat.core.segmentation.Segmenter`.
+//!
+//! Rules are applied in reverse order. Break rules add positions; exception
+//! (`break="no"`) rules remove them. After every rule, remaining exception
+//! positions win. Language maps cascade (`DE.*` then `.*` → Default/Text/HTML).
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct SrxRule {
@@ -22,11 +26,17 @@ pub struct SrxTable {
 pub struct SrxDocument {
     pub languages: HashMap<String, SrxTable>,
     pub maps: Vec<(String, String)>,
+    pub cascade: bool,
 }
 
 static DEFAULT_SRX: Lazy<SrxDocument> = Lazy::new(|| {
     load_srx_file(&default_srx_path()).unwrap_or_default()
 });
+
+static REGEX_CACHE: Lazy<Mutex<HashMap<String, Option<Regex>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+static ANY_CHAR: Lazy<Regex> = Lazy::new(|| Regex::new("(?s).").expect("dotall dot"));
 
 pub fn default_srx_path() -> PathBuf {
     if let Ok(p) = std::env::var("OMEGAT_SRX") {
@@ -55,6 +65,7 @@ pub fn parse_srx(raw: &str, language_rule: &str) -> SrxTable {
 }
 
 pub fn parse_srx_document(raw: &str) -> SrxDocument {
+    let cascade = !raw.contains(r#"cascade="no""#);
     let mut languages = HashMap::new();
     let mut maps = Vec::new();
     let rule_re = Regex::new(
@@ -83,52 +94,49 @@ pub fn parse_srx_document(raw: &str) -> SrxDocument {
     for cap in map_re.captures_iter(raw) {
         maps.push((cap[1].to_string(), cap[2].to_string()));
     }
-    SrxDocument { languages, maps }
+    SrxDocument {
+        languages,
+        maps,
+        cascade,
+    }
 }
 
-fn table_for(doc: &SrxDocument, lang: &str) -> SrxTable {
+/// Java `SRXManager.lookupRulesForLanguage`: every matching map, cascading.
+pub fn table_for(doc: &SrxDocument, lang: &str) -> SrxTable {
+    let tag = language_tag(lang);
     let mut rules = Vec::new();
-    let key = lang_rule_name(doc, lang);
-    if let Some(named) = doc.languages.get(&key) {
-        rules.extend(named.rules.clone());
-    } else if let Some(named) = doc.languages.get(lang) {
-        rules.extend(named.rules.clone());
+    if doc.maps.is_empty() {
+        if let Some(named) = doc.languages.get(lang) {
+            rules.extend(named.rules.clone());
+        }
+        if let Some(def) = doc.languages.get("Default") {
+            rules.extend(def.rules.clone());
+        }
+        return SrxTable { rules };
     }
-    if let Some(def) = doc.languages.get("Default") {
-        rules.extend(def.rules.clone());
+    for (pat, name) in &doc.maps {
+        if language_map_matches(pat, &tag) {
+            if let Some(named) = doc.languages.get(name) {
+                rules.extend(named.rules.clone());
+            }
+            if !doc.cascade {
+                break;
+            }
+        }
     }
     SrxTable { rules }
 }
 
-fn lang_rule_name(doc: &SrxDocument, lang: &str) -> String {
-    let upper = lang.to_ascii_uppercase();
-    for (pat, name) in &doc.maps {
-        if pat == ".*" {
-            continue;
-        }
-        let stem = pat.trim_end_matches(".*").trim_end_matches('*');
-        if upper.starts_with(stem) || upper == stem {
-            return name.clone();
-        }
+fn language_tag(lang: &str) -> String {
+    lang.trim().replace('_', "-")
+}
+
+fn language_map_matches(pattern: &str, lang: &str) -> bool {
+    if let Some(re) = compile_java_regex(pattern, true) {
+        return re.is_match(lang);
     }
-    match crate::tokenize::lang_base(lang) {
-        "en" => "English".into(),
-        "de" => "German".into(),
-        "fr" => "French".into(),
-        "es" => "Spanish".into(),
-        "it" => "Italian".into(),
-        "ja" => "Japanese".into(),
-        "zh" => "Chinese".into(),
-        "nl" => "Dutch".into(),
-        "pl" => "Polish".into(),
-        "ru" => "Russian".into(),
-        "sv" => "Swedish".into(),
-        "sk" => "Slovak".into(),
-        "cs" => "Czech".into(),
-        "ca" => "Catalan".into(),
-        "fi" => "Finnish".into(),
-        _ => "Default".into(),
-    }
+    let stem = pattern.trim_end_matches(".*").trim_end_matches('*');
+    lang.eq_ignore_ascii_case(stem) || lang.to_ascii_uppercase().starts_with(&stem.to_ascii_uppercase())
 }
 
 fn unescape_xml(s: &str) -> String {
@@ -163,105 +171,138 @@ pub fn split_sentences_lang(
     split_with_srx(text, &table_for(&DEFAULT_SRX, lang))
 }
 
+/// Java `Segmenter.breakParagraph` + trim from `segment`.
 pub fn split_with_srx(text: &str, table: &SrxTable) -> Vec<String> {
-    if text.trim().is_empty() {
+    if text.is_empty() {
         return vec![];
     }
-    let mut breaks = vec![0usize];
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    for i in 0..chars.len() {
-        let (idx, ch) = chars[i];
-        if !matches!(ch, '.' | '!' | '?' | '。' | '！' | '？' | '\n' | '"' | '”') {
-            continue;
-        }
-        let next_idx = chars.get(i + 1).map(|(e, _)| *e).unwrap_or(text.len());
-        let before = &text[..=idx];
-        let after = &text[next_idx..];
-        if !should_break(before, after, table) {
-            continue;
-        }
-        let mut end = next_idx;
-        while end < text.len() && text[end..].chars().next().map(|c| c.is_whitespace()).unwrap_or(false) {
-            end += text[end..].chars().next().unwrap().len_utf8();
-        }
-        if end > *breaks.last().unwrap() {
-            breaks.push(end);
+    let mut dontbreak: BTreeSet<usize> = BTreeSet::new();
+    let mut breaks: BTreeSet<usize> = BTreeSet::new();
+    for rule in table.rules.iter().rev() {
+        let positions = get_breaks(text, rule);
+        if rule.breaks {
+            for p in &positions {
+                dontbreak.remove(p);
+            }
+            breaks.extend(positions);
+        } else {
+            for p in &positions {
+                breaks.remove(p);
+            }
+            dontbreak.extend(positions);
         }
     }
-    if *breaks.last().unwrap() != text.len() {
-        breaks.push(text.len());
+    for p in dontbreak {
+        breaks.remove(&p);
     }
-    let mut parts = Vec::new();
-    for w in breaks.windows(2) {
-        let chunk = text[w[0]..w[1]].trim();
-        if !chunk.is_empty() {
-            parts.push(chunk.to_string());
-        }
-    }
-    if parts.is_empty() {
-        parts.push(text.to_string());
-    }
-    parts
-}
 
-fn should_break(before: &str, after: &str, table: &SrxTable) -> bool {
-    for rule in &table.rules {
-        if matches_rule(&rule.before, before, true) && matches_rule(&rule.after, after, false) {
-            return rule.breaks;
+    let mut segments = Vec::new();
+    let mut prev = 0usize;
+    for pos in breaks {
+        if pos > prev && pos <= text.len() && text.is_char_boundary(pos) {
+            segments.push(text[prev..pos].to_string());
+            prev = pos;
         }
     }
-    matches!(
-        before.chars().last(),
-        Some('.' | '!' | '?' | '。' | '！' | '？' | '\n')
-    ) && after
-        .trim_start()
-        .chars()
-        .next()
-        .map(|c| c.is_uppercase() || c.is_numeric() || c == '\n')
-        .unwrap_or(true)
-}
-
-fn matches_rule(pattern: &str, hay: &str, from_end: bool) -> bool {
-    if pattern.is_empty() || pattern == "." {
-        return true;
-    }
-    let window = if from_end {
-        let start = hay.len().saturating_sub(160);
-        &hay[start..]
+    let last = text[prev..].to_string();
+    if last.trim().is_empty() && !segments.is_empty() {
+        if let Some(prev_seg) = segments.last_mut() {
+            prev_seg.push_str(&last);
+        }
     } else {
-        let end = hay.len().min(160);
-        &hay[..end]
+        segments.push(last);
+    }
+
+    let mut sentences = Vec::new();
+    for one in segments {
+        let trimmed = one.trim();
+        if !trimmed.is_empty() {
+            sentences.push(trimmed.to_string());
+        }
+    }
+    if sentences.is_empty() && !text.trim().is_empty() {
+        sentences.push(text.trim().to_string());
+    }
+    sentences
+}
+
+/// Java `Segmenter.getBreaks`: before/after regex `find`, after.start == before.end.
+fn get_breaks(paragraph: &str, rule: &SrxRule) -> Vec<usize> {
+    let before_re = if rule.before.is_empty() {
+        Some(ANY_CHAR.clone())
+    } else {
+        compile_java_regex(&rule.before, false)
     };
-    let rust_pat = icuish_to_rust(pattern);
-    let anchored = if from_end {
-        format!("(?s)(?:{rust_pat})$")
+    let after_re = if rule.after.is_empty() {
+        None
     } else {
-        format!("(?s)^(?:{rust_pat})")
+        compile_java_regex(&rule.after, false)
     };
-    if let Ok(re) = Regex::new(&anchored) {
-        return re.is_match(window);
+    let Some(before_re) = before_re else {
+        return vec![];
+    };
+
+    let after_starts: Option<Vec<usize>> = after_re.as_ref().map(|re| {
+        re.find_iter(paragraph).map(|m| m.start()).collect()
+    });
+    if let Some(starts) = &after_starts {
+        if starts.is_empty() {
+            return vec![];
+        }
     }
-    if from_end {
-        hay.ends_with(pattern)
-    } else {
-        hay.starts_with(pattern)
+
+    let mut res = Vec::new();
+    for m in before_re.find_iter(paragraph) {
+        let bbe = m.end();
+        match &after_starts {
+            None => res.push(bbe),
+            Some(starts) => {
+                if starts.binary_search(&bbe).is_ok() {
+                    res.push(bbe);
+                }
+            }
+        }
     }
+    res
 }
 
-/// Best-effort ICU → Rust regex for the SRX patterns OmegaT ships.
-fn icuish_to_rust(pattern: &str) -> String {
-    pattern
-        .replace(r"\p{Lu}", r"\p{Lu}")
-        .replace(r"\p{Nd}", r"\d")
-        .replace(r"\P{Lu}", r"[^A-ZÀ-ÖØ-Þ]")
-        .replace("(?i)", "(?i)")
+fn compile_java_regex(pattern: &str, case_insensitive: bool) -> Option<Regex> {
+    let key = if case_insensitive {
+        format!("i:{pattern}")
+    } else {
+        format!("s:{pattern}")
+    };
+    let mut cache = REGEX_CACHE.lock().ok()?;
+    if let Some(hit) = cache.get(&key) {
+        return hit.clone();
+    }
+    let rust_pat = java_pattern_to_rust(pattern, case_insensitive);
+    let compiled = Regex::new(&rust_pat).ok();
+    cache.insert(key, compiled.clone());
+    compiled
+}
+
+/// Java `Rule.compilePattern`: DOTALL always; UNICODE_CASE when `(?i)` is set.
+fn java_pattern_to_rust(pattern: &str, force_i: bool) -> String {
+    let mut flags = String::from("(?s");
+    if force_i || pattern.contains("(?i)") {
+        flags.push('i');
+    }
+    flags.push(')');
+    format!("{flags}{pattern}")
 }
 
 /// Kept for STATUS / older callers; now actually parses break attributes.
 pub fn load_srx_rules(path: &Path) -> Option<Vec<(String, bool)>> {
     let doc = load_srx_file(path)?;
     let table = table_for(&doc, "Default");
-    Some(table.rules.into_iter().map(|r| (r.before, r.breaks)).collect())
+    Some(
+        table
+            .rules
+            .into_iter()
+            .map(|r| (r.before, r.breaks))
+            .collect(),
+    )
 }
 
 #[cfg(test)]
@@ -294,14 +335,22 @@ mod tests {
     #[test]
     fn mr_does_not_break_when_rule_present() {
         let table = SrxTable {
-            rules: vec![SrxRule {
-                breaks: false,
-                before: r"Mr\.".into(),
-                after: r"\s".into(),
-            }],
+            rules: vec![
+                SrxRule {
+                    breaks: false,
+                    before: r"Mr\.".into(),
+                    after: r"\s".into(),
+                },
+                SrxRule {
+                    breaks: true,
+                    before: r"[\.\?\!]+".into(),
+                    after: r"\s".into(),
+                },
+            ],
         };
         let parts = split_with_srx("Mr. Smith went home. Next.", &table);
         assert!(parts.iter().any(|p| p.contains("Mr. Smith")), "{parts:?}");
+        assert!(parts.len() >= 2, "{parts:?}");
     }
 
     #[test]
@@ -312,5 +361,14 @@ mod tests {
         let parts = split_with_srx("Mr. Smith went home. Next sentence.", &table);
         assert!(parts.iter().any(|p| p.contains("Mr. Smith")), "{parts:?}");
         assert!(parts.len() >= 2, "{parts:?}");
+    }
+
+    #[test]
+    fn java_segmenter_br_test() {
+        let path = default_srx_path();
+        let doc = load_srx_file(&path).unwrap();
+        let table = table_for(&doc, "en");
+        let parts = split_with_srx("<br7>\n\n<br5>\n\nother", &table);
+        assert_eq!(parts, vec!["<br7>", "<br5>", "other"]);
     }
 }

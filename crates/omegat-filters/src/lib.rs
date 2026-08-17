@@ -39,6 +39,21 @@ pub struct FilterContext {
     pub source_lang: String,
     pub target_lang: String,
     pub remove_tags: bool,
+    /// Java `processOptions` map (e.g. `segmentOn`, `skipHeader`).
+    pub options: HashMap<String, String>,
+}
+
+impl FilterContext {
+    pub fn option(&self, key: &str) -> Option<&str> {
+        self.options.get(key).map(|s| s.as_str())
+    }
+
+    pub fn option_flag(&self, key: &str) -> bool {
+        matches!(
+            self.option(key).map(|s| s.to_ascii_lowercase()).as_deref(),
+            Some("true") | Some("yes") | Some("1")
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,6 +306,15 @@ pub fn placeholder(index: usize) -> String {
 }
 
 pub fn apply_skeleton(skeleton: &str, translations: &HashMap<String, String>) -> String {
+    apply_skeleton_with_originals(skeleton, translations, &[])
+}
+
+/// Replace placeholders. Missing translations keep `originals[i]` (empty-write preserve).
+pub fn apply_skeleton_with_originals(
+    skeleton: &str,
+    translations: &HashMap<String, String>,
+    originals: &[String],
+) -> String {
     let mut out = skeleton.to_string();
     let mut i = 0usize;
     loop {
@@ -302,9 +326,33 @@ pub fn apply_skeleton(skeleton: &str, translations: &HashMap<String, String>) ->
         let repl = translations
             .get(&id)
             .cloned()
-            .unwrap_or_else(|| translations.get(&format!("seg-{i}")).cloned().unwrap_or_default());
+            .or_else(|| translations.get(&format!("seg-{i}")).cloned())
+            .or_else(|| originals.get(i).cloned())
+            .unwrap_or_default();
         out = out.replace(&token, &repl);
         i += 1;
+    }
+    out
+}
+
+/// Overlay translations onto a source-keyed / id-keyed map, keeping originals when absent.
+pub fn merge_translations(
+    segments: &[ExtractedSegment],
+    translations: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for (i, seg) in segments.iter().enumerate() {
+        let t = translations
+            .get(&seg.id)
+            .cloned()
+            .or_else(|| translations.get(&seg.source).cloned())
+            .or_else(|| translations.get(&i.to_string()).cloned())
+            .unwrap_or_else(|| seg.source.clone());
+        out.insert(seg.id.clone(), t.clone());
+        out.insert(i.to_string(), t.clone());
+        if !seg.source.is_empty() {
+            out.insert(seg.source.clone(), t);
+        }
     }
     out
 }

@@ -1,6 +1,6 @@
 use crate::{
-    apply_skeleton, ensure_parent, extract_tags, placeholder, read_to_string, ExtractedSegment,
-    Filter, FilterContext, ParsedFile, ProtectedPart, Result,
+    apply_skeleton_with_originals, ensure_parent, extract_tags, merge_translations, placeholder,
+    read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile, ProtectedPart, Result,
 };
 use regex::Regex;
 use std::collections::HashMap;
@@ -29,9 +29,11 @@ impl Filter for HtmlFilter {
         _ctx: &FilterContext,
     ) -> Result<()> {
         let parsed = parse_html(&read_to_string(source_path)?)?;
+        let merged = merge_translations(&parsed.segments, translations);
+        let originals: Vec<String> = parsed.segments.iter().map(|s| s.source.clone()).collect();
         let out = parsed
             .skeleton
-            .map(|sk| apply_skeleton(&sk, translations))
+            .map(|sk| apply_skeleton_with_originals(&sk, &merged, &originals))
             .unwrap_or_default();
         ensure_parent(dest_path)?;
         std::fs::write(dest_path, out)?;
@@ -45,9 +47,10 @@ fn parse_html(raw: &str) -> Result<ParsedFile> {
     )
     .unwrap();
     let block = Regex::new(
-        r"(?is)</?(p|div|h[1-6]|li|td|th|title|label|option|blockquote|pre|dt|dd|figcaption)(\s[^>]*)?>",
+        r"(?is)</?(html|head|body|p|div|h[1-6]|li|td|th|title|label|option|blockquote|pre|dt|dd|figcaption)(\s[^>]*)?>",
     )
     .unwrap();
+    let lang_re = Regex::new(r#"(?i)(<html\b[^>]*\blang\s*=\s*")([^"]*)("[^>]*>)"#).unwrap();
 
     let mut work = raw.to_string();
     let mut protected = Vec::new();
@@ -59,6 +62,22 @@ fn parse_html(raw: &str) -> Result<ParsedFile> {
 
     let mut segments = Vec::new();
     let mut skeleton = String::new();
+
+    if let Some(cap) = lang_re.captures(&work) {
+        let full = cap.get(0).unwrap();
+        let prefix = &work[..full.start()];
+        let open = cap.get(1).unwrap().as_str();
+        let lang = cap.get(2).unwrap().as_str();
+        let close = cap.get(3).unwrap().as_str();
+        let rest = &work[full.end()..];
+        skeleton.push_str(prefix);
+        skeleton.push_str(open);
+        skeleton.push_str(&placeholder(0));
+        skeleton.push_str(close);
+        segments.push(text_seg(0, lang));
+        work = rest.to_string();
+    }
+
     let mut last = 0usize;
     for m in block.find_iter(&work) {
         push_text(&work[last..m.start()], &mut segments, &mut skeleton);
@@ -99,9 +118,11 @@ fn parse_html(raw: &str) -> Result<ParsedFile> {
 }
 
 fn push_text(chunk: &str, segments: &mut Vec<ExtractedSegment>, skeleton: &mut String) {
-    let text = html_escape::decode_html_entities(chunk).into_owned();
+    let tag = Regex::new(r"(?is)<[^>]+>").unwrap();
+    let visible = tag.replace_all(chunk, "");
+    let text = html_escape::decode_html_entities(&visible).into_owned();
     let trimmed = text.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || trimmed.starts_with('<') {
         skeleton.push_str(chunk);
         return;
     }
