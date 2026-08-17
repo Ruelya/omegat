@@ -1,5 +1,5 @@
 id = "example"
-name = "Example filter plugin"
+name = "Example Filter"
 version = "1.0.0"
 plugin_type = "filter"
-entry = "builtin"
+entry = "libomegat_example_plugin.so"

@@ -20,6 +20,7 @@ jobs:
           test -f fixtures/goldens/filters/html/file-HTMLFilter2.json
           test -f fixtures/goldens/filters/po/file-POFilter-multiple.json
           test -f fixtures/goldens/engine/srx.json
+          test -f fixtures/plugin/sample.example
           python3 tools/export_java_goldens/export.py
   desktop:
     runs-on: ubuntu-latest
@@ -42,14 +43,53 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - run: sudo apt-get update && sudo apt-get install -y fakeroot rpm
+      - run: cargo build --release -p omegat-sidecar -p omegat-cli -p omegat-example-plugin
+      - working-directory: apps/desktop
+        run: |
+          npm ci || npm install
+          npm run build
+          npx electron-builder --linux dir tar.gz deb rpm --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegat-linux-unsigned
+          path: apps/desktop/release/**
+          if-no-files-found: warn
+  pack-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: cargo build --release -p omegat-sidecar -p omegat-cli
       - working-directory: apps/desktop
         run: |
           npm ci || npm install
           npm run build
-          npx electron-builder --linux dir tar.gz --publish never
+          npx electron-builder --win nsis --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: omegat-linux-unsigned
+          name: omegat-windows-unsigned
+          path: apps/desktop/release/**
+          if-no-files-found: warn
+  pack-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo build --release -p omegat-sidecar -p omegat-cli
+      - working-directory: apps/desktop
+        run: |
+          npm ci || npm install
+          npm run build
+          npx electron-builder --mac dmg --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegat-macos-unsigned
           path: apps/desktop/release/**
           if-no-files-found: warn

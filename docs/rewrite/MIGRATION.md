@@ -26,7 +26,7 @@
 
 ## 插件
 
-不再加载 Java JAR。使用 `omegat-plugin.toml` + `cdylib`。见 [PLUGIN_ABI.md](PLUGIN_ABI.md)。
+不再加载 Java JAR。使用 `omegat-plugin.toml` + `cdylib`，导出 `omegat_plugin_register` 注册 Filter / MT / Tokenizer（不只是 `omegat_plugin_abi` 字符串）。见 [PLUGIN_ABI.md](PLUGIN_ABI.md)。示例：`crates/omegat-example-plugin`，夹具 `fixtures/plugin/sample.example`。
 
 ## 过滤器 / 项目
 

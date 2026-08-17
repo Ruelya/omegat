@@ -80,15 +80,38 @@ impl ProjectSession {
         );
         props.ensure_dirs()?;
         props.write()?;
-        Self::open_props(props, prefs)
+        Self::open_props(props, prefs, FilterRegistry::new())
+    }
+
+    pub fn create_with_filters(
+        params: &CreateProjectParams,
+        prefs: Preferences,
+        filters: FilterRegistry,
+    ) -> Result<Self> {
+        let root = PathBuf::from(&params.root);
+        std::fs::create_dir_all(&root)?;
+        let props = ProjectProperties::create(
+            root,
+            params.source_lang.clone(),
+            params.target_lang.clone(),
+            params.sentence_seg,
+        );
+        props.ensure_dirs()?;
+        props.write()?;
+        Self::open_props(props, prefs, filters)
     }
 
     pub fn open(root: &Path, prefs: Preferences) -> Result<Self> {
         let props = ProjectProperties::load(root)?;
-        Self::open_props(props, prefs)
+        Self::open_props(props, prefs, FilterRegistry::new())
     }
 
-    fn open_props(props: ProjectProperties, prefs: Preferences) -> Result<Self> {
+    pub fn open_with_filters(root: &Path, prefs: Preferences, filters: FilterRegistry) -> Result<Self> {
+        let props = ProjectProperties::load(root)?;
+        Self::open_props(props, prefs, filters)
+    }
+
+    fn open_props(props: ProjectProperties, prefs: Preferences, filters: FilterRegistry) -> Result<Self> {
         props.ensure_dirs()?;
         let lock_path = props.root.join(DEFAULT_INTERNAL).join(".lock");
         let lock_file = File::create(&lock_path)?;
@@ -105,7 +128,6 @@ impl ProjectSession {
             _ => crate::spell::SpellBackend::Hunspell,
         };
         let spell = SpellChecker::load_backend(&props.root, &prefs.config_dir, backend);
-        let filters = FilterRegistry::new();
         let mut session = Self {
             props,
             entries: vec![],

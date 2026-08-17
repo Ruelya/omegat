@@ -29,6 +29,7 @@ const METHODS: &[&str] = &[
     "issues.list",
     "filters.list",
     "filters.options",
+    "filters.parse",
     "script.slots",
     "mt.query",
     "dict.query",

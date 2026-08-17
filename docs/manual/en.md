@@ -1,14 +1,15 @@
 # OmegaT user manual
 
-OmegaT is a keyboard-first CAT workstation. This manual describes the Rust + Electron build.
+OmegaT is a keyboard-first CAT workstation. This manual describes the Rust + Electron build. The historic Java HTML manual still lives under `reference/java` (generated DocBook / `release/index.html`) and can be opened from Help when bundled.
 
 ## Install
 
 - **From source:** install Rust stable and Node.js 22, then follow the repository `README.md`.
-- **Linux package:** unpack the CI `tar.gz` or install the `deb`/`rpm` produced by `electron-builder`.
-- **Windows / macOS:** use the NSIS installer or DMG. Builds from CI are unsigned unless a release manager signs them.
+- **Linux:** CI produces unsigned `deb`, `rpm`, `tar.gz`, and a `dir` tree via `electron-builder`.
+- **Windows:** unsigned NSIS installer (`pack-windows` job).
+- **macOS:** unsigned DMG (`pack-macos` job). A release manager signs and notarizes outside CI.
 
-The engine is a sidecar binary (`omegat-sidecar`). The desktop shell never reads project files itself.
+The engine is a sidecar binary (`omegat-sidecar`). The desktop shell never reads project files itself. UI language follows the OS locale (41 catalogs). Arabic (`ar`) is right-to-left; native menus use the same catalogs.
 
 ## Create or open a project
 
@@ -31,19 +32,19 @@ Standard folders:
 
 ## Translate
 
-- The editor shows source and target for the current segment.
+- The editor shows source and target for the current segment. Tags are protected; view marks (whitespace, NBSP, bidi, glossary, TM/MT origin) follow Preferences.
 - **Enter** commits the segment and moves forward.
-- **Ctrl/Cmd+I** inserts the best fuzzy match.
+- **Ctrl/Cmd+I** inserts the best fuzzy match. Fuzzy 1–5 have menu accelerators.
 - **Ctrl/Cmd+N** / **Ctrl/Cmd+P** move to the next/previous segment.
 - **Ctrl/Cmd+S** saves `project_save.tmx` (plus `.bak`).
 - **Ctrl/Cmd+D** compiles into `target/`.
-- **Ctrl/Cmd+F** opens search.
+- **Ctrl/Cmd+F** opens search (exact / keyword / regex, notes, comments, author, dates, replace preview).
 
-Matches, glossary hits, notes, comments, segment properties, and issues appear in the side panes.
+Nine docks: Editor, Matches, Glossary, Dictionary, Machine translation, Notes, Comments, Multiple translations, Segment properties. Files and Issues are separate windows. Layout is persisted.
 
 ## Preferences
 
-Preferences cover appearance, save behaviour, TM matching, file filters, spellchecker, LanguageTool URL, dictionaries, glossary options, machine translation, autocompleter, external finder, team, and plugins. UI language follows the OS locale and can be overridden in Preferences (41 catalogs; `ar` is right-to-left).
+Twenty-five pages write keys the sidecar consumes: general, appearance, fonts, colours, saving, editing, TM matches, view, source files, filters, segmentation, shortcuts, spellchecker, LanguageTool, dictionary, glossary, machine translation, autocompleter (glossary / autotext / character table / history completion / history prediction), external finder, team, secure store, version check, plugins. Changing the UI language rebuilds the native menu.
 
 ## Command line
 
@@ -52,29 +53,42 @@ omegat translate <project>
 omegat stats <project>
 omegat pseudo <project>
 omegat search <project> <query>
-omegat align --output out.tmx source.txt target.txt
+omegat align --alignDir <dir> --output out.tmx source.txt target.txt
 omegat team init <project>
+omegat script path.js --project <dir>
 omegat --help
 ```
 
-Legacy `--mode console-*` flags are accepted. `--no-team` skips repository sync. `--config-dir` overrides `~/.omegat`.
+Legacy flags: `--mode`, `--no-team`, `--config-dir`, `--config-file`, `--resource-bundle`, `--disable-project-locking`, `--disable-location-save`, `--source-pattern`, `--pseudotranslatetmx`, `--pseudotranslatetype`, `--alignDir`, `--output-file`, `--stats-type`, `--script`, `--tag-validation abort|warn`.
 
 ## Team projects
 
-Git, SVN (system `svn`), HTTP, and file mappings from `omegat.project` `repositories` are supported. Sync is prepare → rebase → commit. Same-segment conflicts open in the desktop UI. `--no-team` stays local.
+Four repository types: file, HTTP (real download), git, SVN. `omegat.project` `<mapping>` / includes / excludes are applied. Working copies live under `.repositories/<sanitized-url>/`. Sync is **prepare → rebase (TMX and glossary) → commit/push**. Same-segment conflicts keep both sides; the desktop dialog offers Keep ours / Keep theirs / manual. `--no-team` stays local. Two-client git tests cover merge and conflict.
+
+## Aligner
+
+mALIGNa modes: HEAPWISE (filter extract + SRX + length HMM), PARSEWISE (same filter on both sides), ID (segment id). Viterbi is min-cost; Forward-Backward is a posterior path (not an alias). CHAR/WORD counters with Normal/Poisson calculators. The GUI table can merge, split, move rows, and export TMX that R1 can open.
 
 ## Scripts
 
-Scripts are JavaScript. Drop a file under `scripts/js/<event>/` or pass `--script`. Event names match the historic set: `application_startup`, `application_shutdown`, `project_changed`, `entry_activated`, `new_file`, `new_word`. Groovy sources are not executed; see `docs/rewrite/MIGRATION.md`.
+JavaScript bindings match Java `AbstractScriptRunner`: `project`, `editor`, `glossary`, `console`, `mainWindow`, `Core`. Callable methods include current-segment read/write, insert/overwrite, jump, save, compile, glossary add/query, `console.println`. Six event directories and twelve slots. `--script` on the CLI. Groovy is not executed; see `docs/rewrite/MIGRATION.md`.
 
-## Filters and tags
+## Filters, tags, Wiki, MED
 
-Text, HTML, PO, XLIFF, Office, ODF, PDF (text extract), and the other built-in filters register by extension and XML sniff. Compile-time tag QA reports missing, extra, order, duplicate, malformed, orphaned, and whitespace issues.
+The 49 Java filter classes (plus extra JSON/CSV/Markdown) register by dialect and options. Compile-time tag QA reports missing, extra, order, duplicate, malformed, orphaned, and whitespace issues. Wiki import reads MediaWiki XML pages into `source/`. MED packages are zip archives unpacked onto a project tree.
 
-## Machine translation and LanguageTool
+## Machine translation, finder, autocompleter
 
-MT engines are opt-in. Network calls are disabled unless `OMEGAT_MT_NETWORK=1`. Credentials go to the OS keychain or encrypted prefs. LanguageTool is an external HTTP service; if it is down, editing continues.
+Seven engines (Google v2, IBM Watson, MyMemory machine/human, Apertium, Yandex Cloud, Belazar) use the Java URL/auth headers. Credentials go to the OS keychain or encrypted prefs. Recorded HTTP fixtures live under `fixtures/mt/<engine>/`. External Finder reads the existing finder XML. Autocompleter classes: Glossary, Autotext, Character table, History completer, History predictor (next-word model), Tags.
+
+## LanguageTool, spelling, dictionaries
+
+LanguageTool is HTTP `v2/check`. If no URL is set, Issues shows a `severity=info` downgrade item — never an empty “clean” list. Hunspell reads `.aff`/`.dic` (real files from `reference/java/language-modules`, or download-on-first-use). Lucene-Hunspell and Morfologik use different resource paths. StarDict (`.ifo`/`.idx`/`.dict`/`.dict.dz`) and DSL (including `.dsl.dz`) are supported.
+
+## Plugins
+
+Java JAR plugins are not loaded. A plugin is `omegat-plugin.toml` + a `cdylib` that exports `omegat_plugin_register` and registers Filter / MT / Tokenizer callbacks. The example plugin (`crates/omegat-example-plugin`) appears in `filters.list` and parses `fixtures/plugin/sample.example`. See `docs/rewrite/PLUGIN_ABI.md`.
 
 ## Help and license
 
-OmegaT is GNU GPL v3+. Third-party notices: `THIRD_PARTY.md`. Plugin ABI: `docs/rewrite/PLUGIN_ABI.md`.
+OmegaT is GNU GPL v3+. Third-party notices: `THIRD_PARTY.md`. This Markdown manual is shipped in the package (`docs/manual`). The Java HTML set under `reference/java` remains the long-form reference until it is fully ported.

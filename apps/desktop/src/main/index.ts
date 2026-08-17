@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { detectLocale, setLocale } from "../renderer/i18n";
 import { buildApplicationMenu } from "./menu";
 
 type Pending = {
@@ -28,10 +29,13 @@ function sidecarPath(): string {
   return dev;
 }
 
-function manualPath(): string {
-  const bundled = join(process.resourcesPath, "manual", "en.md");
-  const dev = join(app.getAppPath(), "..", "..", "docs", "manual", "en.md");
+function manualPath(locale = "en"): string {
+  const name = locale.startsWith("zh") ? "zh-CN.md" : "en.md";
+  const bundled = join(process.resourcesPath, "manual", name);
+  const javaHtml = join(process.resourcesPath, "manual", "java", "index.html");
+  const dev = join(app.getAppPath(), "..", "..", "docs", "manual", name);
   if (existsSync(bundled)) return bundled;
+  if (existsSync(javaHtml)) return javaHtml;
   return dev;
 }
 
@@ -99,6 +103,12 @@ function createWindow() {
   });
 }
 
+function applyMenuLocale(locale: string) {
+  setLocale(locale);
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  if (win) Menu.setApplicationMenu(buildApplicationMenu(win));
+}
+
 app.whenReady().then(() => {
   startSidecar();
   ipcMain.handle("rpc", (_e, method: string, params: unknown) => rpc(method, params));
@@ -121,6 +131,10 @@ app.whenReady().then(() => {
     if (existsSync(local)) await shell.openPath(local);
     else await shell.openExternal("https://omegat.org/manual");
   });
+  ipcMain.handle("menu-locale", (_e, locale: string) => {
+    applyMenuLocale(typeof locale === "string" ? locale : "en");
+  });
+  setLocale(detectLocale(app.getLocale()));
   createWindow();
 });
 

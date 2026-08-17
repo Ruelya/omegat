@@ -1,9 +1,17 @@
-//! In-process plugin registry. P0 defines the manifest and type map.
-//! External cdylib ABI is documented in `docs/rewrite/PLUGIN_ABI.md` and frozen in P9.
+//! Plugin registry: `omegat-plugin.toml` + cdylib ABI.
+//!
+//! Host calls `omegat_plugin_register` so a plugin can register Filter / MT /
+//! Tokenizer implementations. `omegat_plugin_abi` remains for discovery.
 
+use omegat_filters::{
+    ExtractedSegment, Filter, FilterContext, FilterError, FilterRegistry, ParsedFile, Result as FilterResult,
+};
 use omegat_ipc::PluginManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_int, c_void};
+use std::path::Path;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -56,14 +64,213 @@ pub struct PluginToml {
     pub plugin: PluginManifest,
 }
 
-#[derive(Debug, Default)]
+type ParseFn = extern "C" fn(*const c_char, *mut c_char, c_int) -> c_int;
+type WriteFn = extern "C" fn(*const c_char, *const c_char, *const c_char) -> c_int;
+
+#[repr(C)]
+struct OmegatPluginHost {
+    ctx: *mut c_void,
+    register_filter: Option<
+        extern "C" fn(
+            ctx: *mut c_void,
+            id: *const c_char,
+            name: *const c_char,
+            masks: *const c_char,
+            parse: ParseFn,
+            write: WriteFn,
+        ),
+    >,
+    register_mt: Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+    register_tokenizer: Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+}
+
+struct Registration {
+    filters: Vec<DynamicFilter>,
+    mt: Vec<(String, String)>,
+    tokenizers: Vec<(String, String)>,
+}
+
+fn cstr<'a>(p: *const c_char) -> &'a str {
+    if p.is_null() {
+        return "";
+    }
+    unsafe { CStr::from_ptr(p) }.to_str().unwrap_or("")
+}
+
+fn leak_str(s: &str) -> &'static str {
+    Box::leak(s.to_string().into_boxed_str())
+}
+
+fn leak_masks(spec: &str) -> &'static [&'static str] {
+    let v: Vec<&'static str> = spec
+        .split(|c| c == ',' || c == ';')
+        .map(|m| m.trim())
+        .filter(|m| !m.is_empty())
+        .map(leak_str)
+        .collect();
+    Box::leak(v.into_boxed_slice())
+}
+
+extern "C" fn host_register_filter(
+    ctx: *mut c_void,
+    id: *const c_char,
+    name: *const c_char,
+    masks: *const c_char,
+    parse: ParseFn,
+    write: WriteFn,
+) {
+    if ctx.is_null() {
+        return;
+    }
+    let reg = unsafe { &mut *(ctx as *mut Registration) };
+    reg.filters.push(DynamicFilter {
+        id: leak_str(cstr(id)),
+        name: leak_str(cstr(name)),
+        masks: leak_masks(cstr(masks)),
+        parse_fn: parse,
+        write_fn: write,
+    });
+}
+
+extern "C" fn host_register_mt(ctx: *mut c_void, id: *const c_char, name: *const c_char) {
+    if ctx.is_null() {
+        return;
+    }
+    let reg = unsafe { &mut *(ctx as *mut Registration) };
+    reg.mt.push((cstr(id).to_string(), cstr(name).to_string()));
+}
+
+extern "C" fn host_register_tokenizer(ctx: *mut c_void, id: *const c_char, name: *const c_char) {
+    if ctx.is_null() {
+        return;
+    }
+    let reg = unsafe { &mut *(ctx as *mut Registration) };
+    reg.tokenizers
+        .push((cstr(id).to_string(), cstr(name).to_string()));
+}
+
+/// Filter whose parse/write live in a loaded cdylib.
+#[derive(Clone)]
+pub struct DynamicFilter {
+    id: &'static str,
+    name: &'static str,
+    masks: &'static [&'static str],
+    parse_fn: ParseFn,
+    write_fn: WriteFn,
+}
+
+impl Filter for DynamicFilter {
+    fn id(&self) -> &'static str {
+        self.id
+    }
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn default_masks(&self) -> &'static [&'static str] {
+        self.masks
+    }
+    fn parse(&self, path: &Path, _ctx: &FilterContext) -> FilterResult<ParsedFile> {
+        let c_path = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
+            format: self.id.to_string(),
+            message: e.to_string(),
+        })?;
+        let mut buf = vec![0u8; 1 << 20];
+        let n = (self.parse_fn)(c_path.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len() as c_int);
+        if n < 0 {
+            return Err(FilterError::Parse {
+                format: self.id.to_string(),
+                message: "plugin parse failed".into(),
+            });
+        }
+        let raw = std::str::from_utf8(&buf[..n as usize]).map_err(|e| FilterError::Parse {
+            format: self.id.to_string(),
+            message: e.to_string(),
+        })?;
+        let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| FilterError::Parse {
+            format: self.id.to_string(),
+            message: e.to_string(),
+        })?;
+        let mut segments = Vec::new();
+        if let Some(arr) = v.get("segments").and_then(|s| s.as_array()) {
+            for (i, item) in arr.iter().enumerate() {
+                segments.push(ExtractedSegment {
+                    id: item
+                        .get("id")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or(&i.to_string())
+                        .to_string(),
+                    source: item
+                        .get("source")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    existing_translation: None,
+                    note: item.get("note").and_then(|x| x.as_str()).map(|s| s.to_string()),
+                    comment: None,
+                    path: None,
+                    protected_parts: vec![],
+                });
+            }
+        }
+        Ok(ParsedFile {
+            segments,
+            skeleton: None,
+        })
+    }
+    fn write(
+        &self,
+        source_path: &Path,
+        dest_path: &Path,
+        translations: &HashMap<String, String>,
+        _ctx: &FilterContext,
+    ) -> FilterResult<()> {
+        let src = CString::new(source_path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
+            format: self.id.to_string(),
+            message: e.to_string(),
+        })?;
+        let dest = CString::new(dest_path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
+            format: self.id.to_string(),
+            message: e.to_string(),
+        })?;
+        let json = serde_json::to_string(translations).unwrap_or_else(|_| "{}".into());
+        let c_json = CString::new(json).map_err(|e| FilterError::Parse {
+            format: self.id.to_string(),
+            message: e.to_string(),
+        })?;
+        let rc = (self.write_fn)(src.as_ptr(), dest.as_ptr(), c_json.as_ptr());
+        if rc != 0 {
+            return Err(FilterError::Parse {
+                format: self.id.to_string(),
+                message: "plugin write failed".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
 pub struct PluginRegistry {
     by_type: HashMap<PluginType, Vec<PluginManifest>>,
+    dyn_filters: Vec<DynamicFilter>,
+    mt: Vec<(String, String)>,
+    tokenizers: Vec<(String, String)>,
+    _libs: Vec<libloading::Library>,
+}
+
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        let mut reg = Self::default();
+        let mut reg = Self {
+            by_type: HashMap::new(),
+            dyn_filters: Vec::new(),
+            mt: Vec::new(),
+            tokenizers: Vec::new(),
+            _libs: Vec::new(),
+        };
         reg.register_builtin();
         reg
     }
@@ -81,8 +288,31 @@ impl PluginRegistry {
         }
     }
 
+    pub fn extra_filters(&self) -> Vec<Box<dyn Filter>> {
+        self.dyn_filters
+            .iter()
+            .map(|f| Box::new(f.clone()) as Box<dyn Filter>)
+            .collect()
+    }
+
+    pub fn registered_mt(&self) -> &[(String, String)] {
+        &self.mt
+    }
+
+    pub fn registered_tokenizers(&self) -> &[(String, String)] {
+        &self.tokenizers
+    }
+
+    pub fn filter_registry(&self) -> FilterRegistry {
+        let mut reg = FilterRegistry::new();
+        for f in self.extra_filters() {
+            reg.register(f);
+        }
+        reg
+    }
+
     /// Load every `omegat-plugin.toml` under `dir` and `dlopen` the `entry` cdylib.
-    pub fn load_dir(&mut self, dir: &std::path::Path) -> Result<Vec<String>, PluginError> {
+    pub fn load_dir(&mut self, dir: &Path) -> Result<Vec<String>, PluginError> {
         let mut loaded = Vec::new();
         if !dir.exists() {
             return Ok(loaded);
@@ -93,7 +323,11 @@ impl PluginRegistry {
             let manifest_path = if p.is_dir() {
                 let toml = p.join("omegat-plugin.toml");
                 let json = p.join("omegat-plugin.json");
-                if toml.exists() { toml } else { json }
+                if toml.exists() {
+                    toml
+                } else {
+                    json
+                }
             } else if p.file_name().and_then(|s| s.to_str()) == Some("omegat-plugin.toml") {
                 p
             } else {
@@ -110,21 +344,46 @@ impl PluginRegistry {
                     // Safety: plugins are trusted local cdylibs listed in the manifest.
                     let dynlib = unsafe { libloading::Library::new(&lib) }
                         .map_err(|e| PluginError::Manifest(e.to_string()))?;
-                    type AbiFn = unsafe extern "C" fn() -> *const std::os::raw::c_char;
+                    type AbiFn = unsafe extern "C" fn() -> *const c_char;
+                    type RegisterFn = unsafe extern "C" fn(*const OmegatPluginHost);
                     if let Ok(sym) = unsafe { dynlib.get::<AbiFn>(b"omegat_plugin_abi\0") } {
                         let ptr = unsafe { sym() };
                         if !ptr.is_null() {
-                            let _ = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
+                            let _ = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
                         }
                     }
-                    // Keep the library loaded for the process lifetime.
-                    std::mem::forget(dynlib);
+                    let mut pending = Registration {
+                        filters: Vec::new(),
+                        mt: Vec::new(),
+                        tokenizers: Vec::new(),
+                    };
+                    if let Ok(sym) = unsafe { dynlib.get::<RegisterFn>(b"omegat_plugin_register\0") } {
+                        let host = OmegatPluginHost {
+                            ctx: &mut pending as *mut Registration as *mut c_void,
+                            register_filter: Some(host_register_filter),
+                            register_mt: Some(host_register_mt),
+                            register_tokenizer: Some(host_register_tokenizer),
+                        };
+                        unsafe { sym(&host) };
+                    }
+                    self.dyn_filters.extend(pending.filters);
+                    self.mt.extend(pending.mt);
+                    self.tokenizers.extend(pending.tokenizers);
+                    self._libs.push(dynlib);
                     loaded.push(m.id.clone());
                 }
             }
             self.register(m)?;
         }
         Ok(loaded)
+    }
+
+    pub fn load_default_dirs(&mut self, config_dir: &Path) {
+        let _ = self.load_dir(&config_dir.join("plugins"));
+        let _ = self.load_dir(Path::new("plugins"));
+        if let Ok(dir) = std::env::var("OMEGAT_PLUGINS_DIR") {
+            let _ = self.load_dir(Path::new(&dir));
+        }
     }
 
     pub fn parse_toml(src: &str) -> Result<PluginManifest, PluginError> {
@@ -187,6 +446,30 @@ impl PluginRegistry {
     }
 }
 
+pub fn example_cdylib_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "omegat_example_plugin.dll"
+    } else if cfg!(target_os = "macos") {
+        "libomegat_example_plugin.dylib"
+    } else {
+        "libomegat_example_plugin.so"
+    }
+}
+
+pub fn example_cdylib_path() -> std::path::PathBuf {
+    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("../../target/debug");
+    p.push(example_cdylib_name());
+    if !p.exists() {
+        let mut alt = std::path::PathBuf::from("target/debug");
+        alt.push(example_cdylib_name());
+        if alt.exists() {
+            return alt;
+        }
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,26 +514,30 @@ entry = "builtin"
         let _ = loaded;
     }
 
-    #[test]
-    fn loads_example_cdylib_when_built() {
-        let mut candidates = vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../target/debug/libomegat_example_plugin.so"),
-            std::path::PathBuf::from("target/debug/libomegat_example_plugin.so"),
-        ];
-        if cfg!(target_os = "macos") {
-            candidates.push(std::path::PathBuf::from("target/debug/libomegat_example_plugin.dylib"));
+    fn ensure_example_cdylib() -> std::path::PathBuf {
+        let lib = example_cdylib_path();
+        if !lib.exists() {
+            let status = std::process::Command::new("cargo")
+                .args(["build", "-p", "omegat-example-plugin"])
+                .status()
+                .expect("cargo build example plugin");
+            assert!(status.success(), "failed to build omegat-example-plugin");
         }
-        let Some(lib) = candidates.into_iter().find(|p| p.exists()) else {
-            return;
-        };
+        let lib = example_cdylib_path();
+        assert!(lib.exists(), "missing {}", lib.display());
+        lib
+    }
+
+    #[test]
+    fn example_plugin_registers_filter_and_parses_fixture() {
+        let lib = ensure_example_cdylib();
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join(lib.file_name().unwrap());
         std::fs::copy(&lib, &dest).unwrap();
         std::fs::write(
             dir.path().join("omegat-plugin.toml"),
             format!(
-                "id = \"example\"\nname = \"Example\"\nversion = \"1.0.0\"\nplugin_type = \"filter\"\nentry = \"{}\"\n",
+                "id = \"example\"\nname = \"Example Filter\"\nversion = \"1.0.0\"\nplugin_type = \"filter\"\nentry = \"{}\"\n",
                 dest.file_name().unwrap().to_string_lossy()
             ),
         )
@@ -258,5 +545,27 @@ entry = "builtin"
         let mut reg = PluginRegistry::new();
         let loaded = reg.load_dir(dir.path()).unwrap();
         assert!(loaded.contains(&"example".to_string()));
+        assert!(reg.list(Some(PluginType::Filter)).iter().any(|p| p.id == "example"));
+        let filters = reg.extra_filters();
+        let filter = filters
+            .iter()
+            .find(|f| f.id() == "example")
+            .expect("registered example filter");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plugin/sample.example");
+        let parsed = filter.parse(&fixture, &FilterContext::default()).unwrap();
+        assert_eq!(parsed.segments.len(), 2);
+        assert_eq!(parsed.segments[0].source, "Hello from plugin");
+        assert_eq!(parsed.segments[1].source, "Second line");
+        let out = dir.path().join("out.example");
+        let mut tr = HashMap::new();
+        tr.insert("0".into(), "Bonjour depuis le greffon".into());
+        tr.insert("1".into(), "Deuxieme ligne".into());
+        filter.write(&fixture, &out, &tr, &FilterContext::default()).unwrap();
+        let written = std::fs::read_to_string(&out).unwrap();
+        assert!(written.contains("Bonjour depuis le greffon"));
+        assert!(written.contains("Deuxieme ligne"));
+        let list = reg.filter_registry();
+        assert!(list.by_id("example").is_some());
+        assert!(list.for_path(&fixture).map(|f| f.id()) == Some("example"));
     }
 }

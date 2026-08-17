@@ -206,6 +206,7 @@ export const useApp = create<AppState>((set, get) => ({
   applyPrefs: (p) => {
     const extra = p.extra ?? {};
     applyDocumentLocale(p.locale || get().locale);
+    void window.omegat?.setMenuLocale?.(p.locale || get().locale);
     const theme = (p.theme === "dark" ? "dark" : "light") as "light" | "dark";
     if (typeof document !== "undefined") {
       document.documentElement.dataset.theme = theme;
@@ -230,6 +231,7 @@ export const useApp = create<AppState>((set, get) => ({
     applyDocumentLocale(locale);
     writeLocal("omegat.locale", locale);
     set({ locale });
+    void window.omegat?.setMenuLocale?.(locale);
     const prefs = get().prefs;
     if (prefs) void get().savePrefs({ ...prefs, locale });
   },

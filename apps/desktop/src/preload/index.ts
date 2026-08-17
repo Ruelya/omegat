@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("omegat", {
   openPath: (path: string) => ipcRenderer.invoke("open-path", path) as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url) as Promise<void>,
   openManual: () => ipcRenderer.invoke("open-manual") as Promise<void>,
+  setMenuLocale: (locale: string) => ipcRenderer.invoke("menu-locale", locale) as Promise<void>,
   onMenu: (channel: string, fn: (...args: unknown[]) => void) => {
     const listener = (_: unknown, ...args: unknown[]) => fn(...args);
     ipcRenderer.on(channel, listener);

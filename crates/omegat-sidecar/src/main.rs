@@ -19,8 +19,7 @@ impl App {
     fn new() -> Self {
         let prefs = Preferences::load_or_default(&default_config_dir());
         let mut plugins = PluginRegistry::new();
-        let _ = plugins.load_dir(&prefs.config_dir.join("plugins"));
-        let _ = plugins.load_dir(std::path::Path::new("plugins"));
+        plugins.load_default_dirs(&prefs.config_dir);
         Self {
             session: None,
             prefs,
@@ -51,15 +50,24 @@ impl App {
             }
             "project.create" => {
                 let p: CreateProjectParams = serde_json::from_value(params).map_err(invalid)?;
-                let s = ProjectSession::create(&p, self.prefs.clone()).map_err(core_err)?;
+                let s = ProjectSession::create_with_filters(
+                    &p,
+                    self.prefs.clone(),
+                    self.plugins.filter_registry(),
+                )
+                .map_err(core_err)?;
                 let dto = s.props.to_dto();
                 self.session = Some(s);
                 Ok(serde_json::to_value(dto).unwrap())
             }
             "project.open" => {
                 let p: OpenProjectParams = serde_json::from_value(params).map_err(invalid)?;
-                let s = ProjectSession::open(std::path::Path::new(&p.root), self.prefs.clone())
-                    .map_err(core_err)?;
+                let s = ProjectSession::open_with_filters(
+                    std::path::Path::new(&p.root),
+                    self.prefs.clone(),
+                    self.plugins.filter_registry(),
+                )
+                .map_err(core_err)?;
                 let dto = s.props.to_dto();
                 self.session = Some(s);
                 Ok(serde_json::to_value(dto).unwrap())
@@ -220,7 +228,7 @@ impl App {
             "issues.list" => Ok(serde_json::to_value(self.session()?.issues()).unwrap()),
             "filters.options" => {
                 let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let reg = omegat_filters::FilterRegistry::new();
+                let reg = self.plugins.filter_registry();
                 let Some(f) = reg.by_id(id) else {
                     return Err((error_code::INVALID_PARAMS, format!("unknown filter {id}")));
                 };
@@ -241,7 +249,9 @@ impl App {
                 Ok(json!({ "slots": omegat_script::list_slots(std::path::Path::new(root)) }))
             }
             "filters.list" => {
-                let list: Vec<FilterInfoDto> = omegat_filters::FilterRegistry::new()
+                let list: Vec<FilterInfoDto> = self
+                    .plugins
+                    .filter_registry()
                     .info()
                     .into_iter()
                     .map(|f| FilterInfoDto {
@@ -252,6 +262,26 @@ impl App {
                     })
                     .collect();
                 Ok(serde_json::to_value(list).unwrap())
+            }
+            "filters.parse" => {
+                let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let id = params.get("id").and_then(|v| v.as_str());
+                let reg = self.plugins.filter_registry();
+                let filter = if let Some(id) = id {
+                    reg.by_id(id)
+                } else {
+                    reg.for_path(std::path::Path::new(path))
+                }
+                .ok_or((error_code::FILTER, format!("no filter for {path}")))?;
+                let parsed = filter
+                    .parse(std::path::Path::new(path), &omegat_filters::FilterContext::default())
+                    .map_err(|e| core_err(e.into()))?;
+                let segments: Vec<_> = parsed
+                    .segments
+                    .iter()
+                    .map(|s| json!({"id": s.id, "source": s.source}))
+                    .collect();
+                Ok(json!({"id": filter.id(), "segments": segments}))
             }
             "mt.query" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;

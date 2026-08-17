@@ -171,6 +171,8 @@ declare global {
       pickFile: () => Promise<string | null>;
       openPath: (path: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
+      openManual?: () => Promise<void>;
+      setMenuLocale?: (locale: string) => Promise<void>;
       onMenu: (channel: string, fn: (...args: unknown[]) => void) => () => void;
     };
   }

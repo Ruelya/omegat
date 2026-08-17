@@ -185,6 +185,10 @@ impl FilterRegistry {
         Self { filters }
     }
 
+    pub fn register(&mut self, filter: Box<dyn Filter>) {
+        self.filters.push(filter);
+    }
+
     pub fn all(&self) -> &[Box<dyn Filter>] {
         &self.filters
     }

@@ -479,6 +479,7 @@ name = "omegat-plugin"
 version = "6.2.0"
 dependencies = [
  "libloading",
+ "omegat-filters",
  "omegat-ipc",
  "serde",
  "serde_json",
@@ -513,6 +514,7 @@ dependencies = [
  "omegat-team",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
