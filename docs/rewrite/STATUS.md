@@ -22,7 +22,7 @@ wave’s Java goldens are green.
 | filters3: XML event engine + 23 Dialect modules | G3 | parity |
 | filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | parity |
 | Desktop: document-model editor, 113 menus, 28 prefs | G5 | parity |
-| Tokenizers / spell / dictionaries / LanguageTool | G6 | scaffold |
+| Tokenizers / spell / dictionaries / LanguageTool | G6 | parity |
 | 7 MT engines, External Finder, autocompleter | G7 | scaffold |
 | team2: 23 classes, rebase, conflict UI | G8 | scaffold |
 | Aligner, embedded JS, Wiki / MED / CLI | G9 | scaffold |
@@ -42,7 +42,7 @@ Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 - `Preferences.extra: HashMap` as the preference model (**removed in G5**)
 - `contentEditable` as the segment editor (**removed in G5**)
 - `fallback_eval("1+2")` as a script engine
-- toy `resources/languages` word lists with no `.aff`
+- toy `resources/languages` word lists with no `.aff` (**removed in G6**)
 - match bins that record every non-exact hit as `fuzzy_85`
 - Python “export” that never ran Java
 - handwritten goldens with fake `java_test` strings
@@ -118,7 +118,21 @@ Accepted against Java-exported goldens (`assert_eq`) for filters4. Shared StAX e
 
 49 Java plugin ids each have a golden directory. Registration test checks directory existence, not `n >= 49`.
 
-Not this wave: tokenizers / spell / LT (G6).
+Not this wave: tokenizers / spell / LT (G6, now accepted).
+
+## G6 notes
+
+Accepted against Java-exported `fixtures/goldens/engine/tokens.json` (`assert_eq` on `words` = `tokenizeWordsToStrings`) plus Hunspell / LT / dictionary unit tests:
+
+- 34 Lucene `*Tokenizer` modules + `DefaultTokenizer` + `HunspellTokenizer`. Shared StandardTokenizer-like engine; each language file owns stem + stopword set.
+- TokenizerTest English / German / Italian / Default / Turkish / Japanese tag-joining / SmartChinese HMM punctuation + CJK bigrams match Java lists.
+- Hunspell reads `.aff` PFX/SFX (char / long / num flags). Lookup is stem + reverse affix (language-module `fr` is not fully expanded).
+- Three backends use distinct fixture paths: hunspell `colour`/`walks`, lucene `color`, morfologik `kolor`.
+- `ensure_lang` copies ca/es/fa/fr/ga/gl/pt/uk from `reference/java/language-modules` into `config/spell/hunspell`. Toy `resources/languages/*.dic` removed.
+- StarDict (`.ifo`+`.idx`+`.dict`/`.dict.dz`) and DSL (`.dsl`/`.dsl.dz`); `fixtures/dict/sample.dsl` looks up `omega`. Fuzzy prefix is `prefs.dictionary_fuzzy_matching`.
+- LanguageTool: no URL → Issues `severity=info` downgrade; `fixture:` parses `matches[].message` / `rule.id` / `offset`.
+
+`parity_gap` (measured, not claimed as product dictionaries): no bundled aff/dic for en/de/ja/zh/ar/… — first use must `spell.install` or drop files into `config/spell`. Japanese morphological analysis of running text is TagJoining + script runs (Kuromoji is not embedded); the exported Japanese case is the tag-joining fixture, not the Wikipedia sentence.
 
 ## G5 notes
 

@@ -95,6 +95,8 @@ impl ProjectSession {
             "morfologik" => crate::spell::SpellBackend::Morfologik,
             _ => crate::spell::SpellBackend::Hunspell,
         };
+        let dest = prefs.config_dir.join("spell").join("hunspell");
+        let _ = crate::spell::ensure_lang(&props.target_lang, &dest);
         let spell = SpellChecker::load_backend(&props.root, &prefs.config_dir, backend);
         let mut session = Self {
             props,
@@ -513,7 +515,7 @@ impl ProjectSession {
     }
 
     pub fn dict(&self, word: &str) -> Vec<DictHitDto> {
-        dict::lookup(&self.props.dictionary_dir, word)
+        dict::lookup_opts(&self.props.dictionary_dir, word, self.prefs.dictionary_fuzzy_matching)
     }
 
     pub fn completer(&self, index: usize, prefix: &str, draft: Option<&str>) -> Vec<CompleterItemDto> {

@@ -66,11 +66,19 @@ fn tokens_match_java_lists() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        let got: Vec<String> = omegat_core::tokenize::tokenize(input, lang)
-            .into_iter()
-            .map(|t| t.text)
-            .collect();
-        assert_eq!(got, expected, "tokens {lang} {input:?} tokenizer={}", case["tokenizer"]);
+        let class = case["tokenizer"].as_str().unwrap();
+        let mode = omegat_core::tokenize::StemmingMode::parse(case["stemming"].as_str().unwrap_or("NONE"));
+        if let Some(words) = case["words"].as_array() {
+            let expected_words: Vec<String> = words.iter().map(|v| v.as_str().unwrap().to_string()).collect();
+            let got = omegat_core::tokenize::tokenize_words(input, class, mode);
+            assert_eq!(got, expected_words, "words {lang} {input:?} {class} {mode:?}");
+        } else {
+            let got: Vec<String> = omegat_core::tokenize::tokenize(input, lang)
+                .into_iter()
+                .map(|t| t.text)
+                .collect();
+            assert_eq!(got, expected, "tokens {lang} {input:?} tokenizer={class}");
+        }
     }
 }
 

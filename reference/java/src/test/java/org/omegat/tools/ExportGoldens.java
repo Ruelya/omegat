@@ -94,8 +94,40 @@ import org.omegat.gui.glossary.GlossaryReaderTSV;
 import org.omegat.gui.glossary.GlossarySearcher;
 import org.omegat.tokenizer.DefaultTokenizer;
 import org.omegat.tokenizer.ITokenizer;
+import org.omegat.tokenizer.LuceneArabicTokenizer;
+import org.omegat.tokenizer.LuceneArmenianTokenizer;
+import org.omegat.tokenizer.LuceneBasqueTokenizer;
+import org.omegat.tokenizer.LuceneBrazilianTokenizer;
+import org.omegat.tokenizer.LuceneBulgarianTokenizer;
 import org.omegat.tokenizer.LuceneCJKTokenizer;
+import org.omegat.tokenizer.LuceneCatalanTokenizer;
+import org.omegat.tokenizer.LuceneCzechTokenizer;
+import org.omegat.tokenizer.LuceneDanishTokenizer;
+import org.omegat.tokenizer.LuceneDutchTokenizer;
 import org.omegat.tokenizer.LuceneEnglishTokenizer;
+import org.omegat.tokenizer.LuceneFinnishTokenizer;
+import org.omegat.tokenizer.LuceneFrenchTokenizer;
+import org.omegat.tokenizer.LuceneGalicianTokenizer;
+import org.omegat.tokenizer.LuceneGermanTokenizer;
+import org.omegat.tokenizer.LuceneGreekTokenizer;
+import org.omegat.tokenizer.LuceneHindiTokenizer;
+import org.omegat.tokenizer.LuceneHungarianTokenizer;
+import org.omegat.tokenizer.LuceneIndonesianTokenizer;
+import org.omegat.tokenizer.LuceneIrishTokenizer;
+import org.omegat.tokenizer.LuceneItalianTokenizer;
+import org.omegat.tokenizer.LuceneJapaneseTokenizer;
+import org.omegat.tokenizer.LuceneLatvianTokenizer;
+import org.omegat.tokenizer.LuceneNorwegianTokenizer;
+import org.omegat.tokenizer.LucenePersianTokenizer;
+import org.omegat.tokenizer.LucenePolishTokenizer;
+import org.omegat.tokenizer.LucenePortugueseTokenizer;
+import org.omegat.tokenizer.LuceneRomanianTokenizer;
+import org.omegat.tokenizer.LuceneRussianTokenizer;
+import org.omegat.tokenizer.LuceneSmartChineseTokenizer;
+import org.omegat.tokenizer.LuceneSpanishTokenizer;
+import org.omegat.tokenizer.LuceneSwedishTokenizer;
+import org.omegat.tokenizer.LuceneThaiTokenizer;
+import org.omegat.tokenizer.LuceneTurkishTokenizer;
 import org.omegat.util.Language;
 import org.omegat.util.Preferences;
 import org.omegat.util.TestPreferencesInitializer;
@@ -134,7 +166,15 @@ public final class ExportGoldens {
         TestPreferencesInitializer.init();
         Core.initializeConsole();
         Core.setFilterMaster(new FilterMaster(FilterMaster.createDefaultFiltersConfig()));
-        new ExportGoldens(javaRoot, goldenRoot).run();
+        ExportGoldens exporter = new ExportGoldens(javaRoot, goldenRoot);
+        if (args.length > 1 && "engine".equals(args[1])) {
+            exporter.exportEngine();
+            exporter.exportGlossary();
+            exporter.exportStats();
+            System.out.println("ExportGoldens wrote engine goldens to " + goldenRoot);
+        } else {
+            exporter.run();
+        }
     }
 
     private void run() throws Exception {
@@ -691,13 +731,90 @@ public final class ExportGoldens {
                 ITokenizer.StemmingMode.GLOSSARY));
         tokenCases.add(tokenCase(new LuceneCJKTokenizer(), "zh", "汉字词", ITokenizer.StemmingMode.NONE));
         tokenCases.add(tokenCase(new LuceneCJKTokenizer(), "ja", "日本語", ITokenizer.StemmingMode.NONE));
+
+        String enOrig = "The quick, brown <x0/> jumped over 1 \"lazy\" dog.";
+        tokenCases.add(tokenWordsCase(new LuceneEnglishTokenizer(), "en", enOrig, ITokenizer.StemmingMode.NONE,
+                "org.omegat.tokenizer.TokenizerTest#testEnglish"));
+        tokenCases.add(tokenWordsCase(new LuceneEnglishTokenizer(), "en", enOrig, ITokenizer.StemmingMode.GLOSSARY,
+                "org.omegat.tokenizer.TokenizerTest#testEnglish"));
+        tokenCases.add(tokenWordsCase(new LuceneEnglishTokenizer(), "en", enOrig, ITokenizer.StemmingMode.GLOSSARY_FULL,
+                "org.omegat.tokenizer.TokenizerTest#testEnglish"));
+        tokenCases.add(tokenWordsCase(new LuceneEnglishTokenizer(), "en", enOrig, ITokenizer.StemmingMode.MATCHING,
+                "org.omegat.tokenizer.TokenizerTest#testEnglish"));
+        tokenCases.add(tokenWordsCase(new LuceneEnglishTokenizer(), "en", "organisation organization",
+                ITokenizer.StemmingMode.GLOSSARY, "org.omegat.tokenizer.TokenizerTest#testEnglish"));
+        tokenCases.add(tokenWordsCase(new LuceneEnglishTokenizer(), "en", "organisation organization",
+                ITokenizer.StemmingMode.GLOSSARY_FULL, "org.omegat.tokenizer.TokenizerTest#testEnglish"));
+
+        String defOrig = "The quick, brown <x0/> jumped over 1 \"lazy\" \u0130stanbul. "
+                + "\u65E5\u672C\u8A9E\u3042\u3044\u3046\u3048\u304A\u3002";
+        tokenCases.add(tokenWordsCase(new DefaultTokenizer(), "en", defOrig, ITokenizer.StemmingMode.NONE,
+                "org.omegat.tokenizer.TokenizerTest#testDefault"));
+        tokenCases.add(tokenWordsCase(new DefaultTokenizer(), "en", defOrig, ITokenizer.StemmingMode.GLOSSARY,
+                "org.omegat.tokenizer.TokenizerTest#testDefault"));
+        tokenCases.add(tokenWordsCase(new DefaultTokenizer(), "en", defOrig, ITokenizer.StemmingMode.MATCHING,
+                "org.omegat.tokenizer.TokenizerTest#testDefault"));
+
+        tokenCases.add(tokenWordsCase(new LuceneGermanTokenizer(), "de", "pr\u00e4sentierte",
+                ITokenizer.StemmingMode.GLOSSARY, "org.omegat.tokenizer.TokenizerTest#testGerman"));
+        tokenCases.add(tokenWordsCase(new LuceneGermanTokenizer(), "de", "pr\u00e4sentieren",
+                ITokenizer.StemmingMode.GLOSSARY, "org.omegat.tokenizer.TokenizerTest#testGerman"));
+        tokenCases.add(tokenWordsCase(new LuceneItalianTokenizer(), "it", "paesi", ITokenizer.StemmingMode.GLOSSARY,
+                "org.omegat.tokenizer.TokenizerTest#testItalian"));
+        tokenCases.add(tokenWordsCase(new LuceneItalianTokenizer(), "it", "paesi", ITokenizer.StemmingMode.GLOSSARY_FULL,
+                "org.omegat.tokenizer.TokenizerTest#testItalian"));
+
+        String trOrig = "\u201C\u0130stanbul a\u011Fz\u0131\u201D, T\u00FCrkiye T\u00FCrk\u00E7esi"
+                + "yaz\u0131 dilinin kayna\u011F\u0131 olarak kabul edilir; yaz\u0131 dili bu"
+                + "a\u011F\u0131z temelinde olu\u015Fmu\u015Ftur.";
+        tokenCases.add(tokenWordsCase(new LuceneTurkishTokenizer(), "tr", trOrig, ITokenizer.StemmingMode.NONE,
+                "org.omegat.tokenizer.TokenizerTest#testTurkish"));
+        tokenCases.add(tokenWordsCase(new LuceneTurkishTokenizer(), "tr", trOrig, ITokenizer.StemmingMode.GLOSSARY,
+                "org.omegat.tokenizer.TokenizerTest#testTurkish"));
+        tokenCases.add(tokenWordsCase(new LuceneTurkishTokenizer(), "tr", trOrig, ITokenizer.StemmingMode.MATCHING,
+                "org.omegat.tokenizer.TokenizerTest#testTurkish"));
+
+        String jaTags = "<x0/>\u3042</x0>\u300C<x1/>\u300D<x2/>\u3002<foo bar 123";
+        tokenCases.add(tokenWordsCase(new LuceneJapaneseTokenizer(), "ja", jaTags, ITokenizer.StemmingMode.NONE,
+                "org.omegat.tokenizer.TokenizerTest#testJapanese"));
+        tokenCases.add(tokenWordsCase(new LuceneJapaneseTokenizer(), "ja", jaTags, ITokenizer.StemmingMode.MATCHING,
+                "org.omegat.tokenizer.TokenizerTest#testJapanese"));
+
+        String zhOrig = "\u6F22\u8A9E\u7684\u6587\u5B57\u7CFB\u7D71\u2014\u2014\u6F22\u5B57\u662F"
+                + "\u4E00\u7A2E\u610F\u97F3\u8A9E\u8A00\uFF0C\u8868\u610F\u7684\u540C\u6642\u4E5F"
+                + "\u5177\u4E00\u5B9A\u7684\u8868\u97F3\u529F\u80FD\u3002";
+        tokenCases.add(tokenWordsCase(new LuceneSmartChineseTokenizer(), "zh", zhOrig, ITokenizer.StemmingMode.NONE,
+                "org.omegat.tokenizer.TokenizerTest#testChinese"));
+        tokenCases.add(tokenWordsCase(new LuceneSmartChineseTokenizer(), "zh", zhOrig, ITokenizer.StemmingMode.GLOSSARY,
+                "org.omegat.tokenizer.TokenizerTest#testChinese"));
+        tokenCases.add(tokenWordsCase(new LuceneSmartChineseTokenizer(), "zh", zhOrig, ITokenizer.StemmingMode.MATCHING,
+                "org.omegat.tokenizer.TokenizerTest#testChinese"));
+
+        ITokenizer[] allLucene = new ITokenizer[] { new LuceneArabicTokenizer(), new LuceneArmenianTokenizer(),
+                new LuceneBasqueTokenizer(), new LuceneBrazilianTokenizer(), new LuceneBulgarianTokenizer(),
+                new LuceneCatalanTokenizer(), new LuceneCJKTokenizer(), new LuceneCzechTokenizer(),
+                new LuceneDanishTokenizer(), new LuceneDutchTokenizer(), new LuceneEnglishTokenizer(),
+                new LuceneFinnishTokenizer(), new LuceneFrenchTokenizer(), new LuceneGalicianTokenizer(),
+                new LuceneGermanTokenizer(), new LuceneGreekTokenizer(), new LuceneHindiTokenizer(),
+                new LuceneHungarianTokenizer(), new LuceneIndonesianTokenizer(), new LuceneIrishTokenizer(),
+                new LuceneItalianTokenizer(), new LuceneLatvianTokenizer(), new LuceneNorwegianTokenizer(),
+                new LucenePersianTokenizer(), new LucenePolishTokenizer(), new LucenePortugueseTokenizer(),
+                new LuceneRomanianTokenizer(), new LuceneRussianTokenizer(), new LuceneSpanishTokenizer(),
+                new LuceneSwedishTokenizer(), new LuceneThaiTokenizer(), new LuceneTurkishTokenizer() };
+        String[] langs = { "ar", "hy", "eu", "pt-br", "bg", "ca", "zh", "cs", "da", "nl", "en", "fi", "fr", "gl", "de",
+                "el", "hi", "hu", "id", "ga", "it", "lv", "nb", "fa", "pl", "pt", "ro", "ru", "es", "sv", "th", "tr" };
+        for (int i = 0; i < allLucene.length; i++) {
+            tokenCases.add(tokenWordsCase(allLucene[i], langs[i], "Hello worlds running", ITokenizer.StemmingMode.NONE,
+                    "org.omegat.tokenizer.BaseTokenizer#tokenizeWordsToStrings"));
+        }
+
         Map<String, Object> tokens = new LinkedHashMap<>();
-        tokens.put("java_test", "org.omegat.tokenizer.DefaultTokenizer#tokenizeWords");
+        tokens.put("java_test", "org.omegat.tokenizer.TokenizerTest#testEnglish");
         tokens.put("exported_by", EXPORTED_BY);
         tokens.put("cases", tokenCases);
         writeJson(goldenRoot.resolve("engine/tokens.json"), tokens);
 
-        System.out.println("wrote engine srx/fuzzy/tokens");
+        System.out.println("wrote engine srx/fuzzy/tokens cases=" + tokenCases.size());
     }
 
     private void exportGlossary() throws Exception {
@@ -828,14 +945,22 @@ public final class ExportGoldens {
 
     private Map<String, Object> tokenCase(ITokenizer tokenizer, String lang, String input,
             ITokenizer.StemmingMode mode) {
+        return tokenWordsCase(tokenizer, lang, input, mode, "org.omegat.tokenizer.DefaultTokenizer#tokenizeWords");
+    }
+
+    private Map<String, Object> tokenWordsCase(ITokenizer tokenizer, String lang, String input,
+            ITokenizer.StemmingMode mode, String javaTest) {
         Token[] tokens = tokenizer.tokenizeWords(input, mode);
         String[] texts = Token.getTextsFromString(tokens, input);
+        String[] words = tokenizer.tokenizeWordsToStrings(input, mode);
         Map<String, Object> c = new LinkedHashMap<>();
         c.put("lang", lang);
         c.put("input", input);
         c.put("tokenizer", tokenizer.getClass().getName());
         c.put("stemming", mode.name());
+        c.put("java_test", javaTest);
         c.put("tokens", List.of(texts));
+        c.put("words", List.of(words));
         return c;
     }
 

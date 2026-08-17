@@ -5,6 +5,10 @@ use std::path::Path;
 
 /// StarDict (`.ifo` + `.idx` + `.dict` / `.dict.dz`) and Lingvo DSL (`.dsl` / `.dsl.dz`).
 pub fn lookup(dir: &Path, word: &str) -> Vec<DictHitDto> {
+    lookup_opts(dir, word, false)
+}
+
+pub fn lookup_opts(dir: &Path, word: &str, fuzzy: bool) -> Vec<DictHitDto> {
     if !dir.exists() || word.is_empty() {
         return vec![];
     }
@@ -20,6 +24,12 @@ pub fn lookup(dir: &Path, word: &str) -> Vec<DictHitDto> {
             hits.extend(lookup_dsl(&p, &needle));
         } else if name.ends_with(".ifo") {
             hits.extend(lookup_stardict(&p, &needle));
+        }
+    }
+    if hits.is_empty() && fuzzy && needle.chars().count() >= 3 {
+        let prefix: String = needle.chars().take(needle.chars().count().saturating_sub(1)).collect();
+        if !prefix.is_empty() {
+            return lookup_opts(dir, &prefix, false);
         }
     }
     hits
@@ -138,6 +148,16 @@ mod tests {
     use flate2::Compression;
     use std::io::Write;
     use tempfile::tempdir;
+
+    #[test]
+    fn fixture_dsl_lookup() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/dict");
+        let hits = lookup(&dir, "omega");
+        assert_eq!(hits[0].word, "omega");
+        assert!(hits[0].definition.contains("translation"));
+        let fuzzy = lookup_opts(&dir, "omegx", true);
+        assert!(fuzzy.iter().any(|h| h.word == "omega"), "{fuzzy:?}");
+    }
 
     #[test]
     fn dsl_lookup() {

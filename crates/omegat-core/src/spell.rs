@@ -14,8 +14,17 @@ pub enum SpellBackend {
     Morfologik,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum FlagKind {
+    #[default]
+    Char,
+    Long,
+    Num,
+}
+
 #[derive(Debug, Clone)]
 struct AffRule {
+    flag: String,
     strip: String,
     append: String,
     condition: String,
@@ -23,8 +32,9 @@ struct AffRule {
 
 #[derive(Debug, Default)]
 pub struct AffixTable {
-    prefixes: HashMap<char, Vec<AffRule>>,
-    suffixes: HashMap<char, Vec<AffRule>>,
+    kind: FlagKind,
+    prefixes: HashMap<String, Vec<AffRule>>,
+    suffixes: HashMap<String, Vec<AffRule>>,
 }
 
 #[derive(Debug)]
@@ -33,6 +43,8 @@ pub struct SpellChecker {
     pub learned: HashSet<String>,
     pub ignored: HashSet<String>,
     pub dictionary: HashSet<String>,
+    stems: HashMap<String, String>,
+    affix: AffixTable,
 }
 
 impl Default for SpellChecker {
@@ -42,6 +54,8 @@ impl Default for SpellChecker {
             learned: HashSet::new(),
             ignored: HashSet::new(),
             dictionary: HashSet::new(),
+            stems: HashMap::new(),
+            affix: AffixTable::default(),
         }
     }
 }
@@ -62,7 +76,7 @@ impl SpellChecker {
             s.learned = load_wordlist(&config_dir.join("learned_words.txt"));
         }
         for dir in language_dirs(project_root, config_dir, backend) {
-            load_hunspell_dir(&dir, &mut s.dictionary);
+            load_hunspell_dir(&dir, &mut s.dictionary, &mut s.stems, &mut s.affix);
             if backend == SpellBackend::Morfologik {
                 load_wordlist_into(&dir.join("pl.dict.txt"), &mut s.dictionary);
                 if let Ok(rd) = std::fs::read_dir(&dir) {
@@ -86,7 +100,35 @@ impl SpellChecker {
         if word.chars().any(|c| c.is_ascii_punctuation()) && word.len() == 1 {
             return true;
         }
-        self.ignored.contains(&w) || self.learned.contains(&w) || self.dictionary.contains(&w)
+        self.ignored.contains(&w)
+            || self.learned.contains(&w)
+            || self.dictionary.contains(&w)
+            || self.stems.contains_key(&w)
+            || self.formed_by_affix(&w)
+    }
+
+    fn formed_by_affix(&self, word: &str) -> bool {
+        for rules in self.affix.suffixes.values() {
+            for rule in rules {
+                if let Some(stem) = unapply_suffix(word, rule) {
+                    if flags_contain(self.stems.get(&stem).map(String::as_str).unwrap_or(""), &rule.flag, self.affix.kind)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        for rules in self.affix.prefixes.values() {
+            for rule in rules {
+                if let Some(stem) = unapply_prefix(word, rule) {
+                    if flags_contain(self.stems.get(&stem).map(String::as_str).unwrap_or(""), &rule.flag, self.affix.kind)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     pub fn unknown_in(&self, text: &str) -> Vec<String> {
@@ -129,7 +171,12 @@ fn language_dirs(project_root: &Path, config_dir: &Path, backend: SpellBackend) 
     .collect()
 }
 
-fn load_hunspell_dir(dir: &Path, dict: &mut HashSet<String>) {
+fn load_hunspell_dir(
+    dir: &Path,
+    dict: &mut HashSet<String>,
+    stems: &mut HashMap<String, String>,
+    affix: &mut AffixTable,
+) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut affixes: HashMap<String, AffixTable> = HashMap::new();
     for ent in rd.flatten() {
@@ -137,6 +184,7 @@ fn load_hunspell_dir(dir: &Path, dict: &mut HashSet<String>) {
         if p.extension().and_then(|e| e.to_str()) == Some("aff") {
             if let Some(table) = parse_aff(&p) {
                 let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                merge_affix(affix, &table);
                 affixes.insert(stem, table);
             }
         }
@@ -148,10 +196,21 @@ fn load_hunspell_dir(dir: &Path, dict: &mut HashSet<String>) {
         if ext == "dic" {
             let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let table = affixes.get(stem);
-            load_dic_file_affixed(&p, dict, table);
+            let expand = p.metadata().map(|m| m.len() < 200_000).unwrap_or(true);
+            load_dic_file_affixed(&p, dict, stems, table, expand);
         } else if ext == "txt" {
             load_dic_file(&p, dict);
         }
+    }
+}
+
+fn merge_affix(dest: &mut AffixTable, src: &AffixTable) {
+    dest.kind = src.kind;
+    for (k, v) in &src.suffixes {
+        dest.suffixes.entry(k.clone()).or_default().extend(v.clone());
+    }
+    for (k, v) in &src.prefixes {
+        dest.prefixes.entry(k.clone()).or_default().extend(v.clone());
     }
 }
 
@@ -169,6 +228,14 @@ pub fn parse_aff_str(raw: &str) -> AffixTable {
             continue;
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 && parts[0] == "FLAG" {
+            table.kind = match parts[1] {
+                "long" => FlagKind::Long,
+                "num" | "numeric" => FlagKind::Num,
+                _ => FlagKind::Char,
+            };
+            continue;
+        }
         if parts.len() < 4 {
             continue;
         }
@@ -176,7 +243,7 @@ pub fn parse_aff_str(raw: &str) -> AffixTable {
         if kind != "SFX" && kind != "PFX" {
             continue;
         }
-        let flag = parts[1].chars().next().unwrap_or('?');
+        let flag = parts[1].to_string();
         if parts[2] == "Y" || parts[2] == "N" {
             let n: usize = parts[3].parse().unwrap_or(0);
             let mut rules = Vec::new();
@@ -187,6 +254,7 @@ pub fn parse_aff_str(raw: &str) -> AffixTable {
                     continue;
                 }
                 rules.push(AffRule {
+                    flag: flag.clone(),
                     strip: if bp[2] == "0" { String::new() } else { bp[2].to_string() },
                     append: if bp[3] == "0" { String::new() } else { bp[3].to_string() },
                     condition: bp.get(4).copied().unwrap_or(".").to_string(),
@@ -204,10 +272,17 @@ pub fn parse_aff_str(raw: &str) -> AffixTable {
 
 /// Hunspell `.dic`: first line is count, then `word/FLAGS`.
 pub fn load_dic_file(path: &Path, dict: &mut HashSet<String>) {
-    load_dic_file_affixed(path, dict, None);
+    let mut stems = HashMap::new();
+    load_dic_file_affixed(path, dict, &mut stems, None, true);
 }
 
-pub fn load_dic_file_affixed(path: &Path, dict: &mut HashSet<String>, aff: Option<&AffixTable>) {
+pub fn load_dic_file_affixed(
+    path: &Path,
+    dict: &mut HashSet<String>,
+    stems: &mut HashMap<String, String>,
+    aff: Option<&AffixTable>,
+    expand: bool,
+) {
     let Ok(raw) = std::fs::read_to_string(path) else { return };
     for (i, line) in raw.lines().enumerate() {
         let line = line.trim();
@@ -218,20 +293,25 @@ pub fn load_dic_file_affixed(path: &Path, dict: &mut HashSet<String>, aff: Optio
             continue;
         }
         let (word, flags) = match line.split_once('/') {
-            Some((w, f)) => (w, f),
+            Some((w, f)) => (w, f.split(['\t', ' ']).next().unwrap_or(f)),
             None => (line.split(['\t', ' ']).next().unwrap_or(line), ""),
         };
         if word.is_empty() {
             continue;
         }
-        expand_word(word, flags, aff, dict);
+        stems.insert(word.to_lowercase(), flags.to_string());
+        if expand {
+            expand_word(word, flags, aff, dict);
+        } else {
+            dict.insert(word.to_lowercase());
+        }
     }
 }
 
 fn expand_word(word: &str, flags: &str, aff: Option<&AffixTable>, dict: &mut HashSet<String>) {
     dict.insert(word.to_lowercase());
     let Some(aff) = aff else { return };
-    for flag in flags.chars() {
+    for flag in split_flags(flags, aff.kind) {
         if let Some(rules) = aff.suffixes.get(&flag) {
             for rule in rules {
                 if let Some(formed) = apply_suffix(word, rule) {
@@ -246,6 +326,55 @@ fn expand_word(word: &str, flags: &str, aff: Option<&AffixTable>, dict: &mut Has
                 }
             }
         }
+    }
+}
+
+fn split_flags(flags: &str, kind: FlagKind) -> Vec<String> {
+    match kind {
+        FlagKind::Long => flags
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(2)
+            .map(|c| c.iter().collect())
+            .collect(),
+        FlagKind::Num => flags.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+        FlagKind::Char => flags.chars().map(|c| c.to_string()).collect(),
+    }
+}
+
+fn flags_contain(flags: &str, flag: &str, kind: FlagKind) -> bool {
+    split_flags(flags, kind).iter().any(|f| f == flag)
+}
+
+fn unapply_suffix(word: &str, rule: &AffRule) -> Option<String> {
+    let stem = if rule.append.is_empty() {
+        word.to_string()
+    } else if word.ends_with(&rule.append) {
+        word[..word.len() - rule.append.len()].to_string()
+    } else {
+        return None;
+    };
+    let restored = format!("{}{}", stem, rule.strip);
+    if condition_matches(&restored, &rule.condition, true) {
+        Some(restored.to_lowercase())
+    } else {
+        None
+    }
+}
+
+fn unapply_prefix(word: &str, rule: &AffRule) -> Option<String> {
+    let stem = if rule.append.is_empty() {
+        word.to_string()
+    } else if word.starts_with(&rule.append) {
+        word[rule.append.len()..].to_string()
+    } else {
+        return None;
+    };
+    let restored = format!("{}{}", rule.strip, stem);
+    if condition_matches(&restored, &rule.condition, false) {
+        Some(restored.to_lowercase())
+    } else {
+        None
     }
 }
 
@@ -409,11 +538,13 @@ mod tests {
         let hun = SpellChecker::load_backend(cfg.path(), root.parent().unwrap_or(cfg.path()), SpellBackend::Hunspell);
         // Load directly from fixture dirs
         let mut hun_set = HashSet::new();
-        load_hunspell_dir(&root.join("hunspell"), &mut hun_set);
+        let mut stems = HashMap::new();
+        let mut aff = AffixTable::default();
+        load_hunspell_dir(&root.join("hunspell"), &mut hun_set, &mut stems, &mut aff);
         let mut luc_set = HashSet::new();
-        load_hunspell_dir(&root.join("lucene"), &mut luc_set);
+        load_hunspell_dir(&root.join("lucene"), &mut luc_set, &mut HashMap::new(), &mut AffixTable::default());
         let mut mor_set = HashSet::new();
-        load_hunspell_dir(&root.join("morfologik"), &mut mor_set);
+        load_hunspell_dir(&root.join("morfologik"), &mut mor_set, &mut HashMap::new(), &mut AffixTable::default());
         assert!(hun_set.contains("colour"), "{hun_set:?}");
         assert!(hun_set.contains("walks"), "affix must form walks");
         assert!(!hun_set.contains("color"));
@@ -432,5 +563,27 @@ mod tests {
         s.ignore("Ctrl", dir.path());
         assert!(s.is_correct("OmegaT"));
         assert!(s.is_correct("Ctrl"));
+    }
+
+    #[test]
+    fn language_module_fr_detects_real_misspelling() {
+        let dest = tempdir().unwrap();
+        assert!(
+            ensure_lang("fr", dest.path()),
+            "reference/java/language-modules fr aff/dic must be copied"
+        );
+        let mut dict = HashSet::new();
+        let mut stems = HashMap::new();
+        let mut aff = AffixTable::default();
+        load_hunspell_dir(dest.path(), &mut dict, &mut stems, &mut aff);
+        let s = SpellChecker {
+            backend: SpellBackend::Hunspell,
+            dictionary: dict,
+            stems,
+            affix: aff,
+            ..SpellChecker::default()
+        };
+        assert!(s.is_correct("maison") || s.is_correct("bonjour"), "fr stems loaded");
+        assert!(!s.is_correct("xyzzyqqfr"), "real misspelling must be flagged");
     }
 }
