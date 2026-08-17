@@ -4,6 +4,7 @@
 mod csv;
 mod dokuwiki;
 mod filters3;
+mod filters4;
 mod hhc;
 mod html;
 mod ilias;
@@ -17,7 +18,6 @@ mod moodlephp;
 mod mozdtd;
 mod mozftl;
 mod mozlang;
-mod office;
 mod pdf;
 mod po;
 mod properties;
@@ -32,7 +32,6 @@ mod xml_dialect;
 mod xml_engine;
 mod xml_filter;
 mod xml_zip;
-mod xliff;
 mod xtag;
 mod yaml;
 
@@ -151,7 +150,7 @@ impl FilterRegistry {
             Box::new(text::TextFilter),
             Box::new(html::HtmlFilter),
             Box::new(po::PoFilter),
-            Box::new(xliff::Xliff1Filter),
+            Box::new(filters4::Xliff1Filter),
             Box::new(json::JsonFilter),
             Box::new(properties::PropertiesFilter),
             Box::new(csv::CsvFilter),
@@ -195,9 +194,10 @@ impl FilterRegistry {
             Box::new(filters3::docbook_filter::DocBookFilter),
             Box::new(filters3::visio_filter::VisioFilter),
             Box::new(filters3::xliff_filter::XliffFilter),
-            Box::new(xliff::Xliff2Filter),
-            Box::new(xliff::SdlXliffFilter),
-            Box::new(xliff::SdlProjectFilter),
+            Box::new(filters4::Xliff2Filter),
+            Box::new(filters4::SdlXliffFilter),
+            Box::new(filters4::SdlProjectFilter),
+            Box::new(filters4::MsOfficeFileFilter),
             Box::new(pdf::PdfFilter),
         ];
         Self { filters }
@@ -262,7 +262,7 @@ impl FilterRegistry {
             "odt" | "ods" | "odp" => Some("opendoc"),
             "pdf" => Some("pdf"),
             "sdlxliff" => Some("sdlxliff"),
-            "sdlproj" => Some("sdlproject"),
+            "sdlppx" | "sdlproj" => Some("sdlproject"),
             "xlf" | "xliff" => {
                 if let Ok(s) = read_to_string(path) {
                     if s.contains("urn:oasis:names:tc:xliff:document:2.0") || s.contains("version=\"2.")
@@ -458,6 +458,9 @@ mod tests {
             "xmlss",
         ] {
             assert!(reg.by_id(id).is_some(), "missing G3 id {id}");
+        }
+        for id in ["xliff1", "xliff2", "sdlxliff", "sdlproject", "msoffice"] {
+            assert!(reg.by_id(id).is_some(), "missing G4 id {id}");
         }
     }
 

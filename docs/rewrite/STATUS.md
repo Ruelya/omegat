@@ -20,7 +20,7 @@ wave’s Java goldens are green.
 | RealProject / SRX / TMX / matching / stats / tags | G1 | parity |
 | filters2: 21 Filter classes, one module each | G2 | parity |
 | filters3: XML event engine + 23 Dialect modules | G3 | parity |
-| filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | scaffold |
+| filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | parity |
 | Desktop: document-model editor, 113 menus, 28 prefs | G5 | scaffold |
 | Tokenizers / spell / dictionaries / LanguageTool | G6 | scaffold |
 | 7 MT engines, External Finder, autocompleter | G7 | scaffold |
@@ -37,7 +37,7 @@ Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 
 - `dialect_filter!` / one `XmlDialect` tag-name table (**removed in G3**)
 - `filters.options` returning a generic `extra` map
-- full-file `replacen` / first `find` as the only XML / Office / SDL write-back
+- full-file `replacen` / first `find` as the only XML / Office / SDL write-back (**removed in G4**)
 - `filter_goldens.rs` `contains` / `must_contain` / `n >= 49` (removed in G0)
 - `Preferences.extra: HashMap` as the preference model
 - `contentEditable` as the segment editor
@@ -102,7 +102,23 @@ Accepted against Java-exported goldens (`assert_eq`) for all **23** filters3 Fil
 | OpenDoc / OpenXML (filters3 ZIP) | sources/ids only (binary write not stored) |
 | Camtasia / Flash / Infix / L10nmgr / Properties XML / Schematron / Scribus / TXML / Typo3 / Visio / Wordpress | Java-exported `simple` / Java fixture goldens |
 
-Not this wave: filters4 `Xliff1Filter` / `Xliff2Filter` / `SdlXliff` / Office node write-back (G4). `office.rs` G4 stubs remain unregistered.
+Not this wave: filters4 `Xliff1Filter` / `Xliff2Filter` / `SdlXliff` / Office node write-back (G4, now accepted).
+
+## G4 notes
+
+Accepted against Java-exported goldens (`assert_eq`) for filters4. Shared StAX event engine (`AbstractXmlFilter` / `XMLWriter` header+EOL). `office.rs` / `xliff.rs` compression layers are gone. `.docx` `for_path` still selects filters3 `openxml`; G4 `msoffice` is by id only.
+
+| Filter | Golden |
+|---|---|
+| XLIFF 1 | `xliff1/en-xx.json` (7 units; empty `<target/>`; `state="translated"` on new target; `translate=no` not extracted) |
+| XLIFF 2 | `xliff2/ex.9.5.json` (`<t0>` from `sc`; `translate=no` Desert unit skipped) |
+| SDL XLIFF | `sdlxliff/simple.json` (no `state="translated"`) |
+| SDL project | `sdlproject/simple.json` (`*.sdlppx`, target-lang prefix `be/`) |
+| MsOffice (filters4) | `msoffice/file-OpenXMLFilter.json` + `file-OpenXMLFilter-tables.json` (51 segments; `w:t` node write-back) |
+
+49 Java plugin ids each have a golden directory. Registration test checks directory existence, not `n >= 49`.
+
+Not this wave: document-model editor / 113 menus / 28 prefs (G5).
 
 ## G0 notes
 

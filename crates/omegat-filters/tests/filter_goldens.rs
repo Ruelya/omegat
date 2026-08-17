@@ -2,6 +2,7 @@
 //! Missing or divergent implementations must fail. Red is allowed.
 
 use omegat_filters::{FilterContext, FilterRegistry};
+use std::io::Read;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -35,9 +36,15 @@ fn collect_json(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn ctx_from(options: &Value) -> FilterContext {
+fn ctx_from(spec: &Value) -> FilterContext {
     let mut ctx = FilterContext::default();
-    if let Some(map) = options.as_object() {
+    if let Some(s) = spec["source_lang"].as_str() {
+        ctx.source_lang = s.to_string();
+    }
+    if let Some(s) = spec["target_lang"].as_str() {
+        ctx.target_lang = s.to_string();
+    }
+    if let Some(map) = spec["options"].as_object() {
         for (k, v) in map {
             ctx.options.insert(
                 k.clone(),
@@ -123,7 +130,7 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
         src.display(),
         path.display()
     );
-    let ctx = ctx_from(&spec["options"]);
+    let ctx = ctx_from(spec);
     let filter = reg
         .by_id(id)
         .unwrap_or_else(|| panic!("unknown filter {id}"));
@@ -146,6 +153,20 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
             .collect();
         if exp_ids.iter().any(|s| !s.is_empty()) {
             assert_eq!(got_ids, exp_ids, "ids mismatch {}", path.display());
+        }
+    }
+    if let Some(paths) = spec["paths"].as_array() {
+        let got_paths: Vec<String> = parsed
+            .segments
+            .iter()
+            .map(|s| s.path.clone().unwrap_or_default())
+            .collect();
+        let exp_paths: Vec<String> = paths
+            .iter()
+            .map(|v| v.as_str().unwrap_or("").to_string())
+            .collect();
+        if exp_paths.iter().any(|s| !s.is_empty()) {
+            assert_eq!(got_paths, exp_paths, "paths mismatch {}", path.display());
         }
     }
     if let Some(empty_text) = spec["empty_write_text"].as_str() {
@@ -305,6 +326,87 @@ fn g3_opendoc_openxml_java_goldens_must_match() {
         "openxml/file-OpenXMLFilter.json",
     ] {
         assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g4_xliff_sdl_java_goldens_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "xliff1/en-xx.json",
+        "xliff2/ex.9.5.json",
+        "sdlxliff/simple.json",
+        "sdlproject/simple.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g4_msoffice_java_goldens_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "msoffice/file-OpenXMLFilter.json",
+        "msoffice/file-OpenXMLFilter-tables.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g4_msoffice_translation_lands_on_wt_node() {
+    let root = repo_root();
+    let src = root.join("fixtures/filters/openXML/file-OpenXMLFilter.docx");
+    let reg = FilterRegistry::new();
+    let filter = reg.by_id("msoffice").expect("msoffice");
+    let ctx = FilterContext {
+        source_lang: "en".into(),
+        target_lang: "be".into(),
+        ..FilterContext::default()
+    };
+    let parsed = filter.parse(&src, &ctx).unwrap();
+    assert_eq!(parsed.segments[0].source, "This is first line.");
+    let mut map = HashMap::new();
+    map.insert("This is first line.".into(), "GOLDEN_T".into());
+    let tmp = tempfile::tempdir().unwrap();
+    let dest = tmp.path().join("out.docx");
+    filter.write(&src, &dest, &map, &ctx).unwrap();
+    let file = std::fs::File::open(&dest).unwrap();
+    let mut zip = zip::ZipArchive::new(file).unwrap();
+    let mut xml = String::new();
+    zip.by_name("word/document.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    let start = xml.find("<w:t").expect("w:t start");
+    let slice = &xml[start..];
+    let gt = slice.find('>').unwrap();
+    let end = slice.find("</w:t>").expect("w:t end");
+    let text = &slice[gt + 1..end];
+    assert_eq!(text, "GOLDEN_T", "translation must land in first w:t node");
+}
+
+/// G2–G4: every Java plugin id has a golden directory.
+#[test]
+fn g2_g4_forty_nine_java_ids_have_golden_dirs() {
+    let ids = [
+        "text", "latex", "po", "rc", "moodlephp", "mozdtd", "mozlang", "properties", "mozftl",
+        "html", "hhc", "ini", "dokuwiki", "magento", "ilias", "yaml", "pdf", "srt", "sbv",
+        "webvtt", "xtag", "android", "xhtml", "helpandmanual", "propxml", "schematron",
+        "relaxng", "camtasia", "docbook", "opendoc", "openxml", "resx", "wix", "typo3",
+        "l10nmgr", "svg", "infix", "flash", "txml", "visio", "xmlss", "wordpress", "scribus",
+        "xliff", "msoffice", "xliff1", "xliff2", "sdlxliff", "sdlproject",
+    ];
+    assert_eq!(ids.len(), 49);
+    let root = goldens_dir();
+    for id in ids {
+        let dir = root.join(id);
+        assert!(dir.is_dir(), "missing golden directory for Java id {id}");
+        let has_json = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
+        assert!(has_json, "golden directory {id} has no json");
     }
 }
 

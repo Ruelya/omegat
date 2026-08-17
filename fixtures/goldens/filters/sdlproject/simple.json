@@ -1,0 +1,20 @@
+{
+  "id": "sdlproject",
+  "fixture": "sdl/simple.sdlppx",
+  "java_test": "org.omegat.filters4.xml.xliff.SdlProject#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Hello SDL"
+  ],
+  "ids": [
+    "1"
+  ],
+  "paths": [
+    "//hello.txt"
+  ]
+}

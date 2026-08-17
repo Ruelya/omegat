@@ -84,6 +84,11 @@ import org.omegat.filters3.xml.wordpress.WordpressFilter;
 import org.omegat.filters3.xml.xhtml.XHTMLFilter;
 import org.omegat.filters3.xml.xliff.XLIFFFilter;
 import org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetFilter;
+import org.omegat.filters4.xml.openxml.MsOfficeFileFilter;
+import org.omegat.filters4.xml.xliff.SdlProject;
+import org.omegat.filters4.xml.xliff.SdlXliff;
+import org.omegat.filters4.xml.xliff.Xliff1Filter;
+import org.omegat.filters4.xml.xliff.Xliff2Filter;
 import org.omegat.gui.glossary.GlossaryEntry;
 import org.omegat.gui.glossary.GlossaryReaderTSV;
 import org.omegat.gui.glossary.GlossarySearcher;
@@ -141,6 +146,7 @@ public final class ExportGoldens {
         exportYaml();
         exportAndroid();
         exportFilters3();
+        exportFilters4();
         exportResourceBundle();
         exportMozillaFtl();
         exportMagento();
@@ -426,6 +432,45 @@ public final class ExportGoldens {
                 "Hello WordPress", "GOLDEN_T");
     }
 
+    private void exportFilters4() throws Exception {
+        exportFilter("xliff1", "xliff1/en-xx.json",
+                "xliff/filters4-xliff1/en-xx.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testParse",
+                new Xliff1Filter(), Collections.emptyMap(),
+                "Should translate in result.", "Devrait traduire dans le résultat.");
+        exportFilter("xliff2", "xliff2/ex.9.5.json",
+                "xliff/filters4-xliff2/ex.9.5.xlf",
+                "org.omegat.filters4.Xliff2FilterTest#testParse",
+                new Xliff2Filter(), Collections.emptyMap(),
+                "Birds in Oregon", "Oiseaux en Oregon");
+        exportZipFilter("msoffice", "msoffice/file-OpenXMLFilter.json",
+                "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testParse",
+                new MsOfficeFileFilter(), Collections.emptyMap());
+        exportZipFilter("msoffice", "msoffice/file-OpenXMLFilter-tables.json",
+                "openXML/file-OpenXMLFilter-tables.docx",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testParseTables",
+                new MsOfficeFileFilter(), Collections.emptyMap());
+        exportFilter("sdlxliff", "sdlxliff/simple.json",
+                "sdl/simple.sdlxliff",
+                "org.omegat.filters4.xml.xliff.SdlXliff#processFile",
+                new SdlXliff(), Collections.emptyMap(),
+                "Hello SDL", "GOLDEN_T");
+        // Java SdlProject leaves getEntryComparator() null; parse then calls
+        // translateEntry with a null ZipOutputStream and NPEs. A comparator
+        // routes parse through translateEntries (the intended read path).
+        SdlProject sdlProject = new SdlProject() {
+            @Override
+            protected java.util.Comparator<java.util.zip.ZipEntry> getEntryComparator() {
+                return java.util.Comparator.comparing(java.util.zip.ZipEntry::getName);
+            }
+        };
+        exportZipFilter("sdlproject", "sdlproject/simple.json",
+                "sdl/simple.sdlppx",
+                "org.omegat.filters4.xml.xliff.SdlProject#processFile",
+                sdlProject, Collections.emptyMap());
+    }
+
     private File resolveFixture(String fixtureRel) {
         Path a = javaRoot.resolve("src/test/resources/data/filters").resolve(fixtureRel);
         if (Files.isRegularFile(a)) {
@@ -445,9 +490,11 @@ public final class ExportGoldens {
         List<Parsed> parsed = parse(filter, in, options);
         List<String> sources = new ArrayList<>();
         List<String> ids = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
         for (Parsed p : parsed) {
             sources.add(p.source);
             ids.add(p.id == null ? "" : p.id);
+            paths.add(p.path == null ? "" : p.path);
         }
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("id", id);
@@ -455,8 +502,11 @@ public final class ExportGoldens {
         json.put("java_test", javaTest);
         json.put("exported_by", EXPORTED_BY);
         json.put("options", options);
+        json.put("source_lang", "en");
+        json.put("target_lang", "be");
         json.put("sources", sources);
         json.put("ids", ids);
+        json.put("paths", paths);
         writeJson(goldenRoot.resolve("filters").resolve(outRel), json);
         System.out.println("wrote filters/" + outRel + " sources=" + sources.size() + " (zip, no write text)");
     }
@@ -472,9 +522,11 @@ public final class ExportGoldens {
         List<Parsed> parsed = parse(filter, in, options);
         List<String> sources = new ArrayList<>();
         List<String> ids = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
         for (Parsed p : parsed) {
             sources.add(p.source);
             ids.add(p.id == null ? "" : p.id);
+            paths.add(p.path == null ? "" : p.path);
         }
         Path tmp = Files.createTempDirectory("omegat-export-");
         File emptyOut = tmp.resolve("empty-" + in.getName()).toFile();
@@ -501,8 +553,11 @@ public final class ExportGoldens {
         json.put("java_test", javaTest);
         json.put("exported_by", EXPORTED_BY);
         json.put("options", options);
+        json.put("source_lang", "en");
+        json.put("target_lang", "be");
         json.put("sources", sources);
         json.put("ids", ids);
+        json.put("paths", paths);
         json.put("empty_write_text", emptyText);
         if (translated != null) {
             json.put("translated", translated);
