@@ -1,6 +1,6 @@
 //! Java `XHTMLFilter`.
 
-use crate::xml_filter::{parse_to_file, write_xml, DefaultHooks};
+use crate::xml_filter::{engine_config, parse_to_file_cfg, write_xml_cfg, DefaultHooks};
 use crate::{Filter, FilterContext, ParsedFile, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -22,7 +22,7 @@ impl Filter for XhtmlFilter {
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
         let dialect = XhtmlDialect::new(&ctx.options);
         let mut hooks = DefaultHooks::parse();
-        parse_to_file(path, &dialect, &mut hooks)
+        parse_to_file_cfg(path, &dialect, &mut hooks, engine_config(ctx))
     }
     fn write(
         &self,
@@ -33,6 +33,6 @@ impl Filter for XhtmlFilter {
     ) -> Result<()> {
         let dialect = XhtmlDialect::new(&ctx.options);
         let mut hooks = DefaultHooks::write(translations);
-        write_xml(source_path, dest_path, &dialect, &mut hooks)
+        write_xml_cfg(source_path, dest_path, &dialect, &mut hooks, engine_config(ctx))
     }
 }

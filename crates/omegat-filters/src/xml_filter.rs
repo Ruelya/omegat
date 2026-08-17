@@ -9,6 +9,33 @@ use crate::{
 use std::collections::HashMap;
 use std::path::Path;
 
+fn run_xml(
+    raw: &str,
+    path: Option<&Path>,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    inline_system: bool,
+) -> Result<String> {
+    let base = path.and_then(|p| p.parent());
+    let mut owned = raw.to_string();
+    if let Some(p) = path {
+        if let Ok(bytes) = std::fs::read(p) {
+            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) && !owned.starts_with('\u{feff}') {
+                owned.insert(0, '\u{feff}');
+            }
+        }
+    }
+    let ProcessResult { output } =
+        crate::xml_engine::process_xml_ex(&owned, dialect, hooks, cfg, base, inline_system).map_err(
+            |e| crate::FilterError::Parse {
+                format: "xml".into(),
+                message: e,
+            },
+        )?;
+    Ok(output)
+}
+
 pub struct DefaultHooks {
     pub segments: Vec<ExtractedSegment>,
     pub translations: HashMap<String, String>,
@@ -86,20 +113,26 @@ impl FilterHooks for DefaultHooks {
     }
 }
 
-pub fn engine_config(_ctx: &FilterContext) -> EngineConfig {
-    EngineConfig::default()
+pub fn engine_config(ctx: &FilterContext) -> EngineConfig {
+    EngineConfig {
+        remove_tags: ctx.remove_tags,
+        remove_spaces_nonseg: ctx.remove_spaces_nonseg,
+        preserve_spaces: false,
+    }
 }
 
 pub fn parse_xml(path: &Path, dialect: &dyn XmlDialect, hooks: &mut dyn FilterHooks) -> Result<String> {
+    parse_xml_cfg(path, dialect, hooks, EngineConfig::default())
+}
+
+pub fn parse_xml_cfg(
+    path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+) -> Result<String> {
     let raw = read_to_string(path)?;
-    let ProcessResult { output } =
-        crate::xml_engine::process_xml(&raw, dialect, hooks, EngineConfig::default()).map_err(
-            |e| crate::FilterError::Parse {
-                format: "xml".into(),
-                message: e,
-            },
-        )?;
-    Ok(output)
+    run_xml(&raw, Some(path), dialect, hooks, cfg, true)
 }
 
 pub fn write_xml(
@@ -108,14 +141,18 @@ pub fn write_xml(
     dialect: &dyn XmlDialect,
     hooks: &mut dyn FilterHooks,
 ) -> Result<()> {
+    write_xml_cfg(source_path, dest_path, dialect, hooks, EngineConfig::default())
+}
+
+pub fn write_xml_cfg(
+    source_path: &Path,
+    dest_path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+) -> Result<()> {
     let raw = read_to_string(source_path)?;
-    let ProcessResult { output } =
-        crate::xml_engine::process_xml(&raw, dialect, hooks, EngineConfig::default()).map_err(
-            |e| crate::FilterError::Parse {
-                format: "xml".into(),
-                message: e,
-            },
-        )?;
+    let output = run_xml(&raw, Some(source_path), dialect, hooks, cfg, false)?;
     ensure_parent(dest_path)?;
     std::fs::write(dest_path, output)?;
     Ok(())
@@ -126,8 +163,17 @@ pub fn parse_to_file(
     dialect: &dyn XmlDialect,
     hooks: &mut DefaultHooks,
 ) -> Result<ParsedFile> {
+    parse_to_file_cfg(path, dialect, hooks, EngineConfig::default())
+}
+
+pub fn parse_to_file_cfg(
+    path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut DefaultHooks,
+    cfg: EngineConfig,
+) -> Result<ParsedFile> {
     let raw = read_to_string(path)?;
-    parse_raw(&raw, dialect, hooks)
+    parse_raw_cfg_at(&raw, Some(path), dialect, hooks, cfg, true)
 }
 
 pub fn parse_raw(
@@ -135,13 +181,27 @@ pub fn parse_raw(
     dialect: &dyn XmlDialect,
     hooks: &mut DefaultHooks,
 ) -> Result<ParsedFile> {
-    let ProcessResult { output } =
-        crate::xml_engine::process_xml(raw, dialect, hooks, EngineConfig::default()).map_err(|e| {
-            crate::FilterError::Parse {
-                format: "xml".into(),
-                message: e,
-            }
-        })?;
+    parse_raw_cfg(raw, dialect, hooks, EngineConfig::default())
+}
+
+pub fn parse_raw_cfg(
+    raw: &str,
+    dialect: &dyn XmlDialect,
+    hooks: &mut DefaultHooks,
+    cfg: EngineConfig,
+) -> Result<ParsedFile> {
+    parse_raw_cfg_at(raw, None, dialect, hooks, cfg, false)
+}
+
+fn parse_raw_cfg_at(
+    raw: &str,
+    path: Option<&Path>,
+    dialect: &dyn XmlDialect,
+    hooks: &mut DefaultHooks,
+    cfg: EngineConfig,
+    inline_system: bool,
+) -> Result<ParsedFile> {
+    let output = run_xml(raw, path, dialect, hooks, cfg, inline_system)?;
     Ok(ParsedFile {
         segments: std::mem::take(&mut hooks.segments),
         skeleton: Some(output),

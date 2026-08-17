@@ -1,0 +1,24 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter-properties.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testProperties",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "tr1=This is test",
+    "tr2=test2"
+  ],
+  "ids": [
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.1\">\n    <file target-language=\"be\" source-language=\"en\" original=\"text.txt\">\n        <body>\n            <group resname=\"bazinga\">\n                <trans-unit>\n                    <source>This is test</source>\n                    <target>tr1=This is test</target>\n                    <note>foo</note>\n                </trans-unit>\n                <trans-unit resname=\"baz\">\n                    <source>test2</source>\n                    <target>tr2=test2</target>\n                    <note>bar</note>\n                </trans-unit>\n            </group>\n        </body>\n    </file>\n</xliff>"
+}

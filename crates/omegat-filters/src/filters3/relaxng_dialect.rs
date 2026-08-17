@@ -10,7 +10,10 @@ impl RelaxNGDialect {
     pub fn new() -> Self {
         let mut inner = DefaultXmlDialect::new();
         inner.define_constraint(ConstraintKind::Root, "grammar");
-        inner.define_constraint(ConstraintKind::Xmlns, r"http://relaxng.org/ns/structure/1.0");
+        inner.define_constraint(
+            ConstraintKind::Xmlns,
+            r#"xmlns(:\w+)?="http://relaxng.org/ns/structure/1.0""#,
+        );
         inner.define_paragraph_tags(&["documentation", "a:documentation"]);
         inner.define_intact_tags(&["value", "name", "nsName"]);
         Self { inner }

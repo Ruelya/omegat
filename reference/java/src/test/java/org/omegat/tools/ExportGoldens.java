@@ -20,6 +20,9 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Enumeration;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -77,6 +80,8 @@ import org.omegat.filters2.hhc.HHCFilter2;
 import org.omegat.filters2.html2.HTMLFilter2;
 import org.omegat.filters2.latex.LatexFilter;
 import org.omegat.filters2.master.FilterMaster;
+import org.omegat.filters2.master.FiltersUtil;
+import org.omegat.filters3.xml.XMLTag;
 import org.omegat.filters2.moodlephp.MoodlePHPFilter;
 import org.omegat.filters2.mozdtd.MozillaDTDFilter;
 import org.omegat.filters2.mozlang.MozillaLangFilter;
@@ -600,6 +605,23 @@ public final class ExportGoldens {
 
     private void exportZipFilter(String id, String outRel, String fixtureRel, String javaTest,
             IFilter filter, Map<String, String> options) throws Exception {
+        exportZipFilter(id, outRel, fixtureRel, javaTest, filter, options, zipPartNames(id),
+                "This is first line.", "GOLDEN_T");
+    }
+
+    private static String[] zipPartNames(String id) {
+        if ("opendoc".equals(id)) {
+            return new String[] { "content.xml", "styles.xml", "meta.xml" };
+        }
+        if ("openxml".equals(id) || "msoffice".equals(id)) {
+            return new String[] { "word/document.xml" };
+        }
+        return new String[] {};
+    }
+
+    private void exportZipFilter(String id, String outRel, String fixtureRel, String javaTest,
+            IFilter filter, Map<String, String> options, String[] partNames, String trSource,
+            String trTarget) throws Exception {
         File in = resolveFixture(fixtureRel);
         filter.isFileSupported(in, options, context);
         List<Parsed> parsed = parse(filter, in, options);
@@ -611,6 +633,25 @@ public final class ExportGoldens {
             ids.add(p.id == null ? "" : p.id);
             paths.add(p.path == null ? "" : p.path);
         }
+        Path tmp = Files.createTempDirectory("omegat-export-zip-");
+        File emptyOut = tmp.resolve("empty-" + in.getName()).toFile();
+        translate(filter, in, emptyOut, options, Collections.emptyMap(), filter.isBilingual());
+        Map<String, String> emptyParts = zipXmlParts(emptyOut, partNames);
+
+        Map<String, Object> translated = null;
+        Map<String, String> translatedParts = null;
+        if (trSource != null && trTarget != null && !sources.isEmpty()) {
+            String actualSource = resolveSource(parsed, trSource);
+            Map<String, String> one = new LinkedHashMap<>();
+            one.put(actualSource, trTarget);
+            File trOut = tmp.resolve("tr-" + in.getName()).toFile();
+            translate(filter, in, trOut, options, one, filter.isBilingual());
+            translatedParts = zipXmlParts(trOut, partNames);
+            translated = new LinkedHashMap<>();
+            translated.put("source", actualSource);
+            translated.put("translation", trTarget);
+        }
+
         Map<String, Object> json = new LinkedHashMap<>();
         json.put("id", id);
         json.put("fixture", fixtureRel);
@@ -622,8 +663,45 @@ public final class ExportGoldens {
         json.put("sources", sources);
         json.put("ids", ids);
         json.put("paths", paths);
+        json.put("empty_write_parts", emptyParts);
+        if (translated != null) {
+            json.put("translated", translated);
+            json.put("translated_write_parts", translatedParts);
+        }
         writeJson(goldenRoot.resolve("filters").resolve(outRel), json);
-        System.out.println("wrote filters/" + outRel + " sources=" + sources.size() + " (zip, no write text)");
+        System.out.println("wrote filters/" + outRel + " sources=" + sources.size() + " zip parts="
+                + emptyParts.size());
+    }
+
+    private Map<String, String> zipXmlParts(File zip, String[] names) throws Exception {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (zip == null || !zip.isFile() || names == null || names.length == 0) {
+            return out;
+        }
+        try (ZipFile zf = new ZipFile(zip)) {
+            for (String name : names) {
+                ZipEntry e = zf.getEntry(name);
+                if (e == null) {
+                    Enumeration<? extends ZipEntry> en = zf.entries();
+                    while (en.hasMoreElements()) {
+                        ZipEntry z = en.nextElement();
+                        String shortName = z.getName();
+                        int slash = shortName.lastIndexOf('/');
+                        if (slash >= 0) {
+                            shortName = shortName.substring(slash + 1);
+                        }
+                        if (name.equals(z.getName()) || name.equals(shortName)) {
+                            e = z;
+                            break;
+                        }
+                    }
+                }
+                if (e != null) {
+                    out.put(name, new String(zf.getInputStream(e).readAllBytes(), StandardCharsets.UTF_8));
+                }
+            }
+        }
+        return out;
     }
 
     private void exportFilter(String id, String outRel, String fixtureRel, String javaTest,
@@ -1828,7 +1906,9 @@ public final class ExportGoldens {
         exportHtmlFilter2AllTests();
         exportHtmlOptionKeys();
         exportFilters2AllTests();
-        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html)");
+        exportFilters3();
+        exportFilters3AllTests();
+        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html/filters3)");
     }
 
     private Object[][] languageTokenizerFixtures() {
@@ -2197,8 +2277,432 @@ public final class ExportGoldens {
             id = "text";
         } else if (simple.contains("Yaml")) {
             id = "yaml";
+        } else if (simple.equals("FiltersTest")) {
+            id = "filters";
         }
         return "filters/" + id + "/" + method + ".json";
+    }
+
+    /**
+     * One golden per filters3 {@code *FilterTest#test*} at
+     * {@code filters/<id>/<method>.json}, plus OpenDoc/OpenXML write-back parts.
+     */
+    private void exportFilters3AllTests() throws Exception {
+        Map<String, String> empty = Collections.emptyMap();
+
+        exportFilter("android", "android/testParse.json", "Android/file-AndroidFilter.xml",
+                "org.omegat.filters.AndroidFilterTest#testParse", new AndroidFilter(), empty, "MyApp",
+                "GOLDEN_T");
+        exportFilter("android", "android/testTranslate.json", "Android/file-AndroidFilter.xml",
+                "org.omegat.filters.AndroidFilterTest#testTranslate", new AndroidFilter(), empty, null, null);
+        exportFilter("android", "android/testLoad.json", "Android/file-AndroidFilter.xml",
+                "org.omegat.filters.AndroidFilterTest#testLoad", new AndroidFilter(), empty, null, null);
+
+        exportFilter("docbook", "docbook/testParse.json", "docBook/file-DocBookFilter.xml",
+                "org.omegat.filters.DocBookFilterTest#testParse", new DocBookFilter(), empty, "My String",
+                "GOLDEN_T");
+        exportFilter("docbook", "docbook/testTranslate.json", "docBook/file-DocBookFilter.xml",
+                "org.omegat.filters.DocBookFilterTest#testTranslate", new DocBookFilter(), empty, null, null);
+        exportFilter("docbook", "docbook/testTranslateExtWriter.json",
+                "docBook/file-DocBookFilter-extWriter.xml",
+                "org.omegat.filters.DocBookFilterTest#testTranslateExtWriter", new DocBookFilter(), empty,
+                null, null);
+        writeExpectError("docbook", "docbook/testLoadInvalidXml.json",
+                "docBook/file-DocBookFilter-invalid2.xml",
+                "org.omegat.filters.DocBookFilterTest#testLoadInvalidXml");
+        exportFilter("docbook", "docbook/testParseIntroLinux.json", "docBook/Intro-Linux/abook.xml",
+                "org.omegat.filters.DocBookFilterTest#testParseIntroLinux", new DocBookFilter(), empty, null,
+                null);
+        exportFilter("docbook", "docbook/testLoad.json", "docBook/Intro-Linux/abook.xml",
+                "org.omegat.filters.DocBookFilterTest#testLoad", new DocBookFilter(), empty, null, null);
+        writeSupported("docbook", "docbook/testIsSupported.json",
+                "org.omegat.filters.DocBookFilterTest#testIsSupported",
+                List.of(supportedRow("docBook/file-DocBookFilter.xml", true),
+                        supportedRow("docBook/file-DocBookFilter-invalid.xml", false)));
+
+        exportFilter("helpandmanual", "helpandmanual/testTranslateAttributeFalseIsSkipped.json",
+                "helpandmanual/translate-attr.xml",
+                "org.omegat.filters.HelpAndManualFilterTest#testTranslateAttributeFalseIsSkipped",
+                new HelpAndManualFilter(), empty, null, null);
+        exportFilter("helpandmanual", "helpandmanual/testParagraphTagsAreExtracted.json",
+                "helpandmanual/paragraph-tags.xml",
+                "org.omegat.filters.HelpAndManualFilterTest#testParagraphTagsAreExtracted",
+                new HelpAndManualFilter(), empty, "Caption Text", "GOLDEN_T");
+
+        exportZipFilter("opendoc", "opendoc/testParse.json", "openDoc/file-OpenDocFilter.odt",
+                "org.omegat.filters.OpenDocFilterTest#testParse", new OpenDocFilter(), empty);
+        exportZipFilter("opendoc", "opendoc/testTranslate.json", "openDoc/file-OpenDocFilter.odt",
+                "org.omegat.filters.OpenDocFilterTest#testTranslate", new OpenDocFilter(), empty);
+        exportZipFilter("opendoc", "opendoc/testLoad.json", "openDoc/file-OpenDocFilter.odt",
+                "org.omegat.filters.OpenDocFilterTest#testLoad", new OpenDocFilter(), empty);
+        writeSupported("opendoc", "opendoc/testIsFileSupported.json",
+                "org.omegat.filters.OpenDocFilterTest#testIsFileSupported",
+                List.of(supportedRow("openDoc/file-OpenDocFilter.odt", true)));
+
+        exportZipFilter("openxml", "openxml/testParse.json", "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters.OpenXMLFilterTest#testParse", new OpenXMLFilter(), empty);
+        exportZipFilter("openxml", "openxml/testTranslate.json", "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters.OpenXMLFilterTest#testTranslate", new OpenXMLFilter(), empty);
+        exportZipFilter("openxml", "openxml/testLoad.json", "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters.OpenXMLFilterTest#testLoad", new OpenXMLFilter(), empty);
+
+        exportFilter("relaxng", "relaxng/testParse.json", "relaxng/relaxng.rng",
+                "org.omegat.filters.RelaxNGFilterTest#testParse", new RelaxNGFilter(), empty,
+                "RELAX NG is a schema language for XML.", "GOLDEN_T");
+        exportFilter("relaxng", "relaxng/testTranslate.json", "relaxng/relaxng.rng",
+                "org.omegat.filters.RelaxNGFilterTest#testTranslate", new RelaxNGFilter(), empty, null, null);
+        exportFilter("relaxng", "relaxng/testParseIntroLinux.json", "relaxng/relaxng.rng",
+                "org.omegat.filters.RelaxNGFilterTest#testParseIntroLinux", new RelaxNGFilter(), empty, null,
+                null);
+        exportFilter("relaxng", "relaxng/testLoad.json", "relaxng/relaxng.rng",
+                "org.omegat.filters.RelaxNGFilterTest#testLoad", new RelaxNGFilter(), empty, null, null);
+        writeSupported("relaxng", "relaxng/testIsSupported.json",
+                "org.omegat.filters.RelaxNGFilterTest#testIsSupported",
+                List.of(supportedRow("relaxng/relaxng.rng", true),
+                        supportedRow("relaxng/relaxng-invalid.rng", false),
+                        supportedRow("relaxng/relaxng-invalid-ns.rng", false)));
+
+        exportFilter("resx", "resx/testParseSimple.json", "ResX/Simple.resx",
+                "org.omegat.filters.ResXFilterTest#testParseSimple", new ResXFilter(), empty, null, null);
+        exportFilter("resx", "resx/testLoad.json", "ResX/Resources.resx",
+                "org.omegat.filters.ResXFilterTest#testLoad", new ResXFilter(), empty, null, null);
+        exportFilter("resx", "resx/testParse.json", "ResX/Resources.resx",
+                "org.omegat.filters.ResXFilterTest#testParse", new ResXFilter(), empty,
+                "This is a text displayed in the UI.", "GOLDEN_T");
+        exportFilter("resx", "resx/testTranslateXMLIdentical.json", "ResX/Resources.resx",
+                "org.omegat.filters.ResXFilterTest#testTranslateXMLIdentical", new ResXFilter(), empty, null,
+                null);
+
+        exportFilter("svg", "svg/testLoad.json", "SVG/Neural_network_example.svg",
+                "org.omegat.filters.SvgFilterTest#testLoad", new SvgFilter(), empty, null, null);
+
+        exportFilter("wix", "wix/testLoad.json", "Wix/fr-fr.wxl",
+                "org.omegat.filters.WiXFilterTest#testLoad", new WiXFilter(), empty,
+                "This installation requires XXX. Setup will now exit.", "GOLDEN_T");
+
+        exportFilter("xhtml", "xhtml/testParse.json", "xhtml/file-XHTMLFilter.html",
+                "org.omegat.filters.XHTMLFilterTest#testParse", new XHTMLFilter(), empty,
+                "XHTML 1.0 Example", "GOLDEN_T");
+        exportFilter("xhtml", "xhtml/testTranslate.json", "xhtml/file-XHTMLFilter.html",
+                "org.omegat.filters.XHTMLFilterTest#testTranslate", new XHTMLFilter(), empty, null, null);
+        exportFilter("xhtml", "xhtml/testLoad.json", "xhtml/file-XHTMLFilter.html",
+                "org.omegat.filters.XHTMLFilterTest#testLoad", new XHTMLFilter(), empty, null, null);
+        exportXhtmlTagsOptimization();
+        exportXhtmlBadDocType();
+
+        exportFilter("xmlss", "xmlss/testParse.json", "XMLSpreadsheet/XMLSpreadsheet2003.xml",
+                "org.omegat.filters.XMLSpreadsheetTest#testParse", new XMLSpreadsheetFilter(), empty, null,
+                null);
+        exportFilter("xmlss", "xmlss/testTranslate.json", "XMLSpreadsheet/XMLSpreadsheet2003.xml",
+                "org.omegat.filters.XMLSpreadsheetTest#testTranslate", new XMLSpreadsheetFilter(), empty,
+                null, null);
+
+        exportXliff3AllTests();
+        exportFiltersComparison();
+        System.out.println("wrote filters3 *FilterTest goldens");
+    }
+
+    private Map<String, Object> supportedRow(String fixture, boolean ok) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("fixture", fixture);
+        row.put("ok", ok);
+        return row;
+    }
+
+    private void writeSupported(String id, String outRel, String javaTest, List<Map<String, Object>> rows)
+            throws Exception {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", id);
+        json.put("java_test", javaTest);
+        json.put("exported_by", EXPORTED_BY);
+        json.put("sources", List.of());
+        json.put("supported", rows);
+        writeJson(goldenRoot.resolve("filters").resolve(outRel), json);
+    }
+
+    private void writeExpectError(String id, String outRel, String fixtureRel, String javaTest)
+            throws Exception {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", id);
+        json.put("fixture", fixtureRel);
+        json.put("java_test", javaTest);
+        json.put("exported_by", EXPORTED_BY);
+        json.put("sources", List.of());
+        json.put("expect_error", true);
+        writeJson(goldenRoot.resolve("filters").resolve(outRel), json);
+    }
+
+    private void exportXhtmlTagsOptimization() throws Exception {
+        String fixture = "xhtml/file-XHTMLFilter-tags-optimization.html";
+        XHTMLFilter filter = new XHTMLFilter();
+        File in = resolveFixture(fixture);
+        Core.getFilterMaster().getConfig().setRemoveTags(false);
+        filter.isFileSupported(in, Collections.emptyMap(), context);
+        List<Parsed> keep = parse(filter, in, Collections.emptyMap());
+        Core.getFilterMaster().getConfig().setRemoveTags(true);
+        filter.isFileSupported(in, Collections.emptyMap(), context);
+        List<Parsed> removed = parse(filter, in, Collections.emptyMap());
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", "xhtml");
+        json.put("fixture", fixture);
+        json.put("java_test", "org.omegat.filters.XHTMLFilterTest#testTagsOptimization");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("options", Collections.emptyMap());
+        json.put("source_lang", "en");
+        json.put("target_lang", "be");
+        json.put("remove_tags", true);
+        json.put("sources", removed.stream().map(p -> p.source).toList());
+        json.put("sources_remove_tags_false", keep.stream().map(p -> p.source).toList());
+        writeJson(goldenRoot.resolve("filters/xhtml/testTagsOptimization.json"), json);
+        Core.getFilterMaster().getConfig().setRemoveTags(true);
+    }
+
+    private void exportXhtmlBadDocType() throws Exception {
+        Map<String, String> config = new TreeMap<>();
+        config.put(XHTMLOptions.OPTION_SKIP_META, "true");
+        config.put(XHTMLOptions.OPTION_TRANSLATE_SRC, "true");
+        config.put(XHTMLOptions.OPTION_IGNORE_TAGS, "");
+        config.put(XHTMLOptions.OPTION_IGNORE_DOCTYPE, "true");
+        exportFilter("xhtml", "xhtml/testBadDocTypeIgnore.json", "xhtml/p-000-source.xhtml",
+                "org.omegat.filters.XHTMLFilterTest#testBadDocTypeIgnore", new XHTMLFilter(), config, null,
+                null);
+    }
+
+    private void exportXliff3AllTests() throws Exception {
+        Map<String, String> empty = Collections.emptyMap();
+        XLIFFFilter filter = new XLIFFFilter();
+        XLIFFDialect dialect = (XLIFFDialect) filter.getDialect();
+        dialect.defineDialect(new XLIFFOptions(new TreeMap<String, String>()));
+
+        exportFilter("xliff", "xliff/testParse.json", "xliff/filters3/file-XLIFFFilter.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testParse", filter, empty, null, null);
+        exportFilter("xliff", "xliff/testTranslate.json", "xliff/filters3/file-XLIFFFilter.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testTranslate", filter, empty, null, null);
+        exportFilter("xliff", "xliff/testLoad.json", "xliff/filters3/file-XLIFFFilter.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testLoad", filter, empty, null, null);
+        exportFilter("xliff", "xliff/testTags.json", "xliff/filters3/file-XLIFFFilter-tags.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testTags", filter, empty, null, null);
+        exportXliffTagOptimization();
+        exportXliffWordCount("xliff/testStatCounting.json",
+                "org.omegat.filters.XLIFFFilterTest#testStatCounting", true, true, 4);
+        exportXliffWordCount("xliff/testStatCountingNoProtectedText.json",
+                "org.omegat.filters.XLIFFFilterTest#testStatCountingNoProtectedText", false, true, 2);
+        exportXliffWordCount("xliff/testStatCountingNoCustomTags.json",
+                "org.omegat.filters.XLIFFFilterTest#testStatCountingNoCustomTags", true, false, 3);
+        writeExpectError("xliff", "xliff/testInvalidXML.json",
+                "xliff/filters3/file-XLIFFFilter-invalid-content.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testInvalidXML");
+        writeExpectError("xliff", "xliff/testInvalidXMLOnWeirdPath.json",
+                "xliff/filters3/file-XLIFFFilter-invalid-content.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testInvalidXMLOnWeirdPath");
+        exportFilter("xliff", "xliff/testProperties.json", "xliff/filters3/file-XLIFFFilter-properties.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testProperties", filter, empty, null, null);
+        exportXliffHandleXmlTag();
+        exportXliffRfe1506();
+        exportFilter("xliff", "xliff/testBugs1221.json", "xliff/filters3/file-xliff-BUGS1221.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testBugs1221", filter, empty, null, null);
+        exportFilter("xliff", "xliff/testBugs418.json", "xliff/filters3/file-XLIFFFilter-cdata-bugs418.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testBugs418", filter, empty, null, null);
+    }
+
+    private void exportXliffTagOptimization() throws Exception {
+        String fixture = "xliff/filters3/file-XLIFFFilter-tags-optimization.xlf";
+        XLIFFFilter filter = new XLIFFFilter();
+        ((XLIFFDialect) filter.getDialect()).defineDialect(new XLIFFOptions(new TreeMap<>()));
+        File in = resolveFixture(fixture);
+        Core.getFilterMaster().getConfig().setRemoveTags(false);
+        List<Parsed> keep = parse(filter, in, Collections.emptyMap());
+        Core.getFilterMaster().getConfig().setRemoveTags(true);
+        List<Parsed> removed = parse(filter, in, Collections.emptyMap());
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", "xliff");
+        json.put("fixture", fixture);
+        json.put("java_test", "org.omegat.filters.XLIFFFilterTest#testTagOptimization");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("options", Collections.emptyMap());
+        json.put("source_lang", "en");
+        json.put("target_lang", "be");
+        json.put("remove_tags", true);
+        json.put("sources", removed.stream().map(p -> p.source).toList());
+        json.put("sources_remove_tags_false", keep.stream().map(p -> p.source).toList());
+        writeJson(goldenRoot.resolve("filters/xliff/testTagOptimization.json"), json);
+        Core.getFilterMaster().getConfig().setRemoveTags(true);
+    }
+
+    private void exportXliffWordCount(String outRel, String javaTest, boolean protectedText,
+            boolean customTags, int words) throws Exception {
+        String fixture = "xliff/filters3/file-XLIFFFilter-statcount.xlf";
+        XLIFFFilter filter = new XLIFFFilter();
+        ((XLIFFDialect) filter.getDialect()).defineDialect(new XLIFFOptions(new TreeMap<>()));
+        List<Parsed> parsed = parse(filter, resolveFixture(fixture), Collections.emptyMap());
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", "xliff");
+        json.put("fixture", fixture);
+        json.put("java_test", javaTest);
+        json.put("exported_by", EXPORTED_BY);
+        json.put("options", Collections.emptyMap());
+        json.put("source_lang", "en");
+        json.put("target_lang", "be");
+        json.put("sources", parsed.stream().map(p -> p.source).toList());
+        json.put("word_count", words);
+        json.put("count_protected", protectedText);
+        json.put("count_custom_tags", customTags);
+        writeJson(goldenRoot.resolve("filters").resolve(outRel), json);
+    }
+
+    private void exportXliffHandleXmlTag() throws Exception {
+        XLIFFFilter filter = new XLIFFFilter();
+        org.xml.sax.Attributes attributes = new org.xml.sax.Attributes() {
+            @Override
+            public int getLength() {
+                return 1;
+            }
+
+            @Override
+            public String getURI(int i) {
+                return null;
+            }
+
+            @Override
+            public String getLocalName(int i) {
+                return "state";
+            }
+
+            @Override
+            public String getQName(int i) {
+                return "state";
+            }
+
+            @Override
+            public String getType(int i) {
+                return null;
+            }
+
+            @Override
+            public String getValue(int i) {
+                return "needs-translation";
+            }
+
+            @Override
+            public int getIndex(String s, String s1) {
+                return 1;
+            }
+
+            @Override
+            public int getIndex(String s) {
+                return 1;
+            }
+
+            @Override
+            public String getType(String s, String s1) {
+                return getType(0);
+            }
+
+            @Override
+            public String getType(String s) {
+                return getType(0);
+            }
+
+            @Override
+            public String getValue(String s, String s1) {
+                return getValue(0);
+            }
+
+            @Override
+            public String getValue(String s) {
+                return "needs-translation";
+            }
+        };
+        List<Map<String, Object>> cases = new ArrayList<>();
+        XMLTag tag = new XMLTag("target", null, org.omegat.filters3.Tag.Type.BEGIN, attributes, filter);
+        XLIFFDialect dialect = (XLIFFDialect) filter.getDialect();
+        XLIFFOptions options = new XLIFFOptions(new TreeMap<String, String>());
+        dialect.defineDialect(options);
+        dialect.handleXMLTag(tag, false);
+        cases.add(handleCase(false, false, "needs-translation", tag.getAttribute("state")));
+        dialect.handleXMLTag(tag, true);
+        cases.add(handleCase(true, false, "needs-translation", tag.getAttribute("state")));
+        options.setStateToReview(true);
+        dialect.defineDialect(options);
+        tag = new XMLTag("target", null, org.omegat.filters3.Tag.Type.BEGIN, attributes, filter);
+        dialect.handleXMLTag(tag, true);
+        cases.add(handleCase(true, true, "needs-translation", tag.getAttribute("state")));
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", "xliff");
+        json.put("java_test", "org.omegat.filters.XLIFFFilterTest#testHandleXMLTag");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("sources", List.of());
+        json.put("handle_xml_tag", cases);
+        writeJson(goldenRoot.resolve("filters/xliff/testHandleXMLTag.json"), json);
+    }
+
+    private Map<String, Object> handleCase(boolean translated, boolean review, String from, String to) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("translated", translated);
+        m.put("review", review);
+        m.put("from", from);
+        m.put("to", to);
+        return m;
+    }
+
+    private void exportXliffRfe1506() throws Exception {
+        XLIFFFilter filter = new XLIFFFilter();
+        ((XLIFFDialect) filter.getDialect()).defineDialect(new XLIFFOptions(new TreeMap<>()));
+        File in = resolveFixture("xliff/filters3/file-xliff-RFE1506.xliff");
+        Map<String, String> translations = new LinkedHashMap<>();
+        translations.put("Create", "\u4F5C\u6210");
+        translations.put("Emoji", "\u7D75\u6587\u5B57");
+        Path tmp = Files.createTempDirectory("omegat-xliff-rfe-");
+        File outDefault = tmp.resolve("default.xlf").toFile();
+        translate(filter, in, outDefault, Collections.emptyMap(), translations, true);
+        Map<String, String> review = new TreeMap<>();
+        review.put("changetargetstateneedsreviewtranslation", "true");
+        ((XLIFFDialect) filter.getDialect()).defineDialect(new XLIFFOptions(review));
+        File outReview = tmp.resolve("review.xlf").toFile();
+        translate(filter, in, outReview, review, translations, true);
+        List<Parsed> parsed = parse(filter, in, Collections.emptyMap());
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", "xliff");
+        json.put("fixture", "xliff/filters3/file-xliff-RFE1506.xliff");
+        json.put("java_test", "org.omegat.filters.XLIFFFilterTest#testTranslationRFE1506");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("options", Collections.emptyMap());
+        json.put("source_lang", "en");
+        json.put("target_lang", "be");
+        json.put("sources", parsed.stream().map(p -> p.source).toList());
+        Map<String, Object> tr = new LinkedHashMap<>();
+        tr.put("source", "Create");
+        tr.put("translation", "\u4F5C\u6210");
+        json.put("translations", translations);
+        json.put("translated", tr);
+        json.put("translated_write",
+                outDefault.isFile() ? Files.readString(outDefault.toPath(), StandardCharsets.UTF_8) : "");
+        json.put("translated_write_review",
+                outReview.isFile() ? Files.readString(outReview.toPath(), StandardCharsets.UTF_8) : "");
+        writeJson(goldenRoot.resolve("filters/xliff/testTranslationRFE1506.json"), json);
+    }
+
+    private void exportFiltersComparison() throws Exception {
+        FilterMaster.setFilterClasses(List.of(TextFilter.class, ResourceBundleFilter.class));
+        gen.core.filters.Filters orig = FilterMaster.createDefaultFiltersConfig();
+        gen.core.filters.Filters clone = FilterMaster.createDefaultFiltersConfig();
+        boolean same = FiltersUtil.filtersEqual(orig, clone);
+        clone.setIgnoreFileContext(!clone.isIgnoreFileContext());
+        boolean afterFlip = FiltersUtil.filtersEqual(orig, clone);
+        clone = FilterMaster.createDefaultFiltersConfig();
+        gen.core.filters.Files file = clone.getFilters().get(0).getFiles().get(0);
+        file.setTargetEncoding(file.getTargetEncoding() + "foo");
+        boolean afterEncoding = FiltersUtil.filtersEqual(orig, clone);
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", "filters");
+        json.put("java_test", "org.omegat.filters.FiltersTest#testFiltersComparison");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("sources", List.of());
+        json.put("filters_equal_same_config", same);
+        json.put("filters_equal_after_ignore_file_context_flip", afterFlip);
+        json.put("filters_equal_after_target_encoding_change", afterEncoding);
+        writeJson(goldenRoot.resolve("filters/filters/testFiltersComparison.json"), json);
+        Core.setFilterMaster(new FilterMaster(FilterMaster.createDefaultFiltersConfig()));
     }
 
     private void exportHtmlFilter2AllTests() throws Exception {

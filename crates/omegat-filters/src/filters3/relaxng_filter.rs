@@ -19,6 +19,15 @@ impl Filter for RelaxNGFilter {
     fn default_masks(&self) -> &'static [&'static str] {
         &["*.rng"]
     }
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        raw.contains("grammar")
+            && regex::Regex::new(r#"xmlns(:\w+)?="http://relaxng.org/ns/structure/1.0""#)
+                .map(|re| re.is_match(&raw))
+                .unwrap_or(false)
+    }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
         let dialect = RelaxNGDialect::new();
         let mut hooks = DefaultHooks::parse();

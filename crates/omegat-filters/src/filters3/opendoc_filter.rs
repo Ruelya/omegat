@@ -1,7 +1,7 @@
 //! Java `OpenDocFilter`.
 
-use crate::xml_filter::{parse_raw, DefaultHooks};
-use crate::xml_zip::{rewrite_zip_xml, run_part};
+use crate::xml_filter::{engine_config, parse_raw_cfg, DefaultHooks};
+use crate::xml_zip::rewrite_zip_xml;
 use crate::{Filter, FilterContext, FilterError, ParsedFile, Result};
 use std::collections::HashMap;
 use std::fs::File;
@@ -33,6 +33,22 @@ impl Filter for OpenDocFilter {
     fn phase(&self) -> u8 {
         3
     }
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        let Ok(file) = File::open(path) else {
+            return false;
+        };
+        let Ok(mut zip) = ZipArchive::new(file) else {
+            return false;
+        };
+        for i in 0..zip.len() {
+            if let Ok(entry) = zip.by_index(i) {
+                if want(entry.name()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
         let dialect = OpenDocDialect::new(&ctx.options);
         let file = File::open(path)?;
@@ -55,7 +71,7 @@ impl Filter for OpenDocFilter {
                 continue;
             }
             let mut hooks = DefaultHooks::parse();
-            let parsed = parse_raw(&raw, &dialect, &mut hooks)?;
+            let parsed = parse_raw_cfg(&raw, &dialect, &mut hooks, engine_config(ctx))?;
             segments.extend(parsed.segments);
         }
         Ok(ParsedFile {
@@ -72,9 +88,10 @@ impl Filter for OpenDocFilter {
     ) -> Result<()> {
         let dialect = OpenDocDialect::new(&ctx.options);
         let translations = translations.clone();
+        let cfg = engine_config(ctx);
         rewrite_zip_xml(source_path, dest_path, want, &dialect, |_name, raw| {
             let mut hooks = DefaultHooks::write(&translations);
-            Ok(run_part(raw, &dialect, &mut hooks)?.output)
+            Ok(crate::xml_zip::run_part_cfg(raw, &dialect, &mut hooks, cfg)?.output)
         })
     }
 }

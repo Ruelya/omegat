@@ -3,10 +3,12 @@
 //! not a tree walk or file-wide `find`.
 
 use crate::xml_dialect::XmlDialect;
+use crate::xml_entities::{prepare_xml, reconstruct_doctype_from_source, reject_self_nested_leaf_tags};
 use crate::ProtectedPart;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TagType {
@@ -81,6 +83,10 @@ impl XmlTag {
     }
 }
 
+fn java_trim_is_empty(text: &str) -> bool {
+    text.chars().all(|c| (c as u32) <= 0x20)
+}
+
 fn first_shortcut_char(tag: &str) -> String {
     tag.chars().next().unwrap_or('f').to_string()
 }
@@ -104,8 +110,9 @@ pub enum Element {
 impl Element {
     fn is_meaningful_text(&self) -> bool {
         match self {
-            Element::Text { text, .. } => !text.trim().is_empty(),
-            Element::Entity { value, .. } => !value.trim().is_empty(),
+            // Java `String.trim()` only strips code points <= U+0020, not U+3000.
+            Element::Text { text, .. } => !java_trim_is_empty(text),
+            Element::Entity { value, .. } => !java_trim_is_empty(value),
             _ => false,
         }
     }
@@ -349,18 +356,18 @@ impl Entry {
     fn detect_tags(&mut self, cfg: EngineConfig, dialect: &dyn XmlDialect) {
         let mut text_start = -1i32;
         for (i, el) in self.elements.iter().enumerate() {
-            if el.is_meaningful_text()
-                || matches!(
-                    el,
-                    Element::Intact {
-                        content_based: true,
-                        ..
-                    }
-                )
-            {
-                if text_start < 0 {
-                    text_start = i as i32;
+            if el.is_meaningful_text() {
+                text_start = i as i32;
+                break;
+            }
+            if matches!(
+                el,
+                Element::Intact {
+                    content_based: true,
+                    ..
                 }
+            ) {
+                text_start = i as i32;
             }
         }
         if text_start < 0 {
@@ -375,6 +382,7 @@ impl Entry {
                 break;
             }
         }
+        expand_content_based_pairs(&self.elements, &mut text_start, &mut text_end);
 
         let mut first_good = 0i32;
         let mut found = false;
@@ -692,6 +700,44 @@ fn recover_tags(
         let _ = bytes;
     }
     out
+}
+
+fn content_based_pair_id(el: &Element) -> Option<String> {
+    let Element::Intact {
+        tag,
+        content_based: true,
+        ..
+    } = el
+    else {
+        return None;
+    };
+    if tag.tag != "bpt" && tag.tag != "ept" {
+        return None;
+    }
+    tag.attrs
+        .iter()
+        .find(|a| a.name == "rid" || a.name == "id" || a.name == "i")
+        .map(|a| a.value.clone())
+}
+
+fn expand_content_based_pairs(elements: &[Element], text_start: &mut i32, text_end: &mut i32) {
+    let start = *text_start;
+    let end = *text_end;
+    for i in start..=end {
+        let Some(id) = content_based_pair_id(&elements[i as usize]) else {
+            continue;
+        };
+        for j in (0..start).rev() {
+            if content_based_pair_id(&elements[j as usize]).as_deref() == Some(id.as_str()) {
+                *text_start = j;
+            }
+        }
+        for j in (end + 1)..elements.len() as i32 {
+            if content_based_pair_id(&elements[j as usize]).as_deref() == Some(id.as_str()) {
+                *text_end = j;
+            }
+        }
+    }
 }
 
 fn is_paragraph_name(dialect: &dyn XmlDialect, tag: &str) -> bool {
@@ -1229,7 +1275,27 @@ pub fn process_xml(
     hooks: &mut dyn FilterHooks,
     cfg: EngineConfig,
 ) -> Result<ProcessResult, String> {
-    let encoding = detect_encoding(raw);
+    process_xml_ex(raw, dialect, hooks, cfg, None, false)
+}
+
+pub fn process_xml_ex(
+    raw: &str,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    base: Option<&Path>,
+    inline_system: bool,
+) -> Result<ProcessResult, String> {
+    let bom_utf8 = raw.starts_with('\u{feff}');
+    let raw_no_bom = raw.trim_start_matches('\u{feff}');
+    reject_self_nested_leaf_tags(raw_no_bom)?;
+    let prep = prepare_xml(raw_no_bom, base, inline_system)?;
+    let raw = prep.text.as_str();
+    let encoding = if bom_utf8 {
+        Some("UTF-8".to_string())
+    } else {
+        detect_encoding(raw)
+    };
     let eol = detect_eol(raw);
     let header = if let Some(enc) = encoding {
         format!("<?xml version=\"1.0\" encoding=\"{enc}\"?>")
@@ -1237,8 +1303,14 @@ pub fn process_xml(
         "<?xml version=\"1.0\"?>".to_string()
     };
 
+    if raw.chars().any(is_xml_invalid) {
+        return Err("invalid XML character".into());
+    }
     let mut handler = Handler::new(dialect, hooks, cfg);
-    handler.entities = parse_internal_entities(raw);
+    handler.entities = prep.internal.clone();
+    if handler.entities.is_empty() {
+        handler.entities = parse_internal_entities(raw);
+    }
     handler.output.push_str("<?xml version=\"1.0\"?>\n");
 
     let mut reader = Reader::from_str(raw);
@@ -1291,7 +1363,7 @@ pub fn process_xml(
             }
             Ok(Event::DocType(t)) => {
                 let body = String::from_utf8_lossy(t.as_ref()).into_owned();
-                let reconstructed = reconstruct_doctype(&body, &handler.entities);
+                let reconstructed = reconstruct_doctype_from_source(&body);
                 handler.curr_entry().add(Element::Doctype(reconstructed));
             }
             Ok(Event::Decl(_)) => {}
@@ -1329,6 +1401,8 @@ fn decode_start(e: &BytesStart<'_>, reader: &Reader<&[u8]>) -> (String, Vec<(Str
                 .decode_and_unescape_value(reader.decoder())
                 .map(|c| c.into_owned())
                 .unwrap_or_default();
+            // XML 1.0 §3.3.3: normalize newlines/tabs in attribute values to space.
+            let val = val.replace("\r\n", " ").replace(['\n', '\r', '\t'], " ");
             attrs.push((key, val));
         }
     }
@@ -1357,54 +1431,6 @@ fn detect_encoding(raw: &str) -> Option<String> {
 
 fn normalize_eol(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-fn reconstruct_doctype(body: &str, entities: &HashMap<String, String>) -> String {
-    let body = normalize_eol(body);
-    let name = body.split_whitespace().next().unwrap_or("").to_string();
-    let public_id = regex::Regex::new(r#"PUBLIC\s+"([^"]*)""#)
-        .ok()
-        .and_then(|re| re.captures(&body).map(|c| c[1].to_string()));
-    let system_id = if public_id.is_some() {
-        regex::Regex::new(r#"PUBLIC\s+"[^"]*"\s+"([^"]*)""#)
-            .ok()
-            .and_then(|re| re.captures(&body).map(|c| c[1].to_string()))
-    } else {
-        regex::Regex::new(r#"SYSTEM\s+"([^"]*)""#)
-            .ok()
-            .and_then(|re| re.captures(&body).map(|c| c[1].to_string()))
-    };
-    let mut res = format!("<!DOCTYPE {name}");
-    if let Some(p) = &public_id {
-        res.push_str(" PUBLIC \"");
-        res.push_str(p);
-        res.push('"');
-    }
-    if let Some(s) = &system_id {
-        if public_id.is_none() {
-            res.push_str(" SYSTEM");
-        }
-        res.push_str(" \"");
-        res.push_str(s);
-        res.push('"');
-    }
-    if !entities.is_empty() {
-        res.push_str("\n[\n");
-        let mut names: Vec<_> = entities.keys().cloned().collect();
-        names.sort();
-        for n in names {
-            if let Some(v) = entities.get(&n) {
-                res.push_str("<!ENTITY ");
-                res.push_str(&n);
-                res.push_str(" \"");
-                res.push_str(v);
-                res.push_str("\">\n");
-            }
-        }
-        res.push(']');
-    }
-    res.push_str(">\n");
-    res
 }
 
 fn parse_internal_entities(raw: &str) -> HashMap<String, String> {

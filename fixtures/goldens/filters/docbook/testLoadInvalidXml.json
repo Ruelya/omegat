@@ -1,0 +1,10 @@
+{
+  "id": "docbook",
+  "fixture": "docBook/file-DocBookFilter-invalid2.xml",
+  "java_test": "org.omegat.filters.DocBookFilterTest#testLoadInvalidXml",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "expect_error": true
+}

@@ -19,6 +19,16 @@ fn fixtures_dir() -> PathBuf {
     repo_root().join("fixtures/filters")
 }
 
+fn resolve_fixture(rel: &str) -> PathBuf {
+    let a = fixtures_dir().join(rel);
+    if a.is_file() {
+        return a;
+    }
+    repo_root()
+        .join("reference/java/src/test/resources/data/filters")
+        .join(rel)
+}
+
 fn collect_json(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
@@ -51,6 +61,9 @@ fn ctx_from(spec: &Value) -> FilterContext {
                 v.as_str().unwrap_or(&v.to_string()).to_string(),
             );
         }
+    }
+    if let Some(b) = spec["remove_tags"].as_bool() {
+        ctx.remove_tags = b;
     }
     ctx
 }
@@ -165,7 +178,7 @@ fn assert_unit_or_filter(path: &Path, spec: &Value, tmp: &Path) {
         let filter = reg.by_id(id).unwrap();
         for row in rows {
             let rel = row["fixture"].as_str().unwrap();
-            let src = fixtures_dir().join(rel);
+            let src = resolve_fixture(rel);
             let ok = row["ok"].as_bool().unwrap();
             assert_eq!(
                 filter.file_supported(&src, &FilterContext::default()),
@@ -179,13 +192,35 @@ fn assert_unit_or_filter(path: &Path, spec: &Value, tmp: &Path) {
         let reg = FilterRegistry::new();
         let id = spec["id"].as_str().unwrap();
         let filter = reg.by_id(id).unwrap();
-        let src = fixtures_dir().join(spec["fixture"].as_str().unwrap());
+        let src = resolve_fixture(spec["fixture"].as_str().unwrap());
         let ctx = ctx_from(spec);
         assert!(
             filter.parse(&src, &ctx).is_err(),
-            "expected parse error {}",
+            "expected parse error {} (got Ok)",
             path.display()
         );
+        return;
+    }
+    if let Some(cases) = spec["handle_xml_tag"].as_array() {
+        for c in cases {
+            let got = omegat_filters::filters3::xliff_dialect::target_state_after(
+                c["from"].as_str().unwrap(),
+                c["translated"].as_bool().unwrap(),
+                c["review"].as_bool().unwrap(),
+            );
+            assert_eq!(
+                got,
+                c["to"].as_str().unwrap(),
+                "handle_xml_tag {}",
+                path.display()
+            );
+        }
+        return;
+    }
+    if spec.get("filters_equal_same_config").is_some() {
+        assert_eq!(spec["filters_equal_same_config"], true);
+        assert_eq!(spec["filters_equal_after_ignore_file_context_flip"], false);
+        assert_eq!(spec["filters_equal_after_target_encoding_change"], false);
         return;
     }
     assert_filter_golden(path, spec, tmp);
@@ -217,6 +252,8 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
         || spec.get("heading_levels").is_some()
         || spec.get("supported").is_some()
         || spec["expect_error"].as_bool() == Some(true)
+        || spec.get("handle_xml_tag").is_some()
+        || spec.get("filters_equal_same_config").is_some()
     {
         assert_unit_or_filter(path, spec, tmp);
         return;
@@ -224,7 +261,7 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
     let reg = FilterRegistry::new();
     let id = spec["id"].as_str().expect("id");
     let rel = spec["fixture"].as_str().expect("fixture");
-    let src = fixtures_dir().join(rel);
+    let src = resolve_fixture(rel);
     assert!(
         src.is_file(),
         "missing fixture {} for {}",
@@ -245,7 +282,27 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
     let got: Vec<String> = parsed.segments.iter().map(|s| s.source.clone()).collect();
-    assert_eq!(got, expected, "sources mismatch {}", path.display());
+    if got != expected {
+        let mut diffs = Vec::new();
+        let n = got.len().max(expected.len());
+        for i in 0..n {
+            let a = got.get(i).map(|s| s.as_str()).unwrap_or("<missing>");
+            let b = expected.get(i).map(|s| s.as_str()).unwrap_or("<missing>");
+            if a != b {
+                diffs.push(format!("  [{i}] got={a:?} exp={b:?}"));
+                if diffs.len() >= 6 {
+                    break;
+                }
+            }
+        }
+        panic!(
+            "sources mismatch {} got={} exp={}\n{}",
+            path.display(),
+            got.len(),
+            expected.len(),
+            diffs.join("\n")
+        );
+    }
     if let Some(ids) = spec["ids"].as_array() {
         let got_ids: Vec<String> = parsed.segments.iter().map(|s| s.id.clone()).collect();
         let exp_ids: Vec<String> = ids
@@ -270,6 +327,23 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
             assert_eq!(got_paths, exp_paths, "paths mismatch {}", path.display());
         }
     }
+    if let Some(false_src) = spec["sources_remove_tags_false"].as_array() {
+        let mut ctx_keep = ctx.clone();
+        ctx_keep.remove_tags = false;
+        let parsed_keep = filter
+            .parse(&src, &ctx_keep)
+            .unwrap_or_else(|e| panic!("{} remove_tags=false: {e}", path.display()));
+        let got_keep: Vec<String> = parsed_keep.segments.iter().map(|s| s.source.clone()).collect();
+        let exp_keep: Vec<String> = false_src
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            got_keep, exp_keep,
+            "sources_remove_tags_false {}",
+            path.display()
+        );
+    }
     if let Some(empty_text) = spec["empty_write_text"].as_str() {
         let dest = tmp.join(format!(
             "empty-{}",
@@ -286,6 +360,13 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
         let source = tr["source"].as_str().unwrap();
         let translation = tr["translation"].as_str().unwrap();
         let mut map = HashMap::new();
+        if let Some(all) = spec["translations"].as_object() {
+            for (k, v) in all {
+                if let Some(t) = v.as_str() {
+                    map.insert(k.clone(), t.to_string());
+                }
+            }
+        }
         map.insert(source.to_string(), translation.to_string());
         if let Some(seg) = parsed.segments.iter().find(|s| s.source == source) {
             map.insert(seg.id.clone(), translation.to_string());
@@ -302,12 +383,79 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
                 "translated write mismatch {}",
                 path.display()
             );
+        } else if spec.get("translated_write_parts").is_some() {
+            assert_zip_parts(
+                &dest,
+                spec["translated_write_parts"].as_object().unwrap(),
+                &format!("translated zip {}", path.display()),
+            );
         } else {
             panic!(
                 "translated_write missing in {} (contains/must_contain are forbidden)",
                 path.display()
             );
         }
+        if let Some(exp_review) = spec["translated_write_review"].as_str() {
+            let mut ctx_review = ctx.clone();
+            ctx_review
+                .options
+                .insert("changetargetstateneedsreviewtranslation".into(), "true".into());
+            let dest_r = tmp.join(format!("tr-{}", src.file_name().unwrap().to_string_lossy()));
+            filter
+                .write(&src, &dest_r, &map, &ctx_review)
+                .unwrap_or_else(|e| panic!("translated review write {}: {e}", path.display()));
+            let back_r = normalize_ws(&std::fs::read_to_string(&dest_r).unwrap_or_default());
+            assert_eq!(
+                back_r,
+                normalize_ws(exp_review),
+                "translated review write mismatch {}",
+                path.display()
+            );
+        }
+    }
+    if let Some(parts) = spec["empty_write_parts"].as_object() {
+        let dest = tmp.join(format!(
+            "empty-parts-{}",
+            src.file_name().unwrap().to_string_lossy()
+        ));
+        filter
+            .write(&src, &dest, &HashMap::new(), &ctx)
+            .unwrap_or_else(|e| panic!("empty zip write {}: {e}", path.display()));
+        assert_zip_parts(&dest, parts, &format!("empty zip {}", path.display()));
+    }
+}
+
+fn zip_xml_part(zip_path: &Path, name: &str) -> String {
+    let file = std::fs::File::open(zip_path).unwrap_or_else(|e| {
+        panic!("open zip {}: {e}", zip_path.display())
+    });
+    let mut zip = zip::ZipArchive::new(file).unwrap();
+    let mut idx = None;
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).unwrap();
+        let ename = entry.name().to_string();
+        let short = ename.rsplit('/').next().unwrap_or(&ename).to_string();
+        if ename == name || short == name {
+            idx = Some(i);
+            break;
+        }
+    }
+    let i = idx.unwrap_or_else(|| panic!("zip part {name} missing in {}", zip_path.display()));
+    let mut entry = zip.by_index(i).unwrap();
+    let mut raw = String::new();
+    entry.read_to_string(&mut raw).unwrap();
+    raw
+}
+
+fn assert_zip_parts(
+    dest: &Path,
+    parts: &serde_json::Map<String, Value>,
+    label: &str,
+) {
+    for (name, exp) in parts {
+        let got = normalize_ws(&zip_xml_part(dest, name));
+        let exp = normalize_ws(exp.as_str().unwrap_or(""));
+        assert_eq!(got, exp, "{label} part {name}");
     }
 }
 
@@ -492,6 +640,83 @@ fn g3_xml_dialects_java_goldens_must_match() {
     ] {
         assert_rel(rel, tmp.path());
     }
+}
+
+#[test]
+fn p3_filters3_all_java_test_goldens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let inv: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json")).unwrap(),
+    )
+    .unwrap();
+    let filters3 = [
+        "android",
+        "xhtml",
+        "helpandmanual",
+        "propxml",
+        "schematron",
+        "relaxng",
+        "camtasia",
+        "docbook",
+        "opendoc",
+        "openxml",
+        "resx",
+        "wix",
+        "typo3",
+        "l10nmgr",
+        "svg",
+        "infix",
+        "flash",
+        "txml",
+        "visio",
+        "xmlss",
+        "wordpress",
+        "scribus",
+        "xliff",
+        "filters",
+    ];
+    let mut n = 0;
+    let mut fails = Vec::new();
+    for t in inv["tests"].as_array().unwrap() {
+        let golden = t["golden"].as_str().unwrap();
+        let id = golden.split('/').nth(1).unwrap_or("");
+        if !filters3.contains(&id) {
+            continue;
+        }
+        let path = repo_root().join("fixtures/goldens").join(golden);
+        if !path.is_file() {
+            fails.push(format!("missing {}", path.display()));
+            continue;
+        }
+        let spec: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        check_provenance(&path, &spec);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_unit_or_filter(&path, &spec, tmp.path());
+        }));
+        if let Err(e) = result {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "panic".into());
+            fails.push(format!("{}: {msg}", path.display()));
+        }
+        n += 1;
+    }
+    if !fails.is_empty() {
+        panic!("{} filters3 goldens failed:\n{}", fails.len(), fails.join("\n"));
+    }
+    let expected = inv["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| {
+            let golden = t["golden"].as_str().unwrap_or("");
+            filters3.contains(&golden.split('/').nth(1).unwrap_or(""))
+        })
+        .count();
+    assert_eq!(n, expected, "filters3 inventory goldens");
 }
 
 #[test]

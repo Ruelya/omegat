@@ -23,6 +23,13 @@ impl Filter for DocBookFilter {
         4
     }
 
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        crate::xml_dialect::file_looks_like(&raw, &DocBookDialect::new())
+    }
+
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
         let dialect = DocBookDialect::new();
         let mut hooks = DefaultHooks::parse();

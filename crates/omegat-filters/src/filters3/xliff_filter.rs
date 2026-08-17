@@ -1,7 +1,7 @@
 //! Java `XLIFFFilter` (filters3).
 
 use crate::xml_engine::FilterHooks;
-use crate::xml_filter::{parse_xml, write_xml};
+use crate::xml_filter::{engine_config, parse_xml_cfg, write_xml_cfg};
 use crate::{ExtractedSegment, Filter, FilterContext, ParsedFile, ProtectedPart, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -111,7 +111,7 @@ impl Filter for XliffFilter {
             entry_text: Vec::new(),
             alt_ids: HashSet::new(),
         };
-        parse_xml(path, &dialect, &mut hooks)?;
+        parse_xml_cfg(path, &dialect, &mut hooks, engine_config(ctx))?;
         Ok(ParsedFile {
             segments: hooks.segments,
             skeleton: None,
@@ -135,6 +135,6 @@ impl Filter for XliffFilter {
             entry_text: Vec::new(),
             alt_ids: HashSet::new(),
         };
-        write_xml(source_path, dest_path, &dialect, &mut hooks)
+        write_xml_cfg(source_path, dest_path, &dialect, &mut hooks, engine_config(ctx))
     }
 }

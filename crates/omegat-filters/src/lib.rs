@@ -3,10 +3,11 @@
 
 mod csv;
 mod dokuwiki;
-mod filters3;
+pub mod filters3;
 mod filters4;
 mod hhc;
 pub mod html;
+mod inline_tag;
 mod ilias;
 mod ini;
 mod json;
@@ -30,6 +31,7 @@ mod text;
 mod webvtt;
 mod xml_dialect;
 mod xml_engine;
+mod xml_entities;
 mod xml_filter;
 mod xml_zip;
 mod xtag;

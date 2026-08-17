@@ -51,7 +51,16 @@ def main() -> int:
         if "filters" in path.parts:
             unit = any(
                 k in data
-                for k in ("decoded", "heading_levels", "exclude_keys", "supported", "expect_error")
+                for k in (
+                    "decoded",
+                    "heading_levels",
+                    "exclude_keys",
+                    "supported",
+                    "expect_error",
+                    "handle_xml_tag",
+                    "filters_equal_same_config",
+                    "word_count",
+                )
             )
             if "id" not in data:
                 errors.append(f"{path}: missing id")

@@ -99,6 +99,21 @@ machine (UTF-8 replacement matches `InputStreamReader`). The P2 STATUS row
 stays `scaffold`: filters3/4 test-method goldens, dialect tag sets, and the
 other honesty gates are still red.
 
+## P3 notes
+
+23 filters3 dialects snapshot against `dialect_tags.json` (`assert_eq` of
+paragraph / intact / out_of_turn / preformat / attrs / tag_attrs /
+constraints). Camtasia intact is the Java list (includes
+`AudioClickSensitivity`, `QuestionGroup_Array`, `Zoom_Array`). OpenDoc /
+OpenXML goldens include `empty_write_parts` and `translated_write_parts`
+(unzipped XML, not the zip bytes). `sniff_xml` still returns `None` for
+unknown XML. Each filters3 `*FilterTest#test*` has an ExportGoldens JSON
+and `p3_filters3_all_java_test_goldens` `assert_eq`s them (DocBook SYSTEM
+entities, XLIFF `constructShortcuts` / `bpt`+`ept` pairing, FilterVisitor
+HTML already in P2). The P3 STATUS row stays `scaffold`: Lucene identity
+stems, editor / menu / locale gates, and filters4 test-method goldens
+remain red.
+
 ## Intentional non-goals (must still have a full replacement)
 
 - Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib.

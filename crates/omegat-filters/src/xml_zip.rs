@@ -97,7 +97,16 @@ pub fn run_part(
     dialect: &dyn XmlDialect,
     hooks: &mut dyn FilterHooks,
 ) -> Result<ProcessResult> {
-    process_xml(raw, dialect, hooks, EngineConfig::default()).map_err(|e| FilterError::Parse {
+    run_part_cfg(raw, dialect, hooks, EngineConfig::default())
+}
+
+pub fn run_part_cfg(
+    raw: &str,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+) -> Result<ProcessResult> {
+    process_xml(raw, dialect, hooks, cfg).map_err(|e| FilterError::Parse {
         format: "xml".into(),
         message: e,
     })

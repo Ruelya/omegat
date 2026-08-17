@@ -1,7 +1,7 @@
 //! Java `OpenXMLFilter` (filters3 ZIP + dialect).
 
-use crate::xml_filter::{parse_raw, DefaultHooks};
-use crate::xml_zip::{rewrite_zip_xml, run_part};
+use crate::xml_filter::{engine_config, parse_raw_cfg, DefaultHooks};
+use crate::xml_zip::rewrite_zip_xml;
 use crate::{Filter, FilterContext, FilterError, ParsedFile, Result};
 use regex::Regex;
 use std::collections::HashMap;
@@ -114,7 +114,7 @@ impl Filter for OpenXmlFilter {
                 continue;
             }
             let mut hooks = DefaultHooks::parse();
-            if let Ok(parsed) = parse_raw(&raw, &dialect, &mut hooks) {
+            if let Ok(parsed) = parse_raw_cfg(&raw, &dialect, &mut hooks, engine_config(ctx)) {
                 segments.extend(parsed.segments);
             }
         }
@@ -140,7 +140,7 @@ impl Filter for OpenXmlFilter {
             &dialect,
             |_name, raw| {
                 let mut hooks = DefaultHooks::write(&translations);
-                Ok(run_part(raw, &dialect, &mut hooks)?.output)
+                Ok(crate::xml_zip::run_part_cfg(raw, &dialect, &mut hooks, engine_config(ctx))?.output)
             },
         )
     }
