@@ -14,6 +14,8 @@
 package org.omegat.tools;
 
 import java.io.File;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,10 +24,16 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.omegat.core.Core;
 import org.omegat.core.data.EntryKey;
+import org.omegat.core.data.NotLoadedProject;
+import org.omegat.core.data.ProjectProperties;
 import org.omegat.core.data.SourceTextEntry;
 import org.omegat.core.matching.FuzzyMatcher;
 import org.omegat.core.matching.LevenshteinDistance;
@@ -61,37 +69,69 @@ import org.omegat.filters2.subtitles.SbvFilter;
 import org.omegat.filters2.subtitles.SrtFilter;
 import org.omegat.filters2.subtitles.WebVttFilter;
 import org.omegat.filters2.xtagqxp.XtagFilter;
+import org.omegat.filters2.html2.HTMLOptions;
+import org.omegat.filters3.xml.DefaultXMLDialect;
+import org.omegat.filters3.xml.XMLDialect;
+import org.omegat.filters3.xml.android.AndroidDialect;
 import org.omegat.filters3.xml.android.AndroidFilter;
+import org.omegat.filters3.xml.camtasiawindows.CamtasiaWindowsDialect;
 import org.omegat.filters3.xml.camtasiawindows.CamtasiaWindowsFilter;
+import org.omegat.filters3.xml.docbook.DocBookDialect;
 import org.omegat.filters3.xml.docbook.DocBookFilter;
+import org.omegat.filters3.xml.flash.FlashDialect;
 import org.omegat.filters3.xml.flash.FlashFilter;
+import org.omegat.filters3.xml.helpandmanual.HelpAndManualDialect;
 import org.omegat.filters3.xml.helpandmanual.HelpAndManualFilter;
+import org.omegat.filters3.xml.infix.InfixDialect;
 import org.omegat.filters3.xml.infix.InfixFilter;
+import org.omegat.filters3.xml.l10nmgr.L10nmgrDialect;
 import org.omegat.filters3.xml.l10nmgr.L10nmgrFilter;
+import org.omegat.filters3.xml.opendoc.OpenDocDialect;
 import org.omegat.filters3.xml.opendoc.OpenDocFilter;
+import org.omegat.filters3.xml.opendoc.OpenDocOptions;
+import org.omegat.filters3.xml.openxml.OpenXMLDialect;
 import org.omegat.filters3.xml.openxml.OpenXMLFilter;
+import org.omegat.filters3.xml.openxml.OpenXMLOptions;
+import org.omegat.filters3.xml.properties.PropertiesDialect;
 import org.omegat.filters3.xml.properties.PropertiesFilter;
+import org.omegat.filters3.xml.relaxng.RelaxNGDialect;
 import org.omegat.filters3.xml.relaxng.RelaxNGFilter;
+import org.omegat.filters3.xml.resx.ResXDialect;
 import org.omegat.filters3.xml.resx.ResXFilter;
+import org.omegat.filters3.xml.schematron.SchematronDialect;
 import org.omegat.filters3.xml.schematron.SchematronFilter;
+import org.omegat.filters3.xml.scribus.ScribusDialect;
 import org.omegat.filters3.xml.scribus.ScribusFilter;
+import org.omegat.filters3.xml.svg.SvgDialect;
 import org.omegat.filters3.xml.svg.SvgFilter;
+import org.omegat.filters3.xml.txml.TXMLDialect;
 import org.omegat.filters3.xml.txml.TXMLFilter;
+import org.omegat.filters3.xml.typo3.Typo3Dialect;
 import org.omegat.filters3.xml.typo3.Typo3Filter;
+import org.omegat.filters3.xml.visio.VisioDialect;
 import org.omegat.filters3.xml.visio.VisioFilter;
+import org.omegat.filters3.xml.wix.WiXDialect;
 import org.omegat.filters3.xml.wix.WiXFilter;
+import org.omegat.filters3.xml.wordpress.WordpressDialect;
 import org.omegat.filters3.xml.wordpress.WordpressFilter;
+import org.omegat.filters3.xml.xhtml.XHTMLDialect;
 import org.omegat.filters3.xml.xhtml.XHTMLFilter;
+import org.omegat.filters3.xml.xhtml.XHTMLOptions;
+import org.omegat.filters3.xml.xliff.XLIFFDialect;
 import org.omegat.filters3.xml.xliff.XLIFFFilter;
+import org.omegat.filters3.xml.xliff.XLIFFOptions;
+import org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetDialect;
 import org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetFilter;
 import org.omegat.filters4.xml.openxml.MsOfficeFileFilter;
 import org.omegat.filters4.xml.xliff.SdlProject;
 import org.omegat.filters4.xml.xliff.SdlXliff;
 import org.omegat.filters4.xml.xliff.Xliff1Filter;
 import org.omegat.filters4.xml.xliff.Xliff2Filter;
+import org.omegat.gui.editor.IEditor;
 import org.omegat.gui.glossary.GlossaryEntry;
 import org.omegat.gui.glossary.GlossaryReaderTSV;
 import org.omegat.gui.glossary.GlossarySearcher;
+import org.omegat.gui.main.MainWindowMenuHandler;
 import org.omegat.tokenizer.DefaultTokenizer;
 import org.omegat.tokenizer.ITokenizer;
 import org.omegat.tokenizer.LuceneArabicTokenizer;
@@ -128,7 +168,9 @@ import org.omegat.tokenizer.LuceneSpanishTokenizer;
 import org.omegat.tokenizer.LuceneSwedishTokenizer;
 import org.omegat.tokenizer.LuceneThaiTokenizer;
 import org.omegat.tokenizer.LuceneTurkishTokenizer;
+import org.omegat.util.HTMLUtils;
 import org.omegat.util.Language;
+import org.omegat.util.MultiMap;
 import org.omegat.util.Preferences;
 import org.omegat.util.TestPreferencesInitializer;
 import org.omegat.util.Token;
@@ -167,13 +209,18 @@ public final class ExportGoldens {
         Core.initializeConsole();
         Core.setFilterMaster(new FilterMaster(FilterMaster.createDefaultFiltersConfig()));
         ExportGoldens exporter = new ExportGoldens(javaRoot, goldenRoot);
-        if (args.length > 1 && "engine".equals(args[1])) {
+        if (args.length > 1 && "honesty".equals(args[1])) {
+            exporter.exportHonesty();
+            System.out.println("ExportGoldens wrote honesty surfaces to " + goldenRoot);
+        } else if (args.length > 1 && "engine".equals(args[1])) {
             exporter.exportEngine();
             exporter.exportGlossary();
             exporter.exportStats();
+            exporter.exportHonesty();
             System.out.println("ExportGoldens wrote engine goldens to " + goldenRoot);
         } else {
             exporter.run();
+            exporter.exportHonesty();
         }
     }
 
@@ -790,22 +837,20 @@ public final class ExportGoldens {
         tokenCases.add(tokenWordsCase(new LuceneSmartChineseTokenizer(), "zh", zhOrig, ITokenizer.StemmingMode.MATCHING,
                 "org.omegat.tokenizer.TokenizerTest#testChinese"));
 
-        ITokenizer[] allLucene = new ITokenizer[] { new LuceneArabicTokenizer(), new LuceneArmenianTokenizer(),
-                new LuceneBasqueTokenizer(), new LuceneBrazilianTokenizer(), new LuceneBulgarianTokenizer(),
-                new LuceneCatalanTokenizer(), new LuceneCJKTokenizer(), new LuceneCzechTokenizer(),
-                new LuceneDanishTokenizer(), new LuceneDutchTokenizer(), new LuceneEnglishTokenizer(),
-                new LuceneFinnishTokenizer(), new LuceneFrenchTokenizer(), new LuceneGalicianTokenizer(),
-                new LuceneGermanTokenizer(), new LuceneGreekTokenizer(), new LuceneHindiTokenizer(),
-                new LuceneHungarianTokenizer(), new LuceneIndonesianTokenizer(), new LuceneIrishTokenizer(),
-                new LuceneItalianTokenizer(), new LuceneLatvianTokenizer(), new LuceneNorwegianTokenizer(),
-                new LucenePersianTokenizer(), new LucenePolishTokenizer(), new LucenePortugueseTokenizer(),
-                new LuceneRomanianTokenizer(), new LuceneRussianTokenizer(), new LuceneSpanishTokenizer(),
-                new LuceneSwedishTokenizer(), new LuceneThaiTokenizer(), new LuceneTurkishTokenizer() };
-        String[] langs = { "ar", "hy", "eu", "pt-br", "bg", "ca", "zh", "cs", "da", "nl", "en", "fi", "fr", "gl", "de",
-                "el", "hi", "hu", "id", "ga", "it", "lv", "nb", "fa", "pl", "pt", "ro", "ru", "es", "sv", "th", "tr" };
-        for (int i = 0; i < allLucene.length; i++) {
-            tokenCases.add(tokenWordsCase(allLucene[i], langs[i], "Hello worlds running", ITokenizer.StemmingMode.NONE,
-                    "org.omegat.tokenizer.BaseTokenizer#tokenizeWordsToStrings"));
+        // Language-body fixtures (not Latin "Hello worlds running") × NONE/GLOSSARY/MATCHING.
+        // English-family may still use TokenizerTest English sentences above.
+        Object[][] luceneLang = languageTokenizerFixtures();
+        ITokenizer.StemmingMode[] modes = { ITokenizer.StemmingMode.NONE, ITokenizer.StemmingMode.GLOSSARY,
+                ITokenizer.StemmingMode.MATCHING };
+        for (Object[] row : luceneLang) {
+            ITokenizer tok = (ITokenizer) row[0];
+            String lang = (String) row[1];
+            String input = (String) row[2];
+            String javaTest = (String) row[3];
+            bindTokenizer(tok, lang);
+            for (ITokenizer.StemmingMode mode : modes) {
+                tokenCases.add(tokenWordsCase(tok, lang, input, mode, javaTest));
+            }
         }
 
         Map<String, Object> tokens = new LinkedHashMap<>();
@@ -948,6 +993,35 @@ public final class ExportGoldens {
         return tokenWordsCase(tokenizer, lang, input, mode, "org.omegat.tokenizer.DefaultTokenizer#tokenizeWords");
     }
 
+    private void bindTokenizer(ITokenizer tokenizer, String lang) {
+        Core.setProject(new NotLoadedProject() {
+            @Override
+            public ITokenizer getSourceTokenizer() {
+                return tokenizer;
+            }
+
+            @Override
+            public ITokenizer getTargetTokenizer() {
+                return tokenizer;
+            }
+
+            @Override
+            public ProjectProperties getProjectProperties() {
+                return new ProjectProperties() {
+                    @Override
+                    public Language getSourceLanguage() {
+                        return new Language(lang);
+                    }
+
+                    @Override
+                    public Language getTargetLanguage() {
+                        return new Language(lang);
+                    }
+                };
+            }
+        });
+    }
+
     private Map<String, Object> tokenWordsCase(ITokenizer tokenizer, String lang, String input,
             ITokenizer.StemmingMode mode, String javaTest) {
         Token[] tokens = tokenizer.tokenizeWords(input, mode);
@@ -962,6 +1036,486 @@ public final class ExportGoldens {
         c.put("tokens", List.of(texts));
         c.put("words", List.of(words));
         return c;
+    }
+
+    /**
+     * Honesty surfaces: dialect tag sets, IEditor / menu / prefs inventories,
+     * every *FilterTest#test* listing, and HTMLFilter2Test-per-method goldens.
+     */
+    private void exportHonesty() throws Exception {
+        exportDialectTags();
+        exportIEditorMethods();
+        exportMenuActions();
+        exportPreferenceKeys();
+        exportFilterTestInventory();
+        exportHtmlFilter2AllTests();
+        exportHtmlOptionKeys();
+        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html)");
+    }
+
+    private Object[][] languageTokenizerFixtures() {
+        String jaWiki = "\u6211\u3005\u306E\u3059\u3079\u3066\u306F\u540C\u3058\uFF11\u500B\u306E\u60D1"
+                + "\u661F\uFF08\u82F1\uFF1A\u300Ca planet\u300D\uFF09\u306B\u4F4F\u307F\u3001\u6211"
+                + "\u3005\u306E\u3059\u3079\u3066\u306F\u305D\u306E\u751F\u7269\u570F\u306E1.5\u90E8"
+                + "\u3067\u3042\u308B<x0/>\u3002";
+        String zhWiki = "\u6F22\u8A9E\u7684\u6587\u5B57\u7CFB\u7D71\u2014\u2014\u6F22\u5B57\u662F"
+                + "\u4E00\u7A2E\u610F\u97F3\u8A9E\u8A00\uFF0C\u8868\u610F\u7684\u540C\u6642\u4E5F"
+                + "\u5177\u4E00\u5B9A\u7684\u8868\u97F3\u529F\u80FD\u3002";
+        String trWiki = "\u201C\u0130stanbul a\u011Fz\u0131\u201D, T\u00FCrkiye T\u00FCrk\u00E7esi"
+                + "yaz\u0131 dilinin kayna\u011F\u0131 olarak kabul edilir; yaz\u0131 dili bu"
+                + "a\u011F\u0131z temelinde olu\u015Fmu\u015Ftur.";
+        String enOrig = "The quick, brown <x0/> jumped over 1 \"lazy\" dog.";
+        return new Object[][] {
+                { new LuceneArabicTokenizer(), "ar",
+                        "\u0627\u0644\u0644\u063A\u0629 \u0627\u0644\u0639\u0631\u0628\u064A\u0629 \u0647\u064A \u0623\u0643\u062B\u0631 \u0627\u0644\u0644\u063A\u0627\u062A \u0627\u0644\u0633\u0627\u0645\u064A\u0629 \u062A\u062D\u062F\u062B\u0627\u064B",
+                        "org.omegat.tokenizer.LuceneArabicTokenizer#tokenizeWordsToStrings" },
+                { new LuceneArmenianTokenizer(), "hy",
+                        "\u0540\u0561\u0575\u0565\u0580\u0565\u0576\u0568 \u0570\u0561\u0575 \u056A\u0578\u0572\u0578\u057E\u0580\u0564\u056B \u0574\u0561\u0575\u0580\u0565\u0576\u056B \u056C\u0565\u0566\u0578\u0582\u0576 \u0567",
+                        "org.omegat.tokenizer.LuceneArmenianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneBasqueTokenizer(), "eu", "Euskara Euskal Herriko hizkuntza da eta euskaldunek hitz egiten dute.",
+                        "org.omegat.tokenizer.LuceneBasqueTokenizer#tokenizeWordsToStrings" },
+                { new LuceneBrazilianTokenizer(), "pt-br",
+                        "O portugu\u00eas brasileiro \u00e9 falado no Brasil por milh\u00f5es de pessoas.",
+                        "org.omegat.tokenizer.LuceneBrazilianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneBulgarianTokenizer(), "bg",
+                        "\u0411\u044A\u043B\u0433\u0430\u0440\u0441\u043A\u0438\u044F\u0442 \u0435\u0437\u0438\u043A \u0435 \u044E\u0436\u043D\u043E\u0441\u043B\u0430\u0432\u044F\u043D\u0441\u043A\u0438 \u0435\u0437\u0438\u043A.",
+                        "org.omegat.tokenizer.LuceneBulgarianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneCatalanTokenizer(), "ca", "El catal\u00e0 \u00e9s una llengua rom\u00e0nica parlada a Catalunya.",
+                        "org.omegat.tokenizer.LuceneCatalanTokenizer#tokenizeWordsToStrings" },
+                { new LuceneCJKTokenizer(), "zh", "\u6C49\u5B57\u8BCD",
+                        "org.omegat.tokenizer.LuceneCJKTokenizer#tokenizeWordsToStrings" },
+                { new LuceneCzechTokenizer(), "cs", "\u010ce\u0161tina je z\u00e1padoslovansk\u00fd jazyk.",
+                        "org.omegat.tokenizer.LuceneCzechTokenizer#tokenizeWordsToStrings" },
+                { new LuceneDanishTokenizer(), "da", "Dansk er et nordisk sprog talt i Danmark.",
+                        "org.omegat.tokenizer.LuceneDanishTokenizer#tokenizeWordsToStrings" },
+                { new LuceneDutchTokenizer(), "nl", "Nederlands is een West-Germaanse taal.",
+                        "org.omegat.tokenizer.LuceneDutchTokenizer#tokenizeWordsToStrings" },
+                { new LuceneEnglishTokenizer(), "en", enOrig,
+                        "org.omegat.tokenizer.TokenizerTest#testEnglish" },
+                { new LuceneFinnishTokenizer(), "fi", "Suomi on uralilainen kieli jota puhutaan Suomessa.",
+                        "org.omegat.tokenizer.LuceneFinnishTokenizer#tokenizeWordsToStrings" },
+                { new LuceneFrenchTokenizer(), "fr", "Le fran\u00e7ais est une langue romane parl\u00e9e en France.",
+                        "org.omegat.tokenizer.LuceneFrenchTokenizer#tokenizeWordsToStrings" },
+                { new LuceneGalicianTokenizer(), "gl", "O galego \u00e9 unha lingua rom\u00e1nica.",
+                        "org.omegat.tokenizer.LuceneGalicianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneGermanTokenizer(), "de", "Die pr\u00e4sentierte L\u00f6sung funktioniert in laufenden Tests.",
+                        "org.omegat.tokenizer.TokenizerTest#testGerman" },
+                { new LuceneGreekTokenizer(), "el",
+                        "\u0397 \u03B5\u03BB\u03BB\u03B7\u03BD\u03B9\u03BA\u03AE \u03B3\u03BB\u03CE\u03C3\u03C3\u03B1 \u03B5\u03AF\u03BD\u03B1\u03B9 \u03B9\u03BD\u03B4\u03BF\u03B5\u03C5\u03C1\u03C9\u03C0\u03B1\u03CA\u03BA\u03AE.",
+                        "org.omegat.tokenizer.LuceneGreekTokenizer#tokenizeWordsToStrings" },
+                { new LuceneHindiTokenizer(), "hi",
+                        "\u0939\u093F\u0928\u094D\u0926\u0940 \u092D\u093E\u0930\u0924 \u0915\u0940 \u090F\u0915 \u092A\u094D\u0930\u092E\u0941\u0916 \u092D\u093E\u0937\u093E \u0939\u0948",
+                        "org.omegat.tokenizer.LuceneHindiTokenizer#tokenizeWordsToStrings" },
+                { new LuceneHungarianTokenizer(), "hu", "A magyar nyelv ur\u00e1li nyelv amelyet Magyarorsz\u00e1gon besz\u00e9lnek.",
+                        "org.omegat.tokenizer.LuceneHungarianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneIndonesianTokenizer(), "id",
+                        "Bahasa Indonesia adalah bahasa resmi Republik Indonesia.",
+                        "org.omegat.tokenizer.LuceneIndonesianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneIrishTokenizer(), "ga", "Is \u00ed an Ghaeilge teanga na h\u00c9ireann.",
+                        "org.omegat.tokenizer.LuceneIrishTokenizer#tokenizeWordsToStrings" },
+                { new LuceneItalianTokenizer(), "it", "I paesi europei sono molti e parlano lingue diverse.",
+                        "org.omegat.tokenizer.TokenizerTest#testItalian" },
+                { new LuceneJapaneseTokenizer(), "ja", jaWiki,
+                        "org.omegat.tokenizer.TokenizerTest#testJapanese" },
+                { new LuceneLatvianTokenizer(), "lv", "Latvie\u0161u valoda ir Baltijas valoda.",
+                        "org.omegat.tokenizer.LuceneLatvianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneNorwegianTokenizer(), "nb", "Norsk bokm\u00e5l er et nordisk spr\u00e5k.",
+                        "org.omegat.tokenizer.LuceneNorwegianTokenizer#tokenizeWordsToStrings" },
+                { new LucenePersianTokenizer(), "fa",
+                        "\u0641\u0627\u0631\u0633\u06CC \u0632\u0628\u0627\u0646 \u0631\u0633\u0645\u06CC \u0627\u06CC\u0631\u0627\u0646 \u0627\u0633\u062A",
+                        "org.omegat.tokenizer.LucenePersianTokenizer#tokenizeWordsToStrings" },
+                { new LucenePolishTokenizer(), "pl", "J\u0119zyk polski jest j\u0119zykiem s\u0142owia\u0144skim.",
+                        "org.omegat.tokenizer.LucenePolishTokenizer#tokenizeWordsToStrings" },
+                { new LucenePortugueseTokenizer(), "pt", "O portugu\u00eas \u00e9 uma l\u00edngua rom\u00e2nica.",
+                        "org.omegat.tokenizer.LucenePortugueseTokenizer#tokenizeWordsToStrings" },
+                { new LuceneRomanianTokenizer(), "ro", "Limba rom\u00e2n\u0103 este o limb\u0103 romanic\u0103.",
+                        "org.omegat.tokenizer.LuceneRomanianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneRussianTokenizer(), "ru",
+                        "\u0420\u0443\u0441\u0441\u043A\u0438\u0439 \u044F\u0437\u044B\u043A \u044F\u0432\u043B\u044F\u0435\u0442\u0441\u044F \u0441\u043B\u0430\u0432\u044F\u043D\u0441\u043A\u0438\u043C \u044F\u0437\u044B\u043A\u043E\u043C.",
+                        "org.omegat.tokenizer.LuceneRussianTokenizer#tokenizeWordsToStrings" },
+                { new LuceneSmartChineseTokenizer(), "zh", zhWiki,
+                        "org.omegat.tokenizer.TokenizerTest#testChinese" },
+                { new LuceneSpanishTokenizer(), "es", "El espa\u00f1ol es una lengua romance hablada en Espa\u00f1a.",
+                        "org.omegat.tokenizer.LuceneSpanishTokenizer#tokenizeWordsToStrings" },
+                { new LuceneSwedishTokenizer(), "sv", "Svenska \u00e4r ett nordiskt spr\u00e5k.",
+                        "org.omegat.tokenizer.LuceneSwedishTokenizer#tokenizeWordsToStrings" },
+                { new LuceneThaiTokenizer(), "th",
+                        "\u0E20\u0E32\u0E29\u0E32\u0E44\u0E17\u0E22\u0E40\u0E1B\u0E47\u0E19\u0E20\u0E32\u0E29\u0E32\u0E23\u0E32\u0E0A\u0E01\u0E32\u0E23\u0E02\u0E2D\u0E07\u0E1B\u0E23\u0E30\u0E40\u0E17\u0E28\u0E44\u0E17\u0E22",
+                        "org.omegat.tokenizer.LuceneThaiTokenizer#tokenizeWordsToStrings" },
+                { new LuceneTurkishTokenizer(), "tr", trWiki,
+                        "org.omegat.tokenizer.TokenizerTest#testTurkish" },
+        };
+    }
+
+    private void exportDialectTags() throws Exception {
+        Map<String, DefaultXMLDialect> dialects = new LinkedHashMap<>();
+        dialects.put("android", new AndroidDialect());
+        dialects.put("camtasia", new CamtasiaWindowsDialect());
+        dialects.put("docbook", new DocBookDialect());
+        dialects.put("flash", new FlashDialect());
+        dialects.put("helpandmanual", new HelpAndManualDialect());
+        dialects.put("infix", new InfixDialect());
+        dialects.put("l10nmgr", new L10nmgrDialect());
+        OpenDocDialect opendoc = new OpenDocDialect();
+        opendoc.defineDialect(new OpenDocOptions(Collections.emptyMap()));
+        dialects.put("opendoc", opendoc);
+        OpenXMLDialect openxml = new OpenXMLDialect();
+        openxml.defineDialect(new OpenXMLOptions(Collections.emptyMap()));
+        dialects.put("openxml", openxml);
+        dialects.put("propxml", new PropertiesDialect());
+        dialects.put("relaxng", new RelaxNGDialect());
+        dialects.put("resx", new ResXDialect());
+        dialects.put("schematron", new SchematronDialect());
+        dialects.put("scribus", new ScribusDialect());
+        dialects.put("svg", new SvgDialect());
+        dialects.put("txml", new TXMLDialect());
+        dialects.put("typo3", new Typo3Dialect());
+        dialects.put("visio", new VisioDialect());
+        dialects.put("wix", new WiXDialect());
+        dialects.put("wordpress", new WordpressDialect());
+        XHTMLDialect xhtml = new XHTMLDialect();
+        xhtml.defineDialect(new XHTMLOptions(Collections.emptyMap()));
+        dialects.put("xhtml", xhtml);
+        XLIFFDialect xliff = new XLIFFDialect();
+        xliff.defineDialect(new XLIFFOptions(Collections.emptyMap()));
+        dialects.put("xliff", xliff);
+        dialects.put("xmlss", new XMLSpreadsheetDialect());
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<Map<String, Object>> cases = new ArrayList<>();
+        for (Map.Entry<String, DefaultXMLDialect> e : dialects.entrySet()) {
+            cases.add(dumpDialect(e.getKey(), e.getValue()));
+        }
+        out.put("java_test", "org.omegat.filters3.xml.DefaultXMLDialect#getParagraphTags");
+        out.put("exported_by", EXPORTED_BY);
+        out.put("dialects", cases);
+        writeJson(goldenRoot.resolve("engine/dialect_tags.json"), out);
+        System.out.println("wrote engine/dialect_tags.json dialects=" + cases.size());
+    }
+
+    private Map<String, Object> dumpDialect(String id, DefaultXMLDialect dialect) throws Exception {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id);
+        m.put("class", dialect.getClass().getName());
+        m.put("paragraph", sorted(dialect.getParagraphTags()));
+        m.put("intact", sorted(dialect.getIntactTags()));
+        m.put("out_of_turn", sorted(dialect.getOutOfTurnTags()));
+        m.put("preformat", sorted(dialect.getPreformatTags()));
+        m.put("attrs", sorted(dialect.getTranslatableAttributes()));
+        m.put("tag_attrs", dumpTagAttrs(dialect.getTranslatableTagAttributes()));
+        Map<String, String> constraints = new TreeMap<>();
+        if (dialect.getConstraints() != null) {
+            for (Map.Entry<Integer, Pattern> e : dialect.getConstraints().entrySet()) {
+                constraints.put(constraintName(e.getKey()), e.getValue() == null ? "" : e.getValue().pattern());
+            }
+        }
+        m.put("constraints", constraints);
+        return m;
+    }
+
+    private static String constraintName(int key) {
+        if (key == XMLDialect.CONSTRAINT_DOCTYPE) {
+            return "doctype";
+        }
+        if (key == XMLDialect.CONSTRAINT_PUBLIC_DOCTYPE) {
+            return "public_doctype";
+        }
+        if (key == XMLDialect.CONSTRAINT_SYSTEM_DOCTYPE) {
+            return "system_doctype";
+        }
+        if (key == XMLDialect.CONSTRAINT_ROOT) {
+            return "root";
+        }
+        if (key == XMLDialect.CONSTRAINT_XMLNS) {
+            return "xmlns";
+        }
+        return "c" + key;
+    }
+
+    private static List<String> sorted(Set<String> set) {
+        if (set == null) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>(set);
+        Collections.sort(out);
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, List<String>> dumpTagAttrs(MultiMap<String, String> mm) throws Exception {
+        Map<String, List<String>> out = new TreeMap<>();
+        if (mm == null) {
+            return out;
+        }
+        Field f = MultiMap.class.getDeclaredField("map");
+        f.setAccessible(true);
+        Map<String, Set<String>> raw = (Map<String, Set<String>>) f.get(mm);
+        if (raw == null) {
+            return out;
+        }
+        for (Map.Entry<String, Set<String>> e : raw.entrySet()) {
+            out.put(e.getKey(), sorted(e.getValue()));
+        }
+        return out;
+    }
+
+    private void exportIEditorMethods() throws Exception {
+        Set<String> names = new TreeSet<>();
+        for (Method m : IEditor.class.getDeclaredMethods()) {
+            names.add(m.getName());
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.gui.editor.IEditor#getCurrentEntry");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("methods", new ArrayList<>(names));
+        writeJson(goldenRoot.resolve("engine/ieditor_methods.json"), json);
+        System.out.println("wrote engine/ieditor_methods.json methods=" + names.size());
+    }
+
+    private void exportMenuActions() throws Exception {
+        List<String> actions = new ArrayList<>();
+        for (Method m : MainWindowMenuHandler.class.getDeclaredMethods()) {
+            if (m.getName().endsWith("ActionPerformed")) {
+                actions.add(m.getName());
+            }
+        }
+        Collections.sort(actions);
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.gui.main.MainWindowMenuHandler#projectNewMenuItemActionPerformed");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("actions", actions);
+        json.put("count", actions.size());
+        writeJson(goldenRoot.resolve("engine/menu_actions.json"), json);
+        System.out.println("wrote engine/menu_actions.json actions=" + actions.size());
+    }
+
+    private void exportPreferenceKeys() throws Exception {
+        Path viewDir = javaRoot.resolve("src/main/java/org/omegat/gui/preferences/view");
+        Pattern pref = Pattern.compile("Preferences\\.([A-Z][A-Z0-9_]+)");
+        Map<String, List<String>> controllers = new TreeMap<>();
+        if (Files.isDirectory(viewDir)) {
+            try (var stream = Files.list(viewDir)) {
+                for (Path p : stream.filter(x -> x.getFileName().toString().endsWith("Controller.java")).toList()) {
+                    String src = Files.readString(p);
+                    Set<String> keys = new TreeSet<>();
+                    Matcher mt = pref.matcher(src);
+                    while (mt.find()) {
+                        String field = mt.group(1);
+                        try {
+                            Field f = Preferences.class.getField(field);
+                            Object v = f.get(null);
+                            if (v instanceof String s && !s.isEmpty()) {
+                                keys.add(s);
+                            }
+                        } catch (ReflectiveOperationException ignored) {
+                            keys.add(field);
+                        }
+                    }
+                    controllers.put(p.getFileName().toString().replace(".java", ""), new ArrayList<>(keys));
+                }
+            }
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.gui.preferences.view.GeneralOptionsController#persist");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("controllers", controllers);
+        writeJson(goldenRoot.resolve("engine/preference_keys.json"), json);
+        System.out.println("wrote engine/preference_keys.json controllers=" + controllers.size());
+    }
+
+    private void exportFilterTestInventory() throws Exception {
+        Path testDir = javaRoot.resolve("src/test/java/org/omegat/filters");
+        Pattern testMethod = Pattern.compile("public void (test\\w+)\\s*\\(");
+        List<Map<String, Object>> tests = new ArrayList<>();
+        if (Files.isDirectory(testDir)) {
+            try (var stream = Files.walk(testDir)) {
+                for (Path p : stream.filter(x -> x.getFileName().toString().endsWith("Test.java")).toList()) {
+                    String rel = javaRoot.relativize(p).toString().replace('\\', '/');
+                    String className = rel.replace("src/test/java/", "").replace(".java", "").replace('/', '.');
+                    String src = Files.readString(p);
+                    Matcher mt = testMethod.matcher(src);
+                    while (mt.find()) {
+                        String method = mt.group(1);
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("java_test", className + "#" + method);
+                        row.put("class", className);
+                        row.put("method", method);
+                        row.put("golden", guessFilterGolden(className, method));
+                        tests.add(row);
+                    }
+                }
+            }
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.filters.FiltersTest#testFiltersComparison");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("tests", tests);
+        writeJson(goldenRoot.resolve("engine/filter_tests.json"), json);
+        System.out.println("wrote engine/filter_tests.json tests=" + tests.size());
+    }
+
+    private static String guessFilterGolden(String className, String method) {
+        String simple = className.substring(className.lastIndexOf('.') + 1);
+        String id = simple.replace("FilterTest", "").replace("Filter2Test", "").replace("Test", "").toLowerCase();
+        if (simple.contains("HTML")) {
+            id = "html";
+        } else if (simple.contains("HHC")) {
+            id = "hhc";
+        } else if (simple.contains("PO")) {
+            id = "po";
+        } else if (simple.contains("INI")) {
+            id = "ini";
+        } else if (simple.contains("ResourceBundle")) {
+            id = "properties";
+        } else if (simple.contains("MozillaFTL")) {
+            id = "mozftl";
+        } else if (simple.contains("MozillaDTD")) {
+            id = "mozdtd";
+        } else if (simple.contains("MozillaLang")) {
+            id = "mozlang";
+        } else if (simple.contains("MoodlePHP")) {
+            id = "moodlephp";
+        } else if (simple.contains("DokuWiki")) {
+            id = "dokuwiki";
+        } else if (simple.contains("ILIAS")) {
+            id = "ilias";
+        } else if (simple.contains("Magento")) {
+            id = "magento";
+        } else if (simple.contains("Latex")) {
+            id = "latex";
+        } else if (simple.contains("HelpAndManual")) {
+            id = "helpandmanual";
+        } else if (simple.contains("XMLSpreadsheet")) {
+            id = "xmlss";
+        } else if (simple.contains("OpenXML")) {
+            id = "openxml";
+        } else if (simple.contains("OpenDoc")) {
+            id = "opendoc";
+        } else if (simple.contains("XLIFF")) {
+            id = "xliff";
+        } else if (simple.contains("XHTML")) {
+            id = "xhtml";
+        } else if (simple.contains("DocBook")) {
+            id = "docbook";
+        } else if (simple.contains("Android")) {
+            id = "android";
+        } else if (simple.contains("ResX")) {
+            id = "resx";
+        } else if (simple.contains("WiX")) {
+            id = "wix";
+        } else if (simple.contains("Svg")) {
+            id = "svg";
+        } else if (simple.contains("RelaxNG")) {
+            id = "relaxng";
+        } else if (simple.contains("Srt")) {
+            id = "srt";
+        } else if (simple.contains("Pdf")) {
+            id = "pdf";
+        } else if (simple.contains("Rc")) {
+            id = "rc";
+        } else if (simple.contains("Text")) {
+            id = "text";
+        } else if (simple.contains("Yaml")) {
+            id = "yaml";
+        }
+        return "filters/" + id + "/" + method + ".json";
+    }
+
+    private void exportHtmlFilter2AllTests() throws Exception {
+        exportFilter("html", "html/testParse.json", "html/file-HTMLFilter2.html",
+                "org.omegat.filters.HTMLFilter2Test#testParse", new HTMLFilter2(), Collections.emptyMap(),
+                "This is first line.", "Ceci est la premiere ligne.");
+        Map<String, String> comments = new TreeMap<>();
+        comments.put(HTMLOptions.OPTION_REMOVE_COMMENTS, "true");
+        exportFilter("html", "html/testIgnoreCommentParse.json",
+                "html/file-HTMLFilter2-ignored-comments-no-break-SF610.html",
+                "org.omegat.filters.HTMLFilter2Test#testIgnoreCommentParse", new HTMLFilter2(), comments, null, null);
+        exportFilter("html", "html/testParseAllBlockElements.json",
+                "html/file-HTMLFilter2-all-block-elements.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseAllBlockElements", new HTMLFilter2(),
+                Collections.emptyMap(), null, null);
+        exportFilter("html", "html/testParseRegression-SF205.json",
+                "html/file-HTMLFilter2-recurse-bugfix-SF205.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        exportFilter("html", "html/testParseRegression-SF609.json",
+                "html/file-HTMLFilter2-tag-dropping-bugfix-SF609.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        exportFilter("html", "html/testParseRegression-SF613.json",
+                "html/file-HTMLFilter2-tag-dropping-bugfix-SF613.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        exportFilter("html", "html/testParseRegression-SF873.json",
+                "html/file-HTMLFilter2-tag-dropping-bugfix-SF873.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        exportFilter("html", "html/testParseRegression-OmegaT.json", "html/file-HTMLFilter2-OmegaT.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        exportFilter("html", "html/testTranslate.json", "html/file-HTMLFilter2.html",
+                "org.omegat.filters.HTMLFilter2Test#testTranslate", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        exportFilter("html", "html/testLoad.json", "html/file-HTMLFilter2.html",
+                "org.omegat.filters.HTMLFilter2Test#testLoad", new HTMLFilter2(), Collections.emptyMap(), null, null);
+        exportFilter("html", "html/testLoad-SMP.json", "html/file-HTMLFilter2-SMP.html",
+                "org.omegat.filters.HTMLFilter2Test#testLoad", new HTMLFilter2(), Collections.emptyMap(), null, null);
+        exportFilter("html", "html/testTagsOptimization.json", "html/file-HTMLFilter2-tags-optimization.html",
+                "org.omegat.filters.HTMLFilter2Test#testTagsOptimization", new HTMLFilter2(), Collections.emptyMap(),
+                null, null);
+        Map<String, String> never = new TreeMap<>();
+        never.put(HTMLOptions.OPTION_REWRITE_ENCODING, "NEVER");
+        exportFilter("html", "html/testLayout.json", "html/file-HTMLFilter2-layout.html",
+                "org.omegat.filters.HTMLFilter2Test#testLayout", new HTMLFilter2(), never, null, null);
+        Map<String, String> trim = new TreeMap<>();
+        trim.put(HTMLOptions.OPTION_COMPRESS_WHITESPACE, "true");
+        trim.put(HTMLOptions.OPTION_REWRITE_ENCODING, "NEVER");
+        exportFilter("html", "html/testLayoutTrimWhitespace.json", "html/file-HTMLFilter2-layout.html",
+                "org.omegat.filters.HTMLFilter2Test#testLayoutTrimWhitespace", new HTMLFilter2(), trim, null, null);
+        exportFilter("html", "html/testLayoutPreserveWhitespace.json", "html/file-HTMLFilter2-layout.html",
+                "org.omegat.filters.HTMLFilter2Test#testLayoutPreserveWhitespace", new HTMLFilter2(), never, null,
+                null);
+        Map<String, String> always = new TreeMap<>();
+        always.put(HTMLOptions.OPTION_REWRITE_ENCODING, "ALWAYS");
+        exportFilter("html", "html/testAddCharsetHeaderWhenNoHeader.json", "html/file-HTMLFilter2.html",
+                "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderWhenNoHeader", new HTMLFilter2(), always,
+                null, null);
+        exportFilter("html", "html/testAddCharsetHeaderWhenExistingHeader.json",
+                "html/file-HTMLFilter2-headernocharset.html",
+                "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderWhenExistingHeader", new HTMLFilter2(),
+                always, null, null);
+        exportFilter("html", "html/testAddCharsetHeaderWhenExistingMeta.json",
+                "html/file-HTMLFilter2-headerdifferentcharset.html",
+                "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderWhenExistingMeta", new HTMLFilter2(), always,
+                null, null);
+        exportFilter("html", "html/testAddCharsetHeaderHtml5WhenExistingMeta.json",
+                "html/file-HTMLFilter2-HTML5-headerdifferentcharset.html",
+                "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderHtml5WhenExistingMeta", new HTMLFilter2(),
+                always, null, null);
+        Map<String, Object> entity = new LinkedHashMap<>();
+        entity.put("id", "html");
+        entity.put("fixture", "html/file-HTMLFilter2.html");
+        entity.put("java_test", "org.omegat.filters.HTMLFilter2Test#testHtmlEntityDecode");
+        entity.put("exported_by", EXPORTED_BY);
+        entity.put("sources", List.of());
+        entity.put("input", "foo &apos;bar&apos;");
+        entity.put("decoded", HTMLUtils.entitiesToChars("foo &apos;bar&apos;"));
+        writeJson(goldenRoot.resolve("filters/html/testHtmlEntityDecode.json"), entity);
+    }
+
+    private void exportHtmlOptionKeys() throws Exception {
+        List<String> keys = new ArrayList<>();
+        for (Field f : HTMLOptions.class.getFields()) {
+            if (f.getName().startsWith("OPTION_") && f.getType() == String.class) {
+                keys.add((String) f.get(null));
+            }
+        }
+        Collections.sort(keys);
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.filters2.html2.HTMLOptions#getRewriteEncoding");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("keys", keys);
+        writeJson(goldenRoot.resolve("engine/html_options_keys.json"), json);
     }
 
     private void writeJson(Path path, Map<String, Object> data) throws Exception {

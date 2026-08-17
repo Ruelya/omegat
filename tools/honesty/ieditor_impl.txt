@@ -1,0 +1,6 @@
+# TS/Rust IEditor methods that are actually implemented (not empty break).
+# Compared to fixtures/goldens/engine/ieditor_methods.json.
+# P0: incomplete on purpose — gap must stay red until P7.
+undo
+redo
+insertTag

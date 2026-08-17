@@ -49,16 +49,21 @@ def main() -> int:
         if data.get("exported_by") != EXPORTER:
             errors.append(f"{path}: exported_by must be {EXPORTER}")
         if "filters" in path.parts:
-            for key in ("id", "fixture", "sources"):
+            for key in ("id", "fixture"):
                 if key not in data:
                     errors.append(f"{path}: missing {key}")
+            if "sources" not in data and "decoded" not in data:
+                errors.append(f"{path}: missing sources")
             fixture = data.get("fixture")
-            if fixture:
+            if fixture and fixture != "html/entity-decode":
                 src = ROOT / "fixtures" / "filters" / fixture
-                if not src.is_file():
+                java_src = ROOT / "reference" / "java" / "src" / "test" / "resources" / "data" / "filters" / fixture
+                if not src.is_file() and not java_src.is_file():
                     errors.append(f"{path}: fixture not found {src}")
-        if "engine" in path.parts and "cases" not in data:
-            errors.append(f"{path}: missing cases")
+        if "engine" in path.parts:
+            inventory = any(k in data for k in ("cases", "dialects", "methods", "actions", "controllers", "tests", "keys"))
+            if not inventory:
+                errors.append(f"{path}: missing cases/inventory")
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

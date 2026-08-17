@@ -1,0 +1,906 @@
+{
+  "java_test": "org.omegat.filters.FiltersTest#testFiltersComparison",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "tests": [
+    {
+      "java_test": "org.omegat.filters.ILIASFilterTest#testParse",
+      "class": "org.omegat.filters.ILIASFilterTest",
+      "method": "testParse",
+      "golden": "filters/ilias/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ILIASFilterTest#testTranslate",
+      "class": "org.omegat.filters.ILIASFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/ilias/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ILIASFilterTest#testAlign",
+      "class": "org.omegat.filters.ILIASFilterTest",
+      "method": "testAlign",
+      "golden": "filters/ilias/testAlign.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DokuWikiFilterTest#testTextFilterParsing",
+      "class": "org.omegat.filters.DokuWikiFilterTest",
+      "method": "testTextFilterParsing",
+      "golden": "filters/dokuwiki/testTextFilterParsing.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DokuWikiFilterTest#testTranslate",
+      "class": "org.omegat.filters.DokuWikiFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/dokuwiki/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DokuWikiFilterTest#testIsFileSupported",
+      "class": "org.omegat.filters.DokuWikiFilterTest",
+      "method": "testIsFileSupported",
+      "golden": "filters/dokuwiki/testIsFileSupported.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DokuWikiFilterTest#testLoad",
+      "class": "org.omegat.filters.DokuWikiFilterTest",
+      "method": "testLoad",
+      "golden": "filters/dokuwiki/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DokuWikiFilterTest#testDetectHeadingLevel",
+      "class": "org.omegat.filters.DokuWikiFilterTest",
+      "method": "testDetectHeadingLevel",
+      "golden": "filters/dokuwiki/testDetectHeadingLevel.json"
+    },
+    {
+      "java_test": "org.omegat.filters.WiXFilterTest#testLoad",
+      "class": "org.omegat.filters.WiXFilterTest",
+      "method": "testLoad",
+      "golden": "filters/wix/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.SrtFilterTest#testParse",
+      "class": "org.omegat.filters.SrtFilterTest",
+      "method": "testParse",
+      "golden": "filters/srt/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.SrtFilterTest#testTranslate",
+      "class": "org.omegat.filters.SrtFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/srt/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.SrtFilterTest#testLoad",
+      "class": "org.omegat.filters.SrtFilterTest",
+      "method": "testLoad",
+      "golden": "filters/srt/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.SrtFilterTest#testLoadMixedEol",
+      "class": "org.omegat.filters.SrtFilterTest",
+      "method": "testLoadMixedEol",
+      "golden": "filters/srt/testLoadMixedEol.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MagentoFilterTest#testParse",
+      "class": "org.omegat.filters.MagentoFilterTest",
+      "method": "testParse",
+      "golden": "filters/magento/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MagentoFilterTest#testTranslate",
+      "class": "org.omegat.filters.MagentoFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/magento/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MagentoFilterTest#testAlign",
+      "class": "org.omegat.filters.MagentoFilterTest",
+      "method": "testAlign",
+      "golden": "filters/magento/testAlign.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HelpAndManualFilterTest#testTranslateAttributeFalseIsSkipped",
+      "class": "org.omegat.filters.HelpAndManualFilterTest",
+      "method": "testTranslateAttributeFalseIsSkipped",
+      "golden": "filters/helpandmanual/testTranslateAttributeFalseIsSkipped.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HelpAndManualFilterTest#testParagraphTagsAreExtracted",
+      "class": "org.omegat.filters.HelpAndManualFilterTest",
+      "method": "testParagraphTagsAreExtracted",
+      "golden": "filters/helpandmanual/testParagraphTagsAreExtracted.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MozillaDTDFilterTest#testLoad",
+      "class": "org.omegat.filters.MozillaDTDFilterTest",
+      "method": "testLoad",
+      "golden": "filters/mozdtd/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MozillaDTDFilterTest#testTranslate",
+      "class": "org.omegat.filters.MozillaDTDFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/mozdtd/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MozillaDTDFilterTest#testAlign",
+      "class": "org.omegat.filters.MozillaDTDFilterTest",
+      "method": "testAlign",
+      "golden": "filters/mozdtd/testAlign.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RcFilterTest#testLoad",
+      "class": "org.omegat.filters.RcFilterTest",
+      "method": "testLoad",
+      "golden": "filters/rc/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RcFilterTest#testAlign",
+      "class": "org.omegat.filters.RcFilterTest",
+      "method": "testAlign",
+      "golden": "filters/rc/testAlign.json"
+    },
+    {
+      "java_test": "org.omegat.filters.PdfFilterTest#testParse",
+      "class": "org.omegat.filters.PdfFilterTest",
+      "method": "testParse",
+      "golden": "filters/pdf/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.PdfFilterTest#testTranslate",
+      "class": "org.omegat.filters.PdfFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/pdf/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.PdfFilterTest#testLoad",
+      "class": "org.omegat.filters.PdfFilterTest",
+      "method": "testLoad",
+      "golden": "filters/pdf/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.PdfFilterTest#testPasswordProtected",
+      "class": "org.omegat.filters.PdfFilterTest",
+      "method": "testPasswordProtected",
+      "golden": "filters/pdf/testPasswordProtected.json"
+    },
+    {
+      "java_test": "org.omegat.filters.AndroidFilterTest#testParse",
+      "class": "org.omegat.filters.AndroidFilterTest",
+      "method": "testParse",
+      "golden": "filters/android/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.AndroidFilterTest#testTranslate",
+      "class": "org.omegat.filters.AndroidFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/android/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.AndroidFilterTest#testLoad",
+      "class": "org.omegat.filters.AndroidFilterTest",
+      "method": "testLoad",
+      "golden": "filters/android/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HHCFilter2Test#testParse",
+      "class": "org.omegat.filters.HHCFilter2Test",
+      "method": "testParse",
+      "golden": "filters/hhc/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HHCFilter2Test#testTranslate",
+      "class": "org.omegat.filters.HHCFilter2Test",
+      "method": "testTranslate",
+      "golden": "filters/hhc/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HHCFilter2Test#testLoad",
+      "class": "org.omegat.filters.HHCFilter2Test",
+      "method": "testLoad",
+      "golden": "filters/hhc/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResXFilterTest#testParseSimple",
+      "class": "org.omegat.filters.ResXFilterTest",
+      "method": "testParseSimple",
+      "golden": "filters/resx/testParseSimple.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResXFilterTest#testLoad",
+      "class": "org.omegat.filters.ResXFilterTest",
+      "method": "testLoad",
+      "golden": "filters/resx/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResXFilterTest#testParse",
+      "class": "org.omegat.filters.ResXFilterTest",
+      "method": "testParse",
+      "golden": "filters/resx/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResXFilterTest#testTranslateXMLIdentical",
+      "class": "org.omegat.filters.ResXFilterTest",
+      "method": "testTranslateXMLIdentical",
+      "golden": "filters/resx/testTranslateXMLIdentical.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MoodlePHPFilterTest#testParse",
+      "class": "org.omegat.filters.MoodlePHPFilterTest",
+      "method": "testParse",
+      "golden": "filters/moodlephp/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MoodlePHPFilterTest#testLoad",
+      "class": "org.omegat.filters.MoodlePHPFilterTest",
+      "method": "testLoad",
+      "golden": "filters/moodlephp/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MoodlePHPFilterTest#testTranslate",
+      "class": "org.omegat.filters.MoodlePHPFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/moodlephp/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MoodlePHPFilterTest#testAlign",
+      "class": "org.omegat.filters.MoodlePHPFilterTest",
+      "method": "testAlign",
+      "golden": "filters/moodlephp/testAlign.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testParse",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testParse",
+      "golden": "filters/po/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testLoad",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testLoad",
+      "golden": "filters/po/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testLoadMonolingual",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testLoadMonolingual",
+      "golden": "filters/po/testLoadMonolingual.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testTranslateMonolingual",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testTranslateMonolingual",
+      "golden": "filters/po/testTranslateMonolingual.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testTranslate",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/po/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testLoad2",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testLoad2",
+      "golden": "filters/po/testLoad2.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testLoad3",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testLoad3",
+      "golden": "filters/po/testLoad3.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testParseFuzzyCtx",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testParseFuzzyCtx",
+      "golden": "filters/po/testParseFuzzyCtx.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testAutoFillInPluralStatement",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testAutoFillInPluralStatement",
+      "golden": "filters/po/testAutoFillInPluralStatement.json"
+    },
+    {
+      "java_test": "org.omegat.filters.POFilterTest#testMultiLines",
+      "class": "org.omegat.filters.POFilterTest",
+      "method": "testMultiLines",
+      "golden": "filters/po/testMultiLines.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XHTMLFilterTest#testParse",
+      "class": "org.omegat.filters.XHTMLFilterTest",
+      "method": "testParse",
+      "golden": "filters/html/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XHTMLFilterTest#testTranslate",
+      "class": "org.omegat.filters.XHTMLFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/html/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XHTMLFilterTest#testLoad",
+      "class": "org.omegat.filters.XHTMLFilterTest",
+      "method": "testLoad",
+      "golden": "filters/html/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XHTMLFilterTest#testTagsOptimization",
+      "class": "org.omegat.filters.XHTMLFilterTest",
+      "method": "testTagsOptimization",
+      "golden": "filters/html/testTagsOptimization.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XHTMLFilterTest#testBadDocTypeIgnore",
+      "class": "org.omegat.filters.XHTMLFilterTest",
+      "method": "testBadDocTypeIgnore",
+      "golden": "filters/html/testBadDocTypeIgnore.json"
+    },
+    {
+      "java_test": "org.omegat.filters.SvgFilterTest#testLoad",
+      "class": "org.omegat.filters.SvgFilterTest",
+      "method": "testLoad",
+      "golden": "filters/svg/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testParse",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testParse",
+      "golden": "filters/html/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testIgnoreCommentParse",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testIgnoreCommentParse",
+      "golden": "filters/html/testIgnoreCommentParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testParseAllBlockElements",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testParseAllBlockElements",
+      "golden": "filters/html/testParseAllBlockElements.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testParseRegression",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testParseRegression",
+      "golden": "filters/html/testParseRegression.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testTranslate",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testTranslate",
+      "golden": "filters/html/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testLoad",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testLoad",
+      "golden": "filters/html/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testTagsOptimization",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testTagsOptimization",
+      "golden": "filters/html/testTagsOptimization.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testHtmlEntityDecode",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testHtmlEntityDecode",
+      "golden": "filters/html/testHtmlEntityDecode.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testLayout",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testLayout",
+      "golden": "filters/html/testLayout.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testLayoutTrimWhitespace",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testLayoutTrimWhitespace",
+      "golden": "filters/html/testLayoutTrimWhitespace.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testLayoutPreserveWhitespace",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testLayoutPreserveWhitespace",
+      "golden": "filters/html/testLayoutPreserveWhitespace.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderWhenNoHeader",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testAddCharsetHeaderWhenNoHeader",
+      "golden": "filters/html/testAddCharsetHeaderWhenNoHeader.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderWhenExistingHeader",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testAddCharsetHeaderWhenExistingHeader",
+      "golden": "filters/html/testAddCharsetHeaderWhenExistingHeader.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderWhenExistingMeta",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testAddCharsetHeaderWhenExistingMeta",
+      "golden": "filters/html/testAddCharsetHeaderWhenExistingMeta.json"
+    },
+    {
+      "java_test": "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderHtml5WhenExistingMeta",
+      "class": "org.omegat.filters.HTMLFilter2Test",
+      "method": "testAddCharsetHeaderHtml5WhenExistingMeta",
+      "golden": "filters/html/testAddCharsetHeaderHtml5WhenExistingMeta.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testLoad",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testLoad",
+      "golden": "filters/latex/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testLoadItemize",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testLoadItemize",
+      "golden": "filters/latex/testLoadItemize.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testParseItemize",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testParseItemize",
+      "golden": "filters/latex/testParseItemize.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testLoadComments",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testLoadComments",
+      "golden": "filters/latex/testLoadComments.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testArticle",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testArticle",
+      "golden": "filters/latex/testArticle.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testBugOverlap",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testBugOverlap",
+      "golden": "filters/latex/testBugOverlap.json"
+    },
+    {
+      "java_test": "org.omegat.filters.LatexFilterTest#testVerbatimPreserved",
+      "class": "org.omegat.filters.LatexFilterTest",
+      "method": "testVerbatimPreserved",
+      "golden": "filters/latex/testVerbatimPreserved.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MozillaFTLFilterTest#testParse",
+      "class": "org.omegat.filters.MozillaFTLFilterTest",
+      "method": "testParse",
+      "golden": "filters/mozftl/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MozillaFTLFilterTest#testTranslate",
+      "class": "org.omegat.filters.MozillaFTLFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/mozftl/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.MozillaFTLFilterTest#testLoad",
+      "class": "org.omegat.filters.MozillaFTLFilterTest",
+      "method": "testLoad",
+      "golden": "filters/mozftl/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenDocFilterTest#testParse",
+      "class": "org.omegat.filters.OpenDocFilterTest",
+      "method": "testParse",
+      "golden": "filters/opendoc/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenDocFilterTest#testTranslate",
+      "class": "org.omegat.filters.OpenDocFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/opendoc/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenDocFilterTest#testLoad",
+      "class": "org.omegat.filters.OpenDocFilterTest",
+      "method": "testLoad",
+      "golden": "filters/opendoc/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenDocFilterTest#testIsFileSupported",
+      "class": "org.omegat.filters.OpenDocFilterTest",
+      "method": "testIsFileSupported",
+      "golden": "filters/opendoc/testIsFileSupported.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testTextFilterParsing",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testTextFilterParsing",
+      "golden": "filters/text/testTextFilterParsing.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testTranslate",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/text/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testParseNeverBreak",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testParseNeverBreak",
+      "golden": "filters/text/testParseNeverBreak.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testParseEmptyLinesBreak",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testParseEmptyLinesBreak",
+      "golden": "filters/text/testParseEmptyLinesBreak.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testParseLinesBreak",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testParseLinesBreak",
+      "golden": "filters/text/testParseLinesBreak.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testLoad",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testLoad",
+      "golden": "filters/text/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.TextFilterTest#testLineLengthLimit",
+      "class": "org.omegat.filters.TextFilterTest",
+      "method": "testLineLengthLimit",
+      "golden": "filters/text/testLineLengthLimit.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RelaxNGFilterTest#testParse",
+      "class": "org.omegat.filters.RelaxNGFilterTest",
+      "method": "testParse",
+      "golden": "filters/relaxng/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RelaxNGFilterTest#testTranslate",
+      "class": "org.omegat.filters.RelaxNGFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/relaxng/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RelaxNGFilterTest#testParseIntroLinux",
+      "class": "org.omegat.filters.RelaxNGFilterTest",
+      "method": "testParseIntroLinux",
+      "golden": "filters/relaxng/testParseIntroLinux.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RelaxNGFilterTest#testLoad",
+      "class": "org.omegat.filters.RelaxNGFilterTest",
+      "method": "testLoad",
+      "golden": "filters/relaxng/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.RelaxNGFilterTest#testIsSupported",
+      "class": "org.omegat.filters.RelaxNGFilterTest",
+      "method": "testIsSupported",
+      "golden": "filters/relaxng/testIsSupported.json"
+    },
+    {
+      "java_test": "org.omegat.filters.FiltersTest#testFiltersComparison",
+      "class": "org.omegat.filters.FiltersTest",
+      "method": "testFiltersComparison",
+      "golden": "filters/filters/testFiltersComparison.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenXMLFilterTest#testParse",
+      "class": "org.omegat.filters.OpenXMLFilterTest",
+      "method": "testParse",
+      "golden": "filters/openxml/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenXMLFilterTest#testTranslate",
+      "class": "org.omegat.filters.OpenXMLFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/openxml/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.OpenXMLFilterTest#testLoad",
+      "class": "org.omegat.filters.OpenXMLFilterTest",
+      "method": "testLoad",
+      "golden": "filters/openxml/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParse",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParse",
+      "golden": "filters/yaml/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testTranslate",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/yaml/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testLoad",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testLoad",
+      "golden": "filters/yaml/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParseWithExclude",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParseWithExclude",
+      "golden": "filters/yaml/testParseWithExclude.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParseWithInclude",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParseWithInclude",
+      "golden": "filters/yaml/testParseWithInclude.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParseWithWildcard",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParseWithWildcard",
+      "golden": "filters/yaml/testParseWithWildcard.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParseWithIncludeAndExclude",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParseWithIncludeAndExclude",
+      "golden": "filters/yaml/testParseWithIncludeAndExclude.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParseWithExcludeFileKey",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParseWithExcludeFileKey",
+      "golden": "filters/yaml/testParseWithExcludeFileKey.json"
+    },
+    {
+      "java_test": "org.omegat.filters.YamlFilterTest#testParseWithEscapedIgnore",
+      "class": "org.omegat.filters.YamlFilterTest",
+      "method": "testParseWithEscapedIgnore",
+      "golden": "filters/yaml/testParseWithEscapedIgnore.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testParse",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testParse",
+      "golden": "filters/xliff/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testTranslate",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/xliff/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testLoad",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testLoad",
+      "golden": "filters/xliff/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testTags",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testTags",
+      "golden": "filters/xliff/testTags.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testTagOptimization",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testTagOptimization",
+      "golden": "filters/xliff/testTagOptimization.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testStatCounting",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testStatCounting",
+      "golden": "filters/xliff/testStatCounting.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testStatCountingNoProtectedText",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testStatCountingNoProtectedText",
+      "golden": "filters/xliff/testStatCountingNoProtectedText.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testStatCountingNoCustomTags",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testStatCountingNoCustomTags",
+      "golden": "filters/xliff/testStatCountingNoCustomTags.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testInvalidXML",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testInvalidXML",
+      "golden": "filters/xliff/testInvalidXML.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testInvalidXMLOnWeirdPath",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testInvalidXMLOnWeirdPath",
+      "golden": "filters/xliff/testInvalidXMLOnWeirdPath.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testProperties",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testProperties",
+      "golden": "filters/xliff/testProperties.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testHandleXMLTag",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testHandleXMLTag",
+      "golden": "filters/xliff/testHandleXMLTag.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testTranslationRFE1506",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testTranslationRFE1506",
+      "golden": "filters/xliff/testTranslationRFE1506.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testBugs1221",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testBugs1221",
+      "golden": "filters/xliff/testBugs1221.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XLIFFFilterTest#testBugs418",
+      "class": "org.omegat.filters.XLIFFFilterTest",
+      "method": "testBugs418",
+      "golden": "filters/xliff/testBugs418.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testParse",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testParse",
+      "golden": "filters/properties/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testTranslate",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/properties/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testAlign",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testAlign",
+      "golden": "filters/properties/testAlign.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testLoad",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testLoad",
+      "golden": "filters/properties/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testDoNotEscapeUnicodeLiterals",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testDoNotEscapeUnicodeLiterals",
+      "golden": "filters/properties/testDoNotEscapeUnicodeLiterals.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testNonEscapeUnicode",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testNonEscapeUnicode",
+      "golden": "filters/properties/testNonEscapeUnicode.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testEscapeUnicodeWhenASCII",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testEscapeUnicodeWhenASCII",
+      "golden": "filters/properties/testEscapeUnicodeWhenASCII.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testBadUnicodeLiterals",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testBadUnicodeLiterals",
+      "golden": "filters/properties/testBadUnicodeLiterals.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testWhiteSpace",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testWhiteSpace",
+      "golden": "filters/properties/testWhiteSpace.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testNOI18N",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testNOI18N",
+      "golden": "filters/properties/testNOI18N.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testCommentEscaping",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testCommentEscaping",
+      "golden": "filters/properties/testCommentEscaping.json"
+    },
+    {
+      "java_test": "org.omegat.filters.ResourceBundleFilterTest#testRegressionGithub227",
+      "class": "org.omegat.filters.ResourceBundleFilterTest",
+      "method": "testRegressionGithub227",
+      "golden": "filters/properties/testRegressionGithub227.json"
+    },
+    {
+      "java_test": "org.omegat.filters.INIFilterTest#testParse",
+      "class": "org.omegat.filters.INIFilterTest",
+      "method": "testParse",
+      "golden": "filters/ini/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.INIFilterTest#testTranslate",
+      "class": "org.omegat.filters.INIFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/ini/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.INIFilterTest#testLoad",
+      "class": "org.omegat.filters.INIFilterTest",
+      "method": "testLoad",
+      "golden": "filters/ini/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testParse",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testParse",
+      "golden": "filters/docbook/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testTranslate",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/docbook/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testTranslateExtWriter",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testTranslateExtWriter",
+      "golden": "filters/docbook/testTranslateExtWriter.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testLoadInvalidXml",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testLoadInvalidXml",
+      "golden": "filters/docbook/testLoadInvalidXml.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testParseIntroLinux",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testParseIntroLinux",
+      "golden": "filters/docbook/testParseIntroLinux.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testLoad",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testLoad",
+      "golden": "filters/docbook/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters.DocBookFilterTest#testIsSupported",
+      "class": "org.omegat.filters.DocBookFilterTest",
+      "method": "testIsSupported",
+      "golden": "filters/docbook/testIsSupported.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XMLSpreadsheetTest#testParse",
+      "class": "org.omegat.filters.XMLSpreadsheetTest",
+      "method": "testParse",
+      "golden": "filters/xmlss/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters.XMLSpreadsheetTest#testTranslate",
+      "class": "org.omegat.filters.XMLSpreadsheetTest",
+      "method": "testTranslate",
+      "golden": "filters/xmlss/testTranslate.json"
+    }
+  ]
+}

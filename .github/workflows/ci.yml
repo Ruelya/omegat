@@ -23,6 +23,8 @@ jobs:
           test -f fixtures/plugin/sample.example
           python3 tools/export_java_goldens/check_provenance.py
           test ! -f tools/export_java_goldens/export.py
+      - name: honesty gates (P0 may be red)
+        run: bash tools/honesty/check.sh
   desktop:
     runs-on: ubuntu-latest
     defaults:
