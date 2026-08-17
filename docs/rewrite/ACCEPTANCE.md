@@ -1,28 +1,55 @@
 # Acceptance (parity rewrite)
 
-A feature is complete only when all of the following are true.
+A feature is complete only when **all** of the following are true.
 
-1. Engine tests assert against committed files under `fixtures/goldens/` (exported from Java tests or `tools/export_java_goldens`). “It parses” is not enough.
-2. IPC types live in `crates/omegat-ipc` and the desktop types stay in sync.
-3. If Java OmegaT 6.2 had a window, dock, or preference page, the Electron UI has working controls that call real RPC **and the sidecar consumes those prefs**. A muted category list is not an implementation.
-4. `docs/rewrite/STATUS.md` says `parity` or a **quantified** remaining delta. `done (stub)` and a full-table `parity` without goldens are forbidden.
-5. `cargo test --workspace` and desktop `npm test` / `tsc` pass.
+1. **Java goldens.** Committed files under `fixtures/goldens/` were written by
+   running Java (`reference/java` Gradle task `exportGoldens`, class
+   `org.omegat.tools.ExportGoldens`). The JSON `java_test` field is a real
+   method (`org.omegat…#testName`). “It parses” is not enough.
+2. **Assertions.** Segment lists use `assert_eq`. Empty-write output is compared
+   to the Java-exported text after documented normalisation (line endings only,
+   unless a `parity_gap` records a measured whitespace / tag-order delta).
+   Translated write-back must match the Java-exported target text, or the
+   translation must appear at the recorded node / offset — not “somewhere in
+   the file”.
+3. **Modules.** One Java `*Filter` / `*Dialect` / `*Controller` / `*Tokenizer`
+   is one Rust or TypeScript file. A shared XML **event-stream** engine is
+   allowed. A shared tag-name array is not a dialect.
+4. **Options.** Every key from that Java class’s options dialog is a typed
+   option and is **read** by `parse` / `write`.
+5. **UI.** Every Java dock, window, or preference page has controls that the
+   sidecar or renderer consumes. Writing `extra` is not an implementation.
+6. **STATUS.** Only `scaffold`, a numbered `parity_gap`, or `parity`. A
+   full-table `parity` is forbidden. A wave must not be marked `parity` and
+   the next wave must not start until that wave’s goldens are green.
+7. IPC types live in `crates/omegat-ipc`. Desktop types stay in sync.
+8. `cargo test --workspace` and desktop `npm test` / `tsc` are the product
+   checks. `./gradlew` is for local golden export only.
 
 ## Golden layout
 
-- `fixtures/goldens/filters/<id>/<case>.json` — `sources` (exact Java parse list), `options`, `empty_write` (`preserve_source` or a normalized hash), `translated` (`id`/`source` → expected substring in the written file).
-- `fixtures/goldens/engine/srx.json` — language → input → sentence list.
-- `fixtures/goldens/engine/tokens.json` — language → input → token/stem list from Java tokenizers.
-- `fixtures/goldens/engine/fuzzy.json` — query/candidate pairs with Java `FuzzyMatcher` scores.
+- `fixtures/goldens/filters/<id>/<case>.json`
+  - `id`, `fixture`, `java_test`, `exported_by`, `options`
+  - `sources` — exact Java parse list
+  - `ids` — when the Java test records ids
+  - `empty_write_text` — Java `translateFile` with no translations
+    (bilingual: blank allowed; monolingual: source echoed)
+  - `translated.source` / `translated.translation`
+  - `translated_write` — full Java output with that one translation
+- `fixtures/goldens/engine/srx.json` — language → input → sentence list
+- `fixtures/goldens/engine/tokens.json` — language → input → token / stem list
+- `fixtures/goldens/engine/fuzzy.json` — query / candidate → Java score
 
-## Forbidden assertions
+## Forbidden assertions (do not count as goldens)
 
-These do **not** count as goldens:
-
-- `assert!(tested >= 8)` / `parsed_ok >= 40`
+- `contains` / `must_contain` on write-back
+- `assert!(n >= 49)` / `tested >= 8` / `parsed_ok >= 40`
 - `write(...).is_ok()` without reading the file back
-- inserting `GOLDEN_T` and never asserting it appears
+- inserting `GOLDEN_T` and never asserting the Java-exported target text
 - `assert_ne!(tokenizer_id(lang), "")`
+- `is_ok` as the only check
+- a `java_test` that is not a real method name (for example
+  `"org.omegat.filters dialect/table for android"`)
 
 ## Forbidden
 
@@ -31,7 +58,5 @@ These do **not** count as goldens:
 - Filter parse without write-back
 - Marking a phase complete while tests do not open `fixtures/goldens/`
 - Deleting `reference/java` before STATUS has zero `scaffold` rows
-
-## Sidecar methods
-
-Implemented methods must have a contract test (request/response shape). Missing methods are listed in STATUS as `parity_gap` until implemented — they must not return a fake success.
+- A Python / shell “export” that does not execute Java
+- Keeping handwritten goldens as green after they have been voided

@@ -2,16 +2,24 @@
   "id": "text",
   "fixture": "text/file-TextFilter.txt",
   "java_test": "org.omegat.filters.TextFilterTest#testParseEmptyLinesBreak",
-  "options": { "segmentOn": "EMPTYLINES" },
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "segmentOn": "EMPTYLINES"
+  },
   "sources": [
-    "This test file for test TextFilter.",
-    "It should be second entry for empty-line separator or third line for line-break separator.",
-    "It should be third entry for empty-line separator or fifth line for line-break separator."
+    "This test file for test TextFilter.\r\n",
+    "It should be second entry for empty-line separator or third line for line-break separator.\r\n",
+    "It should be third entry for empty-line separator or fifth line for line-break separator.\r\n"
   ],
-  "empty_write": "preserve_source",
+  "ids": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "This test file for test TextFilter.\r\n\r\nIt should be second entry for empty-line separator or third line for line-break separator.\r\n\r\nIt should be third entry for empty-line separator or fifth line for line-break separator.\r\n",
   "translated": {
-    "source": "This test file for test TextFilter.",
-    "translation": "GOLDEN_T",
-    "must_contain": "GOLDEN_T"
-  }
+    "source": "This test file for test TextFilter.\r\n",
+    "translation": "GOLDEN_T"
+  },
+  "translated_write": "GOLDEN_T\r\nIt should be second entry for empty-line separator or third line for line-break separator.\r\n\r\nIt should be third entry for empty-line separator or fifth line for line-break separator.\r\n"
 }

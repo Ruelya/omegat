@@ -1,24 +1,27 @@
 # Export Java goldens
 
-Goldens under `fixtures/goldens/` are transcribed from Java 6.2 unit tests in
-`reference/java/src/test/java/org/omegat/filters` and the matching fixtures.
+Goldens under `fixtures/goldens/` are produced by **running Java 6.2** in
+`reference/java`. A field-check script is not an exporter.
 
-## Regenerating from this tree
-
-```bash
-python3 tools/export_java_goldens/export.py
-```
-
-The script does **not** compile OmegaT. It copies the Java test assertions
-(segment lists, options, write-back expectations) into JSON so Rust CI can
-run without Gradle. When a Java test is the source of truth, the JSON
-`java_test` field names the method.
-
-To re-export by running Java (optional, needs a full Gradle cache):
+## Export (requires JDK 21 and a Gradle cache)
 
 ```bash
-cd reference/java && ./gradlew :test --tests org.omegat.filters.TextFilterTest
+cd reference/java
+./gradlew exportGoldens --no-daemon
 ```
 
-Then update the JSON by hand from the assertion values. Do not invent
-segment lists from the Rust parser.
+The task runs `org.omegat.tools.ExportGoldens`, which calls the same
+`parseFile` / `translateFile` path as `TestFilterBase` and writes JSON under
+`fixtures/goldens/`.
+
+CI does **not** run Gradle. It only checks that the committed goldens exist
+and that `java_test` / `exported_by` look like a real export.
+
+## Provenance check (no Java)
+
+```bash
+python3 tools/export_java_goldens/check_provenance.py
+```
+
+This script refuses files that lack a real `java_test` method name or that
+still use `must_contain`.

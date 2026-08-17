@@ -1,24 +1,47 @@
 {
-  "java_source": "org.omegat.core.matching.FuzzyMatcher.calcSimilarity + LevenshteinDistance on tokens",
+  "java_test": "org.omegat.core.matching.FuzzyMatcher#calcSimilarity",
+  "exported_by": "org.omegat.tools.ExportGoldens",
   "cases": [
     {
       "lang": "en",
       "query": "Hello world",
       "candidate": "Hello world",
-      "score": 100
+      "score": 100,
+      "query_tokens": [
+        "Hello",
+        "world"
+      ],
+      "candidate_tokens": [
+        "Hello",
+        "world"
+      ]
     },
     {
       "lang": "en",
       "query": "Hello world",
       "candidate": "Hello word",
       "score": 50,
-      "note": "token lists [hello,world] vs [hello,word]: 1 substitution / 2 tokens = 50"
+      "query_tokens": [
+        "Hello",
+        "world"
+      ],
+      "candidate_tokens": [
+        "Hello",
+        "word"
+      ]
     },
     {
       "lang": "en",
       "query": "Hello world",
       "candidate": "Goodbye",
-      "score": 0
+      "score": 0,
+      "query_tokens": [
+        "Hello",
+        "world"
+      ],
+      "candidate_tokens": [
+        "Goodbye"
+      ]
     }
   ]
 }

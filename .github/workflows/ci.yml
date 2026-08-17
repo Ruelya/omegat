@@ -21,7 +21,8 @@ jobs:
           test -f fixtures/goldens/filters/po/file-POFilter-multiple.json
           test -f fixtures/goldens/engine/srx.json
           test -f fixtures/plugin/sample.example
-          python3 tools/export_java_goldens/export.py
+          python3 tools/export_java_goldens/check_provenance.py
+          test ! -f tools/export_java_goldens/export.py
   desktop:
     runs-on: ubuntu-latest
     defaults:

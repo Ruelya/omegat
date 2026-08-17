@@ -1,44 +1,72 @@
-# Rewrite status (parity)
+# Rewrite status
 
-Legend: `scaffold` = present but not accepted · `parity` = accepted against Java fixtures · `parity_gap` = specified, quantified remaining delta.
+Legend:
+
+- `scaffold` — present in the tree, **not** accepted
+- `parity_gap` — specified remaining delta with **measured** numbers
+- `parity` — accepted against **Java-exported** goldens (`assert_eq`)
+
+A full-table `parity` is forbidden. A row may become `parity` only after that
+wave’s Java goldens are green.
 
 | Area | Wave | Status |
 |---|---|---|
-| Java reference tree at `reference/java` | R0 | parity |
-| Filter / align / SRX fixtures under `fixtures/` | R0 | parity |
-| Golden export tool + committed `fixtures/goldens/` | H0 | parity |
-| Sidecar method contract tests | R0 | parity |
-| Project / TMX / SRX / matching / glossary / compile / CLI | R1 | parity |
-| 49 filters + Office write-back + tag QA | R2 | parity |
-| Desktop docks, menus, search/replace, preference pages | R3 | parity |
-| Spell backends, dictionaries, LanguageTool HTTP, Issues | R4 | parity |
-| 7 MT engines, External Finder, autocompleter | R5 | parity |
-| Team sync + rebase + conflict UI | R6 | parity |
-| Aligner, scripts, Wiki/MED/convert, CLI close-out | R7 | parity |
-| 41 authored UI locales, packaging, plugin register ABI | R8 | parity |
+| Java reference tree at `reference/java` | G0 | parity |
+| Honest STATUS + ACCEPTANCE (this file) | G0 | scaffold |
+| Java Gradle exporter `exportGoldens` | G0 | scaffold |
+| Text / PO / HTML Java-exported goldens | G0 | scaffold |
+| Filter / align / SRX fixtures under `fixtures/` | G0 | scaffold |
+| Sidecar method contract tests | G0 | scaffold |
+| RealProject / SRX / TMX / matching / stats / tags | G1 | scaffold |
+| filters2: 21 Filter classes, one module each | G2 | scaffold |
+| filters3: XML event engine + 23 Dialect modules | G3 | scaffold |
+| filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | scaffold |
+| Desktop: document-model editor, 113 menus, 28 prefs | G5 | scaffold |
+| Tokenizers / spell / dictionaries / LanguageTool | G6 | scaffold |
+| 7 MT engines, External Finder, autocompleter | G7 | scaffold |
+| team2: 23 classes, rebase, conflict UI | G8 | scaffold |
+| Aligner, embedded JS, Wiki / MED / CLI | G9 | scaffold |
+| 41 locales, packages, plugin ABI, manual | G10 | scaffold |
 
-## Quantified remaining deltas
+## What is not accepted (previous claims)
 
-- R1 matching: token-Levenshtein scores on committed `fixtures/goldens/engine/fuzzy.json` are exact (en `Hello world`/`Hello word` = 50). CJK n-gram vs Lucene CJKTokenizer not yet measured on a held-out set — record when R4 tokenizers land.
-- R1 TMX: `omegat`/`level1`/`level2` fields (`changeid`, `creationid`, dates, `prop` file/id, level2 `bpt`/`ept`/`ph`) are asserted in unit tests; Java `project_save.tmx` fixture round-trips entry count. Whitespace-only serialization differences vs StAX are allowed.
-- R2 XML: inline tags become OmegaT shortcuts (`<f0>`, `<x0>` for `xliff:g`). Empty write keeps the original tree (Java `translateXML`). Office write replaces `w:t` / `text:p` node ranges, not file-wide `replacen`. `sniff_xml` no longer defaults unknown XML to Android.
-- R3 desktop: nine docks follow `DockingDefaults.xml` ratios (persisted as `extra.docking_layout`); 25 preference pages write keys the sidecar or renderer consume; search RPC includes notes/comments/keyword/author/date/preview. Native menu maps Java `MainMenuShortcuts.properties`.
-- R5: each of the 7 engines has `fixtures/mt/<id>/recorded.json` (request URL/headers + response). Auth headers match Java (`X-HTTP-Method-Override`, Watson Basic + opt-out, Yandex Bearer). History predictor is a next-word model, not a translation-prefix scan. Offline without a fixture is an error and does not invent a translation.
-- R4 spell: CI uses `fixtures/spell/{hunspell,lucene,morfologik}` (affix-expanded `walk`/`walks`). Full ca/es/fa/fr/ga/gl/pt/uk `aff`/`dic` stay in `reference/java/language-modules` and copy via `spell.install` — not vendored (uk.dic 8.2M). en/de have no language-module pair. LT without `languagetool_url` emits one `severity=info` issue, never an empty “clean” list.
-- R7 aligner: HEAPWISE is filter-extract + SRX + length HMM (not `split_whitespace`). PARSEWISE / ID match Java `AlignerTest` fixtures under `fixtures/align`. Viterbi is min-cost; Forward-Backward is a posterior path with 1-0/0-1 (not an alias). CHAR/WORD + Normal/Poisson calculators. GUI table supports merge/split/up/down via `align.edit`. Scripts bind `project`/`editor`/`glossary`/`console`/`mainWindow`/`Core`; `entry_activated` can change the current translation. MED unzips to a project tree. `omegat --help` lists Java legacy flags including `--alignDir` and `--mode`.
-- R6 team: `sync` is prepare → rebase (TMX **and** glossary) → commit/push. Mappings + includes/excludes are parsed from `omegat.project` and applied. Git uses `.repositories/<sanitized-url>/` as the mapped working copy (`fetch` + `reset --hard` to origin, then copy, commit, `push`). HTTP downloads the URL (`file://` or `curl`) into rebase. File repos copy the tree. Two-client git tests: different segments merge; same segment yields `{source,ours,theirs}` and `team.resolve`. SVN checkout/update/commit is implemented; the integration test no-ops when `svn`/`svnadmin` are missing (this environment has neither).
-- R8 locales: 41 catalogs share `en.json` keys. Values come from Java `Bundle_*.properties` by UI key (`tools/migrate_ui_locales.py`). `create` is curated (zh-CN `创建`, never `BUTTON_ADD` / 「添加」). Leftover `"Auto-completion"` is gone; completer uses `PREFS_TITLE_AUTOCOMPLETER` (zh-CN `自动完成`). Native menus call the same catalogs; `ar` sets `dir=rtl`.
-- R8 plugins: `omegat_plugin_register` registers Filter/MT/Tokenizer. Example cdylib is visible in `filters.list` and parses `fixtures/plugin/sample.example` (2 segments). `filters.parse` RPC is contract-tested.
-- R8 packages: CI builds unsigned Linux `deb`/`rpm`/`tar.gz`, Windows NSIS, macOS DMG. Notarization/signing is out of CI (no secrets in this tree).
-- `reference/java` stays. STATUS has no `scaffold` rows; moving the tree is a later discussion, not this wave.
+The R0–R8 `parity` table was withdrawn. The tree is a CAT prototype, not a
+finished rewrite of Java 6.2.
+
+Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
+
+- `dialect_filter!` / `simple_filter!` / one `XmlDialect` tag-name table
+- `filters.options` returning a generic `extra` map
+- full-file `replacen` / first `find` as the only XML / Office / SDL write-back
+- `filter_goldens.rs` `contains` / `must_contain` / `n >= 49` (removed in G0)
+- `Preferences.extra: HashMap` as the preference model
+- `contentEditable` as the segment editor
+- `fallback_eval("1+2")` as a script engine
+- toy `resources/languages` word lists with no `.aff`
+- match bins that record every non-exact hit as `fuzzy_85`
+- Python “export” that never ran Java
+- handwritten goldens with fake `java_test` strings
+
+## G0 notes
+
+- Goldens under `fixtures/goldens/` are valid only when
+  `exported_by` is `org.omegat.tools.ExportGoldens` and `java_test` is a real
+  `org.omegat…#method` name.
+- Handwritten / fake-provenance files were moved to
+  `fixtures/goldens/_voided/`.
+- Rust filter tests use `assert_eq` on the Java source list and on
+  Java-exported empty / translated write text. They may be red until G2–G4.
+- CI checks that the three G0 goldens exist and that `cargo test` runs.
+  `./gradlew exportGoldens` is **not** the product build.
 
 ## Sidecar methods
 
-Present and contract-tested: `sys.version`, `sys.capabilities`, `sys.plugins`, `prefs.get`, `prefs.set`, `project.create|open|close|save|compile|reload|props|convert`, `entry.list|get|set`, `matches.query`, `glossary.query|add`, `search.run`, `search.replace`, `stats.get`, `issues.list`, `filters.list`, `filters.options`, `filters.parse`, `mt.query`, `dict.query`, `completer.query`, `spell.learn`, `spell.ignore`, `spell.install`, `tmx.export`, `languagetool.check`, `finder.run`, `team.sync`, `team.commit`, `team.conflicts`, `team.resolve`, `script.run`, `script.slots`, `align.run`, `align.edit`, `aligner.configure`, `wiki.import`, `med.open`.
+Methods exist on the wire. That is not parity. Missing or stubbed behaviour
+stays `scaffold` until the owning wave’s goldens are green.
 
-## Intentional non-goals (not feature cuts)
+## Intentional non-goals (must still have a full replacement)
 
-- Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib (`docs/rewrite/PLUGIN_ABI.md`).
-- Groovy is not executed. Replacement: JS event hooks with the same binding surface (`docs/rewrite/MIGRATION.md`).
-- LanguageTool is not an embedded JAR. Replacement: HTTP `v2/check`.
-- PDF write-back matches Java `PdfFilter` (text extract; sidecar `.txt`).
+- Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib.
+- Groovy is not executed. Replacement: embedded JS with the Java binding surface.
+- LanguageTool is not an embedded JAR. Replacement: HTTP `v2/check`, with an
+  `severity=info` downgrade item when no URL is configured.
