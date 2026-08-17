@@ -393,10 +393,7 @@ fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
 }
 
 fn apply_tag_validation(session: &mut ProjectSession, mode: &str) {
-    session
-        .prefs
-        .extra
-        .insert("tag_validation".into(), mode.to_string());
+    session.prefs.tag_validation = mode.to_string();
     if mode == "warn" {
         let n = session
             .issues()

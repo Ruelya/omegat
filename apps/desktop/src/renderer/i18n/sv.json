@@ -221,5 +221,8 @@
   "issuesFile": "Kontrollera problem för aktuellt dokument",
   "lastChanges": "Senaste ändringar…",
   "checkUpdates": "Sök efter uppdateringar…",
-  "accessConfig": "Öppna konfigurationsmappen"
+  "accessConfig": "Öppna konfigurationsmappen",
+  "clearRecent": "Töm meny",
+  "restart": "Restart",
+  "exportSelection": "Exportera markering"
 }

@@ -221,5 +221,8 @@
   "issuesFile": "检查当前文件问题",
   "lastChanges": "最近变更...",
   "checkUpdates": "检查更新...",
-  "accessConfig": "访问配置文件夹"
+  "accessConfig": "访问配置文件夹",
+  "clearRecent": "清除最近项目",
+  "restart": "重新启动",
+  "exportSelection": "导出选区"
 }

@@ -48,13 +48,14 @@ pub struct MtCreds {
 }
 
 impl MtCreds {
-    pub fn from_extra(extra: &std::collections::HashMap<String, String>) -> Self {
+    pub fn from_prefs(prefs: &crate::prefs::Preferences) -> Self {
+        let keys = &prefs.mt_keys;
         Self {
-            google_key: extra.get("mt.google.key").cloned().or_else(|| std::env::var("OMEGAT_GOOGLE_KEY").ok()),
-            ibm_login: extra.get("mt.ibmwatson.login").cloned().or_else(|| extra.get("mt.ibmwatson.key").cloned()),
-            ibm_password: extra.get("mt.ibmwatson.password").cloned(),
-            yandex_iam: extra.get("mt.yandex.key").cloned().or_else(|| std::env::var("OMEGAT_YANDEX_IAM").ok()),
-            mymemory_key: extra.get("mt.mymemory.key").cloned(),
+            google_key: keys.get("google").cloned().or_else(|| std::env::var("OMEGAT_GOOGLE_KEY").ok()),
+            ibm_login: keys.get("ibmwatson.login").cloned().or_else(|| keys.get("ibmwatson").cloned()),
+            ibm_password: keys.get("ibmwatson.password").cloned(),
+            yandex_iam: keys.get("yandex").cloned().or_else(|| std::env::var("OMEGAT_YANDEX_IAM").ok()),
+            mymemory_key: keys.get("mymemory").cloned(),
         }
     }
 }

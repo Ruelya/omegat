@@ -221,5 +221,8 @@
   "issuesFile": "Huidig document controleren op problemen",
   "lastChanges": "Laatste wijzigingen…",
   "checkUpdates": "Controleren op updates…",
-  "accessConfig": "Ga naar map voor configuratie"
+  "accessConfig": "Ga naar map voor configuratie",
+  "clearRecent": "Menu opschonen",
+  "restart": "Opnieuw starten",
+  "exportSelection": "Selectie exporteren"
 }

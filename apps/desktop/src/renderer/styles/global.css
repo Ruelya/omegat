@@ -164,8 +164,27 @@ input, textarea, select {
   white-space: pre-wrap;
 }
 .src { background: var(--bg-sunken); color: var(--ink-soft); }
-.tgt { background: var(--bg-raised); }
-.tgt[contenteditable="true"]:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.tgt { background: var(--bg-raised); color: var(--color-target, inherit); }
+.src { color: var(--color-source, var(--ink-soft)); }
+.tgt.editor-surface:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.editor-surface { position: relative; min-height: 8em; cursor: text; }
+.editor-surface .caret {
+  display: inline-block;
+  width: 1px;
+  height: 1.1em;
+  background: var(--ink);
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.ime-proxy {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.is-selected-source { outline: 1px dashed var(--accent); }
 .status {
   display: flex; gap: 16px; padding: 6px 12px;
   border-top: 1px solid var(--line);

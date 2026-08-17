@@ -221,5 +221,8 @@
   "issuesFile": "Geçerli Belge için Sorunları Kontrol Et",
   "lastChanges": "Son Değişiklikler...",
   "checkUpdates": "Güncellemeleri Denetle",
-  "accessConfig": "Yapılandırma Klasörüne Eriş"
+  "accessConfig": "Yapılandırma Klasörüne Eriş",
+  "clearRecent": "Menüyü Temizle",
+  "restart": "Restart",
+  "exportSelection": "Seçimi Dışa Aktar"
 }

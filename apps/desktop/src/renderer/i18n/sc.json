@@ -221,5 +221,8 @@
   "issuesFile": "Verìfica problemas pro su documentu atuale",
   "lastChanges": "Ùrtimas modificatziones...",
   "checkUpdates": "Controlla atualizatziones...",
-  "accessConfig": "Atzede a sa cartella de cunfiguratzione"
+  "accessConfig": "Atzede a sa cartella de cunfiguratzione",
+  "clearRecent": "Lìmpia su menù",
+  "restart": "Restart",
+  "exportSelection": "Esporta sa seletzione"
 }

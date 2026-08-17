@@ -18,9 +18,11 @@ export function FilesWindow() {
           }}
         >
           {f}
-          <div className="meta">
-            {app.entries.filter((x) => x.file === f && x.translated).length}/{app.entries.filter((x) => x.file === f).length}
-          </div>
+          {app.prefs?.project_files_show_translation_progress !== false && (
+            <div className="meta">
+              {app.entries.filter((x) => x.file === f && x.translated).length}/{app.entries.filter((x) => x.file === f).length}
+            </div>
+          )}
         </div>
       ))}
       <button type="button" onClick={() => app.openWindow("files", false)}>{t("cancel")}</button>

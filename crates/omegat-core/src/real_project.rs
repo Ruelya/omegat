@@ -90,9 +90,9 @@ impl ProjectSession {
         let tmx = ProjectTmx::load(&props.save_tmx_path(), &props.source_lang, &props.target_lang)?;
         let external_tm = crate::external_tm::load_external_tm(&props);
         let glossary = glossary::load_glossary(&props.glossary_file);
-        let backend = match prefs.extra.get("spell_backend").map(|s| s.as_str()) {
-            Some("lucene") => crate::spell::SpellBackend::Lucene,
-            Some("morfologik") => crate::spell::SpellBackend::Morfologik,
+        let backend = match prefs.spell_backend.as_str() {
+            "lucene" => crate::spell::SpellBackend::Lucene,
+            "morfologik" => crate::spell::SpellBackend::Morfologik,
             _ => crate::spell::SpellBackend::Hunspell,
         };
         let spell = SpellChecker::load_backend(&props.root, &prefs.config_dir, backend);
@@ -123,23 +123,19 @@ impl ProjectSession {
     }
 
     fn filter_ctx(&self) -> FilterContext {
-        let mut options = HashMap::new();
-        for (k, v) in &self.prefs.extra {
-            if let Some(rest) = k.strip_prefix("filter.") {
-                if let Some((_, opt)) = rest.split_once('.') {
-                    options.insert(opt.to_string(), v.clone());
-                }
-            } else if matches!(
-                k.as_str(),
-                "segmentOn" | "skipHeader" | "monolingualFormat" | "remove_tags" | "preserve_spaces"
-            ) {
+        let mut options = self.prefs.filter_context.clone();
+        if self.prefs.remove_tags {
+            options.insert("remove_tags".into(), "true".into());
+        }
+        for opts in self.prefs.filter_options.values() {
+            for (k, v) in opts {
                 options.insert(k.clone(), v.clone());
             }
         }
         FilterContext {
             source_lang: self.props.source_lang.clone(),
             target_lang: self.props.target_lang.clone(),
-            remove_tags: self.props.remove_tags,
+            remove_tags: self.props.remove_tags || self.prefs.remove_tags,
             options,
         }
     }
@@ -160,10 +156,10 @@ impl ProjectSession {
             let parsed = filter.parse(&file, &ctx)?;
             let nsegs = parsed.segments.len();
             for (i, seg) in parsed.segments.into_iter().enumerate() {
-                let custom = self.prefs.extra.get("srx_path").and_then(|p| {
-                    let raw = std::fs::read_to_string(p).ok()?;
-                    Some(crate::segment::parse_srx(&raw, &self.props.source_lang))
-                });
+                let custom = (!self.prefs.srx_path.is_empty())
+                    .then(|| std::fs::read_to_string(&self.prefs.srx_path).ok())
+                    .flatten()
+                    .map(|raw| crate::segment::parse_srx(&raw, &self.props.source_lang));
                 for sentence in crate::segment::split_sentences_lang(
                     &seg.source,
                     self.props.sentence_seg,
@@ -281,12 +277,7 @@ impl ProjectSession {
             return Err(CoreError::OptimisticLock(params.index));
         }
         if !params.translation.trim().is_empty() {
-            let mode = self
-                .prefs
-                .extra
-                .get("tag_validation")
-                .map(|s| s.as_str())
-                .unwrap_or("");
+            let mode = self.prefs.tag_validation.as_str();
             if mode == "abort" || mode == "warn" {
                 let errs = tags::validate(&e.source, &params.translation);
                 if !errs.is_empty() && mode == "abort" {
@@ -336,8 +327,8 @@ impl ProjectSession {
         let Some(e) = self.entries.get(index) else {
             return vec![];
         };
-        let ignore_case = self.prefs.extra.get("glossary_ignore_case").map(|s| s != "false").unwrap_or(true);
-        let use_stem = self.prefs.extra.get("glossary_stem").map(|s| s != "false").unwrap_or(true);
+        let ignore_case = self.prefs.glossary_ignore_case;
+        let use_stem = self.prefs.glossary_stem;
         glossary::lookup_opts_lang(
             &self.glossary,
             &e.source,
@@ -348,7 +339,7 @@ impl ProjectSession {
     }
 
     pub fn compile(&mut self, source_pattern: Option<&str>) -> Result<usize> {
-        if self.prefs.extra.get("tag_validation").map(|s| s.as_str()) == Some("abort") {
+        if self.prefs.tag_validation == "abort" {
             let bad = self
                 .issues()
                 .iter()
@@ -458,7 +449,7 @@ impl ProjectSession {
 
     pub fn issues(&self) -> Vec<IssueDto> {
         let mut all = Vec::new();
-        let lt = self.prefs.extra.get("languagetool_url").map(|s| s.as_str());
+        let lt = (!self.prefs.languagetool_url.is_empty()).then_some(self.prefs.languagetool_url.as_str());
         if lt.filter(|s| !s.is_empty()).is_none() {
             all.push(IssueDto {
                 kind: "languagetool".into(),
@@ -516,7 +507,7 @@ impl ProjectSession {
             &self.props.source_lang,
             &self.props.target_lang,
             &self.mt_cache,
-            &mt::MtCreds::from_extra(&self.prefs.extra),
+            &mt::MtCreds::from_prefs(&self.prefs),
         )
         .map_err(CoreError::Filter)
     }
@@ -526,11 +517,9 @@ impl ProjectSession {
     }
 
     pub fn completer(&self, index: usize, prefix: &str, draft: Option<&str>) -> Vec<CompleterItemDto> {
-        let extra = &self.prefs.extra;
-        let on = |k: &str, default: bool| extra.get(k).map(|s| s != "false").unwrap_or(default);
         let mut items = Vec::new();
         if let Some(e) = self.entries.get(index) {
-            if on("completer_glossary", true) {
+            if self.prefs.completer_glossary {
                 for g in glossary::lookup(&self.glossary, &e.source) {
                     if g.target.to_lowercase().starts_with(&prefix.to_lowercase()) || prefix.is_empty() {
                         items.push(CompleterItemDto {
@@ -541,7 +530,7 @@ impl ProjectSession {
                     }
                 }
             }
-            if on("completer_tags", true) {
+            if self.prefs.completer_tags {
                 for t in tags::extract_tags(&e.source) {
                     items.push(CompleterItemDto {
                         kind: "tag".into(),
@@ -550,24 +539,21 @@ impl ProjectSession {
                     });
                 }
             }
-            if on("completer_autotext", true) {
-                if let Some(at) = extra.get("autotext") {
-                    for pair in at.split(';') {
-                        if let Some((k, v)) = pair.split_once('=') {
-                            if k.starts_with(prefix) || prefix.is_empty() {
-                                items.push(CompleterItemDto {
-                                    kind: "autotext".into(),
-                                    text: v.to_string(),
-                                    detail: k.to_string(),
-                                });
-                            }
+            if self.prefs.completer_autotext && !self.prefs.autotext.is_empty() {
+                for pair in self.prefs.autotext.split(';') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        if k.starts_with(prefix) || prefix.is_empty() {
+                            items.push(CompleterItemDto {
+                                kind: "autotext".into(),
+                                text: v.to_string(),
+                                detail: k.to_string(),
+                            });
                         }
                     }
                 }
             }
-            if on("completer_chartable", true) {
-                let table = extra.get("chartable").cloned().unwrap_or_else(|| "©®™…—–«»\u{00a0}".into());
-                for ch in table.chars() {
+            if self.prefs.completer_chartable {
+                for ch in self.prefs.chartable.chars() {
                     items.push(CompleterItemDto {
                         kind: "charset".into(),
                         text: ch.to_string(),
@@ -577,10 +563,10 @@ impl ProjectSession {
             }
         }
         let translations: Vec<&str> = self.entries.iter().map(|e| e.translation.as_str()).collect();
-        if on("history_completion", true) {
+        if self.prefs.history_completion {
             items.extend(crate::completer::history_complete(&translations, prefix));
         }
-        if on("history_prediction", true) {
+        if self.prefs.history_prediction {
             let model = crate::completer::train_predictor(&translations);
             items.extend(crate::completer::history_predict(&model, draft.unwrap_or(prefix)));
         }

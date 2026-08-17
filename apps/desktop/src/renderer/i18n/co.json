@@ -221,5 +221,8 @@
   "issuesFile": "Verificà i penseri per u schedariu attuale",
   "lastChanges": "Ultimi cambiamenti…",
   "checkUpdates": "Cuntrollà e nove versioni…",
-  "accessConfig": "Accede à u cartulare di cunfigurazione"
+  "accessConfig": "Accede à u cartulare di cunfigurazione",
+  "clearRecent": "Squassà a lista di i prughjetti recenti",
+  "restart": "Rilancià",
+  "exportSelection": "Espurtà a selezzione"
 }

@@ -42,7 +42,14 @@ impl App {
             "sys.plugins" => Ok(serde_json::to_value(self.plugins.list(None)).unwrap()),
             "prefs.get" => Ok(serde_json::to_value(&self.prefs).unwrap()),
             "prefs.set" => {
-                if let Ok(p) = serde_json::from_value::<Preferences>(params) {
+                if let Ok(mut p) = serde_json::from_value::<Preferences>(params) {
+                    if p.config_dir.as_os_str().is_empty() {
+                        p.config_dir = self.prefs.config_dir.clone();
+                    }
+                    p.normalize();
+                    if let Some(s) = self.session.as_mut() {
+                        s.prefs = p.clone();
+                    }
                     self.prefs = p;
                     let _ = self.prefs.save();
                 }
@@ -161,12 +168,16 @@ impl App {
             }
             "languagetool.check" => {
                 let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                let url = self.prefs.extra.get("languagetool_url").cloned();
+                let url = (!self.prefs.languagetool_url.is_empty()).then(|| self.prefs.languagetool_url.clone());
                 let lang = self.session().map(|s| s.props.target_lang.clone()).unwrap_or_else(|_| "en".into());
                 Ok(serde_json::to_value(omegat_core::languagetool::check(url.as_deref(), text, &lang, 0, "")).unwrap())
             }
             "finder.run" => {
-                let xml = params.get("xml").and_then(|v| v.as_str()).or_else(|| self.prefs.extra.get("finder_xml").map(|s| s.as_str())).unwrap_or("");
+                let xml = params
+                    .get("xml")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| (!self.prefs.finder_xml.is_empty()).then_some(self.prefs.finder_xml.as_str()))
+                    .unwrap_or("");
                 let sel = params.get("selection").and_then(|v| v.as_str()).unwrap_or("");
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or(sel);
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
@@ -238,15 +249,59 @@ impl App {
                     "masks": f.default_masks(),
                     "phase": f.phase(),
                     "options": {
-                        "remove_tags": self.prefs.extra.get("remove_tags").cloned().unwrap_or_else(|| "false".into()),
-                        "preserve_spaces": self.prefs.extra.get(&format!("filter.{id}.preserve_spaces")).cloned().unwrap_or_else(|| "true".into()),
-                        "file_context": self.prefs.extra.get(&format!("filter.{id}.file_context")).cloned().unwrap_or_default(),
+                        "remove_tags": if self.prefs.remove_tags { "true" } else { "false" },
+                        "preserve_spaces": self.prefs.filter_option(id, "preserve_spaces").unwrap_or("true"),
+                        "file_context": self.prefs.filter_option(id, "file_context").unwrap_or(""),
                     }
                 }))
             }
             "script.slots" => {
-                let root = params.get("root").and_then(|v| v.as_str()).unwrap_or("scripts");
+                let root = params
+                    .get("root")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(self.prefs.script_dir.as_str());
                 Ok(json!({ "slots": omegat_script::list_slots(std::path::Path::new(root)) }))
+            }
+            "script.slot" => {
+                let slot = params.get("slot").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+                let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let root = std::path::Path::new(&self.prefs.script_dir);
+                let source = self
+                    .prefs
+                    .script_slots
+                    .get((slot as usize).saturating_sub(1))
+                    .cloned()
+                    .unwrap_or_default();
+                let src = if !source.is_empty() {
+                    source
+                } else {
+                    let path = root.join(format!("slot{slot:02}.js"));
+                    std::fs::read_to_string(path).unwrap_or_else(|_| "null".into())
+                };
+                self.dispatch("script.run", json!({ "source": src, "index": index }))
+            }
+            "project.import" => {
+                let files = params
+                    .get("files")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let dest = self.session()?.props.source_dir.clone();
+                std::fs::create_dir_all(&dest).map_err(|e| (error_code::IO, e.to_string()))?;
+                let mut copied = 0usize;
+                for f in files {
+                    let Some(src) = f.as_str() else { continue };
+                    let name = std::path::Path::new(src)
+                        .file_name()
+                        .unwrap_or_default();
+                    if name.is_empty() {
+                        continue;
+                    }
+                    std::fs::copy(src, dest.join(name)).map_err(|e| (error_code::IO, e.to_string()))?;
+                    copied += 1;
+                }
+                self.session_mut()?.reload().map_err(core_err)?;
+                Ok(json!({ "copied": copied }))
             }
             "filters.list" => {
                 let list: Vec<FilterInfoDto> = self

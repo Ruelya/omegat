@@ -1,4 +1,4 @@
-import type { SearchParams } from "./types";
+import type { SearchParams, SearchWindowPrefs } from "./types";
 
 export type SearchForm = {
   query: string;
@@ -54,38 +54,38 @@ export function toSearchParams(form: SearchForm, opts?: { preview?: boolean; wit
   };
 }
 
-export function persistSearchForm(form: SearchForm): Record<string, string> {
+export function persistSearchForm(form: SearchForm): SearchWindowPrefs {
   return {
-    search_window_search_type: form.searchType,
-    search_window_case_sensitive: String(form.caseSensitive),
-    search_window_whole_words: String(form.wholeWord),
-    search_window_search_source: String(form.source),
-    search_window_search_translation: String(form.translation),
-    search_window_search_notes: String(form.notes),
-    search_window_search_comments: String(form.comments),
-    search_window_replace_untranslated: String(form.untranslated),
-    search_window_author_name: form.author,
-    search_window_date_from_value: form.dateFrom,
-    search_window_date_to_value: form.dateTo,
+    search_type: form.searchType,
+    case_sensitive: form.caseSensitive,
+    whole_word: form.wholeWord,
+    source: form.source,
+    translation: form.translation,
+    notes: form.notes,
+    comments: form.comments,
+    untranslated: form.untranslated,
+    author: form.author,
+    date_from: form.dateFrom,
+    date_to: form.dateTo,
   };
 }
 
-export function restoreSearchForm(extra: Record<string, string> | undefined): SearchForm {
+export function restoreSearchForm(saved: SearchWindowPrefs | undefined): SearchForm {
   const base = defaultSearchForm();
-  if (!extra) return base;
-  const type = extra.search_window_search_type;
+  if (!saved) return base;
+  const type = saved.search_type;
   return {
     ...base,
     searchType: type === "keyword" || type === "regex" ? type : "exact",
-    caseSensitive: extra.search_window_case_sensitive === "true",
-    wholeWord: extra.search_window_whole_words === "true",
-    source: extra.search_window_search_source !== "false",
-    translation: extra.search_window_search_translation !== "false",
-    notes: extra.search_window_search_notes === "true",
-    comments: extra.search_window_search_comments === "true",
-    untranslated: extra.search_window_replace_untranslated === "true",
-    author: extra.search_window_author_name ?? "",
-    dateFrom: extra.search_window_date_from_value ?? "",
-    dateTo: extra.search_window_date_to_value ?? "",
+    caseSensitive: saved.case_sensitive,
+    wholeWord: saved.whole_word,
+    source: saved.source,
+    translation: saved.translation,
+    notes: saved.notes,
+    comments: saved.comments,
+    untranslated: saved.untranslated,
+    author: saved.author ?? "",
+    dateFrom: saved.date_from ?? "",
+    dateTo: saved.date_to ?? "",
   };
 }

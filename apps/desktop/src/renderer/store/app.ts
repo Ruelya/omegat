@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import {
-  extraFromMarks,
-  marksFromExtra,
+  marksFromPrefs,
   nextMissingTag,
+  prefsFromMarks,
   pushUndo,
   redoDraft,
   switchCase,
@@ -10,7 +10,8 @@ import {
   type HistoryStacks,
   type ViewMarks,
 } from "../lib/editor-doc";
-import { DEFAULT_DOCK_LAYOUT, layoutFromPrefs, serializeDockLayout, type DockLayout } from "../lib/layout";
+import { DEFAULT_DOCK_LAYOUT, layoutFromPrefs, layoutToPrefs, serializeDockLayout, type DockLayout } from "../lib/layout";
+import { applyColorVars, defaultPreferences } from "../lib/preferences";
 import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchForm } from "../lib/search-params";
 import type {
   CompleterItemDto,
@@ -82,6 +83,7 @@ export type AppState = {
   navBack: number[];
   navForward: number[];
   selectedMatch: number;
+  selectedText: string;
   marks: ViewMarks;
   layout: DockLayout;
   windows: Partial<Record<WindowId, boolean>>;
@@ -108,7 +110,7 @@ export type AppState = {
   select: (index: number, recordHistory?: boolean) => Promise<void>;
   setDraft: (v: string) => void;
   setNote: (v: string) => void;
-  commit: () => Promise<void>;
+  commit: (opts?: { default_translation?: boolean }) => Promise<void>;
   save: () => Promise<void>;
   compile: (file?: string) => Promise<void>;
   insertMatch: (n?: number, mode?: "overwrite" | "insert") => void;
@@ -122,7 +124,16 @@ export type AppState = {
   registerEmpty: () => Promise<void>;
   registerIdentical: () => Promise<void>;
   registerUntranslated: () => Promise<void>;
-  jump: (kind: "next" | "prev" | "untranslated" | "translated" | "unique" | "note" | "auto" | "enforce" | "number", n?: number) => Promise<void>;
+  jump: (kind: "next" | "prev" | "untranslated" | "translated" | "unique" | "note" | "auto" | "enforce" | "number", n?: number, dir?: 1 | -1) => Promise<void>;
+  selectSource: () => void;
+  exportSelection: () => Promise<void>;
+  importFiles: () => Promise<void>;
+  clearRecent: () => void;
+  exitApp: () => Promise<void>;
+  restartApp: () => Promise<void>;
+  runScriptSlot: (slot: number) => Promise<void>;
+  gotoMatchSource: () => Promise<void>;
+  insertAllTags: () => void;
   historyBack: () => Promise<void>;
   historyForward: () => Promise<void>;
   toggleMark: (key: keyof ViewMarks) => Promise<void>;
@@ -136,7 +147,7 @@ export type AppState = {
   loadFilters: () => Promise<void>;
   loadPrefs: () => Promise<void>;
   savePrefs: (p: Preferences) => Promise<void>;
-  patchPrefs: (patch: Partial<Preferences>, extra?: Record<string, string>) => Promise<void>;
+  patchPrefs: (patch: Partial<Preferences>) => Promise<void>;
   runSearch: (preview?: boolean) => Promise<SearchHitDto[]>;
   replaceAll: () => Promise<number>;
   teamSync: () => Promise<void>;
@@ -177,7 +188,8 @@ const initialState = {
   navBack: [] as number[],
   navForward: [] as number[],
   selectedMatch: 0,
-  marks: marksFromExtra({}),
+  selectedText: "",
+  marks: marksFromPrefs(undefined),
   layout: { ...DEFAULT_DOCK_LAYOUT },
   windows: { ...emptyWindows },
   searchForm: defaultSearchForm(),
@@ -204,27 +216,29 @@ export const useApp = create<AppState>((set, get) => ({
     return loc;
   })(),
   applyPrefs: (p) => {
-    const extra = p.extra ?? {};
-    applyDocumentLocale(p.locale || get().locale);
-    void window.omegat?.setMenuLocale?.(p.locale || get().locale);
-    const theme = (p.theme === "dark" ? "dark" : "light") as "light" | "dark";
+    const prefs = defaultPreferences(p);
+    applyDocumentLocale(prefs.locale || get().locale);
+    void window.omegat?.setMenuLocale?.(prefs.locale || get().locale);
+    const theme = (prefs.theme === "dark" ? "dark" : "light") as "light" | "dark";
     if (typeof document !== "undefined") {
       document.documentElement.dataset.theme = theme;
-      document.documentElement.style.setProperty("--font", `"${p.font_ui || "IBM Plex Sans"}", sans-serif`);
-      document.documentElement.style.setProperty("--font-editor", `"${p.font_editor || "IBM Plex Sans"}", sans-serif`);
+      document.documentElement.style.setProperty("--font", `"${prefs.font_ui || "IBM Plex Sans"}", sans-serif`);
+      document.documentElement.style.setProperty("--font-editor", `"${prefs.font_editor || "IBM Plex Sans"}", sans-serif`);
     }
+    applyColorVars(prefs.colors);
     set({
-      prefs: p,
+      prefs,
       theme,
-      locale: p.locale || get().locale,
-      marks: marksFromExtra(extra),
-      layout: layoutFromPrefs(extra, readLocal("omegat.layout")),
-      searchForm: { ...restoreSearchForm(extra), query: get().searchForm.query, replace: get().searchForm.replace },
-      filterUntranslated: extra.filter_untranslated === "true",
-      completerAuto: extra.completer_auto !== "false",
-      historyCompletion: extra.history_completion !== "false",
-      historyPrediction: extra.history_prediction !== "false",
-      mtAutoFetch: extra.mt_auto_fetch === "true",
+      locale: prefs.locale || get().locale,
+      firstRun: !prefs.first_time_wizard_done,
+      marks: marksFromPrefs(prefs.marks),
+      layout: layoutFromPrefs(prefs.docking_layout, readLocal("omegat.layout")),
+      searchForm: { ...restoreSearchForm(prefs.search_window), query: get().searchForm.query, replace: get().searchForm.replace },
+      filterUntranslated: prefs.filter_untranslated,
+      completerAuto: prefs.completer_auto,
+      historyCompletion: prefs.history_completion,
+      historyPrediction: prefs.history_prediction,
+      mtAutoFetch: prefs.mt_auto_fetch,
     });
   },
   setLocale: (locale) => {
@@ -256,7 +270,11 @@ export const useApp = create<AppState>((set, get) => ({
     const rec = JSON.parse(readLocal("omegat.recent") || "[]") as string[];
     writeLocal("omegat.recent", JSON.stringify([root, ...rec.filter((r) => r !== root)].slice(0, 8)));
     writeLocal("omegat.first", "1");
+    if (get().prefs) {
+      await get().patchPrefs({ first_time_wizard_done: true });
+    }
     set({ firstRun: false });
+    if (get().prefs?.project_files_show_on_load) get().openWindow("files");
     get().logLine(`opened ${root}`);
   },
   create: async (root, sl, tl, seg) => {
@@ -304,7 +322,12 @@ export const useApp = create<AppState>((set, get) => ({
         mt = [];
       }
     }
-    const dict = await rpc<DictHitDto[]>("dict.query", { word: e.source.split(/\s+/)[0] || "" });
+    const dict = get().prefs?.dictionary_auto_search
+      ? await rpc<DictHitDto[]>("dict.query", {
+          word: e.source.split(/\s+/)[0] || "",
+          fuzzy: get().prefs?.dictionary_fuzzy_matching,
+        })
+      : [];
     let draft = e.translation;
     if (!draft && insert_best && matches[0]) draft = matches[0].translation;
     const completer = get().completerAuto
@@ -334,7 +357,12 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   queryDict: async (word) => {
-    set({ dict: await rpc<DictHitDto[]>("dict.query", { word }) });
+    set({
+      dict: await rpc<DictHitDto[]>("dict.query", {
+        word,
+        fuzzy: get().prefs?.dictionary_fuzzy_matching,
+      }),
+    });
   },
   queryCompleter: async (prefix) => {
     if (!get().completerAuto && !prefix) {
@@ -359,14 +387,10 @@ export const useApp = create<AppState>((set, get) => ({
     get().applyPrefs(prefs);
     get().logLine("saved preferences");
   },
-  patchPrefs: async (patch, extra) => {
+  patchPrefs: async (patch) => {
     const cur = get().prefs;
     if (!cur) return;
-    await get().savePrefs({
-      ...cur,
-      ...patch,
-      extra: { ...cur.extra, ...(extra ?? {}) },
-    });
+    await get().savePrefs(defaultPreferences({ ...cur, ...patch }));
   },
   setSearchForm: (patch) => set({ searchForm: { ...get().searchForm, ...patch } }),
   runSearch: async (preview = false) => {
@@ -391,7 +415,7 @@ export const useApp = create<AppState>((set, get) => ({
     });
     set({ searchHits: hits });
     if (get().prefs) {
-      void get().patchPrefs({}, persistSearchForm(form));
+      void get().patchPrefs({ search_window: persistSearchForm(form) });
     }
     return hits;
   },
@@ -453,7 +477,7 @@ export const useApp = create<AppState>((set, get) => ({
       teamConflicts: r.conflicts ?? [],
       teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
     });
-    await get().patchPrefs({}, { team_conflict_resolution: side });
+    await get().patchPrefs({ team_conflict_resolution: side });
   },
   learnWord: async (word) => {
     await rpc("spell.learn", { word });
@@ -508,7 +532,71 @@ export const useApp = create<AppState>((set, get) => ({
     const tag = e ? nextMissingTag(e.source, get().draft) : null;
     if (tag) get().setDraft(get().draft + tag);
   },
+  insertAllTags: () => {
+    const e = get().entries[get().index];
+    if (!e) return;
+    let draft = get().draft;
+    let tag = nextMissingTag(e.source, draft);
+    while (tag) {
+      draft += tag;
+      tag = nextMissingTag(e.source, draft);
+    }
+    get().setDraft(draft);
+  },
   insertChar: (ch) => get().setDraft(get().draft + ch),
+  selectSource: () => {
+    const src = get().entries[get().index]?.source ?? "";
+    set({ selectedText: src, focusPanel: "editor" });
+  },
+  exportSelection: async () => {
+    const text = get().selectedText || get().draft;
+    if (window.omegat?.saveText) {
+      await window.omegat.saveText("selection.txt", text);
+    }
+    get().logLine(`exported selection (${text.length} chars)`);
+  },
+  importFiles: async () => {
+    const files = (await window.omegat?.pickFiles?.()) ?? [];
+    if (!files.length) return;
+    await rpc("project.import", { files });
+    await get().reloadProject();
+    get().logLine(`imported ${files.length} file(s)`);
+  },
+  clearRecent: () => {
+    writeLocal("omegat.recent", "[]");
+    get().logLine("cleared recent projects");
+  },
+  exitApp: async () => {
+    if (get().prefs?.always_confirm_quit) {
+      const ok = typeof window !== "undefined" ? window.confirm("Quit OmegaT?") : true;
+      if (!ok) return;
+    }
+    await window.omegat?.quit?.();
+  },
+  restartApp: async () => {
+    await window.omegat?.relaunch?.();
+  },
+  runScriptSlot: async (slot) => {
+    const src = get().prefs?.script_slots[slot - 1];
+    if (src) {
+      await rpc("script.run", { source: src, index: get().index });
+    } else {
+      await rpc("script.slot", { slot, index: get().index });
+    }
+    get().logLine(`ran script slot ${slot}`);
+    try {
+      const entries = await rpc<EntryDto[]>("entry.list");
+      set({ entries });
+    } catch {
+      /* ignore */
+    }
+  },
+  gotoMatchSource: async () => {
+    const m = get().matches[get().selectedMatch];
+    if (!m) return;
+    const i = get().entries.findIndex((e) => e.source === m.source);
+    if (i >= 0) await get().select(i);
+  },
   registerEmpty: async () => {
     get().setDraft("");
     await get().commit();
@@ -521,7 +609,7 @@ export const useApp = create<AppState>((set, get) => ({
     get().setDraft("");
     await get().commit();
   },
-  commit: async () => {
+  commit: async (opts) => {
     const { index, entries, draft, note } = get();
     const e = entries[index];
     if (!e) return;
@@ -530,7 +618,7 @@ export const useApp = create<AppState>((set, get) => ({
       translation: draft,
       note,
       revision: e.revision,
-      default_translation: true,
+      default_translation: opts?.default_translation ?? true,
     });
     const next = entries.map((x, i) => (i === index ? updated : x));
     set({ entries: next });
@@ -547,28 +635,29 @@ export const useApp = create<AppState>((set, get) => ({
     set({ stats: await rpc<StatsDto>("stats.get") });
     get().logLine(file ? `compiled ${file}` : "compiled project");
   },
-  jump: async (kind, n) => {
+  jump: async (kind, n, dir = 1) => {
     const { entries, index } = get();
     const visible = get().filterUntranslated ? entries.filter((e) => !e.translated) : entries;
-    const findFrom = (start: number, pred: (e: EntryDto) => boolean, dir: 1 | -1) => {
-      for (let i = start; i >= 0 && i < entries.length; i += dir) {
+    const findFrom = (start: number, pred: (e: EntryDto) => boolean, step: 1 | -1) => {
+      for (let i = start; i >= 0 && i < entries.length; i += step) {
         if (pred(entries[i]!)) return i;
       }
       return -1;
     };
+    const start = dir === 1 ? index + 1 : index - 1;
     let next = index;
     if (kind === "next") next = Math.min(index + 1, entries.length - 1);
     else if (kind === "prev") next = Math.max(0, index - 1);
     else if (kind === "number" && n != null) next = Math.max(0, Math.min(entries.length - 1, n - 1));
-    else if (kind === "untranslated") next = findFrom(index + 1, (e) => !e.translated, 1);
-    else if (kind === "translated") next = findFrom(index + 1, (e) => e.translated, 1);
+    else if (kind === "untranslated") next = findFrom(start, (e) => !e.translated, dir);
+    else if (kind === "translated") next = findFrom(start, (e) => e.translated, dir);
     else if (kind === "unique") {
       const counts = new Map<string, number>();
       entries.forEach((e) => counts.set(e.source, (counts.get(e.source) ?? 0) + 1));
-      next = findFrom(index + 1, (e) => (counts.get(e.source) ?? 0) === 1, 1);
-    } else if (kind === "note") next = findFrom(index + 1, (e) => Boolean(e.note), 1);
-    else if (kind === "auto") next = findFrom(index + 1, (e) => e.properties.some(([k, v]) => k === "tm" && v === "auto"), 1);
-    else if (kind === "enforce") next = findFrom(index + 1, (e) => e.properties.some(([k, v]) => k === "tm" && v === "enforce"), 1);
+      next = findFrom(start, (e) => (counts.get(e.source) ?? 0) === 1, dir);
+    } else if (kind === "note") next = findFrom(start, (e) => Boolean(e.note), dir);
+    else if (kind === "auto") next = findFrom(start, (e) => e.properties.some(([k, v]) => k === "tm" && v === "auto"), dir);
+    else if (kind === "enforce") next = findFrom(start, (e) => e.properties.some(([k, v]) => k === "tm" && v === "enforce"), dir);
     if (next < 0 && visible[0]) next = visible[0].index;
     if (next >= 0) await get().select(next);
   },
@@ -609,19 +698,21 @@ export const useApp = create<AppState>((set, get) => ({
   },
   persistMarksAndLayout: async () => {
     const prefs = get().prefs;
-    const extra = {
-      ...(prefs?.extra ?? {}),
-      ...extraFromMarks(get().marks),
-      docking_layout: serializeDockLayout(get().layout),
-      filter_untranslated: String(get().filterUntranslated),
-      completer_auto: String(get().completerAuto),
-      history_completion: String(get().historyCompletion),
-      history_prediction: String(get().historyPrediction),
-      mt_auto_fetch: String(get().mtAutoFetch),
-    };
-    writeLocal("omegat.layout", extra.docking_layout);
+    const docking = layoutToPrefs(get().layout);
+    writeLocal("omegat.layout", serializeDockLayout(get().layout));
     if (!prefs) return;
-    await get().savePrefs({ ...prefs, extra });
+    await get().savePrefs(
+      defaultPreferences({
+        ...prefs,
+        marks: prefsFromMarks(get().marks),
+        docking_layout: docking,
+        filter_untranslated: get().filterUntranslated,
+        completer_auto: get().completerAuto,
+        history_completion: get().historyCompletion,
+        history_prediction: get().historyPrediction,
+        mt_auto_fetch: get().mtAutoFetch,
+      }),
+    );
   },
   toggleTheme: () => {
     const theme = get().theme === "light" ? "dark" : "light";

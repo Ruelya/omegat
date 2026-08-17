@@ -151,9 +151,16 @@ export function FiltersWindow() {
             <label key={k}>
               {k}
               <input
-                defaultValue={v}
+                defaultValue={app.prefs?.filter_options[opts.id]?.[k] ?? v}
                 onBlur={(e) => {
-                  void app.patchPrefs({}, { [`filter.${opts.id}.${k}`]: e.target.value });
+                  const prefs = useApp.getState().prefs;
+                  if (!prefs) return;
+                  void app.patchPrefs({
+                    filter_options: {
+                      ...prefs.filter_options,
+                      [opts.id]: { ...prefs.filter_options[opts.id], [k]: e.target.value },
+                    },
+                  });
                 }}
               />
             </label>
@@ -166,10 +173,10 @@ export function FiltersWindow() {
 }
 
 export function SegmentationWindow() {
-  const extra = useApp((s) => s.prefs?.extra ?? {});
+  const prefs = useApp((s) => s.prefs);
   const patch = useApp((s) => s.patchPrefs);
-  const [path, setPath] = useState(extra.srx_path || "fixtures/srx/defaultRules.srx");
-  const [xml, setXml] = useState(extra.srx_xml || "");
+  const [path, setPath] = useState(prefs?.srx_path || "fixtures/srx/defaultRules.srx");
+  const [xml, setXml] = useState(prefs?.srx_xml || "");
   return (
     <Modal id="segmentation" title={t("segmentation")} wide>
       <div className="form">
@@ -181,7 +188,7 @@ export function SegmentationWindow() {
         <button
           type="button"
           className="primary"
-          onClick={() => void patch({}, { srx_path: path, srx_xml: xml })}
+          onClick={() => void patch({ srx_path: path, srx_xml: xml })}
         >
           {t("save")}
         </button>
@@ -202,7 +209,7 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 export function ShortcutsWindow() {
-  const extra = useApp((s) => s.prefs?.extra ?? {});
+  const prefs = useApp((s) => s.prefs);
   const patch = useApp((s) => s.patchPrefs);
   return (
     <Modal id="shortcuts" title={t("shortcuts")} wide>
@@ -213,8 +220,12 @@ export function ShortcutsWindow() {
               <td>{id}</td>
               <td>
                 <input
-                  defaultValue={extra[`shortcut.${id}`] || def}
-                  onBlur={(e) => void patch({}, { [`shortcut.${id}`]: e.target.value })}
+                  defaultValue={prefs?.shortcuts[id] || def}
+                  onBlur={(e) => {
+                    const cur = useApp.getState().prefs;
+                    if (!cur) return;
+                    void patch({ shortcuts: { ...cur.shortcuts, [id]: e.target.value } });
+                  }}
                 />
               </td>
             </tr>

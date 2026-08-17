@@ -12,33 +12,37 @@ import { Split } from "./Splitter";
 
 export function WorkspaceDocks() {
   const layout = useApp((s) => s.layout);
-  return (
-    <div className="workspace-docks">
-      <Split axis="v" ratio={layout.left} field="left">
-        <Split axis="h" ratio={layout.notes} field="notes">
-          <NotesDock />
-          <GlossaryDock />
+  const main = (
+    <Split axis="v" ratio={layout.left} field="left">
+      <Split axis="h" ratio={layout.notes} field="notes">
+        <NotesDock />
+        <GlossaryDock />
+      </Split>
+      <Split axis="v" ratio={layout.editorStack} field="editorStack">
+        <Split axis="h" ratio={layout.editorMain} field="editorMain">
+          <EditorDock />
+          <Split axis="v" ratio={layout.props} field="props">
+            <SegmentPropertiesDock />
+            <CommentsDock />
+          </Split>
         </Split>
-        <Split axis="v" ratio={layout.editorStack} field="editorStack">
-          <Split axis="h" ratio={layout.editorMain} field="editorMain">
-            <EditorDock />
-            <Split axis="v" ratio={layout.props} field="props">
-              <SegmentPropertiesDock />
-              <CommentsDock />
-            </Split>
-          </Split>
-          <Split axis="h" ratio={layout.matches} field="matches">
-            <MatchesDock />
-            <MultipleTranslationsDock />
-          </Split>
+        <Split axis="h" ratio={layout.matches} field="matches">
+          <MatchesDock />
+          <MultipleTranslationsDock />
         </Split>
       </Split>
-      {(layout.showDict || layout.showMt) && (
-        <aside className="border-docks">
-          {layout.showDict && <DictionaryDock />}
-          {layout.showMt && <MachineTranslationDock />}
-        </aside>
-      )}
+    </Split>
+  );
+  if (!layout.showDict && !layout.showMt) return <div className="workspace-docks">{main}</div>;
+  return (
+    <div className="workspace-docks">
+      <Split axis="v" ratio={layout.east} field="east">
+        {main}
+        <Split axis="h" ratio={layout.dictMt} field="dictMt">
+          {layout.showDict ? <DictionaryDock /> : <div />}
+          {layout.showMt ? <MachineTranslationDock /> : <div />}
+        </Split>
+      </Split>
     </div>
   );
 }

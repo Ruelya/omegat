@@ -7,7 +7,7 @@ import { PrefsWindow } from "./prefs/PrefsWindow";
 import { SearchWindow } from "./search/SearchWindow";
 import { useApp } from "./store/app";
 import { Welcome } from "./welcome/Welcome";
-import { AboutWindow, LicenseWindow, LogWindow } from "./windows/AboutLicenseLog";
+import { AboutWindow, ChangesWindow, LicenseWindow, LogWindow } from "./windows/AboutLicenseLog";
 import { FilesWindow, IssuesWindow } from "./windows/FilesIssues";
 import { StatsWindow } from "./windows/StatsWindows";
 import { TipOfDay } from "./windows/TipOfDay";
@@ -88,6 +88,7 @@ export function App() {
       {w.about && <AboutWindow />}
       {w.license && <LicenseWindow />}
       {w.log && <LogWindow />}
+      {w.changes && <ChangesWindow />}
       {w.tip && <TipOfDay />}
       {w.align && <AlignWindow />}
       {w.team && <TeamWindow />}

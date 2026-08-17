@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_DOCK_LAYOUT,
   layoutFromPrefs,
+  layoutToPrefs,
   normalizeDockLayout,
   parseDockLayout,
-  serializeDockLayout,
 } from "./layout";
+import { defaultDocking } from "./preferences";
 
 describe("dock layout", () => {
   it("matches DockingDefaults.xml ratios", () => {
@@ -17,14 +18,14 @@ describe("dock layout", () => {
     expect(DEFAULT_DOCK_LAYOUT.matches).toBe(0.8);
   });
 
-  it("persists and restores from prefs.extra.docking_layout", () => {
+  it("persists and restores from typed prefs.docking_layout", () => {
     const next = normalizeDockLayout({ left: 0.33, matches: 0.55, showMt: false });
-    const raw = serializeDockLayout(next);
-    const extra = { docking_layout: raw };
-    const restored = layoutFromPrefs(extra);
+    const saved = layoutToPrefs(next);
+    const restored = layoutFromPrefs(saved);
     expect(restored.left).toBeCloseTo(0.33);
     expect(restored.matches).toBeCloseTo(0.55);
     expect(restored.showMt).toBe(false);
+    expect(layoutFromPrefs(defaultDocking()).east).toBeCloseTo(0.78);
     expect(parseDockLayout("not-json")).toEqual(DEFAULT_DOCK_LAYOUT);
   });
 });

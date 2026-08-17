@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import { buildApplicationMenu } from "./menu";
@@ -119,6 +119,23 @@ app.whenReady().then(() => {
   ipcMain.handle("pick-file", async () => {
     const r = await dialog.showOpenDialog({ properties: ["openFile"] });
     return r.canceled ? null : r.filePaths[0];
+  });
+  ipcMain.handle("pick-files", async () => {
+    const r = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
+    return r.canceled ? null : r.filePaths;
+  });
+  ipcMain.handle("save-text", async (_e, name: string, text: string) => {
+    const r = await dialog.showSaveDialog({ defaultPath: name });
+    if (r.canceled || !r.filePath) return null;
+    writeFileSync(r.filePath, text, "utf8");
+    return r.filePath;
+  });
+  ipcMain.handle("app-quit", () => {
+    app.quit();
+  });
+  ipcMain.handle("app-relaunch", () => {
+    app.relaunch();
+    app.quit();
   });
   ipcMain.handle("open-path", async (_e, path: string) => {
     if (path) await shell.openPath(path);

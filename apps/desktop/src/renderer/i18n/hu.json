@@ -221,5 +221,8 @@
   "issuesFile": "Check Issues for Current File",
   "lastChanges": "Utolsó módosítások...",
   "checkUpdates": "Check for Updates...",
-  "accessConfig": "Beállítási mappa elérése"
+  "accessConfig": "Beállítási mappa elérése",
+  "clearRecent": "Clear Recent Projects",
+  "restart": "Restart",
+  "exportSelection": "A kiválasztott rész exportálása"
 }

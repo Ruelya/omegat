@@ -221,5 +221,8 @@
   "issuesFile": "Zkontrolovat problémy v aktuálním dokumentu",
   "lastChanges": "Poslední změny...",
   "checkUpdates": "Zkontrolovat aktualizace...",
-  "accessConfig": "Zpřístupnit adresář nastavení"
+  "accessConfig": "Zpřístupnit adresář nastavení",
+  "clearRecent": "Smazat nabídku",
+  "restart": "Restart",
+  "exportSelection": "Exportovat výběr"
 }

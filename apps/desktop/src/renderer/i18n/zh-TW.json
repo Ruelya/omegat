@@ -221,5 +221,8 @@
   "issuesFile": "驗證目前文件的標籤",
   "lastChanges": "最近更新...",
   "checkUpdates": "Check for Updates...",
-  "accessConfig": "開啟設定值資料夾"
+  "accessConfig": "開啟設定值資料夾",
+  "clearRecent": "Clear Recent Projects",
+  "restart": "Restart",
+  "exportSelection": "匯出所選內容(X)"
 }

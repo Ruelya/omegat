@@ -221,5 +221,8 @@
   "issuesFile": "Sjekk problemer for gjeldende dokument",
   "lastChanges": "Siste endringer...",
   "checkUpdates": "Check for Updates...",
-  "accessConfig": "Åpne konfigurasjonsmappen"
+  "accessConfig": "Åpne konfigurasjonsmappen",
+  "clearRecent": "Clear Recent Projects",
+  "restart": "Restart",
+  "exportSelection": "Eksporter utvalg"
 }

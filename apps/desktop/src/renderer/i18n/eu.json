@@ -221,5 +221,8 @@
   "issuesFile": "Egiaztatu uneko dokumentuaren arazoak",
   "lastChanges": "Azken aldaketak...",
   "checkUpdates": "Egiaztatu bertsio berririk dagoen...",
-  "accessConfig": "Sartu konfigurazioaren karpetara"
+  "accessConfig": "Sartu konfigurazioaren karpetara",
+  "clearRecent": "Garbitu menua",
+  "restart": "Restart",
+  "exportSelection": "Esportatu hautapena"
 }

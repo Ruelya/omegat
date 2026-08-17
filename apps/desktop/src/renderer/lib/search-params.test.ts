@@ -35,12 +35,12 @@ describe("search params", () => {
     });
   });
 
-  it("round-trips preference keys used by SearchWindowController", () => {
+  it("round-trips typed SearchWindowPrefs", () => {
     const form = { ...defaultSearchForm(), notes: true, searchType: "regex" as const };
-    const extra = persistSearchForm(form);
-    expect(extra.search_window_search_notes).toBe("true");
-    expect(extra.search_window_search_type).toBe("regex");
-    const restored = restoreSearchForm(extra);
+    const saved = persistSearchForm(form);
+    expect(saved.notes).toBe(true);
+    expect(saved.search_type).toBe("regex");
+    const restored = restoreSearchForm(saved);
     expect(restored.notes).toBe(true);
     expect(restored.searchType).toBe("regex");
     expect(toSearchParams(restored).regex).toBe(true);

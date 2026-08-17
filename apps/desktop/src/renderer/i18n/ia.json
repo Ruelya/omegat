@@ -221,5 +221,8 @@
   "issuesFile": "Controla problemas pro le documento Currente",
   "lastChanges": "Ultime (Last) cambiamentos...",
   "checkUpdates": "Controlar pro actualisationes...",
-  "accessConfig": "Acceder al plica de configuration"
+  "accessConfig": "Acceder al plica de configuration",
+  "clearRecent": "Clarar le menu",
+  "restart": "Restart",
+  "exportSelection": "Exportar le selection"
 }

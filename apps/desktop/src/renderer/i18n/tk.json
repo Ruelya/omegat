@@ -221,5 +221,8 @@
   "issuesFile": "Häzirki Dokument üçin Meselelerde Barla",
   "lastChanges": "Soňky Özgerişlikler...",
   "checkUpdates": "Täzelemeleri Barla...",
-  "accessConfig": "Konfigurasýa Bukjasyny Aç"
+  "accessConfig": "Konfigurasýa Bukjasyny Aç",
+  "clearRecent": "Menýuny Arassala",
+  "restart": "Restart",
+  "exportSelection": "Seçileni Eksport Et"
 }

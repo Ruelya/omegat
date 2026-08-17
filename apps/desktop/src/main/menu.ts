@@ -30,6 +30,7 @@ export function buildApplicationMenu(win: BrowserWindow, tr: (key: string) => st
         item(win, tr("team"), "project.team-new"),
         item(win, tr("openProject"), "project.open", "CmdOrCtrl+O"),
         { label: tr("recent"), role: "recentDocuments" },
+        item(win, tr("clearRecent"), "project.clear-recent"),
         { type: "separator" },
         item(win, tr("importFiles"), "project.import"),
         item(win, tr("wiki"), "project.wiki"),
@@ -64,7 +65,8 @@ export function buildApplicationMenu(win: BrowserWindow, tr: (key: string) => st
           ],
         },
         { type: "separator" },
-        { role: "quit", label: tr("quit"), accelerator: "CmdOrCtrl+Q" },
+        item(win, tr("quit"), "project.exit", "CmdOrCtrl+Q"),
+        item(win, tr("restart"), "project.restart"),
       ],
     },
     {
@@ -79,6 +81,7 @@ export function buildApplicationMenu(win: BrowserWindow, tr: (key: string) => st
         item(win, tr("overwriteSource"), "edit.overwrite-source", "CmdOrCtrl+Shift+R"),
         item(win, tr("insertSource"), "edit.insert-source", "CmdOrCtrl+Shift+I"),
         item(win, tr("selectSource"), "edit.select-source", "CmdOrCtrl+Shift+A"),
+        item(win, tr("exportSelection"), "edit.export-selection"),
         { type: "separator" },
         item(win, tr("tagNext"), "edit.tag-next", "CmdOrCtrl+T"),
         item(win, tr("tagPainter"), "edit.tag-painter", "CmdOrCtrl+Shift+T"),
@@ -193,8 +196,9 @@ export function buildApplicationMenu(win: BrowserWindow, tr: (key: string) => st
         { type: "separator" },
         item(win, tr("aligner"), "tools.align"),
         item(win, tr("scripts"), "tools.scripts"),
-        item(win, `${tr("scripts")} 1`, "tools.script-1", "CmdOrCtrl+Alt+1"),
-        item(win, `${tr("scripts")} 2`, "tools.script-2", "CmdOrCtrl+Alt+2"),
+        ...Array.from({ length: 12 }, (_, i) =>
+          item(win, `${tr("scripts")} ${i + 1}`, `tools.script-${i + 1}`, i < 9 ? `CmdOrCtrl+Alt+${i + 1}` : undefined),
+        ),
       ],
     },
     {

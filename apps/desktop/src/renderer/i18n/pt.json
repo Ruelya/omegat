@@ -221,5 +221,8 @@
   "issuesFile": "Procurar problemas no documento actual",
   "lastChanges": "Últimas alterações...",
   "checkUpdates": "Procurar actualizações...",
-  "accessConfig": "Aceder à pasta de configuração"
+  "accessConfig": "Aceder à pasta de configuração",
+  "clearRecent": "Limpar menu",
+  "restart": "Reiniciar",
+  "exportSelection": "Exportar selecção"
 }

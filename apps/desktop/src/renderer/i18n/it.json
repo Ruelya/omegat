@@ -221,5 +221,8 @@
   "issuesFile": "Verifica problemi per il file attivo",
   "lastChanges": "Ultime modifiche...",
   "checkUpdates": "Controlla aggiornamenti...",
-  "accessConfig": "Accedi alla cartella di configurazione"
+  "accessConfig": "Accedi alla cartella di configurazione",
+  "clearRecent": "Pulisci il menu",
+  "restart": "Riavvia",
+  "exportSelection": "Esporta la selezione"
 }

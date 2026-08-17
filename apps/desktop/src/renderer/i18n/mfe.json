@@ -221,5 +221,8 @@
   "issuesFile": "Chek bann Erer pou sa Dokiman-la",
   "lastChanges": "Bann dernie modifikasion...",
   "checkUpdates": "Chek bann Update...",
-  "accessConfig": "Akse Dosie Konfigirasion"
+  "accessConfig": "Akse Dosie Konfigirasion",
+  "clearRecent": "Efas Meni",
+  "restart": "Restart",
+  "exportSelection": "Export Seleksion"
 }

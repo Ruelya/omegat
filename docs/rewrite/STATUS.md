@@ -21,7 +21,7 @@ wave’s Java goldens are green.
 | filters2: 21 Filter classes, one module each | G2 | parity |
 | filters3: XML event engine + 23 Dialect modules | G3 | parity |
 | filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | parity |
-| Desktop: document-model editor, 113 menus, 28 prefs | G5 | scaffold |
+| Desktop: document-model editor, 113 menus, 28 prefs | G5 | parity |
 | Tokenizers / spell / dictionaries / LanguageTool | G6 | scaffold |
 | 7 MT engines, External Finder, autocompleter | G7 | scaffold |
 | team2: 23 classes, rebase, conflict UI | G8 | scaffold |
@@ -39,8 +39,8 @@ Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 - `filters.options` returning a generic `extra` map
 - full-file `replacen` / first `find` as the only XML / Office / SDL write-back (**removed in G4**)
 - `filter_goldens.rs` `contains` / `must_contain` / `n >= 49` (removed in G0)
-- `Preferences.extra: HashMap` as the preference model
-- `contentEditable` as the segment editor
+- `Preferences.extra: HashMap` as the preference model (**removed in G5**)
+- `contentEditable` as the segment editor (**removed in G5**)
 - `fallback_eval("1+2")` as a script engine
 - toy `resources/languages` word lists with no `.aff`
 - match bins that record every non-exact hit as `fuzzy_85`
@@ -118,7 +118,18 @@ Accepted against Java-exported goldens (`assert_eq`) for filters4. Shared StAX e
 
 49 Java plugin ids each have a golden directory. Registration test checks directory existence, not `n >= 49`.
 
-Not this wave: document-model editor / 113 menus / 28 prefs (G5).
+Not this wave: tokenizers / spell / LT (G6).
+
+## G5 notes
+
+Accepted against desktop vitest + typecheck:
+
+- Segment editor is a document model (`parseDocument` tokens). Tags are atomic (backspace/insert cannot split `<f0>`). No `contentEditable`.
+- `Preferences.extra` is load-only migration residue (`skip_serializing`). Save writes typed fields only. Sidecar `prefs.set` calls `normalize()` and copies into the open session.
+- 28 preference controllers (25 Java view controllers + Filters + Segmentation + Shortcuts). Every typed key has a consumer test.
+- 120 Java `MainWindowMenuHandler` actions + script slots 1–12 are dispatched. Missing G4-era gaps (`project.import`, clear-recent, exit/restart, export-selection, select-source, multiple default/alt, goto prev note/auto/enforce, `help.changes`) are wired.
+- Nine docks are splitter panes (Dictionary / MT are not a pinned aside). Layout persists as `prefs.docking_layout`.
+- Search window fields persist as `prefs.search_window`.
 
 ## G0 notes
 

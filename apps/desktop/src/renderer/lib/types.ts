@@ -119,6 +119,55 @@ export type FilterOptionsDto = {
   phase: number;
   options: Record<string, string>;
 };
+export type MarkPrefs = {
+  whitespace: boolean;
+  nbsp: boolean;
+  bidi: boolean;
+  glossary: boolean;
+  translated: boolean;
+  untranslated: boolean;
+  noted: boolean;
+  non_unique: boolean;
+  auto_populated: boolean;
+  alternative: boolean;
+  paragraph_start: boolean;
+  display_source: boolean;
+  language_checker: boolean;
+  font_fallback: boolean;
+  modification: "none" | "selected" | "all";
+};
+export type ColorPrefs = {
+  source: string;
+  target: string;
+  match_hit: string;
+  glossary: string;
+  nbsp: string;
+};
+export type DockingLayoutPrefs = {
+  left: number;
+  notes: number;
+  editor_stack: number;
+  editor_main: number;
+  props: number;
+  matches: number;
+  east: number;
+  dict_mt: number;
+  show_dict: boolean;
+  show_mt: boolean;
+};
+export type SearchWindowPrefs = {
+  search_type: "exact" | "keyword" | "regex";
+  case_sensitive: boolean;
+  whole_word: boolean;
+  source: boolean;
+  translation: boolean;
+  notes: boolean;
+  comments: boolean;
+  untranslated: boolean;
+  author: string;
+  date_from: string;
+  date_to: string;
+};
 export type Preferences = {
   theme: string;
   locale: string;
@@ -128,8 +177,54 @@ export type Preferences = {
   font_ui: string;
   font_editor: string;
   mt_enabled: string[];
-  extra: Record<string, string>;
   config_dir?: string;
+  tab_advance: boolean;
+  always_confirm_quit: boolean;
+  first_time_wizard_done: boolean;
+  colors: ColorPrefs;
+  export_tm_levels: string;
+  tag_validation: string;
+  filter_untranslated: boolean;
+  matches_stemming_full: boolean;
+  marks: MarkPrefs;
+  project_files_show_translation_progress: boolean;
+  project_files_show_on_load: boolean;
+  remove_tags: boolean;
+  spell_backend: string;
+  languagetool_url: string;
+  dictionary_dir: string;
+  dictionary_fuzzy_matching: boolean;
+  dictionary_auto_search: boolean;
+  glossary_stem: boolean;
+  glossary_ignore_case: boolean;
+  glossary_not_exact_match: boolean;
+  glossary_replace_on_insert: boolean;
+  mt_auto_fetch: boolean;
+  mt_keys: Record<string, string>;
+  completer_auto: boolean;
+  history_completion: boolean;
+  history_prediction: boolean;
+  completer_glossary: boolean;
+  completer_tags: boolean;
+  completer_autotext: boolean;
+  completer_chartable: boolean;
+  autotext: string;
+  chartable: string;
+  team_passphrase: string;
+  team_conflict_resolution: string;
+  plugin_dir: string;
+  version_check_enabled: boolean;
+  secure_store_key: string;
+  srx_path: string;
+  srx_xml: string;
+  finder_xml: string;
+  script_dir: string;
+  script_slots: string[];
+  filter_options: Record<string, Record<string, string>>;
+  filter_context: Record<string, string>;
+  shortcuts: Record<string, string>;
+  docking_layout: DockingLayoutPrefs;
+  search_window: SearchWindowPrefs;
 };
 export type TeamConflict = {
   kind?: string;
@@ -161,7 +256,8 @@ export type WindowId =
   | "wiki"
   | "med"
   | "convert"
-  | "scripts";
+  | "scripts"
+  | "changes";
 
 declare global {
   interface Window {
@@ -169,6 +265,10 @@ declare global {
       rpc: (method: string, params?: unknown) => Promise<unknown>;
       pickDir: () => Promise<string | null>;
       pickFile: () => Promise<string | null>;
+      pickFiles?: () => Promise<string[] | null>;
+      saveText?: (name: string, text: string) => Promise<string | null>;
+      quit?: () => Promise<void>;
+      relaunch?: () => Promise<void>;
       openPath: (path: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       openManual?: () => Promise<void>;

@@ -221,5 +221,8 @@
   "issuesFile": "Comprova si hi ha errors en el fitxer actual",
   "lastChanges": "Darrers canvis...",
   "checkUpdates": "Comprova si hi ha actualitzacions...",
-  "accessConfig": "Obre la carpeta de configuració"
+  "accessConfig": "Obre la carpeta de configuració",
+  "clearRecent": "Esborra el menú",
+  "restart": "Reinicia",
+  "exportSelection": "Exporta la selecció"
 }

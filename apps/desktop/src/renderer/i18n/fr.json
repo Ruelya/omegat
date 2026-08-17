@@ -221,5 +221,8 @@
   "issuesFile": "Afficher les erreurs pour le fichier actuel",
   "lastChanges": "Dernières modifications…",
   "checkUpdates": "Rechercher des mises à jour…",
-  "accessConfig": "Dossier de configuration"
+  "accessConfig": "Dossier de configuration",
+  "clearRecent": "Effacer la liste",
+  "restart": "Redémarrer",
+  "exportSelection": "Exporter la sélection"
 }

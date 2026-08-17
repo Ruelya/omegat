@@ -221,5 +221,8 @@
   "issuesFile": "Probleme in aktueller Datei untersuchen",
   "lastChanges": "Letzte Änderungen...",
   "checkUpdates": "Nach Updates suchen...",
-  "accessConfig": "Konfigurationsordner öffnen"
+  "accessConfig": "Konfigurationsordner öffnen",
+  "clearRecent": "Menü leeren",
+  "restart": "Neu starten",
+  "exportSelection": "Markiertes exportieren"
 }

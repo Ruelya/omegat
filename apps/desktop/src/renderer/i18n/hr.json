@@ -221,5 +221,8 @@
   "issuesFile": "Provjeri ima li problema u tekućemu dokumentu",
   "lastChanges": "Zadnje promjene...",
   "checkUpdates": "Provjera ažuriranja...",
-  "accessConfig": "Pristup konfiguracijskoj mapi"
+  "accessConfig": "Pristup konfiguracijskoj mapi",
+  "clearRecent": "Očisti izbornik",
+  "restart": "Restart",
+  "exportSelection": "Izvezi odabrani sadržaj"
 }

@@ -30,6 +30,19 @@ https://www.gnu.org/licenses/gpl-3.0.html`}
   );
 }
 
+export function ChangesWindow() {
+  return (
+    <Modal id="changes" title={t("lastChanges")} wide>
+      <pre className="log">{`OmegaT 6.2 rewrite
+- Document-model editor (tags are atomic)
+- Typed preferences (28 controllers)
+- 120 Java menu actions + script slots 1–12
+See docs/rewrite/STATUS.md`}</pre>
+      <button type="button" onClick={() => useApp.getState().openWindow("changes", false)}>{t("cancel")}</button>
+    </Modal>
+  );
+}
+
 export function LogWindow() {
   const log = useApp((s) => s.log);
   return (

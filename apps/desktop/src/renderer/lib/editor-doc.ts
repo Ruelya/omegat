@@ -1,3 +1,5 @@
+import type { MarkPrefs } from "./types";
+
 export type DocToken = { kind: "text" | "tag"; value: string };
 
 const TAG_RE = /<\/?(?:f|x|g|ex|bx|ph|it|bpt|ept|hi|sub)\d*\/?>|<\/?[A-Za-z][\w:-]*\d*\/?>/g;
@@ -39,23 +41,89 @@ export function insertAt(text: string, insertion: string, offset = text.length):
   return text.slice(0, i) + insertion + text.slice(i);
 }
 
-export function serializeFromElement(root: HTMLElement): string {
-  let out = "";
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      out += node.textContent ?? "";
-      return;
+export function serializeTokens(tokens: DocToken[]): string {
+  return tokens.map((t) => t.value).join("");
+}
+
+export type TokenSpan = { start: number; end: number; kind: "text" | "tag"; value: string };
+
+export function tokenSpans(text: string): TokenSpan[] {
+  const tokens = parseDocument(text);
+  const spans: TokenSpan[] = [];
+  let pos = 0;
+  for (const tok of tokens) {
+    spans.push({ start: pos, end: pos + tok.value.length, kind: tok.kind, value: tok.value });
+    pos += tok.value.length;
+  }
+  return spans;
+}
+
+export function snapCaret(text: string, pos: number, bias: "before" | "after" = "after"): number {
+  const n = Math.max(0, Math.min(pos, text.length));
+  const span = tokenSpans(text).find((s) => s.start < n && n < s.end);
+  if (!span || span.kind !== "tag") return n;
+  return bias === "before" ? span.start : span.end;
+}
+
+export function expandToAtomic(text: string, start: number, end: number): { start: number; end: number } {
+  let a = Math.max(0, Math.min(start, end));
+  let b = Math.max(start, end);
+  for (const s of tokenSpans(text)) {
+    if (s.kind !== "tag") continue;
+    const overlaps = a < s.end && b > s.start;
+    if (overlaps) {
+      a = Math.min(a, s.start);
+      b = Math.max(b, s.end);
     }
-    if (node instanceof HTMLElement) {
-      if (node.dataset.tag) {
-        out += node.dataset.tag;
-        return;
-      }
-      node.childNodes.forEach(walk);
-    }
-  };
-  root.childNodes.forEach(walk);
-  return out.replace(/\u00a0/g, "\u00a0");
+  }
+  return { start: a, end: b };
+}
+
+export function deleteBackwardAtomic(text: string, pos: number): { text: string; pos: number } {
+  if (pos <= 0) return { text, pos: 0 };
+  const prev = pos - 1;
+  const span = tokenSpans(text).find((s) => s.start <= prev && prev < s.end);
+  if (span?.kind === "tag") {
+    return { text: text.slice(0, span.start) + text.slice(span.end), pos: span.start };
+  }
+  return { text: text.slice(0, pos - 1) + text.slice(pos), pos: pos - 1 };
+}
+
+export function deleteForwardAtomic(text: string, pos: number): { text: string; pos: number } {
+  if (pos >= text.length) return { text, pos };
+  const span = tokenSpans(text).find((s) => s.start <= pos && pos < s.end);
+  if (span?.kind === "tag") {
+    return { text: text.slice(0, span.start) + text.slice(span.end), pos: span.start };
+  }
+  return { text: text.slice(0, pos) + text.slice(pos + 1), pos };
+}
+
+export function deleteRangeAtomic(text: string, start: number, end: number): { text: string; pos: number } {
+  const r = expandToAtomic(text, start, end);
+  return { text: text.slice(0, r.start) + text.slice(r.end), pos: r.start };
+}
+
+export function insertAtomic(text: string, pos: number, insertion: string): { text: string; pos: number } {
+  const at = snapCaret(text, pos, "after");
+  return { text: text.slice(0, at) + insertion + text.slice(at), pos: at + insertion.length };
+}
+
+export function moveCaret(text: string, pos: number, dir: -1 | 1): number {
+  if (dir < 0) {
+    if (pos <= 0) return 0;
+    const prev = pos - 1;
+    const span = tokenSpans(text).find((s) => s.start <= prev && prev < s.end);
+    if (span?.kind === "tag") return span.start;
+    return prev;
+  }
+  if (pos >= text.length) return text.length;
+  const span = tokenSpans(text).find((s) => s.start <= pos && pos < s.end);
+  if (span?.kind === "tag") return span.end;
+  return pos + 1;
+}
+
+export function tagsIntact(text: string): boolean {
+  return parseDocument(text).every((t) => t.kind !== "tag" || /^<\/?[A-Za-z][\w:-]*\d*\/?>$/.test(t.value));
 }
 
 export type ViewMarks = {
@@ -94,43 +162,47 @@ export const DEFAULT_MARKS: ViewMarks = {
   modification: "none",
 };
 
-const MARK_KEYS: Record<keyof Omit<ViewMarks, "modification">, string> = {
-  whitespace: "mark_whitespace",
-  nbsp: "mark_nbsp",
-  bidi: "mark_bidi",
-  glossary: "mark_glossary_matches",
-  translated: "mark_translated",
-  untranslated: "mark_untranslated",
-  noted: "mark_noted_segments",
-  nonUnique: "mark_non_unique",
-  autoPopulated: "mark_auto_populated",
-  alternative: "mark_alternative",
-  paragraphStart: "mark_paragraph_start",
-  displaySource: "display_segment_source",
-  languageChecker: "mark_language_checker",
-  fontFallback: "mark_font_fallback",
-};
-
-export function marksFromExtra(extra: Record<string, string> | undefined): ViewMarks {
+export function marksFromPrefs(marks: MarkPrefs | undefined): ViewMarks {
   const m = { ...DEFAULT_MARKS };
-  if (!extra) return m;
-  (Object.keys(MARK_KEYS) as (keyof typeof MARK_KEYS)[]).forEach((k) => {
-    const raw = extra[MARK_KEYS[k]];
-    if (raw === "true") m[k] = true;
-    if (raw === "false") m[k] = false;
-  });
-  const info = extra.display_modification_info;
-  if (info === "selected" || info === "all" || info === "none") m.modification = info;
+  if (!marks) return m;
+  m.whitespace = marks.whitespace;
+  m.nbsp = marks.nbsp;
+  m.bidi = marks.bidi;
+  m.glossary = marks.glossary;
+  m.translated = marks.translated;
+  m.untranslated = marks.untranslated;
+  m.noted = marks.noted;
+  m.nonUnique = marks.non_unique;
+  m.autoPopulated = marks.auto_populated;
+  m.alternative = marks.alternative;
+  m.paragraphStart = marks.paragraph_start;
+  m.displaySource = marks.display_source;
+  m.languageChecker = marks.language_checker;
+  m.fontFallback = marks.font_fallback;
+  if (marks.modification === "selected" || marks.modification === "all" || marks.modification === "none") {
+    m.modification = marks.modification;
+  }
   return m;
 }
 
-export function extraFromMarks(marks: ViewMarks): Record<string, string> {
-  const extra: Record<string, string> = {};
-  (Object.keys(MARK_KEYS) as (keyof typeof MARK_KEYS)[]).forEach((k) => {
-    extra[MARK_KEYS[k]] = String(marks[k]);
-  });
-  extra.display_modification_info = marks.modification;
-  return extra;
+export function prefsFromMarks(marks: ViewMarks): MarkPrefs {
+  return {
+    whitespace: marks.whitespace,
+    nbsp: marks.nbsp,
+    bidi: marks.bidi,
+    glossary: marks.glossary,
+    translated: marks.translated,
+    untranslated: marks.untranslated,
+    noted: marks.noted,
+    non_unique: marks.nonUnique,
+    auto_populated: marks.autoPopulated,
+    alternative: marks.alternative,
+    paragraph_start: marks.paragraphStart,
+    display_source: marks.displaySource,
+    language_checker: marks.languageChecker,
+    font_fallback: marks.fontFallback,
+    modification: marks.modification,
+  };
 }
 
 export type MarkSpan = { text: string; cls: string[] };

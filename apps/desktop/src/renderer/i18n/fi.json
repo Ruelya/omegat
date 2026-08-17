@@ -221,5 +221,8 @@
   "issuesFile": "Tarkista nykyisen asiakirjan ongelmakohdat",
   "lastChanges": "Viimeksi muutettu…",
   "checkUpdates": "Tarkista päivitykset…",
-  "accessConfig": "Mene Määrittely-kansioon"
+  "accessConfig": "Mene Määrittely-kansioon",
+  "clearRecent": "Tyhjennä valikko",
+  "restart": "Restart",
+  "exportSelection": "Vie valinta"
 }

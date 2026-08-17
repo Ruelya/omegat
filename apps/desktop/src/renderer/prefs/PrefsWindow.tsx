@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { t } from "../i18n";
+import { defaultPreferences } from "../lib/preferences";
 import type { Preferences } from "../lib/types";
 import { useApp } from "../store/app";
 import { PREF_PAGES } from "./pages";
@@ -7,17 +8,20 @@ import { PREF_PAGES } from "./pages";
 export function PrefsWindow() {
   const app = useApp();
   const [page, setPage] = useState(PREF_PAGES[0]!.id);
-  const [draft, setDraft] = useState<Preferences | null>(app.prefs);
+  const [draft, setDraft] = useState<Preferences | null>(app.prefs ? defaultPreferences(app.prefs) : null);
   useEffect(() => {
-    void app.loadPrefs().then(() => setDraft(useApp.getState().prefs));
+    void app.loadPrefs().then(() => {
+      const p = useApp.getState().prefs;
+      setDraft(p ? defaultPreferences(p) : null);
+    });
   }, [app]);
   if (!draft) return null;
   const current = PREF_PAGES.find((p) => p.id === page) ?? PREF_PAGES[0]!;
   const setPref = <K extends keyof Preferences>(k: K, v: Preferences[K]) => {
     setDraft({ ...draft, [k]: v });
   };
-  const setExtra = (k: string, v: string) => {
-    setDraft({ ...draft, extra: { ...draft.extra, [k]: v } });
+  const patch = (partial: Partial<Preferences>) => {
+    setDraft(defaultPreferences({ ...draft, ...partial }));
   };
   return (
     <div className="modal-bg" onClick={() => app.openWindow("prefs", false)}>
@@ -32,7 +36,7 @@ export function PrefsWindow() {
             ))}
           </nav>
           <div className="form">
-            <current.Page prefs={draft} extra={draft.extra} setPref={setPref} setExtra={setExtra} />
+            <current.Page prefs={draft} setPref={setPref} patch={patch} />
             <button
               type="button"
               className="primary"

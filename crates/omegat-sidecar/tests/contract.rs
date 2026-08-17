@@ -51,6 +51,8 @@ const METHODS: &[&str] = &[
     "wiki.import",
     "med.open",
     "project.convert",
+    "project.import",
+    "script.slot",
 ];
 
 fn rpc(child_in: &mut impl Write, child_out: &mut impl BufRead, id: i64, method: &str, params: Value) -> Value {

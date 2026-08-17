@@ -221,5 +221,8 @@
   "issuesFile": "Check Issues for Current File",
   "lastChanges": "Last Changes...",
   "checkUpdates": "Check for Updates...",
-  "accessConfig": "Access Configuration Folder"
+  "accessConfig": "Access Configuration Folder",
+  "clearRecent": "Clear Recent Projects",
+  "restart": "Restart",
+  "exportSelection": "Eksporter selektion"
 }

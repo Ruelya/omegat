@@ -120,7 +120,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("proj3");
         let mut prefs = Preferences::default_in(dir.path().join("cfg"));
-        prefs.extra.insert("tag_validation".into(), "abort".into());
+        prefs.tag_validation = "abort".into();
         let mut session = ProjectSession::create(
             &CreateProjectParams {
                 root: root.to_string_lossy().into(),
@@ -151,7 +151,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("tmfold");
         let mut prefs = Preferences::default_in(dir.path().join("cfg"));
-        prefs.extra.insert("segmentOn".into(), "BREAKS".into());
+        prefs.filter_context.insert("segmentOn".into(), "BREAKS".into());
         let mut session = ProjectSession::create(
             &CreateProjectParams {
                 root: root.to_string_lossy().into(),
@@ -207,7 +207,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("goldproj");
         let mut prefs = Preferences::default_in(dir.path().join("cfg"));
-        prefs.extra.insert("skipHeader".into(), "true".into());
+        prefs.filter_context.insert("skipHeader".into(), "true".into());
         let mut session = ProjectSession::create(
             &CreateProjectParams {
                 root: root.to_string_lossy().into(),
@@ -309,7 +309,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("projw");
         let mut prefs = Preferences::default_in(dir.path().join("cfg"));
-        prefs.extra.insert("tag_validation".into(), "warn".into());
+        prefs.tag_validation = "warn".into();
         let mut session = ProjectSession::create(
             &CreateProjectParams {
                 root: root.to_string_lossy().into(),

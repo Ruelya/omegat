@@ -221,5 +221,8 @@
   "issuesFile": "品質チェック（現在の文書のみ）",
   "lastChanges": "最近の更新履歴...",
   "checkUpdates": "更新の確認...",
-  "accessConfig": "設定フォルダにアクセス"
+  "accessConfig": "設定フォルダにアクセス",
+  "clearRecent": "メニューをクリア(C)",
+  "restart": "再起動",
+  "exportSelection": "選択領域を出力(X)"
 }
