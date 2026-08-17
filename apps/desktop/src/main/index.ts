@@ -154,6 +154,23 @@ function createWindow() {
         ],
       },
       {
+        label: "Tools",
+        submenu: [
+          { label: "Check Issues", accelerator: "CmdOrCtrl+Shift+I", click: () => win.webContents.send("menu:issues") },
+          { label: "Align Files…", click: () => win.webContents.send("menu:align") },
+          { label: "Search / Replace", accelerator: "CmdOrCtrl+F", click: () => win.webContents.send("menu:search") },
+          { type: "separator" },
+          { label: "Script slot 1", accelerator: "CmdOrCtrl+Alt+1", click: () => win.webContents.send("menu:script", 1) },
+          { label: "Script slot 2", accelerator: "CmdOrCtrl+Alt+2", click: () => win.webContents.send("menu:script", 2) },
+        ],
+      },
+      {
+        label: "Options",
+        submenu: [
+          { label: "Preferences…", accelerator: "CmdOrCtrl+,", click: () => win.webContents.send("menu:prefs") },
+        ],
+      },
+      {
         label: "Help",
         submenu: [
           {
@@ -164,6 +181,7 @@ function createWindow() {
               else void shell.openExternal("https://omegat.org");
             },
           },
+          { label: "About OmegaT", click: () => win.webContents.send("menu:about") },
         ],
       },
     ]),

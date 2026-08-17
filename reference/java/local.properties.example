@@ -1,0 +1,33 @@
+## Mac code signing
+macCodesignIdentity=
+
+## Mac notarization
+macNotarizationUsername=
+
+## Sonatype OSSRH publishing (synced to Maven Central)
+ossrhUsername=
+ossrhPassword=
+
+## Signing for Maven Central
+#
+# Option 1: Supply key ID and password directly in this file
+# Option 2: Leave signing.* properties blank to use the system gpg2 command; see
+#   https://docs.gradle.org/current/userguide/signing_plugin.html#sec:sec:gnupg_signatory_configuration
+#
+# Last 8 characters of full key ID
+signing.keyId=
+signing.password=
+# Exported as e.g. `gpg --export-secret-keys > secring.gpg`
+signing.secretKeyRingFile=
+
+## example with GnuPG
+#signing.gnupg.keyName=<KeyHashHex>
+#signing.gnupg.executable=gpg
+
+## SourceForge web
+sourceforgeWebUser=
+# Not required when using SSH auth
+sourceforgeWebPassword=
+
+## Speed-up build process
+org.gradle.configuration-cache=false

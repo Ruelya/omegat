@@ -2,7 +2,7 @@
 
 OmegaT is a free computer-assisted translation workstation (GNU GPL v3+).
 
-This repository is the **Rust + Electron** application. The former Java 21 / Swing / Gradle tree has been retired.
+This repository is the **Rust + Electron** application. The Java 6.2 tree lives in `reference/java/` as a **contrast implementation only** until STATUS has no `scaffold` rows. The default build is not Gradle.
 
 - Desktop: React 19 + Vite + Electron
 - Engine: Rust sidecar over newline-delimited JSON-RPC 2.0 (stdio)
@@ -49,7 +49,9 @@ There is no `./gradlew`. Java is not part of the default build.
 | `apps/desktop` | Electron shell |
 | `fixtures/` | Golden files for filters and TMX |
 | `docs/manual/` | User manual |
-| `docs/rewrite/` | Status, packaging, plugin ABI |
+| `docs/rewrite/` | Status, acceptance, packaging, plugin ABI |
+| `reference/java/` | Historic Java 6.2 tree (goldens / reading only) |
+| `fixtures/` | Java filter, SRX, aligner, TMX goldens |
 
 ## Design
 

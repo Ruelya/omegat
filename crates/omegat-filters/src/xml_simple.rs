@@ -102,29 +102,32 @@ fn fallback_tag_scan(raw: &str, tags: &[&str]) -> Result<ParsedFile> {
     for tag in tags {
         let open = format!("<{tag}");
         let close = format!("</{tag}>");
-        let mut search = raw;
-        while let Some(start) = search.find(&open) {
-            let after = &search[start..];
-            if let Some(gt) = after.find('>') {
-                let content_start = start + gt + 1;
-                if let Some(rel) = raw[content_start..].find(&close) {
-                    let content = raw[content_start..content_start + rel].trim();
-                    if !content.is_empty() && !content.contains('<') {
-                        segments.push(ExtractedSegment {
-                            id: segments.len().to_string(),
-                            source: html_escape::decode_html_entities(content).into_owned(),
-                            existing_translation: None,
-                            note: None,
-                            comment: None,
-                            path: Some((*tag).to_string()),
-                            protected_parts: vec![],
-                        });
-                    }
-                    search = &raw[content_start + rel + close.len()..];
-                    continue;
-                }
+        let mut pos = 0usize;
+        while let Some(rel_start) = raw[pos..].find(&open) {
+            let start = pos + rel_start;
+            let after = &raw[start..];
+            let Some(gt) = after.find('>') else { break };
+            let content_start = start + gt + 1;
+            if content_start >= raw.len() {
+                break;
             }
-            break;
+            let Some(rel) = raw[content_start..].find(&close) else { break };
+            let content = raw[content_start..content_start + rel].trim();
+            if !content.is_empty() && !content.contains('<') {
+                segments.push(ExtractedSegment {
+                    id: segments.len().to_string(),
+                    source: html_escape::decode_html_entities(content).into_owned(),
+                    existing_translation: None,
+                    note: None,
+                    comment: None,
+                    path: Some((*tag).to_string()),
+                    protected_parts: vec![],
+                });
+            }
+            pos = content_start + rel + close.len();
+            if pos <= start {
+                pos = start + open.len();
+            }
         }
     }
     Ok(ParsedFile {

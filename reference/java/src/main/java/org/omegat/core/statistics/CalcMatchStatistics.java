@@ -1,0 +1,362 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2009 Alex Buloichik
+               2012 Thomas Cordonnier
+               2013 Alex Buloichik
+               2015 Aaron Madlon-Kay
+               2024 Hiroshi Miura
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.core.statistics;
+
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.FormatStyle;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntPredicate;
+import java.util.logging.Logger;
+import java.util.stream.Stream;
+
+import org.omegat.core.Core;
+import org.omegat.core.data.CoreState;
+import org.omegat.core.data.IProject;
+import org.omegat.core.data.ProtectedPart;
+import org.omegat.core.data.SourceTextEntry;
+import org.omegat.core.matching.FuzzyMatcher;
+import org.omegat.core.matching.ISimilarityCalculator;
+import org.omegat.core.matching.LevenshteinDistance;
+import org.omegat.core.matching.NearString;
+import org.omegat.core.segmentation.Segmenter;
+import org.omegat.core.statistics.FindMatches.StoppedException;
+import org.omegat.core.statistics.dso.MatchStatCounts;
+import org.omegat.core.statistics.dso.StatCount;
+import org.omegat.core.threads.CancellationToken;
+import org.omegat.core.threads.LongProcessInterruptedException;
+import org.omegat.core.threads.Completion;
+import org.omegat.util.Log;
+import org.omegat.util.OConsts;
+import org.omegat.util.OStrings;
+import org.omegat.util.Token;
+import org.omegat.util.gui.TextUtil;
+
+/**
+ * Thread for calculate match statistics, total and per file.
+ *
+ * Calculation requires two different tags stripping: one for calculate match
+ * percentage, and second for calculate number of words and chars.
+ *
+ * Number of words/chars calculation requires to just strip all tags, protected
+ * parts, placeholders(see StatCount.java).
+ *
+ * Calculation of match percentage requires 2 steps for tags processing: 1)
+ * remove only simple XML tags for find 5 nearest matches(but not protected
+ * parts' text: from "<m0>Acme</m0>" only tags should be removed, but not "Acme"
+ * ), then 2) compute better percentage without any tags removing.
+ *
+ * @author Alex Buloichik (alex73mail@gmail.com)
+ * @author Thomas Cordonnier
+ * @author Aaron Madlon-Kay
+ */
+public class CalcMatchStatistics extends CalcStandardStatistics implements ICalcStatistics {
+    private final String[] header = new String[] { "", OStrings.getString("CT_STATS_Segments"),
+            OStrings.getString("CT_STATS_Words"), OStrings.getString("CT_STATS_Characters_NOSP"),
+            OStrings.getString("CT_STATS_Characters") };
+
+    protected final String[] rowsTotal = new String[] { OStrings.getString("CT_STATSMATCH_RowRepetitions"),
+            OStrings.getString("CT_STATSMATCH_RowExactMatch"), OStrings.getString("CT_STATSMATCH_RowMatch95"),
+            OStrings.getString("CT_STATSMATCH_RowMatch85"), OStrings.getString("CT_STATSMATCH_RowMatch75"),
+            OStrings.getString("CT_STATSMATCH_RowMatch50"), OStrings.getString("CT_STATSMATCH_RowNoMatch"),
+            OStrings.getString("CT_STATSMATCH_Total") };
+
+    private final String[] rowsPerFile = new String[] {
+            OStrings.getString("CT_STATSMATCH_RowRepetitionsWithinThisFile"),
+            OStrings.getString("CT_STATSMATCH_RowRepetitionsFromOtherFiles"),
+            OStrings.getString("CT_STATSMATCH_RowExactMatch"), OStrings.getString("CT_STATSMATCH_RowMatch95"),
+            OStrings.getString("CT_STATSMATCH_RowMatch85"), OStrings.getString("CT_STATSMATCH_RowMatch75"),
+            OStrings.getString("CT_STATSMATCH_RowMatch50"), OStrings.getString("CT_STATSMATCH_RowNoMatch"),
+            OStrings.getString("CT_STATSMATCH_Total") };
+
+    private final boolean[] align = new boolean[] { false, true, true, true, true };
+
+    protected int entriesToProcess;
+
+    /** Already processed segments. Used for repetitions detect. */
+    private final Set<String> alreadyProcessedInProject = new HashSet<>();
+
+    private final ThreadLocal<ISimilarityCalculator> distanceCalculator = ThreadLocal
+            .withInitial(LevenshteinDistance::new);
+    private final ThreadLocal<FindMatches> finder;
+    private final StringBuilder textForLog = new StringBuilder();
+
+    /**
+     * Short date/time formatter for the statistics file header. Equivalent to
+     * the former {@code DateFormat.getInstance()} (short date and short time).
+     * {@link DateTimeFormatter} is immutable and thread-safe.
+     */
+    private static final DateTimeFormatter TIMESTAMP_FORMAT = DateTimeFormatter
+            .ofLocalizedDateTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault());
+
+    public CalcMatchStatistics(IStatsConsumer callback) {
+        this(CoreState.getInstance().getProject(), Core.getSegmenter(), callback);
+    }
+
+    public CalcMatchStatistics(IProject project, Segmenter segmenter, IStatsConsumer callback) {
+        super(project, callback);
+        finder = ThreadLocal
+                .withInitial(() -> new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, -1));
+    }
+
+    @Override
+    public Void run(CancellationToken token) {
+        cancellationToken = token;
+        Completion completion = Completion.success();
+        try {
+            entriesToProcess = project.getAllEntries().size();
+            calcTotal(true);
+        } catch (LongProcessInterruptedException | FindMatches.StoppedException ex) {
+            completion = Completion.cancelled();
+        } catch (Throwable t) {
+            completion = Completion.failed(t);
+        } finally {
+            callback.onComplete(completion);
+        }
+        return null;
+    }
+
+    private void appendText(String text) {
+        textForLog.append(text);
+        callback.appendTextData(text);
+    }
+
+    private void showText(String text) {
+        textForLog.setLength(0);
+        textForLog.append(text);
+        callback.setTextData(text);
+    }
+
+    void showTextTable(String title, MatchStatCounts counts, IntPredicate filter, boolean perFile) {
+        String[][] table = counts.calcTable(perFile ? rowsPerFile : rowsTotal, filter);
+        String outText = TextUtil.showTextTable(header, table, align);
+        appendText(title + "\n");
+        appendText(outText + "\n");
+        callback.appendTable(title, header, table);
+    }
+
+    /**
+     * Writes the specified text to a file, along with the current date and
+     * time. If the target file's parent directories do not exist, they will be
+     * created. Any existing content in the file will be overwritten.
+     *
+     * @param filename
+     *            the name and path of the file to which the text will be
+     *            written
+     * @param text
+     *            the text content to write to the file
+     */
+    private void writeStat(String filename, String text) {
+        Path path = Paths.get(filename);
+        // Create parent directories if they don't exist
+        if (path.getParent() != null) {
+            try {
+                Files.createDirectories(path.getParent());
+            } catch (IOException e) {
+                Log.log(e);
+                return;
+            }
+        }
+
+        try (BufferedWriter writer = Files.newBufferedWriter(path, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            writer.write(TIMESTAMP_FORMAT.format(Instant.now()) + "\n");
+            writer.write(text);
+        } catch (Exception ex) {
+            Log.log(ex);
+        }
+    }
+
+    MatchStatCounts calcTotal(boolean outData) {
+        MatchStatCounts result = new MatchStatCounts();
+        alreadyProcessedInProject.clear();
+
+        final List<SourceTextEntry> untranslatedEntries = new ArrayList<>();
+
+        // We should iterate all segments from all files in project.
+        for (SourceTextEntry ste : project.getAllEntries()) {
+            cancellationToken.throwIfCancelled();
+            StatCount count = new StatCount(ste);
+            boolean isFirst = alreadyProcessedInProject.add(ste.getSrcText());
+            if (project.getTranslationInfo(ste).isTranslated()) {
+                // segment has translation - should be calculated as "Exact
+                // matched"
+                result.addExact(count);
+                entryProcessed();
+            } else if (!isFirst) {
+                // already processed - repetition
+                result.addRepetition(count);
+                entryProcessed();
+            } else {
+                // first time
+                untranslatedEntries.add(ste);
+            }
+        }
+
+        if (outData) {
+            String[][] table = result.calcTableWithoutPercentage(rowsTotal);
+            String outText = TextUtil.showTextTable(header, table, align);
+            showText(outText);
+            callback.setTable(header, table);
+        }
+
+        calcSimilarity(untranslatedEntries).ifPresent(result::addCounts);
+
+        if (outData) {
+            String[][] table = result.calcTable(rowsTotal, i -> i != 1);
+            String outText = TextUtil.showTextTable(header, table, align);
+            showText(outText);
+            callback.setTable(header, table);
+            String fn = project.getProjectProperties().getProjectInternal() + OConsts.STATS_MATCH_FILENAME;
+            writeStat(fn, outText);
+            callback.setDataFile(fn);
+        }
+
+        return result;
+    }
+
+    void writeLog(String fn) {
+        writeStat(fn, textForLog.toString());
+    }
+
+    /**
+     * For the match calculation, we iterates by untranslated entries. Each
+     * untranslated entry compared with source texts of: 1) default
+     * translations, 2) alternative translations, 3) TMs(from
+     * project.getTransMemories()).
+     *
+     * We need to find best matches, because "adjustedScore" for non-best
+     * matches can be better for some worse "score", what is not so good. It
+     * happen because some tags can be repeated many times, or since we are
+     * using not so good tokens comparison. Best matches find will produce the
+     * same similarity like in patches pane.
+     *
+     * Similarity calculates between tokens tokenized by
+     * ITokenizer.tokenizeAllExactly() (adjustedScore)
+     */
+    Optional<MatchStatCounts> calcSimilarity(List<SourceTextEntry> untranslatedEntries) {
+        // If we have more than one available processor then we do the
+        // calculation in parallel unless explicitly disabled via system
+        // property.
+        // Property: omegat.stats.parallel = true|false (default: true)
+        boolean parallelAllowed = Boolean.parseBoolean(System.getProperty("omegat.stats.parallel", "true"));
+        boolean doParallel = parallelAllowed && Runtime.getRuntime().availableProcessors() > 1;
+        Stream<SourceTextEntry> stream = doParallel ? untranslatedEntries.parallelStream()
+                : untranslatedEntries.stream();
+        long startTime = System.currentTimeMillis();
+        MatchStatCounts result = null;
+        try {
+            result = stream.collect(MatchStatCounts::new, (counts, ste) -> {
+                cancellationToken.throwIfCancelled();
+                counts.addForPercents(calcMaxSimilarity(ste), new StatCount(ste));
+                entryProcessed();
+            }, MatchStatCounts::addCounts);
+        } catch (StoppedException | LongProcessInterruptedException ignored) {
+            // ignore all cancel operations
+        }
+        long endTime = System.currentTimeMillis();
+        Logger.getLogger(getClass().getName()).fine(String.format("Calc similarity took %.3f s (%s)",
+                (endTime - startTime) / 1000f, doParallel ? "parallel" : "sequential"));
+        return Optional.ofNullable(result);
+    }
+
+    private int calcMaxSimilarity(SourceTextEntry ste) {
+        String srcNoXmlTags = removeXmlTags(ste);
+        FindMatches localFinder = finder.get();
+        List<NearString> nears = localFinder.search(srcNoXmlTags, false, this::isInterrupted);
+        final Token[] strTokensStem = localFinder.tokenizeAll(ste.getSrcText());
+        int maxSimilarity = 0;
+        for (NearString near : nears) {
+            final Token[] candTokens = localFinder.tokenizeAll(near.source);
+            int newSimilarity = FuzzyMatcher.calcSimilarity(distanceCalculator.get(), strTokensStem,
+                    candTokens);
+            if (near.fuzzyMark) {
+                newSimilarity -= FindMatches.PENALTY_FOR_FUZZY;
+            }
+            if (newSimilarity > maxSimilarity) {
+                maxSimilarity = newSimilarity;
+                if (newSimilarity >= 95) { // enough to say that we are in row 2
+                    break;
+                }
+            }
+        }
+        return maxSimilarity;
+    }
+
+    String removeXmlTags(SourceTextEntry ste) {
+        String srcNoXmlTags = ste.getSrcText();
+        for (ProtectedPart pp : ste.getProtectedParts()) {
+            srcNoXmlTags = srcNoXmlTags.replace(pp.getTextInSourceSegment(),
+                    pp.getReplacementMatchCalculation());
+        }
+        return srcNoXmlTags;
+    }
+
+    protected final AtomicInteger treated = new AtomicInteger();
+    protected volatile int percent;
+
+    void entryProcessed() {
+        int newTreated = treated.incrementAndGet();
+        int newPercent = newTreated * 100 / entriesToProcess;
+        if (percent != newPercent) {
+            synchronized (this) {
+                if (percent != newPercent) {
+                    callback.showProgress(newPercent);
+                    percent = newPercent;
+                }
+            }
+        }
+    }
+
+    int getEntrySize() {
+        return project.getAllEntries().size();
+    }
+
+    void addEntryProcessed(Set<String> entries) {
+        alreadyProcessedInProject.addAll(entries);
+    }
+
+    boolean isEntryProcessed(String srcText) {
+        return alreadyProcessedInProject.contains(srcText);
+    }
+}

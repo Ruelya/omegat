@@ -38,6 +38,9 @@ apps/desktop/release
 apps/desktop/.vite
 npm-debug.log*
 
+# Java Qodana dump is not needed for contrast goldens
+/reference/java/qodana.sarif.json
+
 # AI related files
 AGENTS.md
 .codex/

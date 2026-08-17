@@ -58,6 +58,7 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
         message: String::new(),
     };
     for repo in &props.repositories {
+        // prepare
         match repo.repo_type.as_str() {
             "git" => git_sync(props, repo)?,
             "svn" => svn_sync(props, repo)?,
@@ -65,9 +66,66 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             "file" => file_sync(props, repo)?,
             other => return Err(TeamError::Unsupported(other.into())),
         }
+        // rebase TMX / glossary against the fetched copy
+        let conflicts = rebase_project(props)?;
+        if !conflicts.is_empty() {
+            return Err(TeamError::Conflict(conflicts.join(" | ")));
+        }
+        // commit local save TMX back when git
+        if repo.repo_type == "git" {
+            git_commit(props)?;
+        }
         report.message.push_str(&format!("synced {}; ", repo.repo_type));
     }
+    if props.repositories.is_empty() {
+        report.action = "local".into();
+        report.message = "no repositories".into();
+    }
     Ok(report)
+}
+
+pub fn rebase_project(props: &ProjectProperties) -> Result<Vec<String>> {
+    let ours_path = props.save_tmx_path();
+    let theirs = find_remote_tmx(props);
+    if !ours_path.exists() || theirs.is_none() {
+        return Ok(vec![]);
+    }
+    let ours = std::fs::read_to_string(&ours_path)?;
+    let theirs = std::fs::read_to_string(theirs.unwrap())?;
+    let base = ours_path.with_extension("tmx.bak");
+    let base_s = std::fs::read_to_string(&base).unwrap_or_default();
+    let (merged, conflicts) = rebase_tmx(&base_s, &ours, &theirs, &props.source_lang, &props.target_lang);
+    merged
+        .write(&ours_path, &props.source_lang, &props.target_lang)
+        .map_err(|e| TeamError::Command(e.to_string()))?;
+    Ok(conflicts)
+}
+
+fn find_remote_tmx(props: &ProjectProperties) -> Option<std::path::PathBuf> {
+    for dir in [
+        props.root.join(".repositories").join("git").join("omegat"),
+        props.root.join(".repositories").join("file").join("omegat"),
+        props.root.join(".repositories").join("svn").join("omegat"),
+    ] {
+        let p = dir.join("project_save.tmx");
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn git_commit(props: &ProjectProperties) -> Result<()> {
+    let repo_dir = props.root.join(".repositories").join("git");
+    if !repo_dir.join(".git").exists() {
+        return Ok(());
+    }
+    let _ = Command::new("git").args(["add", "-A"]).current_dir(&repo_dir).status();
+    let _ = Command::new("git")
+        .args(["commit", "-m", "OmegaT team sync"])
+        .current_dir(&repo_dir)
+        .status();
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -187,5 +245,71 @@ mod tests {
         let (tmx, conflicts) = rebase_tmx("", ours, theirs, "en", "fr");
         assert_eq!(conflicts.len(), 1);
         assert_eq!(tmx.get("Hi").unwrap().translation, "Salut");
+        assert!(tmx.get("Hi").unwrap().note.as_ref().unwrap().contains("Bonjour"));
+    }
+
+    #[test]
+    fn file_sync_copies_and_rebases() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote = dir.path().join("remote");
+        let local = dir.path().join("local");
+        std::fs::create_dir_all(remote.join("omegat")).unwrap();
+        std::fs::write(
+            remote.join("omegat").join("project_save.tmx"),
+            r#"<tu><tuv lang="en"><seg>Hi</seg></tuv><tuv lang="fr"><seg>Bonjour</seg></tuv></tu>"#,
+        )
+        .unwrap();
+        let mut props = omegat_core::ProjectProperties::create(local.clone(), "en".into(), "fr".into(), false);
+        props.repositories.push(omegat_core::properties::RepositoryDef {
+            repo_type: "file".into(),
+            url: remote.to_string_lossy().into(),
+            branch: None,
+            mappings: vec![],
+        });
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        std::fs::create_dir_all(local.join("omegat")).unwrap();
+        std::fs::write(
+            local.join("omegat").join("project_save.tmx"),
+            r#"<tu><tuv lang="en"><seg>Hi</seg></tuv><tuv lang="fr"><seg>Salut</seg></tuv></tu>"#,
+        )
+        .unwrap();
+        let err = sync(&props).unwrap_err();
+        assert!(matches!(err, TeamError::Conflict(_)));
+    }
+
+    #[test]
+    fn git_two_clients_merge_different_segments() {
+        if Command::new("git").arg("--version").output().is_err() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let remote = dir.path().join("remote.git");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        assert!(Command::new("git").args(["init", "--bare", &remote.to_string_lossy()]).status().unwrap().success());
+        for (root, src, tgt) in [(&a, "Hi", "Salut"), (&b, "Bye", "Au revoir")] {
+            std::fs::create_dir_all(root.join("omegat")).unwrap();
+            std::fs::write(
+                root.join("omegat").join("project_save.tmx"),
+                format!(r#"<tu><tuv lang="en"><seg>{src}</seg></tuv><tuv lang="fr"><seg>{tgt}</seg></tuv></tu>"#),
+            )
+            .unwrap();
+            assert!(Command::new("git").args(["init"]).current_dir(root).status().unwrap().success());
+            let _ = Command::new("git").args(["config", "user.email", "t@example.com"]).current_dir(root).status();
+            let _ = Command::new("git").args(["config", "user.name", "t"]).current_dir(root).status();
+            let _ = Command::new("git").args(["add", "-A"]).current_dir(root).status();
+            let _ = Command::new("git").args(["commit", "-m", "init"]).current_dir(root).status();
+        }
+        let mut props = omegat_core::ProjectProperties::create(a.clone(), "en".into(), "fr".into(), false);
+        props.repositories.push(omegat_core::properties::RepositoryDef {
+            repo_type: "git".into(),
+            url: remote.to_string_lossy().into(),
+            branch: Some("main".into()),
+            mappings: vec![],
+        });
+        props.ensure_dirs().unwrap();
+        let r = sync(&props).unwrap();
+        assert_eq!(r.action, "sync");
     }
 }

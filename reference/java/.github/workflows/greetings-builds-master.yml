@@ -1,0 +1,30 @@
+name: Check greetings build
+
+on:
+  push:
+    branches:
+      - master
+      - releases/*
+    paths:
+      - 'build-logic/src/main/groovy/org.omegat.document-conventions.gradle'
+      - 'src/docs/greeting/**'
+  pull_request:
+    paths:
+      - 'build-logic/src/main/groovy/org.omegat.document-conventions.gradle'
+      - 'src/docs/greeting/**'
+
+jobs:
+  gradle:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-java@v5
+      with:
+        java-version: 21
+        distribution: 'temurin'
+    - uses: gradle/actions/setup-gradle@v6
+      name: Setup Gradle
+      id: setup-gradle
+    - name: Run gradle firstSteps
+      run: ./gradlew -PenvIsCi=true firstSteps
+      id: gradle

@@ -4,6 +4,7 @@ pub mod align;
 pub mod consts;
 pub mod dict;
 pub mod error;
+pub mod finder;
 pub mod glossary;
 pub mod languagetool;
 pub mod matching;
@@ -18,6 +19,7 @@ pub mod stats;
 pub mod tags;
 pub mod tmx;
 pub mod tokenize;
+pub mod wiki;
 
 pub use error::{CoreError, Result};
 pub use prefs::Preferences;
@@ -104,5 +106,36 @@ mod tests {
             })
             .unwrap_err();
         assert!(matches!(err, CoreError::OptimisticLock(0)));
+    }
+
+    #[test]
+    fn tag_validation_abort_on_set() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("proj3");
+        let mut prefs = Preferences::default_in(dir.path().join("cfg"));
+        prefs.extra.insert("tag_validation".into(), "abort".into());
+        let mut session = ProjectSession::create(
+            &CreateProjectParams {
+                root: root.to_string_lossy().into(),
+                source_lang: "en".into(),
+                target_lang: "fr".into(),
+                sentence_seg: false,
+            },
+            prefs,
+        )
+        .unwrap();
+        std::fs::write(session.props.source_dir.join("a.txt"), "Hello <b>x</b>").unwrap();
+        session.reload().unwrap();
+        let rev = session.entries[0].revision;
+        let err = session
+            .set_entry(&omegat_ipc::SetEntryParams {
+                index: 0,
+                translation: "Bonjour x".into(),
+                note: None,
+                revision: rev,
+                default_translation: true,
+            })
+            .unwrap_err();
+        assert!(matches!(err, CoreError::TagValidation(_)));
     }
 }

@@ -1,0 +1,91 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2015 Aaron Madlon-Kay
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.gui.stat;
+
+import java.awt.BorderLayout;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
+
+import javax.swing.BoxLayout;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.border.EmptyBorder;
+
+import org.omegat.core.statistics.IStatsConsumer;
+import org.omegat.util.gui.ReasonablySizedPanel;
+import org.omegat.util.gui.StaticUIUtils;
+
+/**
+ *
+ * @author Aaron Madlon-Kay
+ */
+@SuppressWarnings("serial")
+public class PerFileMatchStatisticsPanel extends BaseMatchStatisticsPanel implements IStatsConsumer {
+
+    private final JPanel tablesPanel;
+    private final JScrollPane scrollPane;
+
+    public PerFileMatchStatisticsPanel(StatisticsWindow window) {
+        super(window);
+        setLayout(new BorderLayout());
+        tablesPanel = new ReasonablySizedPanel();
+        tablesPanel.setLayout(new BoxLayout(tablesPanel, BoxLayout.Y_AXIS));
+        scrollPane = new JScrollPane(tablesPanel);
+        scrollPane.setBorder(new EmptyBorder(0, 0, 0, 0));
+        scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        add(scrollPane);
+    }
+
+    @Override
+    public void appendTable(final String title, final String[] headers, final String[][] data) {
+        if (headers == null || headers.length == 0) {
+            return;
+        }
+        if (data == null || data.length == 0) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            TitledTablePanel panel = generateTableDisplay(title, headers, data);
+            panel.scrollPane.addMouseWheelListener(mouseWheelListener);
+            tablesPanel.add(panel);
+        });
+    }
+
+    private final transient MouseWheelListener mouseWheelListener = new MouseAdapter() {
+        @Override
+        public void mouseWheelMoved(MouseWheelEvent e) {
+            StaticUIUtils.forwardMouseWheelEvent(scrollPane, e);
+        }
+    };
+
+    @Override
+    public void setTable(String[] headers, String[][] data) {
+        // Nothing
+    }
+}

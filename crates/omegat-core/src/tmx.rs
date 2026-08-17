@@ -213,4 +213,36 @@ mod tests {
         let tmx = parse_tmx(raw, "en", "fr");
         assert_eq!(tmx.get("Hello").unwrap().translation, "Bonjour");
     }
+
+    #[test]
+    fn java_fixture_roundtrip_and_levels() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/tmx/project_save.tmx");
+        if !path.exists() {
+            return;
+        }
+        let tmx = ProjectTmx::load(&path, "en", "fr").unwrap();
+        assert!(!tmx.entries.is_empty());
+        let omegat = tmx.to_xml_level("en", "fr", "omegat");
+        let l1 = tmx.to_xml_level("en", "fr", "level1");
+        let l2 = tmx.to_xml_level("en", "fr", "level2");
+        assert!(omegat.contains("<tmx version=\"1.4\">"));
+        assert!(l1.contains("<seg>"));
+        assert!(l2.contains("<seg>"));
+        let back = parse_tmx(&omegat, "en", "fr");
+        assert_eq!(back.entries.len(), tmx.entries.iter().filter(|e| !e.translation.is_empty()).count());
+    }
+
+    #[test]
+    fn level1_strips_tags() {
+        let mut tmx = ProjectTmx::new();
+        tmx.insert(TmxEntry {
+            source: "Hello <b>x</b>".into(),
+            translation: "Bonjour <b>x</b>".into(),
+            ..Default::default()
+        });
+        let xml = tmx.to_xml_level("en", "fr", "level1");
+        assert!(!xml.contains("<b>"));
+        assert!(xml.contains("Hello x"));
+    }
 }

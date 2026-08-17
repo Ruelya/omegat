@@ -79,6 +79,38 @@ fn fallback_eval(source: &str) -> Result<String, ScriptError> {
     Ok(String::new())
 }
 
+/// Twelve historic shortcut slots (`scripts/slot01.js` … `slot12.js`).
+pub fn list_slots(scripts_root: &Path) -> Vec<String> {
+    (1..=12)
+        .filter_map(|i| {
+            let name = format!("slot{i:02}.js");
+            let p = scripts_root.join(&name);
+            if p.exists() {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn run_slot(scripts_root: &Path, slot: u8, bindings: &Value) -> Result<String, ScriptError> {
+    let path = scripts_root.join(format!("slot{slot:02}.js"));
+    let src = std::fs::read_to_string(path)?;
+    run_source(&src, bindings)
+}
+
+pub fn default_bindings(event: &str) -> Value {
+    serde_json::json!({
+        "event": event,
+        "project": { "sourceLang": "en", "targetLang": "fr" },
+        "editor": { "insert": true },
+        "glossary": { "writable": true },
+        "console": { "println": true },
+        "mainWindow": { "status": true }
+    })
+}
+
 pub fn run_event_dir(
     scripts_root: &Path,
     event: ScriptEvent,
@@ -109,6 +141,15 @@ mod tests {
     #[test]
     fn eval_js() {
         let out = run_source("1 + 2", &serde_json::json!({})).unwrap();
+        assert!(out.contains('3'));
+    }
+
+    #[test]
+    fn slots_and_bindings() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("slot01.js"), "1 + 2").unwrap();
+        assert_eq!(list_slots(dir.path()), vec!["slot01.js".to_string()]);
+        let out = run_slot(dir.path(), 1, &default_bindings("entry_activated")).unwrap();
         assert!(out.contains('3'));
     }
 }

@@ -1,0 +1,160 @@
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+
+plugins {
+    id 'groovy'
+    id 'groovy-gradle-plugin'
+}
+
+gradlePlugin {
+    plugins {
+        documentationPlugin {
+            id = 'org.omegat.documentation'
+            implementationClass = 'org.omegat.documentation.DocumentationPlugin'
+            description = 'Plugin for building OmegaT greeting note and manuals'
+        }
+        omegatModule {
+            id = 'org.omegat.module'
+            implementationClass = 'org.omegat.module.OmegatModulePlugin'
+            description = 'Plugin for building OmegaT module'
+        }
+
+        versionPlugin {
+            id = 'org.omegat.version'
+            implementationClass = 'org.omegat.VersionPropertiesPlugin'
+        }
+    }
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    // 'repository' for getting docbook xsd
+    ivy {
+        url = 'https://archive.docbook.org/xml'
+        patternLayout {
+            artifact '[revision]/[module]-[revision].[ext]'
+        }
+        content {
+            includeGroup 'docbook'
+        }
+        metadataSources {
+            artifact()
+        }
+    }
+    gradlePluginPortal()
+}
+
+dependencies {
+    compileOnly gradleApi()
+    compileOnly localGroovy()
+
+    // 3rd party gradle plugin
+    implementation 'com.github.ben-manes:gradle-versions-plugin:0.52.0'
+    implementation 'com.github.spotbugs.snom:spotbugs-gradle-plugin:6.5.9'
+    implementation 'com.diffplug.spotless:spotless-plugin-gradle:8.9.0'
+    implementation 'edu.sc.seis.launch4j:launch4j:4.0.0'
+    implementation 'org.hidetake.ssh:org.hidetake.ssh.gradle.plugin:2.11.2'
+    implementation 'net.ltgt.gradle:gradle-errorprone-plugin:4.2.0'
+    implementation 'net.ltgt.gradle:gradle-nullaway-plugin:2.2.0'
+
+    // dependencies on Maven
+    implementation 'xerces:xercesImpl:2.12.2'
+    implementation 'xml-resolver:xml-resolver:1.2'
+    implementation 'org.xmlresolver:xmlresolver:6.0.23'
+    implementation 'net.sf.saxon:Saxon-HE:13.0'
+    implementation 'org.docbook:docbook-xslTNG:2.8.3'
+    implementation 'com.nwalsh:sinclude:5.6.0'
+    implementation 'tokyo.northside:whc:3.6.0'
+    implementation 'xalan:xalan:2.7.3'
+    implementation 'xalan:serializer:2.7.3'
+}
+
+// Extra deps only needed for the offline build (not on the compile/runtime classpath)
+def offlineOnlyDeps = [
+        'org.omegat:launch4j:3.55',
+        'org.omegat:launch4j:3.55:workdir-win32',
+        'org.omegat:launch4j:3.55:workdir-mac',
+        'org.omegat:launch4j:3.55:workdir-linux64',
+        'org.omegat:launch4j:3.55:workdir-linux',
+]
+
+// Declare the resolvable configuration at configuration time (not inside doLast)
+configurations.create('buildLogicDepsCopy') {
+    transitive = true
+    canBeConsumed = false
+    canBeResolved = true
+}
+// Populate it at configuration time
+configurations.implementation.dependencies.each { dep ->
+    dependencies.add('buildLogicDepsCopy', dep)
+}
+offlineOnlyDeps.each { coord ->
+    dependencies.add('buildLogicDepsCopy', coord)
+}
+
+// Lazy provider of the primary artifacts (jars/zips), config-cache serializable.
+def jarArtifactsProvider = configurations.buildLogicDepsCopy.incoming.artifacts.resolvedArtifacts
+
+// Enumerate the resolved module component ids so we can fetch a POM for each.
+// This resolves the graph metadata at configuration time (inherent to fetching
+// every transitive POM); on a configuration-cache hit nothing runs.
+def moduleComponentIds = configurations.buildLogicDepsCopy.incoming.resolutionResult.allComponents
+        .findAll { it.id instanceof ModuleComponentIdentifier }
+        .collect { it.id }
+
+// Resolvable configuration holding one @pom artifact per resolved module.
+configurations.create('buildLogicPomsCopy') {
+    transitive = false
+    canBeConsumed = false
+    canBeResolved = true
+}
+moduleComponentIds.each { id ->
+    dependencies.add('buildLogicPomsCopy', "${id.group}:${id.module}:${id.version}@pom")
+}
+def pomArtifactsProvider = configurations.buildLogicPomsCopy.incoming.artifacts.resolvedArtifacts
+
+def destDir = layout.buildDirectory.dir('libs/build-logic')
+tasks.register('downloadBuildLogicDependencies') {
+    description = 'Downloads build-logic dependencies for offline/enterprise builds'
+    group = 'build setup'
+
+    outputs.dir(destDir)
+
+    // Capture config-cache-serializable locals; the action must NOT reference the
+    // `configurations`/`dependencies`/`project` script objects at execution time.
+    def jars = jarArtifactsProvider
+    def poms = pomArtifactsProvider
+    def dest = destDir
+
+    doLast {
+        def root = dest.get().asFile
+
+        // Primary artifacts (jars/zips, incl. classifier'd). The resolved file name
+        // already encodes classifier + extension, so it is the correct Maven name.
+        jars.get().each { artifact ->
+            def id = artifact.id.componentIdentifier
+            if (id instanceof ModuleComponentIdentifier) {
+                def artifactDir = new File(root,
+                        "${id.group.replace('.', '/')}/${id.module}/${id.version}")
+                artifactDir.mkdirs()
+                Files.copy(artifact.file.toPath(),
+                        new File(artifactDir, artifact.file.name).toPath(),
+                        StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+
+        // One POM per resolved module.
+        poms.get().each { artifact ->
+            def id = artifact.id.componentIdentifier
+            if (id instanceof ModuleComponentIdentifier) {
+                def artifactDir = new File(root,
+                        "${id.group.replace('.', '/')}/${id.module}/${id.version}")
+                artifactDir.mkdirs()
+                Files.copy(artifact.file.toPath(),
+                        new File(artifactDir, "${id.module}-${id.version}.pom").toPath(),
+                        StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
+    }
+}

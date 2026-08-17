@@ -1,0 +1,108 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2025 Hiroshi Miura
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.cli;
+
+import org.jspecify.annotations.Nullable;
+import org.omegat.core.Core;
+import org.omegat.core.data.RealProject;
+import org.omegat.core.events.IProjectEventListener;
+import org.omegat.util.Log;
+import picocli.CommandLine;
+
+import java.util.Objects;
+import java.util.concurrent.Callable;
+
+@CommandLine.Command(name = "translate", resourceBundle = "org.omegat.cli.Parameters")
+public class TranslateCommand implements Callable<Integer> {
+
+    @CommandLine.ParentCommand
+    @Nullable LegacyParameters legacyParams;
+
+    @CommandLine.Parameters(index = "0", arity = "0..1", paramLabel = "<project>",
+            defaultValue = CommandLine.Option.NULL_VALUE)
+    @Nullable String project;
+
+    @CommandLine.Mixin
+    @Nullable CommonParameters params;
+
+    @Override
+    public Integer call() {
+        if (params == null || legacyParams == null) {
+            return 1;
+        }
+        legacyParams.initialize();
+        params.setProjectLocation(Objects.requireNonNullElse(project, "."));
+        return runConsoleTranslate();
+    }
+
+    /**
+     * Execute in console mode for translate.
+     */
+    int runConsoleTranslate() {
+        if (params == null || legacyParams == null) {
+            return 1;
+        }
+
+        CommandCommon.showStartUpLogInfo();
+        CommandCommon.logLevelInitialize(params);
+        Log.logInfoRB("STARTUP_CONSOLE_TRANSLATION_MODE");
+
+        if (params.projectLocation == null) {
+            params.setProjectLocation(legacyParams.project);
+        }
+
+        CommandCommon.initializeApp();
+        Core.initializeConsole();
+
+        CommandCommon.parseCommonParams(params);
+
+        RealProject p = CommandCommon.selectProjectConsoleMode(true, params);
+        if (p == null) {
+            return 1;
+        }
+        CommandCommon.validateTagsConsoleMode(params);
+
+        Log.logInfoRB("CONSOLE_TRANSLATING");
+
+        try {
+            String sourceMask = legacyParams.sourcePattern;
+            p.compileProject(Objects.requireNonNullElse(sourceMask, ".*"), false);
+        } catch (Exception ex) {
+            Log.logErrorRB(ex, "CT_ERROR_COMPILING_PROJECT");
+            return 1;
+        }
+
+        // Called *after* executing post processing command (unlike the
+        // regular PROJECT_CHANGE_TYPE.COMPILE)
+        CommandCommon.executeConsoleScript(IProjectEventListener.PROJECT_CHANGE_TYPE.COMPILE, params);
+
+        p.closeProject();
+        CommandCommon.executeConsoleScript(IProjectEventListener.PROJECT_CHANGE_TYPE.CLOSE, params);
+        Log.logInfoRB("CONSOLE_FINISHED");
+
+        return 0;
+    }
+}

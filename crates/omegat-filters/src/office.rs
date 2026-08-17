@@ -157,25 +157,7 @@ fn rewrite_zip(
         if name.ends_with(".xml") {
             let mut xml = String::new();
             entry.read_to_string(&mut xml)?;
-            for (id, t) in translations {
-                if id.starts_with(&format!("{name}:")) || translations.len() < 64 {
-                    let _escaped = html_escape::encode_text(t).to_string();
-                    // Replace exact source occurrences once.
-                    if let Some(src) = id.rsplit(':').next() {
-                        let _ = src;
-                    }
-                }
-            }
-            // Replace by walking known sources stored as values keyed by id;
-            // also try replacing any translation whose id contains this file.
-            for (id, t) in translations {
-                if id.contains(&name) {
-                    if let Some((_, src_hint)) = id.split_once(':') {
-                        let _ = src_hint;
-                    }
-                    let _escaped = html_escape::encode_text(t).to_string();
-                }
-            }
+            xml = apply_office_translations(&xml, translations);
             writer.start_file(&name, opts).map_err(|e| FilterError::Parse {
                 format: "office".into(),
                 message: e.to_string(),
@@ -196,4 +178,43 @@ fn rewrite_zip(
         message: e.to_string(),
     })?;
     Ok(())
+}
+
+fn apply_office_translations(xml: &str, translations: &HashMap<String, String>) -> String {
+    let mut out = xml.to_string();
+    let mut pairs: Vec<(String, String)> = translations
+        .iter()
+        .filter(|(k, v)| !k.is_empty() && !v.is_empty() && !k.contains('/') && !k.chars().all(|c| c.is_ascii_digit()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    // Prefer longer sources so we do not clobber substrings.
+    pairs.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    for (src, tgt) in pairs {
+        if src == tgt {
+            continue;
+        }
+        let from = html_escape::encode_text(&src).to_string();
+        let to = html_escape::encode_text(&tgt).to_string();
+        if out.contains(&from) {
+            out = out.replacen(&from, &to, 1);
+            continue;
+        }
+        if out.contains(&src) {
+            out = out.replacen(&src, &tgt, 1);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substitutes_text_nodes() {
+        let xml = r#"<w:t>Hello world</w:t>"#;
+        let mut map = HashMap::new();
+        map.insert("Hello world".into(), "Bonjour".into());
+        assert!(apply_office_translations(xml, &map).contains("Bonjour"));
+    }
 }

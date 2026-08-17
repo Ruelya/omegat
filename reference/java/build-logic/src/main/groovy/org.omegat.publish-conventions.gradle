@@ -1,0 +1,62 @@
+
+plugins {
+    id 'org.omegat.version'
+    id 'maven-publish'
+    id 'signing'
+    id 'org.hidetake.ssh'
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) { publication ->
+            groupId = project.property('org.omegat.groupId')
+            artifactId = project.property('org.omegat.artifactId')
+            version = project.ext.omtVersion.mavenStyleVersion
+            from components.java
+
+            pom {
+                name = project.property('org.omegat.appName')
+                description = project.property('org.omegat.distDescription')
+                url = project.property('org.omegat.url')
+                scm {
+                    connection = "scm:git:https://github.com/omegat-org/omegat"
+                    developerConnection = "scm:git:https://github.com/omegat-org/omegat"
+                    url = "https://sourceforge.net/p/omegat/"
+                }
+                licenses {
+                    license {
+                        name = 'The GNU General Public License, Version 3.0'
+                        url = 'https://www.gnu.org/licenses/licenses/gpl-3.0.html'
+                    }
+                }
+                developers {
+                    developer {
+                        id = 'omegat'
+                        name = project.property('org.omegat.developer.name')
+                        email = project.property('org.omegat.developer.email')
+                    }
+                }
+            }
+        }
+    }
+}
+
+signing {
+    sign publishing.publications.mavenJava
+    if (!findProperty("signing.keyId")) {
+        useGpgCmd()
+    }
+}
+
+tasks.register('publishVersion') {
+    description = 'Updates the version considered current by the version check.'
+    group = 'publishing'
+    doLast {
+        ssh.run {
+            session(remotes.sourceforgeWeb) {
+                def target = "${htdocs}/Version-${omtFlavor}.properties"
+                put from: file('src/org/omegat/Version.properties'), into: target
+            }
+        }
+    }
+}

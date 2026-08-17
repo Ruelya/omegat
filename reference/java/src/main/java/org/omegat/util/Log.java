@@ -1,0 +1,442 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2000-2006 Keith Godfrey, Maxym Mykhalchuk, and Henry Pijffers
+               2008 Alex Buloichik
+               2013 Didier Briel
+               2023 Hiroshi Miura
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.util;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.time.ZonedDateTime;
+import java.util.Properties;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.Formatter;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogManager;
+import java.util.logging.LogRecord;
+
+import org.jetbrains.annotations.Nullable;
+import tokyo.northside.logging.ILogger;
+import tokyo.northside.logging.LoggerDecorator;
+import tokyo.northside.logging.LoggerFactory;
+
+import org.omegat.util.logging.OmegaTFileHandler;
+
+/**
+ * A collection of methods to make logging things easier.
+ *
+ * @author Henry Pijffers (henry.pijffers@saxnot.com)
+ * @author Alex Buloichik (alex73mail@gmail.com)
+ * @author Hiroshi Miura
+ */
+public final class Log {
+
+    private static final ILogger LOGGER;
+
+    // Line mark is a day-of-the-year and five-character random number
+    private static final String SESSION_ID;
+    private static final ZonedDateTime SESSION_START_DATETIME;
+
+    private Log() {
+    }
+
+    static {
+        SESSION_ID = String.format("%05d", ThreadLocalRandom.current().nextInt(100000));
+        SESSION_START_DATETIME = ZonedDateTime.now();
+        LOGGER = LoggerFactory.getLogger(ILogger.ROOT_LOGGER_NAME,
+                OStrings.getResourceBundle());
+        init();
+    }
+
+    public static String getSessionId() {
+        return SESSION_ID;
+    }
+
+    public static ZonedDateTime getSessionStartDateTime() {
+        return SESSION_START_DATETIME;
+    }
+
+    private static void init() {
+        boolean loaded = false;
+
+        // Ask slf4j-format-jdk14 to append (KEY) to log message.
+        // When you switch to backend other than slf4j-jdk14(aka. JUL),
+        // you should set to false. Otherwise, you may get duplicated key
+        // in a message.
+        System.setProperty(LoggerDecorator.LOCALISATION_KEY_APPENDER, "true");
+
+        String customLogConfig = System.getProperty("java.util.logging.config.file");
+        if (customLogConfig != null) {
+            File customLogSettings = new File(customLogConfig);
+            if (customLogSettings.isFile() && customLogSettings.canRead()) {
+                // try to load logger settings from custom file
+                try (InputStream in = new FileInputStream(customLogSettings)) {
+                    init(in);
+                    loaded = true;
+                } catch (IOException ignored) {
+                }
+            }
+        }
+        if (!loaded) {
+            // try to load logger settings from user home dir
+            File usersLogSettings = new File(StaticUtils.getConfigDir(), "logger.properties");
+            if (usersLogSettings.isFile() && usersLogSettings.canRead()) {
+                try (InputStream in = new FileInputStream(usersLogSettings)) {
+                    init(in);
+                    loaded = true;
+                } catch (IOException ignored) {
+                }
+            }
+        }
+        if (!loaded) {
+            // load built-in logger settings
+            try (InputStream in = Log.class.getResourceAsStream("/org/omegat/logger.properties")) {
+                init(in);
+            } catch (IOException ex) {
+                LOGGER.atError().setMessage("Can't open file for logging").setCause(ex).log();
+            }
+        }
+    }
+
+    /**
+     * Initialize handlers manually. Required for WebStart.
+     *
+     * @param in
+     *            settings
+     */
+    private static void init(InputStream in) throws IOException {
+        Properties props = new Properties();
+        props.load(in);
+        String handlers = props.getProperty("handlers");
+        if (handlers != null) {
+            props.remove("handlers");
+
+            ByteArrayOutputStream b = new ByteArrayOutputStream();
+            props.store(b, null);
+            LogManager.getLogManager().readConfiguration(new ByteArrayInputStream(b.toByteArray()));
+            java.util.logging.Logger rootLogger = LogManager.getLogManager().getLogger("");
+
+            // remove initialized handlers
+            for (Handler h : rootLogger.getHandlers()) {
+                rootLogger.removeHandler(h);
+            }
+
+            String[] hs = handlers.split(",");
+            for (String hn : hs) {
+                String word = hn.trim();
+                try {
+                    Class<?> clz = Log.class.getClassLoader().loadClass(word);
+                    Handler h = (Handler) clz.getDeclaredConstructor().newInstance();
+                    String fname = props.getProperty(word + ".formatter");
+                    if (fname != null) {
+                        Class<?> clzF = Log.class.getClassLoader().loadClass(fname.trim());
+                        h.setFormatter((Formatter) clzF.getDeclaredConstructor().newInstance());
+                    }
+                    String level = props.getProperty(word + ".level");
+                    if (level != null) {
+                        h.setLevel(Level.parse(level));
+                    }
+                    rootLogger.addHandler(h);
+                } catch (Exception ex) {
+                    System.err.println("Error in logger init: " + ex);
+                    ex.printStackTrace();
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns the path to the log file.
+     */
+    public static String getLogLocation() {
+        return StaticUtils.getConfigDir() + "/logs";
+    }
+
+    /**
+     * Compute the filename of the log file.
+     *
+     * @return the filename of the log, or an empty string
+     */
+    public static String getLogFileName() {
+        java.util.logging.Logger rootLogger = LogManager.getLogManager().getLogger("");
+        for (Handler handler : rootLogger.getHandlers()) {
+            if (handler instanceof OmegaTFileHandler) {
+                OmegaTFileHandler omegatLog = (OmegaTFileHandler) handler;
+                return omegatLog.getLogFileName();
+            }
+        }
+        return "";
+    }
+
+    /**
+     * Compute the full path of the log file.
+     *
+     * @return the full path of the log file
+     */
+    public static String getLogFilePath() {
+        return getLogLocation() + "/" + getLogFileName();
+    }
+
+    /**
+     * Set the level for the global logger. This is normally determined by the
+     * <code>logger.properties</code> file; use this method to override for
+     * special use cases.
+     *
+     * @param level
+     *            The new level
+     */
+    public static void setLevel(Level level) {
+        org.slf4j.ILoggerFactory loggerFactory = org.slf4j.LoggerFactory.getILoggerFactory();
+        Class<? extends org.slf4j.ILoggerFactory> loggerFactoryClass = loggerFactory.getClass();
+        String loggerName = loggerFactoryClass.getName();
+        if (loggerName.equals("org.slf4j.jul.JDK14LoggerFactory")) {
+            // when slf4j-jdk14
+            java.util.logging.Logger rootLogger = LogManager.getLogManager().getLogger("");
+            rootLogger.setLevel(level);
+        }
+    }
+
+    public static void setConsoleLevel(Level level) {
+        org.slf4j.ILoggerFactory loggerFactory = org.slf4j.LoggerFactory.getILoggerFactory();
+        Class<? extends org.slf4j.ILoggerFactory> loggerFactoryClass = loggerFactory.getClass();
+        String loggerName = loggerFactoryClass.getName();
+        if (loggerName.equals("org.slf4j.jul.JDK14LoggerFactory")) {
+            // when slf4j-jdk14
+            java.util.logging.Logger rootLogger = LogManager.getLogManager().getLogger("");
+            for (Handler h : rootLogger.getHandlers()) {
+                if (h instanceof ConsoleHandler) {
+                    h.setLevel(level);
+                }
+            }
+        }
+    }
+
+    public static ILogger getLogger(final Class<?> clazz) {
+        return LoggerDecorator.deco(org.slf4j.LoggerFactory.getLogger(clazz), OStrings.getResourceBundle());
+    }
+
+    /**
+     * Logs what otherwise would go to System.out
+     */
+    public static void log(String s) {
+        LOGGER.atInfo().setMessage(s).log();
+    }
+
+    /**
+     * Logs a message, retrieved from the resource bundle.
+     *
+     * @param key
+     *            The key of the message in the resource bundle.
+     * @param parameters
+     *            Parameters for the message. These are inserted by using
+     *            StaticUtils.format.
+     */
+    public static void logRB(String key, @Nullable Object... parameters) {
+        LOGGER.atInfo().logRB(key, parameters);
+    }
+
+    /**
+     * Logs an Exception or Error. To the log are written: - The class name of
+     * the Exception or Error - The message, if any - The stack trace
+     *
+     * @param throwable
+     *            The exception or error to log
+     */
+    public static void log(Throwable throwable) {
+        Log.log(throwable, "");
+    }
+
+    public static void log(Throwable throwable, String message, @Nullable Object... parameters) {
+        LOGGER.atError().setMessage(message).setCause(throwable).addArgument(parameters).log();
+    }
+
+    /**
+     * Writes a warning message to the log (to be retrieved from the resource
+     * bundle)
+     * <p>
+     * While the warning message can be localized, the warning key is also
+     * logged, so developers can determine what warning was given by looking at
+     * the error key, instead of trying to interpret localized messages.
+     *
+     * @param key
+     *            The key of the error message in the resource bundle
+     * @param parameters
+     *            Parameters for the error message. These are inserted by using
+     *            StaticUtils.format.
+     */
+    public static void logWarningRB(String key, @Nullable Object... parameters) {
+        LOGGER.atWarn().logRB(key, parameters);
+    }
+
+    /**
+     * Writes an info message to the log (to be retrieved from the resource
+     * bundle).
+     * <p>
+     * While the info message can be localized, the info key is also logged, so
+     * developers can determine what info was given by looking at the error key,
+     * instead of trying to interpret localized messages.
+     *
+     * @param key
+     *            The key of the error message in the resource bundle
+     * @param parameters
+     *            Parameters for the error message. These are inserted by using
+     *            StaticUtils.format.
+     */
+    public static void logInfoRB(String key, @Nullable Object... parameters) {
+        LOGGER.atInfo().logRB(key, parameters);
+    }
+
+    /**
+     * Writes an error message to the log (to be retrieved from the resource
+     * bundle)
+     * <p>
+     * While the error message can be localized, the error key is also logged,
+     * so developers can determine what error was given by looking at the error
+     * key, instead of trying to interpret localized messages.
+     *
+     * @param key
+     *            The key of the error message in the resource bundle
+     * @param parameters
+     *            Parameters for the error message. These are inserted by using
+     *            StaticUtils.format.
+     */
+    public static void logErrorRB(String key, @Nullable Object... parameters) {
+        LOGGER.atError().logRB(key, parameters);
+    }
+
+    /**
+     * Writes an error message to the log (to be retrieved from the resource
+     * bundle).
+     * <p>
+     * While the error message can be localized, the error key is also logged,
+     * so developers can determine what error was given by looking at the error
+     * key, instead of trying to interpret localized messages.
+     *
+     * @param ex
+     *            The error that was thrown
+     * @param key
+     *            The key of the error message in the resource bundle
+     * @param parameters
+     *            Parameters for the error message. These are inserted by using
+     *            StaticUtils.format.
+     */
+    public static void logErrorRB(Throwable ex, String key, @Nullable Object... parameters) {
+        LOGGER.atError().setCause(ex).logRB(key, parameters);
+    }
+
+    /**
+     * Writes a debug message to log (without localization).
+     *
+     * @param message
+     *            message text
+     * @param parameters
+     *            Parameters for the error message. These are inserted by using
+     *            StaticUtils.format.
+     * @deprecated
+     */
+    @Deprecated(since = "6.1.0", forRemoval = true)
+    public static void logDebug(java.util.logging.Logger logger, String message, @Nullable Object... parameters) {
+        if (logger.isLoggable(Level.FINE)) {
+            LogRecord rec = new LogRecord(Level.FINE, message);
+            rec.setParameters(parameters);
+            rec.setLoggerName(logger.getName());
+            logger.log(rec);
+        }
+    }
+
+    /**
+     * Checks whether debug-level logging is currently enabled.
+     *
+     * @return true if debug-level logging is enabled, false otherwise
+     */
+    public static boolean isDebugEnabled() {
+        return LOGGER.isDebugEnabled();
+    }
+
+    /**
+     * Logs a debug message with optional parameters. This method uses
+     * the debug logging level to record the provided message and arguments.
+     *
+     * @param message   The message template to be logged. It may include placeholders
+     *                  for arguments.
+     * @param parameters Optional arguments to be inserted into the placeholders of
+     *                   the message template.
+     */
+    public static void logDebug(String message, @Nullable Object... parameters) {
+        LOGGER.atDebug().setMessage(message).addArgument(parameters).log();
+    }
+
+    /**
+     * Writes an info message to the log (to be retrieved from the resource
+     * bundle).
+     *
+     * @param key
+     *            The key of the error message in the resource bundle
+     * @param parameter
+     *            Parameter for the error message.
+     */
+    public static void logInfoRB(String key, @Nullable Object parameter) {
+        LOGGER.atInfo().setMessageRB(key).addArgument(parameter).log();
+    }
+
+    /**
+     * Writes an info message to the log (to be retrieved from the resource
+     * bundle).
+     *
+     * @param key
+     *            The key of the error message in the resource bundle
+     */
+    public static void logInfoRB(String key) {
+        LOGGER.atInfo().setMessageRB(key).log();
+    }
+
+    /**
+     * Writes a warning message to the log (to be retrieved from the resource
+     * bundle).
+     *
+     * @param key
+     *            The key of the error message in the resource bundle
+     * @param parameter
+     *            Parameter for the error message.
+     */
+    public static void logWarningRB(String key, @Nullable Object parameter) {
+        LOGGER.atWarn().setMessageRB(key).addArgument(parameter).log();
+    }
+
+    /**
+     * Writes an error message to the log (to be retrieved from the resource
+     * bundle).
+     */
+    public static void logErrorRB(String key, @Nullable Object parameter) {
+        LOGGER.atError().setMessageRB(key).addArgument(parameter).log();
+    }
+}

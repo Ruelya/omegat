@@ -1,0 +1,1236 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2000-2006 Keith Godfrey and Maxym Mykhalchuk
+               2008 Martin Fleurke, Alex Buloichik, Didier Briel
+               2009 Didier Briel
+               2010 Antonio Vilei
+               2011 Didier Briel
+               2013 Didier Briel, Alex Buloichik
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.filters3.xml;
+
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.IOException;
+import java.io.StringReader;
+import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.file.Path;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.jspecify.annotations.Nullable;
+import org.xml.sax.Attributes;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXException;
+import org.xml.sax.SAXParseException;
+import org.xml.sax.ext.DeclHandler;
+import org.xml.sax.ext.LexicalHandler;
+import org.xml.sax.helpers.DefaultHandler;
+
+import org.omegat.core.Core;
+import org.omegat.core.data.ProtectedPart;
+import org.omegat.filters2.FilterContext;
+import org.omegat.filters2.TranslationException;
+import org.omegat.filters3.Attribute;
+import org.omegat.filters3.Element;
+import org.omegat.filters3.Entry;
+import org.omegat.filters3.Tag;
+import org.omegat.util.OStrings;
+import org.omegat.util.StringUtil;
+
+/**
+ * The part of XML filter that actually does the job. This class is called back
+ * by SAXParser.
+ * <p>
+ * Entities described on
+ * <a href="http://www.ibm.com/developerworks/xml/library/x-entities/">Add
+ * entities in XML</a> <a href=
+ * "https://web.archive.org/web/20180326105358/http://xmlwriter.net/xml_guide/entity_declaration.shtml">
+ * ENTITY Declaration</a>
+ *
+ * @author Maxym Mykhalchuk
+ * @author Martin Fleurke
+ * @author Didier Briel
+ * @author Alex Buloichik (alex73mail@gmail.com)
+ */
+public class Handler extends DefaultHandler implements LexicalHandler, DeclHandler {
+    private final Translator translator;
+    private final XMLDialect dialect;
+    private final File inFile;
+    private final @Nullable File outFile;
+    private final FilterContext context;
+
+    /** Main file writer to write translated text to. */
+    private final BufferedWriter mainWriter;
+    /** Current writer for an external included file. */
+    private @Nullable BufferedWriter extWriter = null;
+
+    /** Current path in XML. */
+    private final Deque<String> currentTagPath = new ArrayDeque<>();
+
+    /**
+     * Returns current writer we should write into. If we're in main file,
+     * returns {@link #mainWriter}, else (if we're writing external file)
+     * returns {@link #extWriter}.
+     */
+    private BufferedWriter currWriter() {
+        return Objects.requireNonNullElse(extWriter, mainWriter);
+    }
+
+    /** Currently parsed external entity that has its own writer. */
+    private @Nullable Entity extEntity = null;
+
+    /** Current entry that collects normal text. */
+    @Nullable
+    Entry entry;
+    /** Stack of entries that collect out-of-turn text. */
+    private final Deque<Entry> outofturnEntries = new ArrayDeque<>();
+    /** Current entry that collects the text surrounded by intact tag. */
+    @Nullable
+    Entry intacttagEntry = null;
+    /** Keep the attributes of an intact tag. */
+    org.omegat.filters3.@Nullable Attributes intacttagAttributes = null;
+    /** Keep the attributes of paragraph tags. */
+    private final Deque<org.omegat.filters3.Attributes> paragraphTagAttributes = new ArrayDeque<>();
+    /** Keep the attributes of preformat tags. */
+    private final Deque<org.omegat.filters3.Attributes> preformatTagAttributes = new ArrayDeque<>();
+    /** Keep the attributes of xml tags. */
+    private final Deque<org.omegat.filters3.Attributes> xmlTagAttributes = new ArrayDeque<>();
+
+    /** Current entry that collects the text surrounded by intact tag. */
+    @Nullable
+    String intacttagName = null;
+    /** Names of possible paragraph tags. */
+    private final Deque<String> paragraphTagName = new ArrayDeque<>();
+    /** Names of possible preformat tags. */
+    private final Deque<String> preformatTagName = new ArrayDeque<>();
+    /** Name of the current variable-translatable tag */
+    private final Deque<String> translatableTagName = new ArrayDeque<>();
+    /** Names of xml tags. */
+    private final Deque<String> xmlTagName = new ArrayDeque<>();
+    /** Status of the xml:space="preserve" flag */
+    private boolean spacePreserve = false;
+
+    /** Now we collect out-of-turn entry. */
+    private boolean collectingOutOfTurnText() {
+        return !outofturnEntries.isEmpty();
+    }
+
+    /** Now we collect intact text. */
+    private boolean collectingIntactText() {
+        return intacttagEntry != null;
+    }
+
+    private boolean isTranslatableTag() {
+        return !translatableTagName.isEmpty();
+    }
+
+    private boolean isSpacePreservingTag() {
+        if (Core.getFilterMaster().getConfig().isPreserveSpaces()) {
+            // Preserve spaces for all tags
+            return true;
+        } else {
+            return spacePreserve;
+        }
+    }
+
+    private void resetSpacePreservingTag() {
+        spacePreserve = false;
+    }
+
+    /**
+     * Returns the current entry we collect text into. If we collect normal
+     * text, returns {@link #entry}, else returns the last of
+     * {@link #outofturnEntries}.
+     */
+    private Entry currEntry() {
+        if (collectingIntactText()) {
+            return intacttagEntry;
+        } else if (collectingOutOfTurnText()) {
+            return Objects.requireNonNull(outofturnEntries.peek());
+        }
+        return Objects.requireNonNull(entry);
+    }
+
+    /**
+     * External entities declared in source file. Each entry is of type
+     * {@link Entity}.
+     */
+    private final List<Entity> externalEntities = new ArrayList<>();
+
+    /**
+     * Internal entities declared in source file. A {@link Map} from
+     * {@link String}/entity name/ to {@link Entity}.
+     */
+    private final Map<String, Entity> internalEntities = new HashMap<>();
+    /** Internal entity just started. */
+    private @Nullable Entity internalEntityStarted = null;
+
+    /** Currently collected text is wrapped in CDATA section. */
+    private boolean inCDATA = false;
+
+    /**
+     * SAX parser encountered DTD declaration, so probably it will parse DTD
+     * next, but some nice things may happen before.
+     */
+    private @Nullable DTD dtd = null;
+    /**
+     * SAX parser parses DTD -- we don't extract translatable text from there
+     */
+    private boolean inDTD = false;
+
+    /**
+     * The list of external files that handler has processed, because they were
+     * included into main file. Each entry is of type {@link File}.
+     */
+    private final List<File> processedFiles = new ArrayList<>();
+
+    /**
+     * Returns external files this handler has processed, because they were
+     * included into main file. Each entry is {@link File}.
+     */
+    @SuppressWarnings("unused")
+    public @Nullable List<File> getProcessedFiles() {
+        return processedFiles.isEmpty() ? null : processedFiles;
+    }
+
+    /** Throws a nice error message when SAX parser encounters fatal error. */
+    private void reportFatalError(SAXParseException e)
+            throws SAXException, MalformedURLException, URISyntaxException {
+        final int lineNumber = e.getLineNumber();
+        String filename;
+        if (e.getSystemId() != null) {
+            File errorfile = new File(inFile.getParentFile(), localizeSystemId(e.getSystemId()));
+            if (errorfile.exists()) {
+                filename = errorfile.getAbsolutePath();
+            } else {
+                filename = inFile.getAbsolutePath();
+            }
+        } else {
+            filename = inFile.getAbsolutePath();
+        }
+        throw new SAXException("\n" + StringUtil
+                .format(e.getMessage() + "\n" + OStrings.getString("XML_FATAL_ERROR"), filename, lineNumber));
+    }
+
+    /**
+     * Creates a new instance of Handler
+     */
+    public Handler(Translator translator, XMLDialect dialect, File inFile, @Nullable File outFile,
+            FilterContext fc) throws IOException {
+        this.translator = translator;
+        this.dialect = dialect;
+        this.inFile = inFile;
+        this.outFile = outFile;
+        this.context = fc;
+        this.mainWriter = translator.createWriter(outFile, fc.getOutEncoding());
+    }
+
+    public FilterContext getContext() {
+        return context;
+    }
+
+    private static final String START_JARSCHEMA = "jar:";
+    private static final String START_FILESCHEMA = "file:";
+
+    // ////////////////////////////////////////////////////////////////////////
+    // Utility methods
+    // ////////////////////////////////////////////////////////////////////////
+
+    private @Nullable String sourceFolderAbsolutePath = null;
+
+    /**
+     * Returns source folder of the main file with trailing '/'
+     * (File.separator).
+     */
+    private String getSourceFolderAbsolutePath() {
+        if (sourceFolderAbsolutePath == null) {
+            String res = inFile.getAbsoluteFile().getParent();
+            try {
+                res = inFile.getCanonicalFile().getParent();
+            } catch (IOException ignored) {
+            }
+            if (res.codePointBefore(res.length()) != File.separatorChar) {
+                res = res + File.separatorChar;
+            }
+            sourceFolderAbsolutePath = res;
+        }
+        return sourceFolderAbsolutePath;
+    }
+
+    /** Makes System ID not an absolute, but a relative one. */
+    private String localizeSystemId(String systemId) throws URISyntaxException, MalformedURLException {
+        if (systemId.startsWith(START_FILESCHEMA)) {
+            Path thisOutFile = new File(new URI(systemId)).toPath();
+            Path sourceFolderFile = new File(getSourceFolderAbsolutePath()).toPath();
+            try {
+                String thisOutPath = sourceFolderFile.relativize(thisOutFile).toString();
+                return thisOutPath.replace("\\", "/");
+            } catch (IllegalArgumentException ex) {
+                // Failed to relativize
+            }
+        }
+        return systemId;
+    }
+
+    /** Whether the file with given systemId is in source folder. */
+    private boolean isInSource(String systemId) throws URISyntaxException {
+        if (systemId.startsWith(START_FILESCHEMA)) {
+            File thisOutFile = new File(new URI(systemId));
+            return thisOutFile.getAbsolutePath().startsWith(getSourceFolderAbsolutePath());
+        }
+        return false;
+    }
+
+    /** Finds external entity by publicId and systemId. */
+    private @Nullable Entity findExternalEntity(@Nullable String publicId, @Nullable String systemId) {
+        if (publicId == null && systemId == null) {
+            return null;
+        }
+        for (Entity entity : externalEntities) {
+            if (entity.getType() != Entity.Type.EXTERNAL) {
+                continue;
+            }
+            if (StringUtil.equal(publicId, entity.getPublicId())
+                    && StringUtil.equal(systemId, entity.getSystemId())) {
+                return entity;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Is called when the entity starts. Tries to find out whether it's an
+     * internal entity, and if so, turns on the trigger to queue entity, and not
+     * the text it represents, in {@link #characters(char[],int,int)}.
+     */
+    private void doStartEntity(String name) {
+        if (inDTD) {
+            return;
+        }
+        internalEntityStarted = internalEntities.get(name);
+    }
+
+    /**
+     * Is called when the entity is ended. Tries to find out whether it's an
+     * external entity we created a writer for, and if so, closes the writer and
+     * nulls the entity.
+     */
+    private void doEndEntity(String name) throws SAXException, TranslationException, IOException {
+        if (inDTD || extEntity == null) {
+            return;
+        }
+        if (extEntity.getOriginalName().equals(name)) {
+            boolean parameterEntity = extEntity.isParameter();
+            extEntity = null;
+            if (dtd != null) {
+                Entity entity = new Entity(name);
+                dtd.addEntity(entity);
+            } else {
+                if (parameterEntity) {
+                    currEntry().add(new XMLText(name + ';', inCDATA));
+                } else {
+                    currEntry().add(new XMLText('&' + name + ';', inCDATA));
+                }
+            }
+            if (extWriter != null) {
+                translateAndFlush();
+                extWriter.close();
+                extWriter = null;
+            }
+        }
+    }
+
+    /**
+     * Resolves an external entity and provides an InputSource for the entity.
+     * The method handles resolving based on the public ID and system ID
+     * provided, and checks for specific URI schemas to determine the type of
+     * resolution required. Additionally, it performs translation and writing if
+     * necessary and resolves external entities from the project's source
+     * folder.
+     *
+     * @param publicId
+     *            The public identifier of the entity being resolved.
+     * @param systemId
+     *            The system identifier of the entity being resolved.
+     * @return An InputSource object representing the resolved entity. If the
+     *         entity cannot be resolved, it returns an empty InputSource.
+     * @throws SAXException
+     *             If there is an error during XML parsing.
+     */
+    public InputSource doResolve(String publicId, String systemId) throws SAXException {
+        inDTD = isDTDMatch(publicId, systemId);
+        if (systemId.startsWith(START_JARSCHEMA) || systemId.startsWith(START_FILESCHEMA)) {
+            return resolveLocalEntity(publicId, systemId);
+        } else {
+            return resolveDialectEntity(publicId, systemId);
+        }
+    }
+
+    /**
+     * Determines if the provided public ID and system ID match the current DTD.
+     * Returns false if no DTD is set, true if both public and system IDs match
+     * (including localized system ID matching).
+     *
+     * @param publicId
+     *            The public identifier to match against the DTD
+     * @param systemId
+     *            The system identifier to match against the DTD
+     * @return true if the IDs match the current DTD, false otherwise
+     */
+    private boolean isDTDMatch(String publicId, String systemId) throws SAXException {
+        if (dtd == null) {
+            return false;
+        }
+        try {
+            boolean publicIdMatches = StringUtil.equal(publicId, dtd.getPublicId());
+            boolean systemIdMatches = StringUtil.equal(systemId, dtd.getSystemId())
+                    || StringUtil.equal(localizeSystemId(systemId), dtd.getSystemId());
+
+            return publicIdMatches && systemIdMatches;
+        } catch (MalformedURLException | URISyntaxException ex) {
+            throw new SAXException(ex);
+        }
+    }
+
+    private InputSource resolveDialectEntity(String publicId, String systemId) {
+        InputSource source = dialect.resolveEntity(publicId, systemId);
+        return Objects.requireNonNullElseGet(source, () -> new InputSource(new StringReader("")));
+    }
+
+    private InputSource resolveLocalEntity(String publicId, String systemId) throws SAXException {
+        try {
+            if (!isValidLocalEntity(systemId)) {
+                return new InputSource(new StringReader(""));
+            }
+
+            InputSource entity = new InputSource(systemId);
+            if (!inDTD && outFile != null && extEntity == null) {
+                extEntity = findExternalEntity(publicId, localizeSystemId(systemId));
+                if (extEntity != null && isInSource(systemId)) {
+                    // if we resolved a new entity, and:
+                    // 1. it's not a DTD
+                    // 2. it's in project's source folder
+                    // 3. it's not during project load
+                    // then it's an external file, and we need to
+                    // write it as an external file
+                    translateAndFlush();
+                    File extFile = new File(outFile.getParentFile(), localizeSystemId(systemId));
+                    processedFiles.add(new File(inFile.getParent(), localizeSystemId(systemId)));
+                    extWriter = translator.createWriter(extFile, context.getOutEncoding());
+                    extWriter.write("<?xml version=\"1.0\"?>\n");
+                }
+            }
+            return entity;
+        } catch (IOException | URISyntaxException | TranslationException ex) {
+            throw new SAXException(ex);
+        }
+    }
+
+    private boolean isValidLocalEntity(String systemId) throws URISyntaxException {
+        // checking if the systemID is a file schema, and if so, we need to
+        // resolve it from the source folder
+        if (systemId.startsWith(START_FILESCHEMA)) {
+            return new File(new URI(systemId)).exists();
+        } else {
+            return systemId.startsWith(START_JARSCHEMA);
+        }
+    }
+
+    private void queueText(String s) {
+        if (!translator.isInIgnored()) {
+            translator.text(s);
+        }
+
+        // TODO: ideally, xml:space=preserved would be handled at this level,
+        // but that would suppose
+        // knowing here whether we're inside a preformatted tag, etc.
+        if (internalEntityStarted != null && s.equals(internalEntityStarted.getValue())) {
+            currEntry().add(new XMLEntityText(internalEntityStarted));
+        } else {
+            boolean added = false;
+            if (!currEntry().isEmpty()) {
+                Element elem = currEntry().get(currEntry().size() - 1);
+                if (elem instanceof XMLText) {
+                    XMLText text = (XMLText) elem;
+                    if (text.isInCDATA() == inCDATA) {
+                        currEntry().resetTagDetected();
+                        text.append(s);
+                        added = true;
+                    }
+                }
+            }
+            if (!added) {
+                currEntry().add(new XMLText(s, inCDATA));
+            }
+        }
+    }
+
+    private void queueTag(String tag, @Nullable Attributes attributes) {
+        Tag xmltag = null;
+        XMLIntactTag intacttag = null;
+        setTranslatableTag(tag, XMLUtils.convertAttributes(attributes));
+        setSpacePreservingTag(XMLUtils.convertAttributes(attributes));
+        if (!collectingIntactText()) {
+            if (isContentBasedTag(tag, XMLUtils.convertAttributes(attributes))) {
+                intacttag = new XMLContentBasedTag(dialect, this, tag, getShortcut(tag),
+                        dialect.getContentBasedTags().get(tag), attributes);
+                xmltag = intacttag;
+                intacttagName = tag;
+                intacttagAttributes = XMLUtils.convertAttributes(attributes);
+            } else if (isIntactTag(tag, XMLUtils.convertAttributes(attributes))) {
+                intacttag = new XMLIntactTag(dialect, this, tag, getShortcut(tag), attributes);
+                xmltag = intacttag;
+                intacttagName = tag;
+                intacttagAttributes = XMLUtils.convertAttributes(attributes);
+            }
+        }
+        if (xmltag == null) {
+            xmlTagName.push(tag);
+            xmlTagAttributes.push(XMLUtils.convertAttributes(attributes));
+            xmltag = new XMLTag(tag, getShortcut(tag), Tag.Type.BEGIN, attributes, this.translator);
+        }
+        currEntry().add(xmltag);
+
+        if (intacttag != null) {
+            intacttagEntry = intacttag.getIntactContents();
+        }
+
+        if (!collectingIntactText()) {
+            processTranslatableAttributes(xmltag, tag);
+        }
+    }
+
+    private void processTranslatableAttributes(Tag xmltag, String tag) {
+        if (xmltag.getAttributes() == null) {
+            // always expect notNull but enforce
+            return;
+        }
+        org.omegat.filters3.Attributes attributes = xmltag.getAttributes();
+        for (int i = 0; i < attributes.size(); i++) {
+            Attribute attr = attributes.get(i);
+            if (isTranslatableAttribute(tag, attr.getName())
+                    && dialect.validateTranslatableTagAttribute(tag, attr.getName(), attributes)) {
+                String translatedAttributeValue = translateAttributeValue(attr.getValue());
+                attr.setValue(translatedAttributeValue);
+            }
+        }
+    }
+
+    private boolean isTranslatableAttribute(String tag, String attributeName) {
+        return dialect.getTranslatableAttributes().contains(attributeName)
+                || dialect.getTranslatableTagAttributes().containsPair(tag, attributeName);
+    }
+
+    private String translateAttributeValue(String value) {
+        String unescapedValue = StringUtil.unescapeXMLEntities(value);
+        String translatedValue = translator.translate(unescapedValue, null);
+        return StringUtil.makeValidXML(translatedValue);
+    }
+
+    /**
+     * Queue tag that should be ignored by editor, including content and all
+     * subtags.
+     */
+    private void queueIgnoredTag(String tag, @Nullable Attributes attributes) {
+        org.omegat.filters3.Attributes atts = XMLUtils.convertAttributes(attributes);
+        setSpacePreservingTag(atts);
+        xmlTagName.push(tag);
+        xmlTagAttributes.push(atts);
+        Tag xmltag = new XMLTag(tag, getShortcut(tag), Tag.Type.BEGIN, attributes, this.translator);
+        currEntry().add(xmltag);
+    }
+
+    private void queueEndTag(String tag) {
+        int len = currEntry().size();
+        if (len > 0 && (currEntry().get(len - 1) instanceof XMLTag)
+                && (((XMLTag) currEntry().get(len - 1)).getTag().equals(tag)
+                        && ((XMLTag) currEntry().get(len - 1)).getType() == Tag.Type.BEGIN)
+                && !isClosingTagRequired()) {
+            if (((XMLTag) currEntry().get(len - 1)).getTag().equals(xmlTagName.peekLast())) {
+                xmlTagName.pop();
+                xmlTagAttributes.pop();
+            }
+            ((XMLTag) currEntry().get(len - 1)).setType(Tag.Type.ALONE);
+        } else {
+            XMLTag xmltag = new XMLTag(tag, getShortcut(tag), Tag.Type.END, null, this.translator);
+            if (xmltag.getTag().equals(xmlTagName.peekLast())) {
+                xmlTagName.pop();
+                xmltag.setStartAttributes(xmlTagAttributes.pop()); // Restore
+                                                                   // attributes
+            }
+            currEntry().add(xmltag);
+        }
+    }
+
+    private void queueComment(String comment) {
+        if (!translator.isInIgnored()) {
+            translator.comment(comment);
+        }
+        currEntry().add(new Comment(comment));
+    }
+
+    private void queueProcessingInstruction(String data, String target) {
+        currEntry().add(new ProcessingInstruction(data, target));
+    }
+
+    private void queueDTD(DTD dtd) {
+        currEntry().add(dtd);
+    }
+
+    /** Is called when the tag is started. */
+    private void start(String tag, @Nullable Attributes attributes) throws SAXException, TranslationException {
+        boolean prevIgnored = translator.isInIgnored();
+        translatorTagStart(tag, attributes);
+
+        if (!translator.isInIgnored()) {
+            if (isOutOfTurnTag(tag)) {
+                XMLOutOfTurnTag ootTag = new XMLOutOfTurnTag(dialect, this, tag, getShortcut(tag),
+                        attributes);
+                currEntry().add(ootTag);
+                outofturnEntries.push(ootTag.getEntry());
+            } else {
+                if (isParagraphTag(tag, XMLUtils.convertAttributes(attributes)) && !collectingOutOfTurnText()
+                        && !collectingIntactText()) {
+                    translateAndFlush();
+                }
+                queueTag(tag, attributes);
+            }
+        } else {
+            if (!prevIgnored) {
+                // start ignored from this tags - need to flush translation
+                translateAndFlush();
+            }
+            queueIgnoredTag(tag, attributes);
+        }
+    }
+
+    /** Is called when the tag is ended. */
+    private void end(String tag) throws SAXException, TranslationException {
+        boolean prevIgnored = translator.isInIgnored();
+        if (!translator.isInIgnored()) {
+            if (collectingIntactText() && tag.equals(intacttagName)
+                    && (isIntactTag(tag, null) || isContentBasedTag(tag, null))) {
+                intacttagEntry = null;
+                intacttagName = null;
+                intacttagAttributes = null;
+                removeTranslatableTag();
+            } else if (collectingOutOfTurnText() && isOutOfTurnTag(tag)) {
+                translateButDontFlash();
+                outofturnEntries.pop();
+            } else {
+                queueEndTag(tag);
+                // TODO: If a file doesn't contain any paragraph tag,
+                // the translatable content will be lost
+                if (isParagraphTag(tag) && !collectingOutOfTurnText() && !collectingIntactText()) {
+                    translateAndFlush();
+                }
+                removeTranslatableTag();
+            }
+        } else {
+            queueEndTag(tag);
+        }
+
+        translatorTagEnd(tag);
+        if (!translator.isInIgnored() && prevIgnored) {
+            // stop ignored from this tag - need to flush without translate
+            flushButDontTranslate();
+        }
+    }
+
+    /**
+     * One of the main methods of the XML filter: it collects all the data,
+     * adjusts it, and sends for translation.
+     *
+     * @see #translateAndFlush()
+     */
+    private void translateButDontFlash() throws TranslationException {
+        if (currEntry().isEmpty()) {
+            return;
+        }
+
+        boolean isTranslated = true;
+        List<ProtectedPart> shortcutDetails = new ArrayList<>();
+        boolean tagsAggregation = isTagsAggregationEnabled();
+        String src = currEntry().sourceToShortcut(tagsAggregation, dialect, shortcutDetails);
+        Element lead = currEntry().get(0);
+        String translation = src;
+        if ((lead instanceof Tag) && (isPreformattingTag(((Tag) lead).getTag(), ((Tag) lead).getAttributes())
+                || isSpacePreservingTag()) && isTranslatableTag() && !StringUtil.isEmpty(src)) {
+            resetSpacePreservingTag();
+            translation = translator.translate(src, shortcutDetails);
+        } else {
+            String compressed = src;
+            if (Core.getFilterMaster().getConfig().isRemoveSpacesNonseg()) {
+                compressed = StringUtil.compressSpaces(src);
+            }
+            if (isTranslatableTag()) {
+                translation = translator.translate(compressed, shortcutDetails);
+            }
+            // untranslated is written out uncompressed
+            if (compressed.equals(translation)) {
+                translation = src;
+                isTranslated = false;
+            }
+        }
+        if (lead instanceof XMLTag) {
+            dialect.handleXMLTag((XMLTag) lead, isTranslated);
+        }
+
+        currEntry().setTranslation(translation, dialect, new ArrayList<>());
+    }
+
+    /**
+     * One of the main methods of the XML filter: it collects all the data,
+     * adjusts it, sends for translation, writes out the translated data and
+     * clears the entry.
+     *
+     * @see #translateButDontFlash()
+     */
+    @SuppressWarnings("resource")
+    private void translateAndFlush() throws SAXException, TranslationException {
+        translateButDontFlash();
+        try {
+            currWriter().write(currEntry().translationToOriginal());
+        } catch (IOException e) {
+            throw new SAXException(e);
+        }
+        currEntry().clear();
+    }
+
+    /**
+     * Write tag's content without translation. Used for ignored tags.
+     */
+    @SuppressWarnings("resource")
+    private void flushButDontTranslate() throws SAXException {
+        try {
+            currWriter().write(currEntry().translationToOriginal());
+        } catch (IOException e) {
+            throw new SAXException(e);
+        }
+        currEntry().clear();
+    }
+
+    // /////////////////////////////////////////////////////////////////////////
+    // Dialect Helper methods
+    // /////////////////////////////////////////////////////////////////////////
+
+    /**
+     * Returns whether the tag starts a new paragraph. Preformatting tags are
+     * also considered to start a new paragraph, so if
+     * {@link #isPreformattingTag(String)} returns true, this method will also
+     * return true.
+     */
+    private boolean isParagraphTag(String tag, org.omegat.filters3.Attributes atts) {
+        paragraphTagName.push(tag);
+        paragraphTagAttributes.push(atts);
+        preformatTagName.push(tag);
+        preformatTagAttributes.push(atts);
+
+        if ((dialect.getParagraphTags() != null && dialect.getParagraphTags().contains(tag))
+                || isPreformattingTag(tag, atts)) {
+            return true;
+        } else {
+            return dialect.validateParagraphTag(tag, atts);
+        }
+    }
+
+    /**
+     * Returns whether the tag starts a new paragraph. It is called at the end
+     * of an element (&lt;/mrk&gt;), and thus doesn't provide attributes. Those
+     * are restored from the paragraphTagAttributes stack.
+     *
+     * @param tag
+     *            A tag
+     * @return <code>true</code> or <code>false</false>
+     */
+    private boolean isParagraphTag(String tag) {
+        if ((dialect.getParagraphTags() != null && dialect.getParagraphTags().contains(tag))
+                || isPreformattingTag(tag)) {
+            return true;
+        } else {
+            org.omegat.filters3.Attributes atts = null;
+            if (tag.equals(paragraphTagName.peekLast())) {
+                paragraphTagName.pop();
+                atts = paragraphTagAttributes.pop(); // Restore attributes
+            }
+            return dialect.validateParagraphTag(tag, atts);
+        }
+    }
+
+    /**
+     * Returns whether the tag starts a new paragraph.
+     */
+    public boolean isParagraphTag(Tag tag) {
+        if ((dialect.getParagraphTags() != null && dialect.getParagraphTags().contains(tag.getTag()))
+                || isPreformattingTag(tag.getTag(), tag.getAttributes())) {
+            return true;
+        } else if (tag.getType() == Tag.Type.END
+                && isPreformattingTag(tag.getTag(), tag.getStartAttributes())) {
+            return true;
+        } else {
+            return dialect.validateParagraphTag(tag.getTag(), tag.getAttributes());
+        }
+    }
+
+    /**
+     * Determines whether a tag should be treated as content-based.
+     *
+     * @param tag
+     *            The XML tag name to evaluate
+     * @param atts
+     *            The tag's attributes, or null if not available
+     * @return {@code true} if the tag should be treated as content-based,
+     *         {@code false} otherwise
+     */
+    private boolean isContentBasedTag(String tag, org.omegat.filters3.@Nullable Attributes atts) {
+        // Check if tag is directly defined as content-based in the dialect
+        if (dialect.getContentBasedTags().containsKey(tag)) {
+            return true;
+        }
+        // Handle special case for intact tag with null attributes
+        if (atts == null && tag.equals(intacttagName)) {
+            // Restore attributes for validation
+            return dialect.validateContentBasedTag(tag, intacttagAttributes);
+        }
+
+        // For normal case, validate with the provided attributes
+        return atts != null && dialect.validateContentBasedTag(tag, atts);
+    }
+
+    /**
+     * Returns whether the tag surrounds preformatted block of text.
+     *
+     * @param tag
+     *            A tag
+     * @return <code>true</code> or <code>false</false>
+     */
+    private boolean isPreformattingTag(String tag, org.omegat.filters3.@Nullable Attributes atts) {
+        if (dialect.getPreformatTags() != null && dialect.getPreformatTags().contains(tag)) {
+            return true;
+        } else {
+            return dialect.validatePreformatTag(tag, atts);
+        }
+    }
+
+    /**
+     * Returns whether the tag surrounds preformatted block of text. It is
+     * called at the end of an element (&lt;/mrk&gt;), and thus doesn't provide
+     * attributes. Those are restored from the preformatTagAttributes stack.
+     *
+     * @param tag
+     *            A tag
+     * @return <code>true</code> or <code>false</false>
+     */
+    private boolean isPreformattingTag(String tag) {
+        if (dialect.getPreformatTags() != null && dialect.getPreformatTags().contains(tag)) {
+            return true;
+        } else {
+            org.omegat.filters3.Attributes atts = null;
+            if (tag.equals(preformatTagName.peekLast())) {
+                preformatTagName.pop();
+                atts = preformatTagAttributes.pop(); // Restore attributes
+            }
+            return dialect.validatePreformatTag(tag, atts);
+        }
+    }
+
+    /**
+     * Returns whether the tag surrounds intact block of text which we shouldn't
+     * translate.
+     */
+    private boolean isIntactTag(String tag, org.omegat.filters3.@Nullable Attributes atts) {
+        if (dialect.getIntactTags() != null && dialect.getIntactTags().contains(tag)) {
+            return true;
+        } else {
+            if (atts == null) {
+                if (tag.equals(intacttagName)) {
+                    atts = intacttagAttributes; // Restore attributes
+                }
+            }
+
+            return dialect.validateIntactTag(tag, atts);
+        }
+    }
+
+    /**
+     * If we are not inside a translatable tag, and if the dialect says the new
+     * one is translatable, add the new tag to the stack
+     *
+     * @param tag
+     *            The current opening tag
+     * @param atts
+     *            The attributes of the current tag
+     */
+    // TODO: The concept works only perfectly if the first tag with
+    // translatable content inside the translatable tag is a paragraph
+    // tag
+    void setTranslatableTag(String tag, org.omegat.filters3.Attributes atts) {
+
+        if (!isTranslatableTag()) { // If stack is empty
+            if (dialect.validateTranslatableTag(tag, atts)) {
+                translatableTagName.push(tag);
+            }
+        } else {
+            translatableTagName.push(tag);
+        }
+    }
+
+    /**
+     * Remove a tag from the stack of translatable tags
+     */
+    void removeTranslatableTag() {
+        if (isTranslatableTag()) { // If there is something in the stack
+            translatableTagName.pop(); // Remove it
+        }
+    }
+
+    private void translatorTagStart(String tag, @Nullable Attributes atts) {
+        currentTagPath.push(tag);
+        translator.tagStart(constructCurrentPath(), atts);
+    }
+
+    private void translatorTagEnd(String tag) {
+        translator.tagEnd(constructCurrentPath());
+        String poppedTag;
+        do {
+            if (currentTagPath.isEmpty()) {
+                return;
+            }
+            poppedTag = currentTagPath.pop();
+        } while (!poppedTag.equals(tag));
+    }
+
+    private String constructCurrentPath() {
+        StringBuilder path = new StringBuilder(256);
+        // When using Deque, we need to iterate in reverse order.
+        Iterator<String> it = currentTagPath.descendingIterator();
+        while (it.hasNext()) {
+            path.append('/').append(it.next());
+        }
+        return path.toString();
+    }
+
+    /**
+     * If the space-preserving flag is not set, and the attributes say it is
+     * one, set it
+     *
+     * @param atts
+     *            The attributes of the current tag
+     */
+    private void setSpacePreservingTag(org.omegat.filters3.Attributes atts) {
+
+        if (isSpacePreservingSet(atts)) {
+            spacePreserve = true;
+        }
+    }
+
+    private boolean isClosingTagRequired() {
+        return dialect.getClosingTagRequired();
+    }
+
+    private boolean isTagsAggregationEnabled() {
+        return dialect.getTagsAggregationEnabled();
+    }
+
+    /** Returns whether we face out of turn tag we should collect separately. */
+    private boolean isOutOfTurnTag(String tag) {
+        return dialect.getOutOfTurnTags() != null && dialect.getOutOfTurnTags().contains(tag);
+    }
+
+    /**
+     * Returns a shortcut for a tag. Queries dialect first, else returns null.
+     */
+    private @Nullable String getShortcut(String tag) {
+        if (dialect.getShortcuts() != null) {
+            return dialect.getShortcuts().get(tag);
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Checks whether the xml:space="preserve" attribute is present
+     * 
+     * @param currentAttributes
+     *            The current Attributes
+     * @return true or false
+     */
+    private boolean isSpacePreservingSet(org.omegat.filters3.Attributes currentAttributes) {
+
+        if (dialect.getForceSpacePreserving()) {
+            return true;
+        }
+
+        boolean preserve = false;
+
+        for (int i = 0; i < currentAttributes.size(); i++) {
+            Attribute oneAttribute = currentAttributes.get(i);
+            if ((oneAttribute.getName().equalsIgnoreCase("xml:space")
+                    && oneAttribute.getValue().equalsIgnoreCase("preserve"))) {
+                preserve = true;
+            }
+        }
+
+        return preserve;
+    }
+
+    // ////////////////////////////////////////////////////////////////////////
+    // Callback methods
+    // ////////////////////////////////////////////////////////////////////////
+
+    /**
+     * Resolves an external entity.
+     */
+    @Override
+    public InputSource resolveEntity(String publicId, String systemId) throws SAXException {
+        return doResolve(publicId, systemId);
+    }
+
+    /** Receive notification of the start of an element. */
+    @Override
+    public void startElement(String uri, String localName, String qName, Attributes attributes)
+            throws SAXException {
+        try {
+            start(qName, attributes);
+        } catch (TranslationException e) {
+            throw new SAXException(e);
+        }
+    }
+
+    /** Receive notification of the end of an element. */
+    @Override
+    public void endElement(String uri, String localName, String qName) throws SAXException {
+        try {
+            end(qName);
+        } catch (TranslationException e) {
+            throw new SAXException(e);
+        }
+    }
+
+    /** Receive notification of character data inside an element. */
+    @Override
+    public void characters(char[] ch, int start, int length) throws SAXException {
+        if (inDTD) {
+            return;
+        }
+        queueText(new String(ch, start, length));
+    }
+
+    /** Receive notification of ignorable whitespace in element content. */
+    @Override
+    public void ignorableWhitespace(char[] ch, int start, int length) {
+        if (inDTD) {
+            return;
+        }
+        queueText(new String(ch, start, length));
+    }
+
+    /** Receive notification of an XML comment anywhere in the document. */
+    @Override
+    public void comment(char[] ch, int start, int length) throws SAXException {
+        if (inDTD) {
+            return;
+        }
+        queueComment(new String(ch, start, length));
+    }
+
+    /**
+     * Receive notification of an XML processing instruction anywhere in the
+     * document.
+     */
+    @Override
+    public void processingInstruction(String target, String data) {
+        if (inDTD) {
+            return;
+        }
+        queueProcessingInstruction(target, data);
+    }
+
+    /** Receive notification of the beginning of the document. */
+    @Override
+    public void startDocument() throws SAXException {
+        try {
+            mainWriter.write("<?xml version=\"1.0\"?>\n");
+        } catch (IOException e) {
+            throw new SAXException(e);
+        }
+
+        entry = new Entry(dialect, this);
+    }
+
+    /** Receive notification of the end of the document. */
+    @Override
+    public void endDocument() throws SAXException {
+        try {
+            translateAndFlush();
+            if (extWriter != null) {
+                extWriter.close();
+                extWriter = null;
+            }
+            translateAndFlush();
+            currWriter().close();
+        } catch (TranslationException | IOException e) {
+            throw new SAXException(e);
+        }
+    }
+
+    /**
+     * Report a fatal XML parsing error. Is used to provide feedback.
+     */
+    @Override
+    public void fatalError(org.xml.sax.SAXParseException e) throws SAXException {
+        try {
+            reportFatalError(e);
+        } catch (MalformedURLException | URISyntaxException ex) {
+            throw new SAXException(ex);
+        }
+    }
+
+    /**
+     * Report the start of DTD declarations, if any.
+     */
+    @Override
+    public void startDTD(String name, String publicId, String systemId) {
+        dtd = new DTD(name, publicId, systemId);
+    }
+
+    /**
+     * Report the end of DTD declarations. Queues the DTD declaration with all
+     * the entities declared.
+     */
+    @Override
+    public void endDTD() {
+        queueDTD(Objects.requireNonNull(dtd));
+        inDTD = false;
+        dtd = null;
+    }
+
+    /**
+     * Report the start of a CDATA section.
+     */
+    @Override
+    public void startCDATA() {
+        inCDATA = true;
+    }
+
+    /**
+     * Report the end of a CDATA section.
+     */
+    @Override
+    public void endCDATA() {
+        inCDATA = false;
+    }
+
+    /**
+     * Not used: Report the beginning of some internal and external XML
+     * entities.
+     */
+    @Override
+    public void startEntity(String name) {
+        doStartEntity(name);
+    }
+
+    /**
+     * Report the end of an entity.
+     *
+     * @param name
+     *            The name of the entity that is ending.
+     * @exception SAXException
+     *                The application may raise an exception.
+     * @see #startEntity
+     */
+    @Override
+    public void endEntity(String name) throws SAXException {
+        try {
+            doEndEntity(name);
+        } catch (IOException | TranslationException e) {
+            throw new SAXException(e);
+        }
+    }
+
+    /**
+     * Report an internal entity declaration.
+     */
+    @Override
+    public void internalEntityDecl(String name, String value) throws SAXException {
+        if (inDTD || dtd == null) {
+            return;
+        }
+        Entity entity = new Entity(name, value);
+        internalEntities.put(name, entity);
+        if (extEntity != null) {
+            if (extWriter != null) {
+                StringBuilder res = new StringBuilder();
+                res.append(entity).append('\n');
+                try {
+                    extWriter.write(res.toString());
+                } catch (IOException e) {
+                    throw new SAXException(e);
+                }
+            }
+        } else {
+            dtd.addEntity(entity);
+        }
+    }
+
+    /**
+     * Report a parsed external entity declaration.
+     */
+    @Override
+    public void externalEntityDecl(String name, String publicId, String systemId) throws SAXException {
+        if (inDTD || dtd == null) {
+            return;
+        }
+        try {
+            Entity entity = new Entity(name, publicId, localizeSystemId(systemId));
+            externalEntities.add(entity);
+            dtd.addEntity(entity);
+        } catch (MalformedURLException | URISyntaxException ex) {
+            throw new SAXException(ex);
+        }
+    }
+
+    // /////////////////////////////////////////////////////////////////////////
+    // unused callbacks
+    // /////////////////////////////////////////////////////////////////////////
+
+    /** Not used: An element type declaration. */
+    @Override
+    public void elementDecl(String name, String model) {
+    }
+
+    /** Not used: An attribute type declaration. */
+    @Override
+    public void attributeDecl(String eName, String aName, String type, String valueDefault, String value) {
+    }
+}

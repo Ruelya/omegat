@@ -1,9 +1,14 @@
 import { create } from "zustand";
 import type {
+  CompleterItemDto,
+  DictHitDto,
   EntryDto,
+  FilterInfoDto,
   GlossaryHitDto,
   IssueDto,
   MatchDto,
+  MtSuggestionDto,
+  Preferences,
   ProjectPropsDto,
   StatsDto,
 } from "../lib/types";
@@ -51,7 +56,25 @@ type State = {
   query: string;
   firstRun: boolean;
   locale: string;
+  mt: MtSuggestionDto[];
+  dict: DictHitDto[];
+  completer: CompleterItemDto[];
+  filters: FilterInfoDto[];
+  prefs: Preferences | null;
+  teamMessage: string;
+  undoStack: string[];
+  undo: () => void;
   setLocale: (locale: string) => void;
+  queryMt: () => Promise<void>;
+  queryDict: (word: string) => Promise<void>;
+  queryCompleter: (prefix: string) => Promise<void>;
+  loadFilters: () => Promise<void>;
+  loadPrefs: () => Promise<void>;
+  savePrefs: (p: Preferences) => Promise<void>;
+  replaceAll: (query: string, replace: string, regex: boolean) => Promise<number>;
+  teamSync: () => Promise<void>;
+  learnWord: (word: string) => Promise<void>;
+  ignoreWord: (word: string) => Promise<void>;
   loadVersion: () => Promise<void>;
   open: (root: string) => Promise<void>;
   create: (root: string, sl: string, tl: string, seg: boolean) => Promise<void>;
@@ -79,6 +102,13 @@ export const useApp = create<State>((set, get) => ({
   draft: "",
   note: "",
   query: "",
+  mt: [],
+  dict: [],
+  completer: [],
+  filters: [],
+  prefs: null,
+  teamMessage: "",
+  undoStack: [],
   firstRun: !readLocal("omegat.first"),
   locale: (() => {
     const saved = readLocal("omegat.locale");
@@ -123,16 +153,92 @@ export const useApp = create<State>((set, get) => ({
     const matches = await rpc<MatchDto[]>("matches.query", { index });
     const glossary = await rpc<GlossaryHitDto[]>("glossary.query", { index });
     const issues = await rpc<IssueDto[]>("issues.list");
+    let mt: MtSuggestionDto[] = [];
+    try {
+      const one = await rpc<MtSuggestionDto>("mt.query", { index, engine: "mymemory" });
+      mt = [one];
+    } catch {
+      mt = [];
+    }
+    const dict = await rpc<DictHitDto[]>("dict.query", { word: e.source.split(/\s+/)[0] || "" });
+    const completer = await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "" });
     set({
       index,
       matches,
       glossary,
       issues,
+      mt,
+      dict,
+      completer,
       draft: e.translation,
       note: e.note,
     });
   },
-  setDraft: (v) => set({ draft: v }),
+  queryMt: async () => {
+    const { index } = get();
+    try {
+      const one = await rpc<MtSuggestionDto>("mt.query", { index, engine: "mymemory" });
+      set({ mt: [one] });
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+  queryDict: async (word) => {
+    const dict = await rpc<DictHitDto[]>("dict.query", { word });
+    set({ dict });
+  },
+  queryCompleter: async (prefix) => {
+    const completer = await rpc<CompleterItemDto[]>("completer.query", { index: get().index, prefix });
+    set({ completer });
+  },
+  loadFilters: async () => {
+    const filters = await rpc<FilterInfoDto[]>("filters.list");
+    set({ filters });
+  },
+  loadPrefs: async () => {
+    const prefs = await rpc<Preferences>("prefs.get");
+    set({ prefs });
+  },
+  savePrefs: async (p) => {
+    const prefs = await rpc<Preferences>("prefs.set", p);
+    set({ prefs });
+  },
+  replaceAll: async (query, replace, regex) => {
+    const r = await rpc<{ replaced: number }>("search.replace", {
+      query,
+      replace,
+      regex,
+      source: false,
+      translation: true,
+    });
+    const entries = await rpc<EntryDto[]>("entry.list");
+    set({ entries });
+    return r.replaced;
+  },
+  teamSync: async () => {
+    try {
+      const r = await rpc<{ action: string; message: string }>("team.sync");
+      set({ teamMessage: `${r.action}: ${r.message}` });
+    } catch (e) {
+      set({ teamMessage: String(e), error: String(e) });
+    }
+  },
+  learnWord: async (word) => {
+    await rpc("spell.learn", { word });
+  },
+  ignoreWord: async (word) => {
+    await rpc("spell.ignore", { word });
+  },
+  setDraft: (v) => {
+    const prev = get().draft;
+    set({ draft: v, undoStack: [...get().undoStack.slice(-49), prev] });
+  },
+  undo: () => {
+    const stack = get().undoStack;
+    const last = stack[stack.length - 1];
+    if (last === undefined) return;
+    set({ draft: last, undoStack: stack.slice(0, -1) });
+  },
   commit: async () => {
     const { index, entries, draft, note } = get();
     const e = entries[index];

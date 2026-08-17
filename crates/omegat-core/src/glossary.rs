@@ -66,11 +66,27 @@ pub fn parse_glossary(raw: &str) -> Vec<GlossaryEntry> {
 }
 
 pub fn lookup(entries: &[GlossaryEntry], segment: &str) -> Vec<GlossaryHitDto> {
-    let lower = segment.to_lowercase();
+    lookup_opts(entries, segment, true, true)
+}
+
+pub fn lookup_opts(entries: &[GlossaryEntry], segment: &str, ignore_case: bool, use_stem: bool) -> Vec<GlossaryHitDto> {
+    let hay = if ignore_case { segment.to_lowercase() } else { segment.to_string() };
     entries
         .iter()
         .filter(|e| {
-            !e.source.is_empty() && lower.contains(&e.source.to_lowercase())
+            if e.source.is_empty() {
+                return false;
+            }
+            let needle = if ignore_case { e.source.to_lowercase() } else { e.source.clone() };
+            if hay.contains(&needle) {
+                return true;
+            }
+            if use_stem {
+                let hs = crate::tokenize::stem(&hay, "en");
+                let ns = crate::tokenize::stem(&needle, "en");
+                return hs.contains(&ns) || hay.split_whitespace().any(|w| crate::tokenize::stem(w, "en") == ns);
+            }
+            false
         })
         .map(|e| GlossaryHitDto {
             source: e.source.clone(),
@@ -96,4 +112,25 @@ pub fn append_entry(path: &Path, source: &str, target: &str, comment: &str) -> s
         .append(true)
         .open(path)?;
     f.write_all(line.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tsv_and_stem_lookup() {
+        let entries = parse_glossary("running\tcourir\tverb\n");
+        let hits = lookup_opts(&entries, "The runner is running", true, true);
+        assert!(!hits.is_empty());
+        assert_eq!(hits[0].target, "courir");
+    }
+
+    #[test]
+    fn tbx_pairs() {
+        let raw = r#"<martif><term>cat</term><term>chat</term></martif>"#;
+        let entries = parse_glossary(raw);
+        assert_eq!(entries[0].source, "cat");
+        assert_eq!(entries[0].target, "chat");
+    }
 }

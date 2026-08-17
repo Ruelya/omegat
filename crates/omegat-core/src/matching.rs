@@ -1,4 +1,4 @@
-use crate::consts::{FUZZY_THRESHOLD, MAX_NEAR_STRINGS};
+use crate::consts::MAX_NEAR_STRINGS;
 use crate::tmx::TmxEntry;
 use crate::tokenize::tokenize;
 use omegat_ipc::MatchDto;
@@ -93,13 +93,24 @@ pub fn find_matches(
     extra: &[(TmxEntry, String)],
     lang: &str,
 ) -> Vec<NearString> {
+    find_matches_threshold(query, memory, extra, lang, 30, MAX_NEAR_STRINGS)
+}
+
+pub fn find_matches_threshold(
+    query: &str,
+    memory: &[TmxEntry],
+    extra: &[(TmxEntry, String)],
+    lang: &str,
+    threshold: i32,
+    limit: usize,
+) -> Vec<NearString> {
     let mut out = Vec::new();
     for e in memory {
         if e.source.is_empty() {
             continue;
         }
         let (s, ns, adj) = score_pair(query, &e.source, lang);
-        if s >= FUZZY_THRESHOLD || e.source == query {
+        if s >= threshold || e.source == query {
             out.push(NearString {
                 source: e.source.clone(),
                 translation: e.translation.clone(),
@@ -113,20 +124,33 @@ pub fn find_matches(
     }
     for (e, origin) in extra {
         let (s, ns, adj) = score_pair(query, &e.source, lang);
-        if s >= FUZZY_THRESHOLD {
+        if s >= threshold {
+            let penalty = e
+                .note
+                .as_deref()
+                .and_then(|n| n.strip_prefix("penalty:")?.parse::<i32>().ok())
+                .unwrap_or(0);
+            let score = (s - penalty).max(0);
+            let comes = if origin.contains("mt/") || origin.contains("/mt/") {
+                "MT".to_string()
+            } else if origin.contains("auto") {
+                "TM".to_string()
+            } else {
+                origin.clone()
+            };
             out.push(NearString {
                 source: e.source.clone(),
                 translation: e.translation.clone(),
-                score: s,
+                score,
                 score_no_stem: ns,
-                adjusted_score: adj,
-                comes_from: origin.clone(),
+                adjusted_score: (adj - penalty).max(0),
+                comes_from: comes,
                 project: Some(origin.clone()),
             });
         }
     }
     out.sort_by(|a, b| b.score.cmp(&a.score));
-    out.truncate(MAX_NEAR_STRINGS);
+    out.truncate(limit.max(1));
     out
 }
 
@@ -149,5 +173,20 @@ mod tests {
         let hits = find_matches("Hello word", &mem, &[], "en");
         assert!(!hits.is_empty());
         assert!(hits[0].score >= 30);
+    }
+
+    #[test]
+    fn penalty_folder_lowers_score() {
+        let extra = vec![(
+            TmxEntry {
+                source: "Hello world".into(),
+                translation: "X".into(),
+                note: Some("penalty:10".into()),
+                ..Default::default()
+            },
+            "penalty-010/ref.tmx".into(),
+        )];
+        let hits = find_matches_threshold("Hello world", &[], &extra, "en", 30, 5);
+        assert_eq!(hits[0].score, 90);
     }
 }

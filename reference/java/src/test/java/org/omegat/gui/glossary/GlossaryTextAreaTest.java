@@ -1,0 +1,145 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2007 Maxym Mykhalchuk
+               2008-2014 Alex Buloichik
+               2015 Aaron Madlon-Kay
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.gui.glossary;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import java.awt.Color;
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+import javax.swing.text.DefaultStyledDocument;
+import javax.swing.text.StyledDocument;
+
+import org.junit.Before;
+import org.junit.Test;
+
+import org.omegat.core.Core;
+import org.omegat.core.TestCore;
+import org.omegat.util.Preferences;
+
+/**
+ *
+ * @author Maxym Mykhalchuk
+ * @author Alex Buloichik (alex73mail@gmail.com)
+ * @author Aaron Madlon-Kay
+ */
+public class GlossaryTextAreaTest extends TestCore {
+    @Before
+    public final void setUp() {
+        // TestCore#setUpCore initialize Preferences with temporary configDir
+        Preferences.setPreference(Preferences.GLOSSARY_LAYOUT,
+                DefaultGlossaryRenderer.class.getCanonicalName());
+        Preferences.setPreference(Preferences.MARK_GLOSSARY_MATCHES, false);
+        UIManager.put("OmegaT.hyperlink", Color.BLUE);
+    }
+
+    /**
+     * Testing setGlossaryEntries of org.omegat.gui.main.GlossaryTextArea.
+     */
+    @Test
+    public void testSetGlossaryEntries() throws Exception {
+        final List<GlossaryEntry> entries = new ArrayList<>();
+        entries.add(new GlossaryEntry("source1", "translation1", "", false, null));
+        entries.add(new GlossaryEntry("source2", "translation2", "comment2", false, null));
+        final GlossaryTextArea gta = new GlossaryTextArea(Core.getMainWindow());
+        SwingUtilities.invokeAndWait(() -> gta.setFoundResult(null, entries));
+        // Make sure representations of both entries are rendered
+        DefaultGlossaryRenderer renderer = new DefaultGlossaryRenderer();
+        StyledDocument doc = new DefaultStyledDocument();
+        renderer.render(entries.get(0), doc);
+        renderer.render(entries.get(1), doc);
+        String expected = doc.getText(0, doc.getLength());
+        assertEquals(expected, gta.getText());
+    }
+
+    @Test
+    public void testSetGlossaryEntriesWithLink() throws Exception {
+        final List<GlossaryEntry> entries = new ArrayList<>();
+        entries.add(new GlossaryEntry("source1", "translation1", "", false, null));
+        entries.add(new GlossaryEntry("source2", "translation2", "comment2", false, null));
+        entries.add(new GlossaryEntry("source3", "translation3",
+                "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre", false, null));
+        final GlossaryTextArea gta = new GlossaryTextArea(Core.getMainWindow());
+        SwingUtilities.invokeAndWait(() -> gta.setFoundResult(null, entries));
+        // Make sure representations of both entries are rendered
+        DefaultGlossaryRenderer renderer = new DefaultGlossaryRenderer();
+        StyledDocument doc = new DefaultStyledDocument();
+        renderer.render(entries.get(0), doc);
+        renderer.render(entries.get(1), doc);
+        renderer.render(entries.get(2), doc);
+        String expected = doc.getText(0, doc.getLength()).replaceAll("%C3%A8", "è");
+        assertTextEventually(gta, expected);
+    }
+
+    /**
+     * The linkifier rewrites the URL asynchronously: the document insert
+     * schedules a refresh with invokeLater, decoding the URL triggers a
+     * second one, and further refreshes run on a Swing timer. A fixed sleep
+     * is either too short on a busy machine or wastes time, so poll the
+     * text on the EDT until it reaches the expected state.
+     */
+    private static void assertTextEventually(GlossaryTextArea gta, String expected) throws Exception {
+        long deadline = System.currentTimeMillis() + 5_000;
+        String actual = getTextOnEdt(gta);
+        while (!expected.equals(actual) && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+            actual = getTextOnEdt(gta);
+        }
+        assertEquals(expected, actual);
+    }
+
+    private static String getTextOnEdt(GlossaryTextArea gta) throws Exception {
+        String[] result = new String[1];
+        SwingUtilities.invokeAndWait(() -> result[0] = gta.getText());
+        return result[0];
+    }
+
+    /**
+     * Testing clear in org.omegat.gui.main.GlossaryTextArea.
+     */
+    @Test
+    public void testClear() throws Exception {
+        final List<GlossaryEntry> entries = new ArrayList<>();
+        entries.add(new GlossaryEntry("source1", "translation1", "", false, null));
+        entries.add(new GlossaryEntry("source2", "translation2", "comment2", false, null));
+        final GlossaryTextArea gta = new GlossaryTextArea(Core.getMainWindow());
+        SwingUtilities.invokeAndWait(new Runnable() {
+            public void run() {
+                gta.setFoundResult(null, entries);
+            }
+        });
+        assertFalse(gta.getText().isEmpty());
+        SwingUtilities.invokeAndWait(gta::clear);
+        assertTrue(gta.getText().isEmpty());
+    }
+}

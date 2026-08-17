@@ -1,35 +1,26 @@
-# Migration from Java OmegaT
+# 从 OmegaT 6.2 Java 迁移
 
-## Projects
+默认产品是 Rust sidecar + Electron。`reference/java/` 只作对照，不嵌入 JVM。
 
-Copy the project folder as-is. `omegat.project`, `project_save.tmx`, `source/`, `target/`, `tm/`, and `glossary/` are read by the Rust engine. Unknown XML nodes in `omegat.project` (including `repositories`) are kept.
+## 脚本
 
-## Plugins
-
-Java JARs listed in the historic `Plugins.properties` are **not** loaded.
-
-Replace a JAR with a directory that contains `omegat-plugin.toml` (or JSON) and a `cdylib` / helper process. Types stay the same: `filter`, `tokenizer`, `marker`, `mt`, `glossary`, `dictionary`, `theme`, `repository`, `spell`, `language`, `misc`. See `PLUGIN_ABI.md`.
-
-## Scripts
-
-Groovy is not executed and the JVM is not embedded.
-
-| Historic | Replacement |
+| Java | 等价 |
 |---|---|
-| `scripts/*.groovy` | `scripts/js/<event>/*.js` |
-| ApplicationEvent / ProjectEvent / … | Same event directory names |
-| `project` / `editor` / `glossary` / `console` bindings | Passed into the JS hook as a JSON payload |
+| Groovy / GraalJS | JavaScript（Node `eval` 或嵌入引擎） |
+| `project` / `editor` / `glossary` / `console` / `mainWindow` | 同名绑定，见 `omegat-script` |
+| 事件 `APPLICATION_STARTUP` 等 6 类 | `event:` 前缀文件名或 `omegat.events` |
+| 12 个快捷槽 | `scripts/slot01.js` … `slot12.js` 或偏好 `script.slot.N` |
 
-A sample hook lives at `scripts/js/entry_activated/log.js`. CLI: `omegat translate --script path/to/file.js`.
+样例从 `reference/java/scripts/` 迁到 `scripts/examples/`。
 
 ## LanguageTool
 
-Do not drop a LanguageTool JAR on the classpath. Run LT as a separate process or HTTP service and set its URL in Preferences → LanguageTool. If the service is down, the editor degrades without blocking saves.
+不再内嵌 LT JAR。配置 HTTP `v2/check`（LanguageTool 独立服务）。未启动时 Issues 显示降级原因。
 
-## Machine translation credentials
+## 插件
 
-Secure Store / Jasypt values are not imported automatically. Re-enter API keys; they are stored in the OS keychain or encrypted preferences.
+不再加载 Java JAR。使用 `omegat-plugin.toml` + `cdylib`（`omegat_plugin_abi()`）。见 [PLUGIN_ABI.md](PLUGIN_ABI.md)。
 
-## Team
+## 过滤器 / 项目
 
-Git/SVN/HTTP/file mappings in `repositories` still apply. SVN uses the system `svn` binary. Use `--no-team` for a local-only session.
+`omegat.project`、`project_save.tmx`、过滤器掩码与 Java 6.2 兼容。PDF 只抽文本写 `.pdf.txt`（与 Java `PdfFilter` 相同边界）。

@@ -268,6 +268,10 @@ impl FilterRegistry {
             "xmlss"
         } else if raw.contains("HelpAndManual") || raw.contains("<topic") {
             "helpandmanual"
+        } else if raw.contains("<string") && raw.contains("name=") {
+            "android"
+        } else if raw.contains("<para") || raw.contains("<chapter") {
+            "docbook"
         } else {
             "android"
         };

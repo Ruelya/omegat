@@ -1,0 +1,255 @@
+<?xml version="1.0"?>
+<!-- Converted by db4-upgrade version 1.1 --><section xmlns="http://docbook.org/ns/docbook" version="5.0" xml:id="windows.text.replace">
+   <title xml:id="windows.text.replace.title"><guilabel>Textersetzung</guilabel></title>
+   <para>Use 
+      <link linkend="menus.edit" endterm="menus.edit.title"/>
+      <link linkend="menus.edit.search.and.replace" endterm="menus.edit.search.and.replace.title"/> to open a new replace window
+      and enter the word or phrase you wish to search for in the search
+      field.</para>
+   <para>Alternatively, select a word or phrase in the <link linkend="panes.editor" endterm="panes.editor.title"/>, <link linkend="panes.fuzzy.matches" endterm="panes.fuzzy.matches.title"/>, or <link linkend="panes.glossary" endterm="panes.glossary.title"/> pane and use <link linkend="menus.edit" endterm="menus.edit.title"/> <link linkend="menus.edit.search.and.replace" endterm="menus.edit.search.and.replace.title"/>. Der markierte Text wird automatisch in das Suchfeld eingetragen.</para>
+   <para>Es können mehrere Ersetzungsfenster gleichzeitig geöffnet sein.</para>
+   <para>Klicken Sie auf die Pfeilschaltfläche im Feld &quot;<guilabel>Suchen nach:</guilabel>&quot; oder &quot;<guilabel>Ersetzen mit:</guilabel>&quot;, um die letzten zehn Einträge anzuzeigen.</para>
+   <para>Enter the string you want to insert to replace your search term in the
+      
+      <guilabel>Replace with:</guilabel> field and click on
+      
+      <guibutton>Search</guibutton>, or hit
+      <keycombo><keycap>Enter</keycap></keycombo> if the cursor is
+      still in the field.</para>
+   <para>Suchtreffer werden blau und fett dargestellt. Geänderten Zeichenketten werden orange dargestellt, um das Ergebnis der Ersetzung anzuzeigen.</para>
+   <example xml:id="replace.with.allemand">
+      <title xml:id="replace.with.allemand.title">Einen Suchbegriff ersetzen</title>
+      <para>
+         	  
+<programlisting>多和田葉子.UTF8
+-- 148&gt; | language = [[日本語]]・[[ドイツ語]]
+&lt;- | language = [[Japonais]]・[[<token>Alllemand</token>]]
+-&gt; | language = [[Japonais]]・[[<token>Allemand</token>]]
+---------</programlisting>
+      </para>
+   </example>
+   <note>
+      <para>Zum jetzigen Zeitpunkt wurden noch nichts ersetzt.</para>
+   </note>
+   <para>Klicken Sie auf eine der folgenden Optionen:</para>
+   <itemizedlist>
+      <listitem>
+         <para>
+            <guibutton>Alle ersetzen</guibutton>: Ersetzt alle Vorkommen (nach einem Bestätigungsfenster mit der Anzahl der Vorkommen).</para>
+      </listitem>
+      <listitem>
+         <para>
+            <guibutton>Ersetzungen anzeigen</guibutton> filtert die Einträge im Editor und hebt die Textbereiche hervor, die ersetzt werden sollen.</para>
+         <para>Klicken Sie auf die Schaltfläche <guibutton>Ersetzen und Nächstes finden</guibutton> oder <guibutton>Nächstes finden</guibutton>, oder auf die Schaltfläche <guibutton>Beenden</guibutton>, um den Ersetzungsvorgang zu beenden.</para>
+      </listitem>
+   </itemizedlist>
+   <itemizedlist>
+      <listitem>
+         <para>
+            <guibutton>Schließen</guibutton>: Schließt das Fenster, ohne Änderungen vorzunehmen.</para>
+      </listitem>
+   </itemizedlist>
+   <para>Das Ersetzungsfenster hat seine eigenen Menüs:</para>
+   <itemizedlist>
+      <listitem>
+         <para>
+            <guimenu>File</guimenu> &gt; 
+            <guimenuitem>Search for
+               Selection</guimenuitem>
+            (
+            <keycombo>
+               <keycap>C</keycap>
+               <keycap>F</keycap>
+            </keycombo>): the current
+            selection is inserted in the search field.</para>
+      </listitem>
+      <listitem>
+         <para>
+            <guimenu>File</guimenu> &gt; 
+            <guimenuitem>Close</guimenuitem>
+            (
+            <keycombo>
+               <keycap>C</keycap>
+               <keycap>W</keycap>
+            </keycombo>): close the
+            search window.</para>
+      </listitem>
+      <listitem>
+         <para>
+            <guimenu>Edit</guimenu> &gt; 
+            <guimenuitem>Insert
+               Source</guimenuitem>
+            (
+            <keycombo>
+               <keycap>C</keycap>
+               <keycap>S</keycap>
+               <keycap>I</keycap>
+            </keycombo>):
+            insert the content of the current source segment.</para>
+      </listitem>
+      <listitem>
+         <para>
+            <guimenu>Edit</guimenu> &gt; 
+            <guimenuitem>Replace with
+               Source</guimenuitem>
+            (
+            <keycombo>
+               <keycap>C</keycap>
+               <keycap>S</keycap>
+               <keycap>R</keycap>
+            </keycombo>):
+            replace the contents of the search field with those of the current source
+            segment.</para>
+      </listitem>
+      <listitem>
+         <para>
+            <guimenu>Edit</guimenu> &gt; 
+            <guimenuitem>Create Glossary
+               Entry</guimenuitem>
+            (
+            <keycombo>
+               <keycap>C</keycap>
+               <keycap>S</keycap>
+               <keycap>G</keycap>
+            </keycombo>):
+            add a new glossary item. See 
+            <link linkend="menus.edit" endterm="menus.edit.title"/>
+            <link linkend="menus.edit.create.glossary.entry" endterm="menus.edit.create.glossary.entry.title"/> for details.</para>
+      </listitem>
+      <listitem>
+         <para>
+            <guimenu>Bearbeiten</guimenu> &gt; <guimenuitem>Optionen zurücksetzen</guimenuitem>: Setzt die Optionen des Suchfensters auf ihre Standardwerte zurück.</para>
+      </listitem>
+   </itemizedlist>
+   <section xml:id="windows.text.replace.methods">
+      <title xml:id="windows.text.replace.methods.title">Suchmethoden</title>
+      <para>Verwenden Sie die Radiobuttons, um die Art der Suche auszuwählen.</para>
+      <para>Es gibt folgende Suchmethoden:</para>
+      <variablelist>
+         <varlistentry xml:id="windows.text.replace.methods.exact">
+            <term xml:id="windows.text.replace.methods.exact.title">Exakte Suche</term>
+            <listitem>
+               <para>Nach einer Zeichenkette suchen, genau wie im Suchfeld angegeben.</para>
+               <para>Entspricht einer Websuche mit Anführungszeichen.</para>
+               <note>
+                  <para>Die Platzhalterzeichen <code>*</code> und <code>?</code> können für die exakte Suche verwendet werden:</para>
+                  <itemizedlist>
+                     <listitem>
+                        <para>'*' findet null oder mehr Zeichen ab der aktuellen Position bis zum Ende eines Wortes. Der Suchtext <literal>'run*'</literal> findet z.B. <literal>'run'</literal>, <literal>'runs'</literal> und <literal>'running'</literal>.</para>
+                     </listitem>
+                     <listitem>
+                        <para>'?' findet ein beliebiges Zeichen. <literal>'run?'</literal> findet z.B. <literal>'runs'</literal>, aber auch den <literal>'runn'</literal>-Teil von <literal>'running'</literal> oder <literal>'runner'</literal>.</para>
+                     </listitem>
+                  </itemizedlist>
+               </note>
+            </listitem>
+         </varlistentry>
+         <varlistentry xml:id="windows.text.replace.methods.regex">
+            <term xml:id="windows.text.replace.methods.regex.title">Reguläre Ausdrücke</term>
+            <listitem>
+               <para>Die Suchzeichenkette als regulären Ausdruck behandeln.</para>
+               <para>Reguläre Ausdrücke sind eine sehr effiziente Methode, um nach allgemeinen oder komplexen Mustern zu suchen, anstatt nach exakten Zeichenketten. Einzelheiten finden Sie unter <link linkend="app.regex" endterm="app.regex.title"/>.</para>
+               <note>
+                  <para>Der Ersatztext unterstützt sogenannte Rückreferenzen, die auf die im Suchtext definierten Gruppen verweisen. Verwenden Sie <code>$n</code> (wobei <code>n</code> eine Ziffer von 1 bis 9 ist) im Ersatztext, um auf die <code>n-te</code> Gruppe im Suchtext zu verweisen.</para>
+               </note>
+            </listitem>
+         </varlistentry>
+      </variablelist>
+   </section>
+   <section xml:id="windows.text.replace.options">
+      <title xml:id="windows.text.replace.options.title">Optionen</title>
+      <variablelist>
+         <varlistentry>
+            <term>Groß-/Kleinschreibung beachten</term>
+            <listitem>
+               <para>Zeigt nur Ergebnisse an, die die gleiche Groß-/Kleinschreibung wie der Suchtext aufweisen.</para>
+            </listitem>
+         </varlistentry>
+         <varlistentry>
+            <term>Leerzeichen findet nbsp</term>
+            <listitem>
+               <para>Leerzeichen im Suchtext finden sowohl normale Leerzeichen als auch geschützte Leerzeichen (\u00A).</para>
+            </listitem>
+         </varlistentry>
+         <varlistentry>
+            <term>Unübersetzt</term>
+            <listitem>
+               <para>Auch in unübersetzten Segmenten suchen.</para>
+            </listitem>
+         </varlistentry>
+         <varlistentry>
+            <term>
+               <guibutton>TM-Suchoptionen</guibutton>
+            </term>
+            <listitem>
+               <para>Sie können zusätzliche Kriterien auswählen, z.B. wer die Übersetzung erstellt oder geändert hat, wann die Übersetzung geändert wurde oder ob verwaiste Segmente ausgeschlossen werden sollen.</para>
+               <variablelist>
+                  <varlistentry>
+                     <term>Zeichen unabhängig von voller/halber Breite</term>
+                     <listitem>
+                        <para>Zeigt Ergebnisse an, die sowohl mit den voll- als auch halbbreiten Formen (CJK-Zeichen) der Zeichen im Suchtext übereinstimmen.</para>
+                     </listitem>
+                  </varlistentry>
+               </variablelist>
+               <para>Verwenden Sie die Schaltfläche <guibutton>Optionen verstecken</guibutton>, um die zusätzlichen Optionen auszublenden.</para>
+            </listitem>
+         </varlistentry>
+      </variablelist>
+   </section>
+   <section xml:id="windows.text.replace.result.display">
+      <title xml:id="windows.text.replace.result.display.title">Ergebnisanzeige</title>
+      <para>Die Suchergebnisse werden gemäß ihrer Reihenfolge im Projekt angeordnet. Bei übersetzten Segmenten wird der Quelltext über dem übersetzten Text angezeigt. Bei unübersetzten Segmenten wird nur der Quelltext angezeigt.</para>
+      <para>Doppelklicken Sie auf ein Segment, um es im Fensterbereich <link linkend="panes.editor" endterm="panes.editor.title"/> zu öffnen.</para>
+      <para>In der Ergebnisanzeige können Sie die folgenden Tastenkürzel verwenden:</para>
+      <variablelist>
+         <varlistentry>
+            <term>
+               <keycombo>
+                  <keycap>C</keycap>
+                  <keycap>N</keycap>
+               </keycombo>
+            </term>
+            <listitem>
+               <para>Zum nächsten Segment springen</para>
+            </listitem>
+         </varlistentry>
+         <varlistentry>
+            <term>
+               <keycombo>
+                  <keycap>C</keycap>
+                  <keycap>P</keycap>
+               </keycombo>
+            </term>
+            <listitem>
+               <para>Zum vorherigen Segment springen</para>
+            </listitem>
+         </varlistentry>
+         <varlistentry>
+            <term>
+               <keycombo>
+                  <keycap>C</keycap>
+                  <keycap>J</keycap>
+               </keycombo>
+            </term>
+            <listitem>
+               <para>Zum aktuellen Segment im Editor springen</para>
+            </listitem>
+         </varlistentry>
+      </variablelist>
+      <para>Das ausgewählte Segment wird grün hervorgehoben.</para>
+      <variablelist>
+         <varlistentry>
+            <term>Mit Editor auto-synchronisieren</term>
+            <listitem>
+               <para>Der Fensterbereich <link linkend="panes.editor" endterm="panes.editor.title"/> synchronisiert seine Anzeige mit dem ausgewählten Suchergebnis.</para>
+            </listitem>
+         </varlistentry>
+         <varlistentry>
+            <term>Nach Beendigung zurück zum Anfangssegment</term>
+            <listitem>
+               <para>Wenn Sie das Suchfenster schließen, kehrt der Fensterbereich <link linkend="panes.editor" endterm="panes.editor.title"/> automatisch zu dem Segment zurück, das er vor dem Start der Suche angezeigt hat.</para>
+            </listitem>
+         </varlistentry>
+      </variablelist>
+   </section>
+</section>

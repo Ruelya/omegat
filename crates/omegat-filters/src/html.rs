@@ -40,7 +40,10 @@ impl Filter for HtmlFilter {
 }
 
 fn parse_html(raw: &str) -> Result<ParsedFile> {
-    let skip = Regex::new(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1>").unwrap();
+    let skip = Regex::new(
+        r"(?is)<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>|<noscript\b[^>]*>.*?</noscript>",
+    )
+    .unwrap();
     let block = Regex::new(
         r"(?is)</?(p|div|h[1-6]|li|td|th|title|label|option|blockquote|pre|dt|dd|figcaption)(\s[^>]*)?>",
     )

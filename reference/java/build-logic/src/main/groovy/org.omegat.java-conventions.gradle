@@ -1,0 +1,158 @@
+import org.omegat.gradle.PropertiesUtil
+
+plugins {
+    id 'java-library'
+    id 'checkstyle'
+    id 'jacoco'
+    id 'pmd'
+    id 'com.github.spotbugs'
+    id 'net.ltgt.errorprone'
+    id 'net.ltgt.nullaway'
+}
+
+ext {
+    localPropsFile = layout.settingsDirectory.file('local.properties').asFile
+    if (localPropsFile.file) {
+        PropertiesUtil.loadProperties(localPropsFile).each { k, v ->
+            if (findProperty(k) == null) {
+                set(k, v)
+            }
+        }
+    }
+    providedCoreLibsPath = 'lib/provided/core'
+    providedModuleLibsPath = 'lib/provided/module'
+    providedCoreLibsDir = layout.settingsDirectory.dir(providedCoreLibsPath).asFile
+    providedModuleLibsDir = layout.settingsDirectory.dir(providedModuleLibsPath).asFile
+    // Resolves jars that the source distribution provides in lib/provided/module.
+    // Fails instead of returning an empty tree so that an incomplete source
+    // distribution cannot silently produce modules without their content.
+    providedModuleLib = { String... artifacts ->
+        def patterns = artifacts.collect { "**/${it}-*.jar".toString() }
+        def tree = fileTree(dir: providedModuleLibsDir, includes: patterns)
+        if (tree.isEmpty()) {
+            throw new GradleException("No jar matches ${patterns} in ${providedModuleLibsDir}; "
+                    + "the provided module libraries are incomplete.")
+        }
+        return tree
+    }
+}
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.named("test", Test) {
+    useJUnit()
+    workingDir project.rootProject.projectDir
+    // Test in headless mode with ./gradlew test -Pheadless
+    if (project.hasProperty('headless')) {
+        systemProperty 'java.awt.headless', 'true'
+    }
+    // Allow setting the max heap size for the run task from the command line, e.g.
+    // `gradle -PtestMaxHeapSize=2048M test`
+    maxHeapSize = findProperty('testMaxHeapSize')
+    systemProperty 'java.util.logging.config.file', layout.settingsDirectory.file("config/test/logger.properties").asFile
+}
+
+javadoc {
+    failOnError = false
+    options {
+        jFlags('-Duser.language=en')
+        addStringOption('locale', 'en_US')
+        addStringOption('bottom', '<span>Copyright 2000-2023, OmegaT project and contributors</span>')
+        addStringOption('encoding', 'UTF-8')
+        addBooleanOption("Xdoclint:none", true)
+        addBooleanOption('html5', true)
+        addBooleanOption('frames', false)
+        addBooleanOption('public', true)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.compilerArgs.addAll '-Xlint'
+    options.errorprone.disableWarningsInGeneratedCode = true
+    options.errorprone.disable 'InlineMeSuggester', 'EmptyCatch'
+    options.errorprone.allErrorsAsWarnings = true
+}
+
+tasks {
+    compileTestJava {
+        options.errorprone.enabled = false
+    }
+}
+
+dependencies {
+    errorprone("com.google.errorprone:error_prone_core:2.40.0")
+    errorprone("com.uber.nullaway:nullaway:0.12.7")
+}
+
+nullaway {
+    annotatedPackages.add("org.omegat")
+}
+
+spotbugs {
+    reportLevel = com.github.spotbugs.snom.Confidence.valueOf("DEFAULT")
+    extraArgs = ['-longBugCodes']
+    jvmArgs = ['-Duser.language=en']
+    // onlyAnalyze <classes/packages>  only analyze given classes and packages;
+    // end with .* to indicate classes in a package, .- to indicate a package prefix
+    toolVersion = '4.10.3'
+    onlyAnalyze = ['org.omegat.-']
+    excludeFilter = project.rootProject.layout.projectDirectory.file("config/spotbugs/exclude.xml")
+}
+
+spotbugsMain {
+    reports {
+        text.required = true
+        html.required = true
+    }
+}
+
+spotbugsTest {
+    reports {
+        text.required = true
+        html.required = true
+    }
+}
+
+checkstyle {
+    toolVersion = libs.versions.checkstyle.get()
+}
+checkstyleMain.exclude '**/gen/**'
+
+tasks.withType(Copy).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+tasks.withType(Sync).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+tasks.withType(Zip).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}
+
+pmd {
+    toolVersion = '6.38.0'
+    ruleSetFiles = layout.settingsDirectory.files("config/pmd/ruleset.xml")
+    consoleOutput = true
+}
+
+tasks.withType(Pmd).configureEach {
+    exclude '**/gen/**'
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+
+        // Consolidate reports in root project
+        xml.outputLocation.set(layout.settingsDirectory.file("build/reports/pmd/${project.name}-pmd.xml"))
+        html.outputLocation.set(layout.settingsDirectory.file("build/reports/pmd/${project.name}-pmd.html"))
+    }
+}

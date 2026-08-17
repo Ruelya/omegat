@@ -1,0 +1,31 @@
+plugins {
+    id 'org.omegat.module'
+}
+
+dependencies {
+    compileOnly(project.rootProject)
+    if (providedCoreLibsDir.directory) {
+        compileOnly fileTree(dir: providedCoreLibsDir,
+                includes: ['**/languagetool-core-*.jar', '**/commons-io-*.jar'])
+        implementation providedModuleLib('language-da')
+    } else {
+        compileOnly(libs.commons.io)
+        compileOnly(libs.languagetool.core)
+        implementation(libs.languagetool.da) {
+            exclude module: 'languagetool-core'
+        }
+        compileOnly(libs.lucene.analyzers.common)
+    }
+    testImplementation(libs.junit4)
+    testImplementation(libs.assertj)
+    testImplementation(testFixtures(project.rootProject))
+    testImplementation(libs.languagetool.core)
+    testRuntimeOnly(libs.json)
+    testImplementation(project(":spellchecker:lucene"))
+    testRuntimeOnly(libs.commons.io)
+}
+
+test {
+    dependsOn tasks.withType(Jar)
+    dependsOn project(":spellchecker:lucene").tasks.withType(Jar)
+}

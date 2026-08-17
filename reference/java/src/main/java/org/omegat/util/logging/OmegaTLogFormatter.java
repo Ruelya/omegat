@@ -1,0 +1,198 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2000-2006 Keith Godfrey, Maxym Mykhalchuk, and Henry Pijffers
+               2000-2006 Alex Buloichik
+               2024 Hiroshi Miura
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.util.logging;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.logging.Formatter;
+import java.util.logging.Level;
+import java.util.logging.LogManager;
+import java.util.logging.LogRecord;
+
+import org.omegat.util.Log;
+import org.omegat.util.OStrings;
+import org.omegat.util.StringUtil;
+
+/**
+ * Formatter for output data with session ID
+ *
+ * @author Henry Pijffers (henry.pijffers@saxnot.com)
+ * @author Alex Buloichik (alex73mail@gmail.com)
+ */
+public class OmegaTLogFormatter extends Formatter {
+
+    // Line mark is five-character random number
+    protected final String LINE_MARK;
+
+    private String logMask;
+    private final boolean isMaskContainsMark;
+    private final boolean isMaskContainsThreadName;
+    private final boolean isMaskContainsLevel;
+    private final boolean isMaskContainsText;
+    private final boolean isMaskContainsKey;
+    private final boolean isMaskContainsLoggerName;
+    private final boolean isMaskContainsTime;
+
+    private static final String DEFAULT_TIME_FORMAT = "HH:mm:ss";
+
+    /**
+     * Formatter for the log timestamp. {@link DateTimeFormatter} is immutable
+     * and thread-safe, so a single shared instance can be reused across threads
+     * without the per-thread allocation and lookup overhead of a
+     * {@link ThreadLocal}.
+     */
+    private final DateTimeFormatter timeFormatter;
+
+    /**
+     * Initialize formatter.
+     */
+    public OmegaTLogFormatter() {
+        LogManager manager = LogManager.getLogManager();
+        String cname = getClass().getName();
+
+        LINE_MARK = Log.getSessionId();
+
+        logMask = manager.getProperty(cname + ".mask");
+        if (logMask == null) {
+            logMask = "$mark: $level: $text $key";
+        }
+
+        String timeFormat = manager.getProperty(cname + ".timeFormat");
+        if (timeFormat == null) {
+            timeFormat = DEFAULT_TIME_FORMAT;
+        }
+        timeFormatter = DateTimeFormatter.ofPattern(timeFormat).withZone(ZoneId.systemDefault());
+
+        isMaskContainsKey = logMask.contains("$key");
+        isMaskContainsLevel = logMask.contains("$level");
+        isMaskContainsMark = logMask.contains("$mark");
+        isMaskContainsTime = logMask.contains("$time");
+        isMaskContainsText = logMask.contains("$text");
+        isMaskContainsThreadName = logMask.contains("$threadName");
+        isMaskContainsLoggerName = logMask.contains("$loggerName");
+    }
+
+    /**
+     * Format output message.
+     */
+    @Override
+    public String format(final LogRecord record) {
+        final StringBuilder result = new StringBuilder();
+        String message;
+        String format;
+        if (record.getResourceBundle() != null) {
+            try {
+                format = record.getResourceBundle().getString(record.getMessage());
+            } catch (Exception ex) {
+                // looks like ID not found in bundle
+                format = record.getMessage();
+            }
+        } else {
+            format = record.getMessage();
+        }
+        if (format == null) {
+            format = "null";
+        }
+        if (record.getParameters() == null) {
+            message = format;
+        } else {
+            message = StringUtil.format(format, record.getParameters());
+        }
+        String[] lines = message.split("\r|\n");
+        for (String line : lines) {
+            appendFormattedLine(result, record, line, false);
+        }
+        if (record.getThrown() != null) {
+            StringWriter stackTrace = new StringWriter();
+
+            record.getThrown().printStackTrace(new PrintWriter(stackTrace));
+            for (String line : stackTrace.toString().split("\r|\n")) {
+                appendFormattedLine(result, record, line, true);
+            }
+        }
+        return result.toString();
+    }
+
+    /**
+     * Format one line and append to output.
+     */
+    protected void appendFormattedLine(final StringBuilder out, final LogRecord record, final String line,
+            final boolean isStack) {
+        if (line.isEmpty()) {
+            return;
+        }
+
+        String res = logMask;
+        if (isMaskContainsMark) {
+            res = res.replace("$mark", LINE_MARK);
+        }
+        if (isMaskContainsTime) {
+            res = res.replace("$time", timeFormatter.format(Instant.now()));
+        }
+        if (isMaskContainsLoggerName) {
+            res = res.replace("$loggerName", record.getLoggerName());
+        }
+        if (isMaskContainsThreadName) {
+            res = res.replace("$threadName", Thread.currentThread().getName());
+        }
+        if (isMaskContainsLevel) {
+            res = res.replace("$level", getLocalizedLevel(record.getLevel()));
+        }
+        if (isMaskContainsText) {
+            res = res.replace("$text", line);
+        }
+        if (isMaskContainsKey) {
+            if (record.getResourceBundle() != null && !isStack) {
+                res = res.replace("$key", "(" + record.getMessage() + ")");
+            } else {
+                res = res.replace("$key", "");
+            }
+        }
+        out.append(res).append(System.lineSeparator());
+    }
+
+    /**
+     * Get localized level name.
+     */
+    protected String getLocalizedLevel(final Level logLevel) {
+        String result;
+        if (Level.INFO.getName().equals(logLevel.getName())) {
+            result = OStrings.getString("LOG_LEVEL_INFO");
+        } else if (Level.SEVERE.getName().equals(logLevel.getName())) {
+            result = OStrings.getString("LOG_LEVEL_SEVERE");
+        } else if (Level.WARNING.getName().equals(logLevel.getName())) {
+            result = OStrings.getString("LOG_LEVEL_WARNING");
+        } else {
+            result = logLevel.getName();
+        }
+        return result.trim();
+    }
+}

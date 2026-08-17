@@ -113,4 +113,14 @@ mod tests {
         let e = validate("Hello <b>x</b>", "Hello x");
         assert!(e.contains(&TagErrorKind::Missing));
     }
+
+    #[test]
+    fn all_kinds_and_repair() {
+        assert!(validate("a {1} b {2}", "a {2} b {1}").contains(&TagErrorKind::Order));
+        assert!(validate("a {1}", "a {1} {9}").contains(&TagErrorKind::Extraneous));
+        assert!(validate("  hi", "hi").contains(&TagErrorKind::Whitespace));
+        let fixed = repair("Hello <b>x</b>", "Hello x <i>");
+        assert!(fixed.contains("<b>"));
+        assert!(!fixed.contains("<i>"));
+    }
 }

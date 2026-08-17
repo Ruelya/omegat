@@ -1,0 +1,111 @@
+Licenses:
+
+htmlparser.jar version 1.5 is distributed under the GNU Lesser General
+Public License version 2.1 and greater.
+
+vldocking-*.jar is distributed under the GNU Lesser General Public
+License.
+
+jmyspell-core is distributed under the GNU Lesser General Public
+License version 2.1 and greater.
+
+svnkit-*.jar is distributed under the TMate Open Source / Commercial dual license.
+
+sequence-library-*.jar is distributed under the Sequence Library
+License.
+
+antlr-runtime-*.jar is distributed under the ANTLR 3 License.
+
+sqljet-*.jar is distributed under the GPL Version 3 license
+with a dual-licensing option for closed source usage.
+
+org.eclipse.jgit-*-r.jar is distributed under the Eclipse Distribution
+License (EDL) v 1.0.
+
+jgit-gpg-signer-*.jar is distributed under the Eclipse Public License (EPL)
+v2.0.
+
+jsch-*.jar is distributed under the JSch License.
+
+jsch-agent-proxy is distributed under the jsch-agent-proxy License.
+
+gnudiff4j is distributed under the GNU General Public License version 1
+and greater.
+
+trilead-ssh2-*.jar is distributed under the Trilead SSH license.
+
+lucene-*.jar are distributed under the Apache License 2.0.
+
+commons-*.jar are distributed under the Apache License 2.0.
+
+LanguageTool is distributed under the LGPL license.  LanguageTool
+sources are available from
+https://github.com/languagetool-org/languagetool
+For licenses of libraries required by LanguageTool, see
+https://github.com/languagetool-org/languagetool/blob/master/languagetool-standalone/src/main/resources/third-party-licenses/README.txt
+
+pdfbox-*.jar and fontbox-*.jar are distributed under the Apache
+License 2.0.
+
+groovy-all-*.jar is distributed under the Apache License 2.0 (required
+for scripting).
+
+supertmxmerge-*.jar is distributed under the Apache License 2.0.
+
+slf4j-*.jar is distributed under the MIT style slf4j License.
+
+OmegaT uses icons from the Modern UI Icons project. See
+ModernUIIcons-license.txt.
+
+juniversalchardet-*.jar is distributed under the GNU Lesser General
+Public License version 2.1 and greater, the GNU Public License version
+2.0 and greater or the Mozilla Public License version 1.1.
+
+JTextPaneLinkifier uses a regex from dperini/regex-web.js
+(https://gist.github.com/dperini/729294) under the MIT License.
+and a resource regex from JetBrains/intellij-community
+(https://github.com/JetBrains/intellij-community/blob/master/platform/util/src/com/intellij/util/io/URLUtil.java)
+under Apache-2.0 License.
+
+dictzip is distributed under the GNU General Public License version
+2.0 or later with classpath link exception.
+
+StringUtil uses code from the FullWidthConversionStep in the Okapi
+Framework (http://okapi.opentag.com/) under the GNU Public License
+version 2.1 or greater.
+
+mALIGNa is distributed under the MIT License (required for Aligner
+tool).
+
+DeNormalize.java is licensed under the DeNormalize license.
+
+TipOfTheDay library is distributed under the GNU Lesser General Public
+License 2.1 or later.
+
+SwingBox, cssbox4, and jstyleparser are distributed under the GNU
+Lesser General Public License 3.0 or later.
+
+JSoup is distributed under the MIT License.
+
+Nashorn javascript engine is distributed under the GNU General Public
+License version 2.0 only with classpath link exception.
+
+newUI.burgerMenu image is distributed under CC-BY-SA 3.0 Unported
+Copyright 2015 Timothy Miller
+(https://www.iconfinder.com/icons/134216/hamburger_lines_menu_icon)
+
+eye.svg, eye-slash.svg is distributed under The MIT License
+Copyright (c) 2019-2023 The Bootstrap Authors
+(https://github.com/twbs/icons)
+
+src/org/omegat/tokenizer/stopwords/* is distributed under The MIT License
+Copyright (c) 2016 Gene Diaz
+(https://github.com/stopwords-iso)
+
+Test spelldics, hunspell dictionary, for en_GB is distributed under
+The MIT license and BSD-3.0 license.
+see Hunspell_dictionary_en_GB_license.txt
+
+Test spelldics, hunspell dictionary, for es is distributed under
+GNU General Public License version 3.0 OR LGPL-3.0 or MPL-1.1.
+see Hunspell_dictionary_es_license.txt

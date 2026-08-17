@@ -1,0 +1,177 @@
+/**************************************************************************
+ OmegaT - Computer Assisted Translation (CAT) tool
+          with fuzzy matching, translation memory, keyword search,
+          glossaries, and translation leveraging into updated projects.
+
+ Copyright (C) 2000-2006 Keith Godfrey and Maxym Mykhalchuk
+               2008 Alex Buloichik
+               Home page: https://www.omegat.org/
+               Support center: https://omegat.org/support
+
+ This file is part of OmegaT.
+
+ OmegaT is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ OmegaT is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ **************************************************************************/
+
+package org.omegat.core.matching;
+
+import org.omegat.util.OStrings;
+import org.omegat.util.Token;
+
+/**
+ * Class to compute Levenshtein Distance.
+ *
+ * <p>
+ * Levenshtein distance (LD) is a measure of the similarity between two strings,
+ * which we will refer to as the source string (s) and the target string (t).
+ * The distance is the number of deletions, insertions, or substitutions
+ * required to transform s into t.
+ *
+ * <p>
+ * For example,
+ * <ul>
+ * <li>If s is "test" and t is "test", then LD(s,t) = 0, because no
+ * transformations are needed. The strings are already identical.
+ * <li>If s is "test" and t is "tent", then LD(s,t) = 1, because one
+ * substitution (change "s" to "n") is enough to transform s into t.
+ * </ul>
+ *
+ * <p>
+ * The greater the Levenshtein distance, the more different the strings are.
+ * <p>
+ * Levenshtein distance is named after the Russian scientist Vladimir
+ * Levenshtein, who devised the algorithm in 1965. If you can't spell or
+ * pronounce Levenshtein, the metric is also sometimes called edit distance.
+ * <p>
+ * alex73's comment: We can't make 'compute' mathod static, because in this case
+ * LevenshteinDistance will not be thread-safe(see 'd' and 'p' arrays). We can't
+ * create these arrays inside 'compute' method, because it's enough slow
+ * operation. We have to create LevenshteinDistance instance one for each thread
+ * where we will call it. It's best way for best performance.
+ *
+ * @see <a href=
+ *      "http://people.cs.pitt.edu/~kirk/cs1501/Pruhs/Fall2006/Assignments/editdistance/Levenshtein%20Distance.htm">
+ *      Levenshtein Distance, in Three Flavors</a>
+ *
+ * @author Vladimir Levenshtein
+ * @author Michael Gilleland, Merriam Park Software
+ * @author Chas Emerick, Apache Software Foundation
+ * @author Maxym Mykhalchuk
+ * @author Alex Buloichik (alex73mail@gmail.com)
+ */
+public class LevenshteinDistance implements ISimilarityCalculator {
+
+    /**
+     * Get minimum of three values
+     */
+    private static short minimum(int a, int b, int c) {
+        return (short) Math.min(a, Math.min(b, c));
+    }
+
+    /** Maximal number of items compared. */
+    private static final int MAX_N = 1000;
+
+    /**
+     * Cost array, horizontally. Here to avoid excessive allocation and garbage
+     * collection.
+     */
+    private short[] distanceArray = new short[MAX_N + 1];
+    /**
+     * "Previous" cost array, horizontally. Here to avoid excessive allocation
+     * and garbage collection.
+     */
+    private short[] previousCosts = new short[MAX_N + 1];
+
+    /**
+     * Compute Levenshtein distance between two lists of tokens.
+     *
+     * <p>
+     * The difference between this implementation and the canonical one is that,
+     * rather than creating and retaining a matrix of size sourceTokens.length()
+     * + 1 by taretTokens.length() + 1, we maintain two single-dimensional
+     * arrays of length sourceTokens.length() + 1.
+     *
+     * <p>
+     * The first, `distanceArray`, is the 'current working' distance array that
+     * maintains the newest distance cost counts as we iterate through the
+     * characters of String sourceTokens. Each time we increment the index of
+     * String targetTokens we are comparing, distanceArray is copied to
+     * previousCosts, the second int[]. Doing so allows us to retain the
+     * previous cost counts as required by the algorithm, taking the minimum of
+     * the cost count to the left, up one, and diagonally up and to the left of
+     * the current cost count being calculated.
+     * <p>
+     * Note that the arrays aren't really copied anymore, just switched... this
+     * is much better than cloning an array or doing a System.arraycopy() each
+     * time through the outer loop.
+     *
+     * <p>
+     * Effectively, the difference between the two implementations is this one
+     * does not cause an out-of-memory condition when calculating the
+     * LevenshteinDistance over two very large strings.
+     *
+     * <p>
+     * For perfomance reasons the maximal number of compared items is
+     * {@link #MAX_N}.
+     */
+    public int compute(Token[] sourceTokens, Token[] targetTokens) {
+        if (sourceTokens == null || targetTokens == null) {
+            throw new IllegalArgumentException(OStrings.getString("LD_NULL_ARRAYS_ERROR"));
+        }
+
+        int sourceLength = sourceTokens.length;
+        int targetLength = targetTokens.length;
+
+        if (sourceLength == 0) {
+            return targetLength;
+        } else if (targetLength == 0) {
+            return sourceLength;
+        }
+
+        if (sourceLength > MAX_N) {
+            sourceLength = MAX_N;
+        }
+        if (targetLength > MAX_N) {
+            targetLength = MAX_N;
+        }
+
+        for (short i = 0; i <= sourceLength; i++) {
+            previousCosts[i] = i;
+        }
+
+        for (short j = 1; j <= targetLength; j++) {
+            Token targetToken = targetTokens[j - 1];
+            distanceArray[0] = j;
+
+            for (short i = 1; i <= sourceLength; i++) {
+                Token sourceToken = sourceTokens[i - 1];
+                int cost = sourceToken.equals(targetToken) ? 0 : 1;
+                // minimum of cell to the left+1, to the top+1, diagonally left
+                // and up +cost
+                distanceArray[i] = minimum(distanceArray[i - 1] + 1, previousCosts[i] + 1,
+                        previousCosts[i - 1] + cost);
+            }
+
+            // copy current distance counts to 'previous row' distance counts
+            short[] swap = previousCosts;
+            previousCosts = distanceArray;
+            distanceArray = swap;
+        }
+
+        // our last action in the above loop was to switch distanceArray and
+        // previousCosts, so previousCosts now actually has the most recent cost
+        // counts
+        return previousCosts[sourceLength];
+    }
+}

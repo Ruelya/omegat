@@ -18,10 +18,13 @@ struct App {
 impl App {
     fn new() -> Self {
         let prefs = Preferences::load_or_default(&default_config_dir());
+        let mut plugins = PluginRegistry::new();
+        let _ = plugins.load_dir(&prefs.config_dir.join("plugins"));
+        let _ = plugins.load_dir(std::path::Path::new("plugins"));
         Self {
             session: None,
             prefs,
-            plugins: PluginRegistry::new(),
+            plugins,
         }
     }
 
@@ -115,8 +118,92 @@ impl App {
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
                 Ok(serde_json::to_value(self.session()?.search(&p)).unwrap())
             }
+            "search.replace" => {
+                let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
+                let n = self.session_mut()?.search_replace(&p);
+                Ok(json!({"replaced": n}))
+            }
+            "spell.ignore" => {
+                let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
+                let s = self.session_mut()?;
+                s.spell.ignore(word, &s.props.root);
+                Ok(json!({"ok": true}))
+            }
+            "tmx.export" => {
+                let level = params.get("level").and_then(|v| v.as_str()).unwrap_or("omegat");
+                let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
+                let s = self.session()?;
+                let xml = s.tmx.to_xml_level(&s.props.source_lang, &s.props.target_lang, level);
+                if !dest.is_empty() {
+                    std::fs::write(dest, &xml).map_err(|e| (error_code::IO, e.to_string()))?;
+                }
+                Ok(json!({"xml": xml, "level": level}))
+            }
+            "languagetool.check" => {
+                let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let url = self.prefs.extra.get("languagetool_url").cloned();
+                let lang = self.session().map(|s| s.props.target_lang.clone()).unwrap_or_else(|_| "en".into());
+                Ok(serde_json::to_value(omegat_core::languagetool::check(url.as_deref(), text, &lang, 0, "")).unwrap())
+            }
+            "finder.run" => {
+                let xml = params.get("xml").and_then(|v| v.as_str()).unwrap_or("");
+                let sel = params.get("selection").and_then(|v| v.as_str()).unwrap_or("");
+                let items = omegat_core::finder::parse_finder_xml(xml);
+                let urls: Vec<String> = items.iter().filter_map(|i| omegat_core::finder::expand(i, sel, sel, "")).collect();
+                Ok(json!({"urls": urls, "items": items.len()}))
+            }
+            "team.conflicts" => {
+                let s = self.session()?;
+                let c = omegat_team::rebase_project(&s.props).map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
+                Ok(json!({"conflicts": c}))
+            }
+            "wiki.import" => {
+                let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let dest = &self.session()?.props.source_dir;
+                let n = omegat_core::wiki::import_wiki(std::path::Path::new(src), dest).map_err(core_err)?;
+                Ok(json!({"files": n}))
+            }
+            "med.open" => {
+                let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
+                omegat_core::wiki::open_med(std::path::Path::new(src), std::path::Path::new(dest)).map_err(core_err)?;
+                Ok(json!({"ok": true}))
+            }
+            "project.convert" => {
+                let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
+                let sl = params.get("source_lang").and_then(|v| v.as_str()).unwrap_or("en");
+                let tl = params.get("target_lang").and_then(|v| v.as_str()).unwrap_or("fr");
+                omegat_core::wiki::convert_project(std::path::Path::new(src), std::path::Path::new(dest), sl, tl).map_err(core_err)?;
+                Ok(json!({"ok": true}))
+            }
+            "aligner.configure" => {
+                Ok(json!({"modes":["heapwise","parsewise","id"],"algos":["viterbi","forward-backward"],"counters":["char","word"]}))
+            }
             "stats.get" => Ok(serde_json::to_value(self.session()?.stats()).unwrap()),
             "issues.list" => Ok(serde_json::to_value(self.session()?.issues()).unwrap()),
+            "filters.options" => {
+                let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let reg = omegat_filters::FilterRegistry::new();
+                let Some(f) = reg.by_id(id) else {
+                    return Err((error_code::INVALID_PARAMS, format!("unknown filter {id}")));
+                };
+                Ok(json!({
+                    "id": f.id(),
+                    "name": f.name(),
+                    "masks": f.default_masks(),
+                    "phase": f.phase(),
+                    "options": {
+                        "remove_tags": self.prefs.extra.get("remove_tags").cloned().unwrap_or_else(|| "false".into()),
+                        "preserve_spaces": self.prefs.extra.get(&format!("filter.{id}.preserve_spaces")).cloned().unwrap_or_else(|| "true".into()),
+                        "file_context": self.prefs.extra.get(&format!("filter.{id}.file_context")).cloned().unwrap_or_default(),
+                    }
+                }))
+            }
+            "script.slots" => {
+                let root = params.get("root").and_then(|v| v.as_str()).unwrap_or("scripts");
+                Ok(json!({ "slots": omegat_script::list_slots(std::path::Path::new(root)) }))
+            }
             "filters.list" => {
                 let list: Vec<FilterInfoDto> = omegat_filters::FilterRegistry::new()
                     .info()
@@ -132,7 +219,7 @@ impl App {
             }
             "mt.query" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let engine = params.get("engine").and_then(|v| v.as_str()).unwrap_or("mock");
+                let engine = params.get("engine").and_then(|v| v.as_str()).unwrap_or("mymemory");
                 let r = self.session()?.mt(index, engine).map_err(core_err)?;
                 Ok(serde_json::to_value(r).unwrap())
             }
@@ -165,10 +252,42 @@ impl App {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
-                self.session()?
-                    .align(std::path::Path::new(source), std::path::Path::new(target), std::path::Path::new(dest))
-                    .map_err(core_err)?;
-                Ok(json!({"ok": true}))
+                let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("parsewise");
+                let algo = params.get("algo").and_then(|v| v.as_str()).unwrap_or("viterbi");
+                let counter = params.get("counter").and_then(|v| v.as_str()).unwrap_or("word");
+                let cfg = omegat_core::align::AlignConfig {
+                    mode: match mode {
+                        "heapwise" => omegat_core::align::AlignMode::Heapwise,
+                        "id" => omegat_core::align::AlignMode::Id,
+                        _ => omegat_core::align::AlignMode::Parsewise,
+                    },
+                    algo: if algo == "forward-backward" {
+                        omegat_core::align::AlignAlgo::ForwardBackward
+                    } else {
+                        omegat_core::align::AlignAlgo::Viterbi
+                    },
+                    counter: if counter == "char" {
+                        omegat_core::align::Counter::Char
+                    } else {
+                        omegat_core::align::Counter::Word
+                    },
+                };
+                let tmx = omegat_core::align::align_files_cfg(
+                    std::path::Path::new(source),
+                    std::path::Path::new(target),
+                    &self.session()?.props.source_lang,
+                    &self.session()?.props.target_lang,
+                    &cfg,
+                )
+                .map_err(core_err)?;
+                omegat_core::align::write_aligned_tmx(
+                    &tmx,
+                    std::path::Path::new(dest),
+                    &self.session()?.props.source_lang,
+                    &self.session()?.props.target_lang,
+                )
+                .map_err(core_err)?;
+                Ok(json!({"ok": true, "pairs": tmx.entries.len()}))
             }
             other => Err((error_code::METHOD_NOT_FOUND, format!("unknown method {other}"))),
         }

@@ -4,7 +4,6 @@ use crate::glossary::{self, GlossaryEntry};
 use crate::matching;
 use crate::prefs::Preferences;
 use crate::properties::ProjectProperties;
-use crate::segment::split_sentences;
 use crate::spell::SpellChecker;
 use crate::tags;
 use crate::tmx::{ProjectTmx, TmxEntry};
@@ -100,7 +99,12 @@ impl ProjectSession {
         let tmx = ProjectTmx::load(&props.save_tmx_path(), &props.source_lang, &props.target_lang)?;
         let external_tm = load_external_tm(&props);
         let glossary = glossary::load_glossary(&props.glossary_file);
-        let spell = SpellChecker::load(&props.root, &prefs.config_dir);
+        let backend = match prefs.extra.get("spell_backend").map(|s| s.as_str()) {
+            Some("lucene") => crate::spell::SpellBackend::Lucene,
+            Some("morfologik") => crate::spell::SpellBackend::Morfologik,
+            _ => crate::spell::SpellBackend::Hunspell,
+        };
+        let spell = SpellChecker::load_backend(&props.root, &prefs.config_dir, backend);
         let filters = FilterRegistry::new();
         let mut session = Self {
             props,
@@ -148,7 +152,16 @@ impl ProjectSession {
             let parsed = filter.parse(&file, &ctx)?;
             let nsegs = parsed.segments.len();
             for (i, seg) in parsed.segments.into_iter().enumerate() {
-                for sentence in split_sentences(&seg.source, self.props.sentence_seg) {
+                let custom = self.prefs.extra.get("srx_path").and_then(|p| {
+                    let raw = std::fs::read_to_string(p).ok()?;
+                    Some(crate::segment::parse_srx(&raw, &self.props.source_lang))
+                });
+                for sentence in crate::segment::split_sentences_lang(
+                    &seg.source,
+                    self.props.sentence_seg,
+                    &self.props.source_lang,
+                    custom.as_ref(),
+                ) {
                     if sentence.trim().is_empty() {
                         continue;
                     }
@@ -246,6 +259,22 @@ impl ProjectSession {
         if e.revision != params.revision {
             return Err(CoreError::OptimisticLock(params.index));
         }
+        if self.prefs.extra.get("tag_validation").map(|s| s.as_str()) == Some("abort")
+            && !params.translation.trim().is_empty()
+        {
+            let errs = tags::validate(&e.source, &params.translation);
+            if errs.iter().any(|k| {
+                matches!(
+                    k,
+                    tags::TagErrorKind::Missing | tags::TagErrorKind::Malformed
+                )
+            }) {
+                return Err(CoreError::TagValidation(format!(
+                    "segment {} failed tag validation",
+                    params.index
+                )));
+            }
+        }
         e.translation = params.translation.clone();
         if let Some(n) = &params.note {
             e.note = n.clone();
@@ -262,11 +291,13 @@ impl ProjectSession {
         let Some(e) = self.entries.get(index) else {
             return vec![];
         };
-        matching::find_matches(
+        matching::find_matches_threshold(
             &e.source,
             &self.tmx.entries,
             &self.external_tm,
             &self.props.source_lang,
+            self.prefs.fuzzy_threshold,
+            crate::consts::MAX_NEAR_STRINGS,
         )
         .into_iter()
         .map(|m| m.to_dto())
@@ -277,10 +308,22 @@ impl ProjectSession {
         let Some(e) = self.entries.get(index) else {
             return vec![];
         };
-        glossary::lookup(&self.glossary, &e.source)
+        let ignore_case = self.prefs.extra.get("glossary_ignore_case").map(|s| s != "false").unwrap_or(true);
+        let use_stem = self.prefs.extra.get("glossary_stem").map(|s| s != "false").unwrap_or(true);
+        glossary::lookup_opts(&self.glossary, &e.source, ignore_case, use_stem)
     }
 
     pub fn compile(&mut self, source_pattern: Option<&str>) -> Result<usize> {
+        if self.prefs.extra.get("tag_validation").map(|s| s.as_str()) == Some("abort") {
+            let bad = self
+                .issues()
+                .iter()
+                .filter(|i| i.kind == "tag" && i.severity == "error")
+                .count();
+            if bad > 0 {
+                return Err(CoreError::TagValidation(format!("{bad} tag errors")));
+            }
+        }
         self.save()?;
         let ctx = FilterContext {
             source_lang: self.props.source_lang.clone(),
@@ -318,8 +361,11 @@ impl ProjectSession {
                 } else {
                     trans
                 };
-                map.insert(p.id.clone(), trans);
-                map.insert(i.to_string(), map.get(&p.id).cloned().unwrap_or_default());
+                map.insert(p.id.clone(), trans.clone());
+                map.insert(i.to_string(), trans.clone());
+                if !p.source.is_empty() {
+                    map.insert(p.source.clone(), trans);
+                }
             }
             filter.write(&src, &dest, &map, &ctx)?;
             n += 1;
@@ -362,10 +408,25 @@ impl ProjectSession {
         search::search(&self.entries, params)
     }
 
+    pub fn search_replace(&mut self, params: &SearchParams) -> usize {
+        let n = search::replace(&mut self.entries, params);
+        if n > 0 {
+            self.dirty = true;
+        }
+        n
+    }
+
     pub fn issues(&self) -> Vec<IssueDto> {
         let mut all = Vec::new();
         for (i, e) in self.entries.iter().enumerate() {
             all.extend(tags::issues_for(i, &e.file, &e.source, &e.translation));
+            all.extend(crate::languagetool::check(
+                self.prefs.extra.get("languagetool_url").map(|s| s.as_str()),
+                &e.translation,
+                &self.props.target_lang,
+                i,
+                &e.file,
+            ));
             for w in self.spell.unknown_in(&e.translation) {
                 all.push(IssueDto {
                     kind: "spell".into(),
@@ -374,6 +435,19 @@ impl ProjectSession {
                     message: format!("Unknown word: {w}"),
                     severity: "info".into(),
                 });
+            }
+            if e.translated() {
+                for g in glossary::lookup(&self.glossary, &e.source) {
+                    if !e.translation.to_lowercase().contains(&g.target.to_lowercase()) {
+                        all.push(IssueDto {
+                            kind: "glossary".into(),
+                            index: i,
+                            file: e.file.clone(),
+                            message: format!("Glossary term '{}' not used (expected '{}')", g.source, g.target),
+                            severity: "warn".into(),
+                        });
+                    }
+                }
             }
         }
         all
@@ -416,6 +490,34 @@ impl ProjectSession {
                     text: t,
                     detail: "source tag".into(),
                 });
+            }
+            if let Some(at) = self.prefs.extra.get("autotext") {
+                for pair in at.split(';') {
+                    if let Some((k, v)) = pair.split_once('=') {
+                        if k.starts_with(prefix) || prefix.is_empty() {
+                            items.push(CompleterItemDto {
+                                kind: "autotext".into(),
+                                text: v.to_string(),
+                                detail: k.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+            for (ch, name) in [
+                ("\u{00a0}", "NBSP"),
+                ("\u{2014}", "em dash"),
+                ("\u{2026}", "ellipsis"),
+                ("\u{00ab}", "guillemet"),
+                ("\u{00bb}", "guillemet"),
+            ] {
+                if prefix.is_empty() || name.starts_with(prefix) {
+                    items.push(CompleterItemDto {
+                        kind: "charset".into(),
+                        text: ch.to_string(),
+                        detail: name.into(),
+                    });
+                }
             }
         }
         let mut seen = std::collections::HashSet::new();
@@ -519,6 +621,13 @@ impl Drop for ProjectSession {
     }
 }
 
+fn penalty_from_origin(origin: &str) -> i32 {
+    origin
+        .split('/')
+        .find_map(|p| p.strip_prefix("penalty-")?.parse().ok())
+        .unwrap_or(0)
+}
+
 fn load_external_tm(props: &ProjectProperties) -> Vec<(TmxEntry, String)> {
     let mut out = Vec::new();
     if !props.tm_dir.exists() {
@@ -535,7 +644,14 @@ fn load_external_tm(props: &ProjectProperties) -> Vec<(TmxEntry, String)> {
                 .unwrap_or(ent.path())
                 .to_string_lossy()
                 .into_owned();
-            for e in tmx.entries {
+            let penalty = penalty_from_origin(&origin);
+            for mut e in tmx.entries {
+                if origin.contains(crate::consts::MT_TM) {
+                    // MT memories are suggestions only; still searchable.
+                }
+                if penalty > 0 {
+                    e.note = Some(format!("penalty:{penalty}"));
+                }
                 out.push((e, origin.clone()));
             }
         }

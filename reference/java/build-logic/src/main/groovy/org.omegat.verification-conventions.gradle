@@ -1,0 +1,308 @@
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
+import java.util.concurrent.atomic.AtomicReference
+
+plugins {
+    id 'application'
+    id 'jacoco'
+    id 'jacoco-report-aggregation'
+}
+
+jacoco {
+    toolVersion = "0.8.12"
+}
+
+sourceSets {
+    testAcceptance
+    testIntegration {
+        java {
+            srcDir 'test-integration/src'
+        }
+    }
+}
+
+configurations {
+    testIntegrationImplementation.extendsFrom implementation
+    testAcceptanceImplementation.extendsFrom testImplementation
+    testAcceptanceRuntime.extendsFrom testRuntime
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test) // tests are required to run before generating the report
+    group = 'verification'
+    reports {
+        xml.required = true  // coveralls plugin depends on xml format report
+        html.required = true
+    }
+    afterEvaluate {
+        classDirectories.setFrom(files(classDirectories.files.collect {
+            fileTree(dir: it,
+                    exclude: ["gen/core/**/*", "org/omegat/util/gui/*", "org/omegat/gui/dialogs/*",
+                              "org/omegat/externalfinder/gui/*", "org/omegat/gui/filters2/*", "org/omegat/core/team2/gui/*",
+                              "org/omegat/gui/properties", "org/omegat/gui/exttrans/*", "org/omegat/gui/theme",
+                              "org/omegat/gui/comments/*", "org/omegat/gui/editor/chartable/*",
+                              "org/omegat/gui/segmentation/*", "org/omegat/util/xml/*", "org/omegat/gui/preferences/*",
+                              "org/omegat/**/data/*", "org/omegat/**/datamodels/*"])
+        }))
+    }
+}
+
+// check.dependsOn jacocoTestCoverageVerification
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    violationRules {
+        rule {
+            element = 'CLASS'
+            includes = ['org.omegat.core.machinetranslators.*', 'org.omegat.core.dictionaries.*']
+            excludes = ['**.*.1', '**.*.2', '**.*.3',  // ignore inner classes
+                        'org.omegat.core.machinetranslators.MachineTranslators']  // simple plugin reg.
+            limit { minimum = 0.20 }
+        }
+        rule {
+            element = 'PACKAGE'
+            includes = ['org.omegat.filters?.*',
+                        'org.omegat.externalfinder', 'org.omegat.languagetools', 'org.omegat.util',
+                        'org.omegat.core.events', 'org.omegat.core.matching', 'org.omegat.core.search',
+                        'org.omegat.core.segmentation', 'org.omegat.core.spellchecker', 'org.omegat.core.statistics',
+                        'org.omegat.core.tagvalidation', 'org.omegat.core.team2.*']
+            excludes = ['org.omegat.core.team2.gui', 'org.omegat.util.xml.*']
+            limit { minimum = 0.60 }
+        }
+    }
+}
+
+tasks.named("run") {
+    if (System.getProperty("os.name").toLowerCase().contains("linux") ||
+            System.getProperty("os.name").toLowerCase().contains("bsd")) {
+        jvmArgs(["--add-opens", "java.desktop/sun.awt.X11=ALL-UNNAMED"])
+    }
+    // Allow setting the max heap size for the run task from the command line, e.g.
+    // `gradle -PrunMaxHeapSize=1024M run`
+    maxHeapSize = findProperty('runMaxHeapSize')
+    // Ask modules to be up-to-date before run task executed
+    dependsOn rootProject.configurations.named('moduleDist')
+}
+
+tasks.register('runDebugger', JavaExec) {
+    description = 'Runs application for debugging.' // Special debug task for NetBeans
+    group = 'application'
+    mainClass = application.mainClass
+    classpath = sourceSets.main.runtimeClasspath
+    jvmArgs(["--illegal-access=warn"])
+    debug = true
+    // Allow setting the max heap size for the run task from the command line, e.g.
+    // `gradle -PrunMaxHeapSize=1024M run`
+    maxHeapSize = findProperty('runMaxHeapSize')
+    // Ask modules to be up-to-date before run task executed
+    dependsOn rootProject.configurations.named('moduleDist')
+}
+
+tasks.register('testIntegration', JavaExec) {
+    description = 'Runs integration tests. Pass repo URL as -Domegat.test.repo=<repo>.'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+        vendor = JvmVendorSpec.ADOPTIUM
+    }
+    group = 'verification'
+    mainClass = 'org.omegat.core.data.TestTeamIntegration'
+    classpath = sourceSets.testIntegration.runtimeClasspath
+    if (System.hasProperty('java.util.logging.config.file')) {
+        systemProperty 'java.util.logging.config.file', System.getProperty('java.util.logging.config.file')
+    } else {
+        systemProperty 'java.util.logging.config.file', "${rootDir}/config/test/logger.properties"
+    }
+    systemProperty 'omegat.test.duration', System.getProperty('omegat.test.duration')
+    systemProperty 'omegat.test.repo', System.getProperty('omegat.test.repo')
+    systemProperty 'omegat.test.repo.alt', System.getProperty('omegat.test.repo.alt')
+    systemProperty 'omegat.test.map.repo', System.getProperty('omegat.test.map.repo')
+    systemProperty 'omegat.test.map.file', System.getProperty('omegat.test.map.file')
+    // Allow setting the max heap size for the run task from the command line, e.g.
+    // `gradle -PtestMaxHeapSize=1024M testIntegration`
+    maxHeapSize = findProperty('testMaxHeapSize')
+    // Ask modules to be up-to-date before run task executed
+    dependsOn rootProject.configurations.named('moduleDist')
+}
+
+// Define a shared service to hold the PID
+abstract class XvfbService implements BuildService<BuildServiceParameters.None> {
+    private final AtomicReference<String> pidRef = new AtomicReference<>("")
+
+    void setPid(String pid) {
+        pidRef.set(pid ?: "")
+    }
+    String getPid() {
+        return pidRef.get() ?: ""
+    }
+    boolean hasPid() {
+        return pidRef.get() != null && !pidRef.get().isEmpty()
+    }
+}
+
+// Register the service
+def xvfbService = gradle.sharedServices.registerIfAbsent("xvfbService", XvfbService) {}
+
+def testAcceptanceFinally = tasks.register('testAcceptanceFinally') {
+    outputs.upToDateWhen { return false } // always run
+    usesService(xvfbService)
+    doLast {
+        def service = xvfbService.get()
+        def pid = service.pid
+        if (service.hasPid()) {
+            logger.lifecycle "Stopping virtual X server (PID: ${pid})..."
+            try {
+                def outputStream = new ByteArrayOutputStream()
+                def errStream = new ByteArrayOutputStream()
+                def result = injected.execOps.exec {
+                    commandLine 'sh', '-c', "kill ${pid} &"
+                    standardOutput = outputStream
+                    errorOutput = errStream
+                    ignoreExitValue = true
+                }
+                if (result.exitValue == 0) {
+                    logger.lifecycle "Virtual X server (PID: ${pid}) stopped successfully"
+                } else if (result.eistValue == 1) {
+                    logger.warn "Virtual X server (PID: ${pid}) was not found (may have already stopped)"
+                } else {
+                    logger.warn "Failed to stop virtual X server: ${errStream.toString()}"
+                }
+
+                // Attempt force kill if graceful kill fails
+                Thread.sleep(500)
+                try {
+                    injected.execOps.exec {
+                        commandLine 'sh', '-c', "kill -9 ${pid}"
+                        ignoreExitValue = true
+                        standardOutput = new ByteArrayOutputStream()
+                        errorOutput = new ByteArrayOutputStream()
+                    }
+                } catch (Exception e) {
+                    logger.debug "Force kill attempt for PID ${pid}: ${e.message}"
+                }
+                service.setPid("")
+            } catch (Exception e) {
+                logger.error "Error stopping virtual X server: ${e.message}", e
+            }
+        }
+    }
+}
+
+tasks.register('testAcceptance', Test) {
+    usesService(xvfbService)
+    def display = project.hasProperty("testDisplay") ? project.getProperty("testDisplay") : ""
+    def xvfbStarted = new AtomicReference<Boolean>(false)
+
+    finalizedBy testAcceptanceFinally
+    description = 'Runs acceptance GUI test.'
+    group = 'verification'
+
+    doFirst {
+        if (!display.isEmpty()) {
+            def lockFile = new File("/tmp/.X${display}-lock")
+            if (!lockFile.exists()) {
+                try {
+                    def outputStream = new ByteArrayOutputStream()
+                    def errStream = new ByteArrayOutputStream()
+                    def result = injected.execOps.exec {
+                        commandLine 'sh', '-c', "Xvfb :${display} -screen 0 1280x1024x24 >>/dev/null 2>&1 & echo \$!"
+                        standardOutput = outputStream
+                        errorOutput = errStream
+                        ignoreExitValue = true
+                    }
+                    if (result.exitValue == 0) {
+                        def pid = outputStream.toString().trim()
+                        if (pid && pid.matches("\\d+\$")) {
+                            // Verify process exists
+                            def checkResult = injected.execOps.exec {
+                                commandLine 'sh', '-c', "kill -0 ${pid} 2>/dev/null"
+                                ignoreExitValue = true
+                            }
+                            if (checkResult.exitValue == 0) {
+                                xvfbService.get().setPid(pid)
+                                xvfbStarted.set(true)
+                                environment 'DISPLAY', ":${display}"
+                                logger.lifecycle "Virtual X server is started with DISPLAY :${display} and PID: ${pid}"
+                            }
+                        }
+                    }
+                    if (!xvfbStarted.get()) {
+                        logger.error "Failed to start virtual X server with DISPLAY :${display}."
+                    }
+                } catch (Exception e) {
+                    logger.error "Exception starting virtual X server: ${e.message}", e
+                }
+            }
+        }
+    }
+
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+    jvmArgs(["--add-opens", "java.desktop/sun.awt.X11=ALL-UNNAMED",
+             "--add-opens", "java.base/java.util=ALL-UNNAMED"])
+    classpath = sourceSets.testAcceptance.runtimeClasspath
+    testClassesDirs = sourceSets.testAcceptance.output.classesDirs
+    systemProperty 'java.util.logging.config.file', "${rootDir}/config/test/logger.properties"
+    // Allow setting the max heap size for the run task from the command line, e.g.
+    // `gradle -PtestMaxHeapSize=1024M testOnJava21`
+    maxHeapSize = findProperty('testMaxHeapSize')
+    dependsOn firstSteps
+    dependsOn ':aligner:jar'
+}
+
+tasks.register('jacocoAcceptanceReport', JacocoReport) {
+    dependsOn(tasks.testAcceptance)
+    executionData(tasks.testAcceptance)
+    sourceSets(sourceSets.main)
+    group = 'verification'
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.register('jacocoIntegrationReport', JacocoReport) {
+    dependsOn(tasks.testIntegration)
+    executionData(tasks.testIntegration)
+    sourceSets(sourceSets.main)
+    group = 'verification'
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+tasks.register('spotbugsReport') {
+    // Capture at configuration time
+    def spotbugsProjects = ([[
+             reportsDir : layout.projectDirectory.dir("build/reports/spotbugs").asFile,
+             displayName: "OmegaT root project"
+     ]] + subprojects.collect { subproject ->
+        [
+                reportsDir : subproject.layout.projectDirectory.dir("build/reports/spotbugs").asFile,
+                displayName: subproject.path
+        ]
+    })
+    group = 'verification'
+    inputs.files(spotbugsProjects.collect { projectReport ->
+        fileTree(projectReport.reportsDir) {
+            include "main.txt", "test.txt"
+        }
+    }).optional()
+
+    // Reusable function to check and print the report for a given project
+    doLast {
+        spotbugsProjects.each { projectReport ->
+            ["main", "test"].each { target ->
+                def reportFile = new File(projectReport.reportsDir, "${target}.txt")
+                if (reportFile.exists()) {
+                    def sep = "-".repeat(40)
+                    println(sep + "${sep} Report from project: ${projectReport.displayName} for ${target} code ${sep}")
+                    reportFile.eachLine { line ->
+                        println(line)
+                    }
+                }
+            }
+        }
+    }
+}

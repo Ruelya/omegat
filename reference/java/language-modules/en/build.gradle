@@ -1,0 +1,30 @@
+plugins {
+    id 'org.omegat.module'
+}
+
+dependencies {
+    compileOnly(project.rootProject)
+    if (providedCoreLibsDir.directory) {
+        compileOnly fileTree(dir: providedCoreLibsDir,
+                includes: ['**/languagetool-core-*.jar', '**/commons-io-*.jar'])
+        implementation providedModuleLib('language-en')
+        runtimeOnly providedModuleLib('opennlp')
+    } else {
+        compileOnly(libs.commons.io)
+        compileOnly(libs.languagetool.core)
+        implementation(libs.languagetool.en) {
+            exclude module: 'languagetool-core'
+        }
+    }
+    testImplementation(libs.junit4)
+    testImplementation(libs.assertj)
+    testImplementation(testFixtures(project.rootProject))
+    testImplementation(libs.languagetool.core)
+    testImplementation project(":spellchecker:morfologik")
+}
+
+test {
+    dependsOn tasks.withType(Jar)
+    dependsOn project(":spellchecker:morfologik").tasks.withType(Jar)
+}
+

@@ -1,0 +1,1011 @@
+
+/***************************/
+/* Device based page width */
+/***************************/
+
+@media screen and (max-width: 640px) {
+	.chapter,
+	.appendix {
+		margin-left:1em;
+		margin-right:2em;
+		padding-bottom: 5em;
+	}
+}
+
+@media screen and (min-width: 641px) and (max-width: 1072px) {
+	.chapter,
+	.appendix {
+		margin-left:1em;
+		margin-right:3em;
+		padding-bottom: 5em;
+	}
+}
+
+@media screen and (max-width: 640px) {
+	h1 {
+		padding-left:1em;
+		margin-left:-1em;
+		margin-right:-1rem;
+
+	}
+}
+
+
+/******************************/
+/* default color as variables */
+/******************************/
+
+:root {
+	--main-color:#77A43B;
+	--insert-background:whitesmoke; /* note, warning */
+	--link-color:black;
+	--hover-color:#AB5421;
+	--normal-font:#3F3F3F;
+	--normal-background:#FDFDFD;
+	--accent-line:#BCBCBC;
+	--warning-header:#ff5555;
+	--caps-border:#408000;
+	--term-match:blue;
+	--match-background:#BFFFBC;
+	--replace-color:#FD8A00;
+	
+	--intro-color:#77A43B;
+	--panes-color:#DE5B17;
+	--menus-color:#179ADE;
+	--windows-color:#DEBF17;
+	--project-color:#DE1737;
+	--prefs-color:#0059B3;
+	--howto-color:#B300B3;
+	--appendices-color:#00B3B3;
+	--support-border:solid 6px;
+}
+
+
+/*************************/
+/* WH basic CSS settings */
+/*************************/
+
+/* WH ToC */
+#wh-body #wh-navigation {
+    width: 25%;
+    margin-right:3em;
+}
+
+#wh-toc a.wh-toc-selected {
+    color:var(--normal-font) !important;
+    border-bottom-width:0px !important;
+    font-weight:bold;
+    font-size: 1.1em;
+}
+
+#wh-toc a {
+    font-style: normal;
+}
+
+/* WH content */
+
+#wh-content {
+	font-family: "Noto Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: var(--normal-background);
+    line-height: 1.5;
+    color:var(--normal-font);
+    text-align:left;
+    clip-path: padding-box;
+}
+
+#wh-content article:lang(ja) {
+	font-family: "Noto Sans CJK JP", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+#wh-content article:lang(zh) {
+	font-family: "Noto Sans CJK SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+#wh-content article:lang(ko) {
+	font-family: "Noto Sans CJK KR", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+#wh-content nav.top {
+  display: none !important;
+}
+
+#wh-content nav.bottom {
+  display: none !important;
+}
+
+#wh-content article.book div.list-of-titles div.lot {
+    display: block;
+}
+
+#wh-content article.book div.list-of-titles div.lot div.title {
+    display:none;
+}
+
+#wh-content article.book div.list-of-titles div.lot > ul.toc {
+    display: grid;
+    grid-template-columns: 45% 1fr;
+    gap: 1rem 3%;
+    align-items: start;
+}
+#wh-content article.book div.list-of-titles div.lot > ul.toc > li {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border: 2px solid var(--accent-line);
+    border-radius: 3px;
+    padding-bottom: 20px;
+}
+
+#wh-content article.book div.list-of-titles div.lot > ul.toc > li > a {
+    display: block;
+    font-size: 1.2em;
+    font-weight: bold;
+    border-bottom: 1px solid var(--accent-line);:
+}
+
+/* subsection titles stay inside the section block */
+#wh-content article.book div.list-of-titles div.lot > ul.toc > li > ul.toc {
+    display: block;
+    margin-top: 0.75rem;
+}
+
+#wh-content article.book div.list-of-titles div.lot > ul.toc > li > ul > li {
+    display:inline;
+}
+
+#wh-content article.book div.list-of-titles div.lot>ul.toc>li span.label,
+#wh-content article.book div.list-of-titles div.lot>ul.toc>li span.sep {
+    display:none;
+}
+
+#wh-content article.book div.list-of-titles div.lot ul.toc li ul li>a:after {
+    content:", ";
+}
+
+/* WH Header */
+
+#wh-header {
+    border-bottom-width: 1px;
+    border-bottom-color: var(--accent-line);
+    border-bottom-style: solid;
+    background-color:var(--main-color);
+    color:var(--normal-background);
+}
+
+#wh-header .logo {
+    display:inline-block;
+    vertical-align: middle;
+}
+
+#wh-header .title {
+    display:inline;
+    font-size:1.8em;
+	font-family: "Noto Sans", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight:bold;
+    vertical-align: middle;
+}
+
+body:has(article:lang(ja)) #wh-header .title {
+  font-family: "Noto Sans CJK JP", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body:has(article:lang(zh)) #wh-header .title {
+	font-family: "Noto Sans CJK SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body:has(article:lang(ko)) #wh-header .title {
+	font-family: "Noto Sans CJK KR", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+#wh-header .title a {
+    color:var(--normal-background);
+    text-decoration:none;
+}
+
+/*****************/
+/* Global layout */
+/*****************/
+
+p,
+pre,
+ol,
+dl,
+ul,
+table,
+hr {
+    margin: 1em 0;
+}
+
+hr {
+    height: 1px;
+    border-style: none;
+    background-color: var(--accent-line);
+}
+
+blockquote {
+    margin: 2em 4em;
+}
+
+
+/***********/
+/* Headers */
+/***********/
+
+h1, h2, h3, h4, dt {
+    color: #77A43B;
+}
+
+h1 {
+    line-height: 1.13;
+    margin-top : 0;
+    padding-bottom: .3em;
+    margin-bottom: 0;
+    padding-left:3em;
+    margin-left:-3em;
+    margin-right:0em;
+}
+
+h2 {
+    font-size:1.35em;
+    font-style: normal;
+    font-family: sans-serif;
+    line-height: 1.2;
+    margin: 0.8em 0;
+    padding-top: 1em;
+    border-bottom: 1px solid var(--accent-line);
+}
+
+h3 {
+    font-size:1.17em;
+    line-height: 1.28;
+    margin: 0.85em 0
+}
+
+h4 {
+    font-size:1.08em;
+    line-height: 1.39;
+    margin: 0.92em 0;
+    font-style:italic;
+    margin-top:1.5rem;
+    margin-bottom:.2rem;
+}
+
+h1:first-child,
+h2:first-child,
+h3:first-child,
+h4:first-child,
+h5:first-child,
+h6:first-child {
+    margin-top: 0;
+}
+
+
+/*********/
+/* Links */
+/*********/
+
+a {
+	color: var(--panes-color);
+	text-decoration-line: underline;
+	text-decoration-style: dotted;
+	text-decoration-thickness: 1px;
+	text-decoration-color: var(--panes-color);
+}
+
+a.link:not(.xref)::after {
+	content: "↗️";
+}
+
+/*****************************************/
+/* Visual differentiation of link target */
+/*****************************************/
+
+/* Menus, submenus and menu items */
+
+section.chapter a[href^="chapter.menus.html#menus"] > span.guimenu::before,
+section.chapter a[href^="chapter.menus.html#menus"] > span.guisubmenu::before,
+section.chapter a[href^="chapter.menus.html#menus"] > span.guimenuitem::before {
+	content: "> ";
+}
+
+/* <guilabel> for panes/windows/dialogs */
+
+section.chapter p > a[href^="chapter.panes.html#panes"] > span.guilabel,
+section.chapter p a[href^="chapter.windows.and.dialogs.html#dialogs"] > span.guilabel,
+section.chapter p a[href^="chapter.windows.and.dialogs.html#windows"] > span.guilabel
+ {
+    font-family: sans-serif;
+    font-size: 1em;
+    padding: 0px 0px;
+}
+
+
+/**********/
+/* Tables */
+/**********/
+
+.table .title {
+    font-style:italic;
+    color: var(--main-color);
+    font-size : .9em;
+    margin-bottom: .75em;
+}
+
+table {
+    border-collapse: collapse;
+    border-top: 1px solid;
+    border-bottom: 1px solid;
+    border-left: 1px solid;
+    border-right: 1px solid;
+}
+
+table th {
+    padding: .5em 1em;
+    text-align: left;
+    border-right: 1px solid;
+    border-bottom: 1px solid;
+}
+
+table td {
+    padding: .5em 1em;
+    text-align: left;
+    border-right: 1px solid;
+    border-bottom: 1px solid;
+}
+
+div.table[id="menus.shortcut.description"] table {
+  border-collapse: collapse;
+  border-top: 1px solid;
+  border-bottom: 1px solid;
+  border-left: 1px solid;
+  border-right: 1px solid;
+}
+
+div.table[id="menus.shortcut.description"] table th {
+  border: 1px solid;
+}
+
+div.table[id="menus.shortcut.description"] table td {
+  border: 1px solid;
+}
+
+div.table[id="menus.shortcut.description"] header .title {
+  font-style: italic;
+  color: var(--main-color);
+  font-size: .9em;
+  margin-bottom: .75em;
+}
+
+.table[id*="app.shortcuts.lists.function.codes"] .table-contents {
+	font-size:0.6em;
+}
+
+.table[id*="app.shortcuts.lists.function.codes"] table {
+	width:100%;
+}
+
+/********/
+/* Code */
+/********/
+
+pre.programlisting em.parameter {
+    white-space:nowrap;
+    display:inline-block;
+}
+
+pre.programlisting {
+    overflow-x : auto;
+    text-align:left;
+}
+
+/*************/
+/* Gui items */
+/*************/
+
+span.guibutton {
+    font-family:monospace;
+	font-size: 1.2em;
+    border: .1px solid var(--normal-font);
+    border-radius:4px;
+    padding: 0 .3rem;
+    margin: 0 .2rem;
+    background: var(--insert-background);
+}
+
+
+/************************/
+/* Chapters, appendices */
+/************************/
+
+.chapter,
+.appendix {
+    margin-left:3em;
+    margin-right:6em;
+    padding-bottom: 5em;
+
+}
+
+
+/********************************/
+/* Notes, examples and warnings */
+/********************************/
+
+.note {
+	font-size: 0.9em;
+    color: var(--normal-font);
+    background-color:var(--insert-background);
+    border: 1px solid var(--accent-line);
+    border-radius:5px;
+    margin-bottom:1em;
+    padding:0 1em;
+}
+
+.note .icon {
+    display: none
+}
+
+.note .body .title {
+    display:inline-block;
+    font-size: 1.17em;
+    font-weight: bold;
+    line-height: 1.28;
+    margin:.5em 0 0 0;
+    color: #77A43B;
+}
+
+div.example header div.title {
+    font-style:italic;
+    color: var(--main-color);
+    font-size : .9em;
+    margin-bottom: .75em;
+}
+
+.example {
+    border-style: solid;
+    border-width: 1px;
+    border-radius:3px;
+    padding: 2px 1em;
+    vertical-align: baseline;
+    border-color:var(--main-color);
+}
+
+.warning {
+	font-size: 0.9em;
+    color: var(--normal-font);
+    background: var(--insert-background);
+    border: .1px solid var(--accent-line);
+    border-radius:5px;
+    margin:2em 0;
+    padding:0 1em;
+
+}
+
+.warning .icon {
+    display: none
+}
+
+.warning .body .title {
+    display:inline-block;
+    font-weight: bold;
+    margin:.5em 0 0 0;
+    color:var(--warning-header);
+}
+
+/***********/
+/* Figures */
+/***********/
+
+div.figure div.title {
+    font-style:italic;
+    color: var(--main-color);
+    font-size : .9em;
+    margin-bottom: .75em;
+}
+
+picture.imageobject img {
+    max-width: 100%;
+    height: auto;
+
+}
+
+/***********/
+/* Keycaps */
+/***********/
+
+.keycap,
+td>span.keycaps,
+span.term>span.keycap {
+    display:inline-block;
+    font-size: .8rem;
+    border: 1px solid var(--normal-font);
+    border-radius:4px;
+    margin: 0 .2rem;
+    background: var(--insert-background);
+    color: var(--normal-font);
+	padding-left:.3rem;
+	padding-right:1.2rem; 
+}
+
+span.keycombo > span.keycap:last-of-type,
+#windows\.aligner\.manual\.corrections p span.keycap:last-of-type,
+#windows\.aligner\.manual\.corrections span.term > span.keycap:last-of-type {
+    background: var(--main-color);
+    color: var(--normal-background);
+    border-color: var(--caps-border);
+    padding: 0 .3rem;
+}
+
+/********/
+/* code */
+/********/
+code {
+   font-family: monospace;
+    font-size: 1.0em;
+}
+
+code.filename {
+    font-size: 1.1em;
+    font-weight: bold;
+}
+
+code.option {
+    font-size: 1.2em;
+    font-weight: bold;
+}
+
+code.userinput {
+    font-style: italic;
+}
+
+code.command {
+    font-weight: bold;
+}
+
+code.literal {
+    font-family: monospace;
+    font-size: 1.3em;
+    font-weight: bold;
+}
+
+/*******************/
+/* ToC side colors */
+/*******************/
+
+/* Introduction */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.instant.start.guide.html"]) > ul {
+	border-left: var(--support-border) var(--intro-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.instant.start.guide.html"]) > ul.toc {
+    border-right: var(--support-border) var(--intro-color);
+    padding-right: 1em;
+}
+
+#chapter\.instant\.start\.guide {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--intro-color);
+	border-bottom: var(--support-border) var(--intro-color);
+}
+
+/* How to */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.how.to.html"]) > ul {
+	border-left: var(--support-border) var(--howto-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.how.to.html"]) > ul.toc {
+	border-right: var(--support-border) var(--howto-color);
+	padding-right: 1em;
+}
+
+#chapter\.how\.to {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--howto-color);
+	border-bottom: var(--support-border) var(--howto-color);
+}
+
+/* Panes */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.panes.html"]) > ul {
+	border-left: var(--support-border) var(--panes-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.panes.html"]) > ul.toc {
+	border-right: var(--support-border) var(--panes-color);
+	padding-right: 1em;
+}
+
+#chapter\.panes {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--panes-color);
+	border-bottom: var(--support-border) var(--panes-color);
+}
+
+/* Menus */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.menus.html"]) > ul {
+	border-left: var(--support-border) var(--menus-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.menus.html"]) > ul.toc {
+	border-right: var(--support-border) var(--menus-color);
+	padding-right: 1em;
+}
+#chapter\.menus {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--menus-color);
+	border-bottom: var(--support-border) var(--menus-color);
+}
+
+/* Windows and dialogs */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.windows.and.dialogs.html"]) > ul {
+	border-left: var(--support-border) var(--windows-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.windows.and.dialogs.html"]) > ul.toc {
+	border-right: var(--support-border) var(--windows-color);
+	padding-right: 1em;
+}
+#chapter\.windows\.and\.dialogs {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--windows-color);
+	border-bottom: var(--support-border) var(--windows-color);
+}
+
+/* Project folder */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.project.folder.html"]) > ul {
+	border-left: var(--support-border) var(--project-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.project.folder.html"]) > ul.toc {
+	border-right: var(--support-border) var(--project-color);
+	padding-right: 1em;
+}
+#chapter\.project\.folder {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--project-color);
+	border-bottom: var(--support-border) var(--project-color);
+}
+
+/* Preferences */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.dialogs.preferences.html"]) > ul {
+	border-left: var(--support-border) var(--prefs-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.dialogs.preferences.html"]) > ul.toc {
+	border-right: var(--support-border) var(--prefs-color);
+	padding-right: 1em;
+}
+#chapter\.dialogs\.preferences {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--prefs-color);
+	border-bottom: var(--support-border) var(--prefs-color);
+}
+
+/* Appendices */
+ul.toc-toc > li.toc-expanded:has(> a[href="chapter.appendices.html"]) > ul {
+	border-left: var(--support-border) var(--appendices-color);
+	border-radius: 3px;
+}
+
+div.lot > ul.toc > li:has(a[href="chapter.appendices.html"]) > ul.toc {
+	border-right: var(--support-border) var(--appendices-color);
+	padding-right: 1em;
+}
+#chapter\.appendices {
+	padding-right: 2em;
+	border-right: var(--support-border) var(--appendices-color);
+	border-bottom: var(--support-border) var(--appendices-color);
+}
+
+/**********************/
+/* List bullets, etc. */
+/**********************/
+
+ul {
+    list-style-type: disc;
+}
+
+ul ul {
+    list-style-type: square;
+}
+
+ul ul ul {
+    list-style-type: circle;
+}
+
+ul ul ul ul {
+    list-style-type: disc;
+}
+
+ul ul ul ul ul {
+    list-style-type: square;
+}
+
+ul ul ul ul ul ul {
+    list-style-type: circle;
+}
+
+ul ul ul ul ul ul ul {
+    list-style-type: disc;
+}
+
+ol > li {
+    list-style-image: none;
+}
+
+li {
+    margin: 1em 0;
+}
+
+*[compact] > li,
+.xmcompact > li {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+dt {
+    margin-top: 1em;
+    margin-bottom: 0;
+}
+
+dt + dt {
+    margin-top: 0;
+}
+
+dd {
+    margin-top: 0;
+    margin-bottom: 1em;
+}
+
+*[compact] > dt,
+.xmcompact > dt {
+    margin-top: 0;
+}
+
+*[compact] > dd,
+.xmcompact > dd {
+    margin-bottom: 0;
+}
+
+
+/***************************************/
+/* CSS for "docbook" coded screenshots */
+/***************************************/
+
+/******************/
+/* Panes examples */
+/******************/
+
+/* General layout */
+
+pre {
+    white-space: pre;
+    background-color: var(--insert-background);
+    border: 1px dotted var(--main-color);
+    padding: 0.5em;
+    margin: 1.1em 0;
+}
+
+pre.programlisting {
+	background-color: var(--normal-background);
+	font-weight: 100;
+	font-size: 1em;
+	text-align:left;
+    border: 1px solid var(--accent-line) ;
+    padding: 1em;
+    border-radius: 5px;
+}
+
+pre.programlisting .ln {
+    display: none;
+}
+
+pre.programlisting .token {
+    font-weight: bold;
+}
+
+/**************/
+/* Status bar */
+/**************/
+
+/* Messages */
+
+#panes\.statusbar\.messages {
+	background-color:var(--normal-background);
+}
+
+#panes\.statusbar\.widgets > p {
+	background-color:var(--insert-background);
+    border: 0.1px solid var(--normal-font) ;
+	border-radius: 0px;
+	text-align: left;
+}
+
+#panes\.statusbar\.messages > p > .literal {
+	background-color:var(--insert-background);
+    border: 0.1px solid var(--normal-font) ;
+    padding: 0.5em 5em 0.5em 1em;
+	box-shadow: 0.5px 0.5px;
+	font-size:1em;
+}
+
+/* Widget */
+
+#panes\.statusbar\.widgets {
+	background-color:var(--normal-background);
+}
+
+#panes\.statusbar\.widgets > p  {
+	background-color:var(--insert-background);
+    border: 0.1px solid var(--normal-font) ;
+    padding: 0.5em 5em 0.5em 1em;
+	box-shadow: 0.5px 0.5px;
+	text-align: left;
+}
+
+#panes\.statusbar\.widgets > p > .literal {
+	font-size:1em;
+}
+
+#panes\.statusbar\.widgets > p > .literal > .token {
+    border: 0.1px solid var(--normal-font) ;
+    padding: 3px;
+}
+
+/* widget with % */
+#panes\.statusbar\.widgets\.percentage {
+	background-color:var(--normal-background);
+}
+
+#panes\.statusbar\.widgets\.percentage > p {
+	background-color:var(--insert-background);
+    border: 0.1px solid var(--normal-font) ;
+    padding: 0.5em 5em 0.5em 1em;
+	box-shadow: 0.5px 0.5px;
+	text-align: left;
+	font-size:1em;
+}
+
+#panes\.statusbar\.widgets\.percentage > p > .literal {
+		font-size:1em;
+}
+
+#panes\.statusbar\.widgets\.percentage > p > .literal > .token {
+    border: 0.1px solid var(--normal-font) ;
+    padding: 3px;
+}
+
+/* Editor pane */
+
+#panes\.editor\.default\.editor\.writing\.space > div.pre-wrap > pre {
+	border-left: 10px solid lightgrey;
+}
+
+#panes\.editor\.default\.editor\.writing\.space span[db-line="3"] .token {
+	background-color:var(--match-background);
+}
+
+/* Fuzzy match pane */
+
+#table\.pane\.matches > table,
+#table\.pane\.matches > table > tbody > tr > td:nth-child(1) > div > table {
+	width: 100%;
+	border-collapse:separate !important;
+	border: 0px !important;
+}
+
+#table\.pane\.matches > table td {
+	border: 0px;
+}
+
+#table\.pane\.matches > table > tbody > tr {
+	vertical-align: top;
+}
+
+#table\.pane\.matches > table > tbody > tr > td:nth-child(1) {
+	border-right: 0px !important;
+}
+
+/** Editor side **/
+/** fuzzy pane side **/
+
+#table\.pane\.matches_tgroup1_tbody1_row1_entry1_para1_informaltable1 div.pre-wrap,
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 div.pre-wrap {
+	border: 1px solid lightgrey;
+	border-left: 10px solid lightgrey;
+	border-radius: 5px;
+}
+
+#table\.pane\.matches_tgroup1_tbody1_row1_entry1_para1_informaltable1 div.pre-wrap pre.programlisting,
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 div.pre-wrap pre.programlisting,
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 table {
+    border:0px;
+}
+
+#table\.pane\.matches_tgroup1_tbody1_row1_entry1_para1_informaltable1 div.pre-wrap pre.programlisting .line[db-line="3"],
+#table\.pane\.matches_tgroup1_tbody1_row1_entry1_para1_informaltable1 div.pre-wrap pre.programlisting .line[db-line="4"] {
+	font-weight: bold;
+}
+
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 div.pre-wrap pre.programlisting .line[db-line="1"],
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 div.pre-wrap pre.programlisting .line[db-line="2"],
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 div.pre-wrap pre.programlisting .line[db-line="3"] {
+	font-weight: bold;
+}
+
+#table\.pane\.matches_tgroup1_tbody1_row1_entry2_para1_informaltable1 div.pre-wrap pre.programlisting .token {
+	color: blue;
+}
+
+/** Explanations **/
+
+#panes\.fuzzy\.matches > p:nth-child(6) > strong.bold:nth-child(2) {
+	color: blue;
+}
+
+#panes\.fuzzy\.matches > p:nth-child(6) > strong.bold:nth-child(3) {
+	color: green;
+}
+
+/* Glossary match */
+
+#glossary\.matches > div.pre-wrap > pre.programlisting {
+	border-left: 10px solid lightgrey;
+	border-radius: 5px;
+}
+
+/* Search */
+
+#search\.for\.doitsu > div.pre-wrap > pre.programlisting {
+	border-left: 10px solid lightgrey;
+	border-radius: 5px;
+}
+
+#search\.for\.doitsu > div.pre-wrap > pre.programlisting .token {
+	color: var(--term-match);
+}
+
+#select\.second\.match > div.pre-wrap > pre.programlisting {
+	border-left: 10px solid lightgrey;
+	border-radius: 5px;
+}
+
+#select\.second\.match > div.pre-wrap > pre.programlisting span.line[db-line="3"] {
+	background-color: var(--match-background);
+}
+
+/* Replace */
+
+#replace\.with\.allemand > div.pre-wrap > pre.programlisting {
+	border-left: 10px solid lightgrey;
+	border-radius: 5px;
+}
+
+#replace\.with\.allemand > div.pre-wrap > pre.programlisting span.line[db-line="3"] .token {
+	color: var(--term-match);
+}
+
+#replace\.with\.allemand > div.pre-wrap > pre.programlisting span.line[db-line="4"] .token {
+	color: var(--replace-color);
+}
+
+/* Convert match numbers */
+#dialogs\.preferences\.editor\.attempt\.to\.replace\.numbers\.when\.inserting\.a\.fuzzy\.match\.convert\.match\.numbers .token {
+    font-size: 1.2em;
+	font-weight: bold;
+}
+
+/* Bridge two languages */
+
+#bridge\.english\.and\.french\.with\.japanese .ln:nth-child(3) .token,
+#bridge\.english\.and\.french\.with\.japanese .ln:nth-child(4) .token {
+	background-color: var(--match-background);
+}

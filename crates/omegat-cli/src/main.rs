@@ -68,6 +68,25 @@ enum Commands {
         source_lang: String,
         #[arg(long, default_value = "fr")]
         target_lang: String,
+        #[arg(long, default_value = "parsewise")]
+        mode: String,
+        #[arg(long, default_value = "viterbi")]
+        algo: String,
+        #[arg(long, default_value = "word")]
+        counter: String,
+    },
+    Wiki {
+        source: PathBuf,
+        #[arg(long)]
+        dest: PathBuf,
+    },
+    Convert {
+        source: PathBuf,
+        dest: PathBuf,
+        #[arg(long, default_value = "en")]
+        source_lang: String,
+        #[arg(long, default_value = "fr")]
+        target_lang: String,
     },
     Search {
         project: Option<PathBuf>,
@@ -220,10 +239,45 @@ fn main() -> Result<()> {
             output,
             source_lang,
             target_lang,
+            mode,
+            algo,
+            counter,
         } => {
-            let tmx = omegat_core::align::align_files(&source, &target, &source_lang, &target_lang)?;
+            let cfg = omegat_core::align::AlignConfig {
+                mode: match mode.as_str() {
+                    "heapwise" => omegat_core::align::AlignMode::Heapwise,
+                    "id" => omegat_core::align::AlignMode::Id,
+                    _ => omegat_core::align::AlignMode::Parsewise,
+                },
+                algo: if algo == "forward-backward" {
+                    omegat_core::align::AlignAlgo::ForwardBackward
+                } else {
+                    omegat_core::align::AlignAlgo::Viterbi
+                },
+                counter: if counter == "char" {
+                    omegat_core::align::Counter::Char
+                } else {
+                    omegat_core::align::Counter::Word
+                },
+            };
+            let tmx = omegat_core::align::align_files_cfg(&source, &target, &source_lang, &target_lang, &cfg)?;
             omegat_core::align::write_aligned_tmx(&tmx, &output, &source_lang, &target_lang)?;
             println!("Aligned TMX written to {}", output.display());
+            Ok(())
+        }
+        Commands::Wiki { source, dest } => {
+            let n = omegat_core::wiki::import_wiki(&source, &dest)?;
+            println!("Imported {n} wiki file(s).");
+            Ok(())
+        }
+        Commands::Convert {
+            source,
+            dest,
+            source_lang,
+            target_lang,
+        } => {
+            omegat_core::wiki::convert_project(&source, &dest, &source_lang, &target_lang)?;
+            println!("Converted project to {}", dest.display());
             Ok(())
         }
         Commands::Search {
@@ -265,10 +319,21 @@ fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
             Ok(())
         }
         "console-createpseudotranslatetmx" => {
-            anyhow::bail!("use `omegat pseudo`");
+            let root = cli.project.clone().unwrap_or_else(|| PathBuf::from("."));
+            let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
+            let mut tmx = omegat_core::tmx::ProjectTmx::new();
+            for e in &session.entries {
+                tmx.insert(omegat_core::tmx::TmxEntry {
+                    source: e.source.clone(),
+                    translation: e.source.clone(),
+                    ..Default::default()
+                });
+            }
+            tmx.write(&root.join("pseudo.tmx"), &session.props.source_lang, &session.props.target_lang)?;
+            Ok(())
         }
-        "console-align" => anyhow::bail!("use `omegat align`"),
-        other => anyhow::bail!("unknown --mode {other}"),
+        "console-align" => anyhow::bail!("use `omegat align --mode parsewise --algo viterbi`"),
+        other => anyhow::bail!("unknown --mode {other}. Supported: console-translate, console-stats, console-createpseudotranslatetmx, console-align"),
     }
 }
 

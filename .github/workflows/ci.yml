@@ -11,6 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
+      - name: fixtures present
+        run: |
+          test -d fixtures/filters
+          test -f fixtures/srx/defaultRules.srx
+          test -d reference/java/src/main/java
   desktop:
     runs-on: ubuntu-latest
     defaults:

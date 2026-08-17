@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# readlink follows any symbolic links to get the real file
+REALOMEGATPATH=`dirname "$(readlink -nf $0)"`
+
+JAVA="java"
+BUNDLED_JAVA="${REALOMEGATPATH}/jre/bin/java"
+[ -f "${BUNDLED_JAVA}" ] && JAVA="${BUNDLED_JAVA}"
+
+"${JAVA}" -jar -Xmx1024M --add-opens java.desktop/sun.awt.X11=ALL-UNNAMED "${REALOMEGATPATH}/@JAR_SUBST@" "$@"
