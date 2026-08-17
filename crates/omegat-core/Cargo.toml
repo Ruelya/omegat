@@ -1,0 +1,31 @@
+[package]
+name = "omegat-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OmegaT project, TMX, matching, glossary, and compile engine"
+
+[dependencies]
+omegat-ipc.workspace = true
+omegat-filters.workspace = true
+omegat-plugin.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+quick-xml.workspace = true
+regex.workspace = true
+walkdir.workspace = true
+globset.workspace = true
+unicode-segmentation.workspace = true
+fs2.workspace = true
+sha2.workspace = true
+hex.workspace = true
+encoding_rs.workspace = true
+once_cell.workspace = true
+log.workspace = true
+similar.workspace = true
+html-escape.workspace = true
+urlencoding.workspace = true
+
+[dev-dependencies]
+tempfile = "=3.10.1"

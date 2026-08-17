@@ -28,6 +28,16 @@ src/docs/site
 # MacOS system file
 .DS_Store
 
+# Rust / Node rewrite tree
+/target
+**/*.rs.bk
+apps/desktop/node_modules
+apps/desktop/out
+apps/desktop/dist
+apps/desktop/release
+apps/desktop/.vite
+npm-debug.log*
+
 # AI related files
 AGENTS.md
 .codex/

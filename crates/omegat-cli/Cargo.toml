@@ -1,0 +1,23 @@
+[package]
+name = "omegat-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OmegaT command-line interface"
+
+[[bin]]
+name = "omegat"
+path = "src/main.rs"
+
+[dependencies]
+omegat-ipc.workspace = true
+omegat-core.workspace = true
+omegat-filters.workspace = true
+omegat-team.workspace = true
+omegat-script.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
