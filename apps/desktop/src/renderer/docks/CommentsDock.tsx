@@ -6,7 +6,7 @@ export function CommentsDock() {
   const e = useApp((s) => s.entries[s.index]);
   return (
     <DockFrame title={t("comments")}>
-      <div className="placeholder">{e?.comment || "—"}</div>
+      <div className="empty-state">{e?.comment || "—"}</div>
     </DockFrame>
   );
 }

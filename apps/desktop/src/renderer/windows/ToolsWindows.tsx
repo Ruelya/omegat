@@ -116,7 +116,46 @@ export function TeamWindow() {
       ))}
       <div className="btn-row">
         <button type="button" className="primary" onClick={() => void sync()}>{t("sync")}</button>
+        <button type="button" onClick={() => useApp.getState().openWindow("mapping")}>{t("accessRoot")}</button>
         <button type="button" onClick={() => useApp.getState().openWindow("team", false)}>{t("cancel")}</button>
+      </div>
+    </Modal>
+  );
+}
+
+export function MappingWindow() {
+  const props = useApp((s) => s.props);
+  const [include, setInclude] = useState("/**");
+  const [exclude, setExclude] = useState("omegat/**");
+  const [url, setUrl] = useState(props?.root || "");
+  return (
+    <Modal id="mapping" title={t("team")} wide>
+      <div className="form">
+        <p>RepositoriesMappingController</p>
+        <label>
+          {t("accessRoot")}
+          <input value={url} onChange={(e) => setUrl(e.target.value)} />
+        </label>
+        <label>
+          include
+          <input value={include} onChange={(e) => setInclude(e.target.value)} />
+        </label>
+        <label>
+          exclude
+          <input value={exclude} onChange={(e) => setExclude(e.target.value)} />
+        </label>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              void window.omegat?.rpc("team.mapping", { url, include, exclude });
+              useApp.getState().openWindow("mapping", false);
+            }}
+          >
+            {t("save")}
+          </button>
+        </div>
       </div>
     </Modal>
   );
@@ -172,11 +211,52 @@ export function FiltersWindow() {
   );
 }
 
+type SrxRule = { lang: string; brk: boolean; before: string; after: string };
+
+function parseSrxRules(xml: string): SrxRule[] {
+  const rules: SrxRule[] = [];
+  const langRe = /<languagerule\s+languagerulename="([^"]+)"[^>]*>([\s\S]*?)<\/languagerule>/gi;
+  for (const lm of xml.matchAll(langRe)) {
+    const lang = lm[1] ?? "";
+    const body = lm[2] ?? "";
+    for (const rm of body.matchAll(/<rule([^>]*)>([\s\S]*?)<\/rule>/gi)) {
+      const brk = !/break\s*=\s*"no"/i.test(rm[1] ?? "");
+      const before = /<beforebreak>([\s\S]*?)<\/beforebreak>/i.exec(rm[2] ?? "")?.[1] ?? "";
+      const after = /<afterbreak>([\s\S]*?)<\/afterbreak>/i.exec(rm[2] ?? "")?.[1] ?? "";
+      rules.push({ lang, brk, before, after });
+    }
+  }
+  return rules;
+}
+
+function rulesToSrx(rules: SrxRule[]): string {
+  const byLang = new Map<string, SrxRule[]>();
+  for (const r of rules) {
+    const list = byLang.get(r.lang) ?? [];
+    list.push(r);
+    byLang.set(r.lang, list);
+  }
+  const body = [...byLang.entries()]
+    .map(
+      ([lang, rs]) =>
+        `<languagerule languagerulename="${lang}">` +
+        rs
+          .map(
+            (r) =>
+              `<rule break="${r.brk ? "yes" : "no"}"><beforebreak>${r.before}</beforebreak><afterbreak>${r.after}</afterbreak></rule>`,
+          )
+          .join("") +
+        `</languagerule>`,
+    )
+    .join("");
+  return `<?xml version="1.0"?><srx><body>${body}</body></srx>`;
+}
+
 export function SegmentationWindow() {
   const prefs = useApp((s) => s.prefs);
   const patch = useApp((s) => s.patchPrefs);
   const [path, setPath] = useState(prefs?.srx_path || "fixtures/srx/defaultRules.srx");
-  const [xml, setXml] = useState(prefs?.srx_xml || "");
+  const [rules, setRules] = useState<SrxRule[]>(() => parseSrxRules(prefs?.srx_xml || ""));
   return (
     <Modal id="segmentation" title={t("segmentation")} wide>
       <div className="form">
@@ -184,14 +264,97 @@ export function SegmentationWindow() {
           SRX path
           <input value={path} onChange={(e) => setPath(e.target.value)} />
         </label>
-        <textarea rows={10} value={xml} onChange={(e) => setXml(e.target.value)} placeholder="<srx>…" />
+        <table className="stats">
+          <thead>
+            <tr><th>lang</th><th>break</th><th>before</th><th>after</th></tr>
+          </thead>
+          <tbody>
+            {rules.map((r, i) => (
+              <tr key={i}>
+                <td><input value={r.lang} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, lang: e.target.value } : x))} /></td>
+                <td><input type="checkbox" checked={r.brk} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, brk: e.target.checked } : x))} /></td>
+                <td><input value={r.before} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, before: e.target.value } : x))} /></td>
+                <td><input value={r.after} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, after: e.target.value } : x))} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button type="button" onClick={() => setRules([...rules, { lang: "English", brk: true, before: "\\.", after: "\\s" }])}>+</button>
         <button
           type="button"
           className="primary"
-          onClick={() => void patch({ srx_path: path, srx_xml: xml })}
+          onClick={() => void patch({ srx_path: path, srx_xml: rulesToSrx(rules) })}
         >
           {t("save")}
         </button>
+      </div>
+    </Modal>
+  );
+}
+
+export function ProjectEditWindow() {
+  const props = useApp((s) => s.props);
+  const [sl, setSl] = useState(props?.source_lang || "en");
+  const [tl, setTl] = useState(props?.target_lang || "fr");
+  const [seg, setSeg] = useState(true);
+  const [repo, setRepo] = useState(props?.root || "");
+  return (
+    <Modal id="project-edit" title={t("properties")}>
+      <div className="form">
+        <label>{t("sourceLang")}<input value={sl} onChange={(e) => setSl(e.target.value)} /></label>
+        <label>{t("targetLang")}<input value={tl} onChange={(e) => setTl(e.target.value)} /></label>
+        <label><input type="checkbox" checked={seg} onChange={(e) => setSeg(e.target.checked)} /> {t("sentenceSeg")}</label>
+        <label>{t("team")}<input value={repo} onChange={(e) => setRepo(e.target.value)} /></label>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="primary"
+            onClick={async () => {
+              if (props?.root) {
+                await window.omegat?.rpc("project.update", {
+                  root: props.root,
+                  source_lang: sl,
+                  target_lang: tl,
+                  sentence_segment: seg,
+                  repository: repo,
+                });
+              }
+              useApp.getState().openWindow("project-edit", false);
+            }}
+          >
+            {t("save")}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+export function FinderWindow() {
+  const prefs = useApp((s) => s.prefs);
+  const patch = useApp((s) => s.patchPrefs);
+  const [xml, setXml] = useState(prefs?.finder_xml || "<finder/>");
+  const [url, setUrl] = useState("https://www.google.com/search?q={selection}");
+  return (
+    <Modal id="finder" title={t("finder")}>
+      <div className="form">
+        <label>
+          URL
+          <input value={url} onChange={(e) => setUrl(e.target.value)} />
+        </label>
+        <textarea rows={6} value={xml} onChange={(e) => setXml(e.target.value)} />
+        <div className="btn-row">
+          <button type="button" className="primary" onClick={() => void patch({ finder_xml: xml })}>{t("save")}</button>
+          <button
+            type="button"
+            onClick={() => {
+              const sel = useApp.getState().draft || useApp.getState().entries[useApp.getState().index]?.source || "";
+              void window.omegat?.openExternal(url.replace("{selection}", encodeURIComponent(sel)));
+            }}
+          >
+            {t("run")}
+          </button>
+        </div>
       </div>
     </Modal>
   );

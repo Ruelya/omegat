@@ -54,7 +54,7 @@ export function IssuesWindow() {
           )}
         </div>
       ))}
-      {issues.length === 0 && <div className="placeholder">{t("noIssues")}</div>}
+      {issues.length === 0 && <div className="empty-state">{t("noIssues")}</div>}
       <div className="muted">{fileOnly}</div>
       <button type="button" onClick={() => app.openWindow("issues", false)}>{t("cancel")}</button>
     </Modal>

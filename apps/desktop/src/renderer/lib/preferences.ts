@@ -118,6 +118,7 @@ export function defaultPreferences(partial?: Partial<Preferences>): Preferences 
     shortcuts: {},
     docking_layout: defaultDocking(),
     search_window: defaultSearchWindow(),
+    controller_keys: {},
   };
   if (!partial) return base;
   return {
@@ -131,6 +132,7 @@ export function defaultPreferences(partial?: Partial<Preferences>): Preferences 
     filter_options: { ...base.filter_options, ...partial.filter_options },
     filter_context: { ...base.filter_context, ...partial.filter_context },
     shortcuts: { ...base.shortcuts, ...partial.shortcuts },
+    controller_keys: { ...base.controller_keys, ...partial.controller_keys },
     script_slots: partial.script_slots ?? base.script_slots,
     mt_enabled: partial.mt_enabled ?? base.mt_enabled,
   };
@@ -224,6 +226,7 @@ export const PREF_CONSUMERS: Record<string, (p: Preferences) => unknown> = {
   "docking_layout.show_mt": (p) => layoutFromPrefs(p.docking_layout).showMt,
   "search_window.notes": (p) => toSearchParams(restoreSearchForm(p.search_window)).notes,
   "search_window.search_type": (p) => toSearchParams(restoreSearchForm(p.search_window)).search_type,
+  controller_keys: (p) => Object.keys(p.controller_keys).length,
 };
 
 export function consumePref(prefs: Preferences, key: string): unknown {

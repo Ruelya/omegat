@@ -150,7 +150,6 @@ export async function dispatchMenuAction(action: string, _payload?: unknown): Pr
       a.openWindow("wizard");
       break;
     case "project.team-new":
-      a.openWindow("wizard");
       a.openWindow("team");
       break;
     case "project.open": {
@@ -192,7 +191,7 @@ export async function dispatchMenuAction(action: string, _payload?: unknown): Pr
       a.openWindow("med");
       break;
     case "project.edit":
-      a.openWindow("wizard");
+      a.openWindow("project-edit");
       break;
     case "project.files":
       a.openWindow("files");

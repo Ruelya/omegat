@@ -359,6 +359,9 @@ pub struct Preferences {
     pub docking_layout: DockingLayoutPrefs,
     #[serde(default)]
     pub search_window: SearchWindowPrefs,
+    /// Typed Java `*Controller` preference keys (not the load-only `extra` bag).
+    #[serde(default)]
+    pub controller_keys: HashMap<String, String>,
     /// Load-only bag from pre-G5 files. Never written back.
     #[serde(default, skip_serializing)]
     pub extra: HashMap<String, String>,
@@ -423,6 +426,7 @@ impl Preferences {
             shortcuts: HashMap::new(),
             docking_layout: DockingLayoutPrefs::default(),
             search_window: SearchWindowPrefs::default(),
+            controller_keys: HashMap::new(),
             extra: HashMap::new(),
         };
         p.normalize();
@@ -597,6 +601,8 @@ impl Preferences {
                         self.script_slots[i - 1] = v.clone();
                     }
                 }
+            } else {
+                self.controller_keys.insert(k.clone(), v.clone());
             }
         }
         self.extra.clear();

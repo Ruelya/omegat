@@ -9,6 +9,30 @@ export type PrefPageProps = {
   patch: (partial: Partial<Preferences>) => void;
 };
 
+function JavaKeys({
+  prefs,
+  setPref,
+  keys,
+}: {
+  prefs: Preferences;
+  setPref: PrefPageProps["setPref"];
+  keys: string[];
+}) {
+  return (
+    <>
+      {keys.map((k) => (
+        <label key={k}>
+          {k}
+          <input
+            value={prefs.controller_keys[k] ?? ""}
+            onChange={(e) => setPref("controller_keys", { ...prefs.controller_keys, [k]: e.target.value })}
+          />
+        </label>
+      ))}
+    </>
+  );
+}
+
 function Check({
   label,
   checked,
@@ -39,6 +63,7 @@ export function GeneralPage({ prefs, setPref }: PrefPageProps) {
       <Check label={t("tabAdvance")} checked={prefs.tab_advance} onChange={(v) => setPref("tab_advance", v)} />
       <Check label={t("confirmQuit")} checked={prefs.always_confirm_quit} onChange={(v) => setPref("always_confirm_quit", v)} />
       <Check label={t("firstRun")} checked={prefs.first_time_wizard_done} onChange={(v) => setPref("first_time_wizard_done", v)} />
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["always_confirm_quit"]} />
     </>
   );
 }
@@ -46,19 +71,26 @@ export function GeneralPage({ prefs, setPref }: PrefPageProps) {
 export function AppearancePage({ prefs, setPref }: PrefPageProps) {
   const toggle = useApp((s) => s.toggleTheme);
   return (
-    <label>
-      {t("appearance")}
-      <select
-        value={prefs.theme}
-        onChange={() => {
-          toggle();
-          setPref("theme", prefs.theme === "light" ? "dark" : "light");
-        }}
-      >
-        <option value="light">light</option>
-        <option value="dark">dark</option>
-      </select>
-    </label>
+    <>
+      <label>
+        {t("appearance")}
+        <select
+          value={prefs.theme}
+          onChange={() => {
+            toggle();
+            setPref("theme", prefs.theme === "light" ? "dark" : "light");
+          }}
+        >
+          <option value="light">light</option>
+          <option value="dark">dark</option>
+        </select>
+      </label>
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={["menuui_class_name", "theme_class_name", "theme_color_mode", "theme_dark_class_name"]}
+      />
+    </>
   );
 }
 
@@ -73,6 +105,11 @@ export function FontsPage({ prefs, setPref }: PrefPageProps) {
         {t("fontEditor")}
         <input value={prefs.font_editor} onChange={(e) => setPref("font_editor", e.target.value)} />
       </label>
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={["dictionary_font_size", "dictionary_use_font", "project_files_use_font", "source_font", "source_font_size"]}
+      />
     </>
   );
 }
@@ -112,6 +149,11 @@ export function SavePage({ prefs, setPref }: PrefPageProps) {
         {t("exportTm")}
         <input value={prefs.export_tm_levels} onChange={(e) => setPref("export_tm_levels", e.target.value)} />
       </label>
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={["allow_project_extern_cmd", "auto_save_interval", "external_command", "stat_format"]}
+      />
       <label>
         {t("tagValidation")}
         <select value={prefs.tag_validation} onChange={(e) => setPref("tag_validation", e.target.value)}>
@@ -131,6 +173,27 @@ export function EditingPage({ prefs, setPref }: PrefPageProps) {
       </label>
       <Check label={t("filterUntranslated")} checked={prefs.filter_untranslated} onChange={(v) => setPref("filter_untranslated", v)} />
       <Check label={t("tabAdvance")} checked={prefs.tab_advance} onChange={(v) => setPref("tab_advance", v)} />
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={[
+          "allowTagEditing",
+          "editor_initial_segment_load_count",
+          "wf_allowTransEqualToSrc",
+          "wf_insertBestMatch",
+          "wf_minimalSimilarity",
+          "tagValidateOnLeave",
+          "mark_para_delimitation_text",
+          "save_auto_status",
+          "save_origin",
+          "wf_convertNumbers",
+          "wf_explanatoryText",
+          "wf_exportCurrentSegment",
+          "wf_noSourceText",
+          "wf_singleClickSegmentActivation",
+          "wf_stopOnAlternativeTranslation",
+        ]}
+      />
     </>
   );
 }
@@ -143,11 +206,25 @@ export function TmMatchesPage({ prefs, setPref }: PrefPageProps) {
         <input type="number" value={prefs.fuzzy_threshold} onChange={(e) => setPref("fuzzy_threshold", Number(e.target.value))} />
       </label>
       <Check label={t("matchesStem")} checked={prefs.matches_stemming_full} onChange={(v) => setPref("matches_stemming_full", v)} />
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={[
+          "ext_tmx_fuzzy_match_threshold",
+          "ext_tmx_match_template",
+          "ext_tmx_show_level2",
+          "keep_foreign_matches",
+          "penalty_foreign_matches",
+          "ext_tmx_sort_key",
+          "ext_tmx_use_slash",
+          "paragraph_match_from_segment_tmx",
+        ]}
+      />
     </>
   );
 }
 
-export function ViewPage({ prefs, patch }: PrefPageProps) {
+export function ViewPage({ prefs, patch, setPref }: PrefPageProps) {
   const m = prefs.marks;
   return (
     <>
@@ -158,6 +235,19 @@ export function ViewPage({ prefs, patch }: PrefPageProps) {
       <Check label={t("markNoted")} checked={m.noted} onChange={(v) => patch({ marks: { ...m, noted: v } })} />
       <Check label={t("markTranslated")} checked={m.translated} onChange={(v) => patch({ marks: { ...m, translated: v } })} />
       <Check label={t("markUntranslated")} checked={m.untranslated} onChange={(v) => patch({ marks: { ...m, untranslated: v } })} />
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={[
+          "view_option_mod_info_template",
+          "view_option_source_active_bold",
+          "view_option_unique_first",
+          "view_option_mod_info_template_wo_date",
+          "view_option_ppt_simplify",
+          "view_option_source_all_bold",
+          "view_option_template_active",
+        ]}
+      />
     </>
   );
 }
@@ -182,20 +272,37 @@ export function TagProcessingPage({ prefs, setPref }: PrefPageProps) {
         </select>
       </label>
       <Check label={t("removeTags")} checked={prefs.remove_tags} onChange={(v) => setPref("remove_tags", v)} />
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={[
+          "loose_tag_ordering",
+          "tagValidation_customPattern",
+          "tagValidation_elaborateCheck",
+          "tagValidation_simpleCheck",
+          "tags_valid_required",
+          "tagValidation_javaMessageFormatSimplePatternCheck",
+          "tagValidation_noCheck",
+          "tagValidation_removePattern",
+        ]}
+      />
     </>
   );
 }
 
 export function SpellPage({ prefs, setPref }: PrefPageProps) {
   return (
-    <label>
-      {t("spell")}
-      <select value={prefs.spell_backend} onChange={(e) => setPref("spell_backend", e.target.value)}>
-        <option value="hunspell">Hunspell</option>
-        <option value="lucene">Lucene-Hunspell</option>
-        <option value="morfologik">Morfologik</option>
-      </select>
-    </label>
+    <>
+      <label>
+        {t("spell")}
+        <select value={prefs.spell_backend} onChange={(e) => setPref("spell_backend", e.target.value)}>
+          <option value="hunspell">Hunspell</option>
+          <option value="lucene">Lucene-Hunspell</option>
+          <option value="morfologik">Morfologik</option>
+        </select>
+      </label>
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["allow_auto_spellchecking", "spellcheker_dir", "target_lang"]} />
+    </>
   );
 }
 
@@ -217,6 +324,7 @@ export function DictionaryPage({ prefs, setPref }: PrefPageProps) {
       </label>
       <Check label={t("dictFuzzy")} checked={prefs.dictionary_fuzzy_matching} onChange={(v) => setPref("dictionary_fuzzy_matching", v)} />
       <Check label={t("dictAuto")} checked={prefs.dictionary_auto_search} onChange={(v) => setPref("dictionary_auto_search", v)} />
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["dictionary_condensed_view"]} />
     </>
   );
 }
@@ -228,6 +336,19 @@ export function GlossaryPage({ prefs, setPref }: PrefPageProps) {
       <Check label={t("ignoreCase")} checked={prefs.glossary_ignore_case} onChange={(v) => setPref("glossary_ignore_case", v)} />
       <Check label={t("glossaryFuzzy")} checked={prefs.glossary_not_exact_match} onChange={(v) => setPref("glossary_not_exact_match", v)} />
       <Check label={t("glossaryReplace")} checked={prefs.glossary_replace_on_insert} onChange={(v) => setPref("glossary_replace_on_insert", v)} />
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={[
+          "glossary_merge_alternate_definitions",
+          "glossary_require_similar_case",
+          "glossary_sort_by_length",
+          "glossary_sort_by_src_length",
+          "glossary_stemming",
+          "glossary_stemming_full",
+          "glossary_tbx_display_context",
+        ]}
+      />
     </>
   );
 }
@@ -253,6 +374,7 @@ export function MachineTranslationPage({ prefs, setPref }: PrefPageProps) {
           {eng}
         </label>
       ))}
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["mt_only_untranslated"]} />
     </>
   );
 }
@@ -263,29 +385,59 @@ export function AutoCompleterPage({ prefs, setPref }: PrefPageProps) {
       <Check label={t("completerAuto")} checked={prefs.completer_auto} onChange={(v) => setPref("completer_auto", v)} />
       <Check label={t("historyCompletion")} checked={prefs.history_completion} onChange={(v) => setPref("history_completion", v)} />
       <Check label={t("historyPrediction")} checked={prefs.history_prediction} onChange={(v) => setPref("history_prediction", v)} />
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["ac_show_suggestions_automatically", "ac_switch_views_with_lr"]} />
     </>
   );
 }
 
 export function GlossaryCompleterPage({ prefs, setPref }: PrefPageProps) {
-  return <Check label={t("glossaryCompleter")} checked={prefs.completer_glossary} onChange={(v) => setPref("completer_glossary", v)} />;
+  return (
+    <>
+      <Check label={t("glossaryCompleter")} checked={prefs.completer_glossary} onChange={(v) => setPref("completer_glossary", v)} />
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={[
+          "ac_glossary_enabled",
+          "ac_glossary_show_source",
+          "ac_glossary_show_target_before_source",
+          "ac_glossary_sort_alphabetically",
+          "ac_glossary_sort_by_length",
+        ]}
+      />
+    </>
+  );
 }
 
 export function AutotextPage({ prefs, setPref }: PrefPageProps) {
   return (
-    <label>
-      {t("autotext")}
-      <input value={prefs.autotext} onChange={(e) => setPref("autotext", e.target.value)} placeholder="omegat=OmegaT" />
-    </label>
+    <>
+      <label>
+        {t("autotext")}
+        <input value={prefs.autotext} onChange={(e) => setPref("autotext", e.target.value)} placeholder="omegat=OmegaT" />
+      </label>
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={["ac_autotext_enabled", "ac_autotext_sort_alphabetically", "ac_autotext_sort_by_length", "ac_autotext_sort_full_text"]}
+      />
+    </>
   );
 }
 
 export function CharTablePage({ prefs, setPref }: PrefPageProps) {
   return (
-    <label>
-      {t("charset")}
-      <input value={prefs.chartable} onChange={(e) => setPref("chartable", e.target.value)} />
-    </label>
+    <>
+      <label>
+        {t("charset")}
+        <input value={prefs.chartable} onChange={(e) => setPref("chartable", e.target.value)} />
+      </label>
+      <JavaKeys
+        prefs={prefs}
+        setPref={setPref}
+        keys={["ac_chartable_custom_char_string", "ac_chartable_enabled", "ac_chartable_unique_custom_chars", "ac_chartable_use_custom_chars"]}
+      />
+    </>
   );
 }
 
@@ -294,16 +446,29 @@ export function HistoryCompleterPage({ prefs, setPref }: PrefPageProps) {
     <>
       <Check label={t("historyCompletion")} checked={prefs.history_completion} onChange={(v) => setPref("history_completion", v)} />
       <Check label={t("historyPrediction")} checked={prefs.history_prediction} onChange={(v) => setPref("history_prediction", v)} />
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["allow_history_completer", "history_completer_prediction_enabled"]} />
     </>
   );
 }
 
 export function TeamPage({ prefs, setPref }: PrefPageProps) {
   return (
-    <label>
-      {t("passphrase")}
-      <input type="password" value={prefs.team_passphrase} onChange={(e) => setPref("team_passphrase", e.target.value)} />
-    </label>
+    <>
+      <label>
+        {t("passphrase")}
+        <input type="password" value={prefs.team_passphrase} onChange={(e) => setPref("team_passphrase", e.target.value)} />
+      </label>
+      <label>
+        {t("author")}
+        <input
+          value={prefs.controller_keys.team_Author || ""}
+          onChange={(e) => setPref("controller_keys", { ...prefs.controller_keys, team_Author: e.target.value })}
+        />
+      </label>
+      <button type="button" onClick={() => useApp.getState().openWindow("mapping")}>
+        RepositoriesMappingController
+      </button>
+    </>
   );
 }
 
@@ -317,7 +482,12 @@ export function PluginsPage({ prefs, setPref }: PrefPageProps) {
 }
 
 export function VersionCheckPage({ prefs, setPref }: PrefPageProps) {
-  return <Check label={t("versionCheck")} checked={prefs.version_check_enabled} onChange={(v) => setPref("version_check_enabled", v)} />;
+  return (
+    <>
+      <Check label={t("versionCheck")} checked={prefs.version_check_enabled} onChange={(v) => setPref("version_check_enabled", v)} />
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["automatically_check_version"]} />
+    </>
+  );
 }
 
 export function SecureStorePage({ prefs, setPref }: PrefPageProps) {
@@ -329,7 +499,7 @@ export function SecureStorePage({ prefs, setPref }: PrefPageProps) {
   );
 }
 
-export function UserPassPage({ prefs, patch }: PrefPageProps) {
+export function UserPassPage({ prefs, patch, setPref }: PrefPageProps) {
   return (
     <>
       {MT_ENGINES.map((eng) => (
@@ -342,6 +512,7 @@ export function UserPassPage({ prefs, patch }: PrefPageProps) {
           />
         </label>
       ))}
+      <JavaKeys prefs={prefs} setPref={setPref} keys={["proxy_password", "proxy_user_name"]} />
     </>
   );
 }
@@ -385,8 +556,20 @@ export function SegmentationPage({ prefs, setPref }: PrefPageProps) {
         SRX path
         <input value={prefs.srx_path} onChange={(e) => setPref("srx_path", e.target.value)} />
       </label>
-      <textarea rows={8} value={prefs.srx_xml} onChange={(e) => setPref("srx_xml", e.target.value)} placeholder="<srx>…" />
+      <button type="button" onClick={() => useApp.getState().openWindow("segmentation")}>
+        SegmentationCustomizer
+      </button>
     </>
+  );
+}
+
+export function FinderPage({ prefs, setPref }: PrefPageProps) {
+  return (
+    <label>
+      {t("finder")}
+      <textarea rows={6} value={prefs.finder_xml} onChange={(e) => setPref("finder_xml", e.target.value)} />
+      <button type="button" onClick={() => useApp.getState().openWindow("finder")}>{t("run")}</button>
+    </label>
   );
 }
 
@@ -449,5 +632,6 @@ export const PREF_PAGES: { id: string; title: string; Page: (p: PrefPageProps) =
   { id: "user-pass", title: "userPass", Page: UserPassPage },
   { id: "filters", title: "filters", Page: FiltersPage },
   { id: "segmentation", title: "segmentation", Page: SegmentationPage },
+  { id: "finder", title: "finder", Page: FinderPage },
   { id: "shortcuts", title: "shortcuts", Page: ShortcutsPage },
 ];

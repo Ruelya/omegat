@@ -4,7 +4,7 @@ import { DockFrame } from "./DockFrame";
 
 export function SegmentPropertiesDock() {
   const e = useApp((s) => s.entries[s.index]);
-  if (!e) return <DockFrame title={t("properties")}><div className="placeholder">—</div></DockFrame>;
+  if (!e) return <DockFrame title={t("properties")}><div className="empty-state">—</div></DockFrame>;
   return (
     <DockFrame title={t("properties")}>
       <div className="prop-grid">

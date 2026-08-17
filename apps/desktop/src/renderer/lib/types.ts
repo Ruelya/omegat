@@ -225,6 +225,7 @@ export type Preferences = {
   shortcuts: Record<string, string>;
   docking_layout: DockingLayoutPrefs;
   search_window: SearchWindowPrefs;
+  controller_keys: Record<string, string>;
 };
 export type TeamConflict = {
   kind?: string;
@@ -245,6 +246,8 @@ export type WindowId =
   | "files"
   | "issues"
   | "wizard"
+  | "project-edit"
+  | "finder"
   | "tip"
   | "stats-standard"
   | "stats-matches"
@@ -257,7 +260,8 @@ export type WindowId =
   | "med"
   | "convert"
   | "scripts"
-  | "changes";
+  | "changes"
+  | "mapping";
 
 declare global {
   interface Window {

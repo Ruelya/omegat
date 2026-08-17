@@ -15,8 +15,11 @@ import {
   AlignWindow,
   ConvertWindow,
   FiltersWindow,
+  FinderWindow,
   GlossaryAddWindow,
+  MappingWindow,
   MedWindow,
+  ProjectEditWindow,
   ScriptsWindow,
   SegmentationWindow,
   ShortcutsWindow,
@@ -82,6 +85,8 @@ export function App() {
         </footer>
       )}
       {w.wizard && <Wizard />}
+      {w["project-edit"] && <ProjectEditWindow />}
+      {w.finder && <FinderWindow />}
       {w.search && <SearchWindow mode="search" />}
       {w.replace && <SearchWindow mode="replace" />}
       {w.prefs && <PrefsWindow />}
@@ -92,6 +97,7 @@ export function App() {
       {w.tip && <TipOfDay />}
       {w.align && <AlignWindow />}
       {w.team && <TeamWindow />}
+      {w.mapping && <MappingWindow />}
       {w.files && <FilesWindow />}
       {w.issues && <IssuesWindow />}
       {w["stats-standard"] && <StatsWindow kind="standard" />}
