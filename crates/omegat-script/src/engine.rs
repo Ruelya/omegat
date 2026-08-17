@@ -18,6 +18,15 @@ var console = {
 var editor = {
   getCurrentTranslation: function() { return state.translation || ''; },
   getCurrentSource: function() { return state.source || ''; },
+  getCurrentEntryNumber: function() { return state.index || 0; },
+  getCurrentFile: function() { return state.file || ''; },
+  getCurrentTargetFile: function() { return state.target_file || ''; },
+  getSelectedText: function() { return state.selected || ''; },
+  getFilter: function() { return state.filter || null; },
+  getSettings: function() { return state.settings || {}; },
+  getAutoCompleter: function() { return { items: state.completer || [] }; },
+  getCurrentPositionInEntryTranslationInEditor: function() { return (state.translation || '').length; },
+  isOrientationAllLtr: function() { return true; },
   setTranslation: function(t) {
     state.translation = String(t == null ? '' : t);
     return state.translation;
@@ -26,20 +35,54 @@ var editor = {
     state.translation = String(t == null ? '' : t);
     return state.translation;
   },
+  replaceEditTextAndMark: function(t) { return this.replaceEditText(t); },
   insertText: function(t) {
     var s = String(t == null ? '' : t);
     state.translation = (state.translation || '') + s;
     state.inserted = s;
     return state.translation;
   },
-  gotoNextUntranslatedEntry: function() {
-    state.jumped = (state.index || 0) + 1;
+  insertTextAndMark: function(t) { return this.insertText(t); },
+  insertTag: function(tag) {
+    return this.insertText(tag || '<x0/>');
   },
-  gotoEntry: function(n) {
-    state.jumped = Number(n);
-    state.index = Number(n);
-  },
-  commitAndDeactivate: function() { state.saved = true; }
+  changeCase: function(mode) { state.case_mode = String(mode || 'cycle'); },
+  activateEntry: function() { state.activated = true; },
+  gotoNextUntranslatedEntry: function() { state.jumped = (state.index || 0) + 1; },
+  nextUntranslatedEntry: function() { this.gotoNextUntranslatedEntry(); },
+  nextTranslatedEntry: function() { state.jumped = (state.index || 0) + 1; },
+  nextUniqueEntry: function() { state.jumped = (state.index || 0) + 1; },
+  nextEntry: function() { state.jumped = (state.index || 0) + 1; },
+  prevEntry: function() { state.jumped = Math.max(0, (state.index || 0) - 1); },
+  nextEntryWithNote: function() { state.jumped = (state.index || 0) + 1; },
+  prevEntryWithNote: function() { state.jumped = Math.max(0, (state.index || 0) - 1); },
+  nextXAutoEntry: function() { state.jumped = (state.index || 0) + 1; },
+  prevXAutoEntry: function() { state.jumped = Math.max(0, (state.index || 0) - 1); },
+  nextXEnforcedEntry: function() { state.jumped = (state.index || 0) + 1; },
+  prevXEnforcedEntry: function() { state.jumped = Math.max(0, (state.index || 0) - 1); },
+  gotoEntry: function(n) { state.jumped = Number(n); state.index = Number(n); },
+  gotoEntryAfterFix: function(n) { this.gotoEntry(n); },
+  gotoFile: function(f) { state.file = String(f); },
+  gotoHistoryBack: function() { state.history = 'back'; },
+  gotoHistoryForward: function() { state.history = 'forward'; },
+  commitAndDeactivate: function() { state.saved = true; },
+  commitAndLeave: function() { state.saved = true; state.jumped = (state.index || 0) + 1; },
+  registerUntranslated: function() { state.translation = ''; state.saved = true; },
+  registerEmptyTranslation: function() { state.translation = ''; state.saved = true; },
+  registerIdenticalTranslation: function() { state.translation = state.source || ''; state.saved = true; },
+  registerPopupMenuConstructors: function() { state.popups = true; },
+  setFilter: function(f) { state.filter = f; },
+  removeFilter: function() { state.filter = null; },
+  setAlternateTranslationForCurrentEntry: function(v) { state.alternate = !!v; },
+  selectSourceText: function() { state.selected = state.source || ''; },
+  markActiveEntrySource: function() { return state.source || ''; },
+  remarkOneMarker: function() { state.remarked = true; },
+  refreshView: function() { state.refreshed = true; },
+  refreshViewAfterFix: function() { state.refreshed = true; },
+  requestFocus: function() { state.focused = true; },
+  undo: function() { state.undone = true; },
+  redo: function() { state.redone = true; },
+  windowDeactivated: function() { state.deactivated = true; }
 };
 var project = {
   getSourceLanguage: function() { return state.source_lang; },

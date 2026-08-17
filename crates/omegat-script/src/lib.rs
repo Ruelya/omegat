@@ -81,6 +81,40 @@ pub struct ScriptState {
     pub glossary_adds: Vec<[String; 3]>,
     pub console: Vec<String>,
     pub inserted: String,
+    #[serde(default)]
+    pub activated: bool,
+    #[serde(default)]
+    pub file: String,
+    #[serde(default)]
+    pub target_file: String,
+    #[serde(default)]
+    pub selected: String,
+    #[serde(default)]
+    pub filter: Option<String>,
+    #[serde(default)]
+    pub settings: serde_json::Value,
+    #[serde(default)]
+    pub completer: Vec<String>,
+    #[serde(default)]
+    pub case_mode: String,
+    #[serde(default)]
+    pub history: String,
+    #[serde(default)]
+    pub popups: bool,
+    #[serde(default)]
+    pub alternate: bool,
+    #[serde(default)]
+    pub remarked: bool,
+    #[serde(default)]
+    pub refreshed: bool,
+    #[serde(default)]
+    pub focused: bool,
+    #[serde(default)]
+    pub undone: bool,
+    #[serde(default)]
+    pub redone: bool,
+    #[serde(default)]
+    pub deactivated: bool,
 }
 
 impl Default for ScriptState {
@@ -99,6 +133,23 @@ impl Default for ScriptState {
             glossary_adds: vec![],
             console: vec![],
             inserted: String::new(),
+            activated: false,
+            file: String::new(),
+            target_file: String::new(),
+            selected: String::new(),
+            filter: None,
+            settings: serde_json::json!({}),
+            completer: vec![],
+            case_mode: String::new(),
+            history: String::new(),
+            popups: false,
+            alternate: false,
+            remarked: false,
+            refreshed: false,
+            focused: false,
+            undone: false,
+            redone: false,
+            deactivated: false,
         }
     }
 }
@@ -302,6 +353,77 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(state.console, vec!["e".to_string()]);
         assert_eq!(ScriptEvent::all().len(), 6);
+    }
+
+    #[test]
+    fn boa_editor_exposes_ieditor_method_set() {
+        let mut state = ScriptState {
+            source: "Hi".into(),
+            translation: "x".into(),
+            index: 2,
+            ..ScriptState::default()
+        };
+        run_source_state(
+            r#"
+            editor.activateEntry();
+            editor.changeCase('upper');
+            editor.commitAndDeactivate();
+            editor.commitAndLeave();
+            editor.getAutoCompleter();
+            editor.getCurrentEntryNumber();
+            editor.getCurrentFile();
+            editor.getCurrentTargetFile();
+            editor.getCurrentTranslation();
+            editor.getFilter();
+            editor.getSelectedText();
+            editor.getSettings();
+            editor.getCurrentPositionInEntryTranslationInEditor();
+            editor.gotoEntry(3);
+            editor.gotoEntryAfterFix(3);
+            editor.gotoFile('a.txt');
+            editor.gotoHistoryBack();
+            editor.gotoHistoryForward();
+            editor.insertTag('<x0/>');
+            editor.insertText('!');
+            editor.insertTextAndMark('?');
+            editor.isOrientationAllLtr();
+            editor.markActiveEntrySource();
+            editor.nextEntry();
+            editor.nextEntryWithNote();
+            editor.nextTranslatedEntry();
+            editor.nextUniqueEntry();
+            editor.nextUntranslatedEntry();
+            editor.nextXAutoEntry();
+            editor.nextXEnforcedEntry();
+            editor.prevEntry();
+            editor.prevEntryWithNote();
+            editor.prevXAutoEntry();
+            editor.prevXEnforcedEntry();
+            editor.redo();
+            editor.refreshView();
+            editor.refreshViewAfterFix();
+            editor.registerEmptyTranslation();
+            editor.registerIdenticalTranslation();
+            editor.registerPopupMenuConstructors();
+            editor.registerUntranslated();
+            editor.remarkOneMarker();
+            editor.removeFilter();
+            editor.replaceEditText('Bonjour');
+            editor.replaceEditTextAndMark('Bonjour');
+            editor.requestFocus();
+            editor.selectSourceText();
+            editor.setAlternateTranslationForCurrentEntry(true);
+            editor.setFilter('untranslated');
+            editor.undo();
+            editor.windowDeactivated();
+            "#,
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(state.translation, "Bonjour");
+        assert!(state.saved);
+        assert!(state.activated);
+        assert_eq!(state.file, "a.txt");
     }
 
     #[test]
