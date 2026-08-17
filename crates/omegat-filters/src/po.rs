@@ -1,6 +1,8 @@
+//! GNU gettext PO filter. Parse/write follow Java `PoFilter`.
+
 use crate::{
-    ensure_parent, extract_tags, read_to_string, ExtractedSegment, Filter, FilterContext,
-    ParsedFile, ProtectedPart, Result,
+    ensure_parent, extract_tags, read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile,
+    ProtectedPart, Result,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,6 +44,7 @@ struct PoEntry {
     msgid: String,
     msgid_plural: Option<String>,
     msgstr: Vec<String>,
+    fuzzy_prev: Option<String>,
 }
 
 fn nplurals_from_header(entries: &[PoEntry]) -> usize {
@@ -70,9 +73,6 @@ fn parse_po(raw: &str, ctx: &FilterContext) -> Result<ParsedFile> {
     let mut segments = Vec::new();
     for (i, e) in entries.iter().enumerate() {
         if e.msgid.is_empty() {
-            if skip_header || monolingual {
-                continue;
-            }
             continue;
         }
         if monolingual {
@@ -87,6 +87,19 @@ fn parse_po(raw: &str, ctx: &FilterContext) -> Result<ParsedFile> {
                 protected_parts: vec![],
             });
             continue;
+        }
+        if let Some(prev) = &e.fuzzy_prev {
+            if !prev.is_empty() {
+                segments.push(ExtractedSegment {
+                    id: format!("{i}-fuzzy-prev"),
+                    source: prev.clone(),
+                    existing_translation: e.msgstr.first().cloned().filter(|s| !s.is_empty()),
+                    note: None,
+                    comment: Some("reference".into()),
+                    path: e.msgctxt.clone(),
+                    protected_parts: vec![],
+                });
+            }
         }
         let existing = e.msgstr.first().cloned().filter(|s| !s.is_empty());
         let tags = extract_tags(&e.msgid);
@@ -124,6 +137,7 @@ fn parse_po(raw: &str, ctx: &FilterContext) -> Result<ParsedFile> {
             }
         }
     }
+    let _ = skip_header;
     Ok(ParsedFile {
         segments,
         skeleton: Some(raw.to_string()),
@@ -135,12 +149,30 @@ fn collect_entries(raw: &str) -> Vec<PoEntry> {
     let mut cur = PoEntry::default();
     let mut field = String::new();
     let mut started = false;
+    let mut fuzzy_field = String::new();
 
     for line in raw.lines() {
-        if line.starts_with('#') {
-            if started && !cur.msgid.is_empty() && !field.is_empty() && line.starts_with("#,") {
-                // continue
+        if let Some(rest) = line.strip_prefix("#| msgid ") {
+            fuzzy_field = "msgid".into();
+            cur.fuzzy_prev = Some(unquote(rest));
+            continue;
+        }
+        if line.starts_with("#| msgid") && line.contains('"') {
+            fuzzy_field = "msgid".into();
+            if let Some(q) = line.find('"') {
+                cur.fuzzy_prev = Some(unquote(&line[q..]));
             }
+            continue;
+        }
+        if line.starts_with("#|") && line.contains('"') && fuzzy_field == "msgid" {
+            if let Some(s) = &mut cur.fuzzy_prev {
+                if let Some(q) = line.find('"') {
+                    s.push_str(&unquote(&line[q..]));
+                }
+            }
+            continue;
+        }
+        if line.starts_with('#') {
             cur.comments.push(line.to_string());
             continue;
         }
@@ -148,6 +180,7 @@ fn collect_entries(raw: &str) -> Vec<PoEntry> {
             if started {
                 entries.push(std::mem::take(&mut cur));
                 field.clear();
+                fuzzy_field.clear();
                 started = false;
             }
             continue;
@@ -198,76 +231,73 @@ fn collect_entries(raw: &str) -> Vec<PoEntry> {
     entries
 }
 
+/// Java `PoFilter` write: drop `#, fuzzy` and `#|` lines; bilingual blank msgstr is empty.
 fn rewrite_po(raw: &str, translations: &HashMap<String, String>, ctx: &FilterContext) -> String {
-    let parsed = parse_po(raw, ctx).ok();
-    let mut by_source: HashMap<String, String> = HashMap::new();
-    if let Some(p) = &parsed {
-        for (i, seg) in p.segments.iter().enumerate() {
-            if let Some(t) = translations
-                .get(&seg.id)
-                .or_else(|| translations.get(&seg.source))
-                .or_else(|| translations.get(&i.to_string()))
-            {
-                if !t.is_empty() {
-                    by_source.insert(seg.source.clone(), t.clone());
-                    by_source.insert(seg.id.clone(), t.clone());
-                }
-            }
-        }
-    }
     let entries = collect_entries(raw);
+    let nplurals = nplurals_from_header(&entries);
+    let monolingual = ctx.option_flag("monolingualFormat");
     let mut out = String::new();
-    let mut idx = 0usize;
-    let mut in_msgstr = false;
-    let mut skipping_msgstr_cont = false;
-    for line in raw.lines() {
-        if line.starts_with("msgid ") {
-            in_msgstr = false;
-            skipping_msgstr_cont = false;
-            out.push_str(line);
+    for e in &entries {
+        for c in &e.comments {
+            let t = c.trim();
+            if t.starts_with("#,") && t.contains("fuzzy") {
+                continue;
+            }
+            if t.starts_with("#|") {
+                continue;
+            }
+            out.push_str(c);
             out.push('\n');
-        } else if line.starts_with("msgstr[") {
-            in_msgstr = true;
-            skipping_msgstr_cont = true;
-            out.push_str(line);
+        }
+        if let Some(ctxv) = &e.msgctxt {
+            out.push_str("msgctxt ");
+            out.push_str(&quote(ctxv));
             out.push('\n');
-        } else if line.starts_with("msgstr ") {
-            in_msgstr = true;
-            skipping_msgstr_cont = true;
-            let msgid = entries.get(idx).map(|e| e.msgid.as_str()).unwrap_or("");
-            let original = entries
-                .get(idx)
-                .and_then(|e| e.msgstr.first())
-                .cloned()
-                .unwrap_or_default();
-            let t = translations
-                .get(&idx.to_string())
-                .cloned()
-                .or_else(|| by_source.get(msgid).cloned())
-                .or_else(|| translations.get(msgid).cloned())
-                .unwrap_or_else(|| original.clone());
-            if msgid.is_empty() {
-                out.push_str(line);
-                out.push('\n');
-                skipping_msgstr_cont = false;
-            } else {
-                out.push_str("msgstr ");
+        }
+        out.push_str("msgid ");
+        out.push_str(&quote(&e.msgid));
+        out.push('\n');
+        if let Some(pl) = &e.msgid_plural {
+            out.push_str("msgid_plural ");
+            out.push_str(&quote(pl));
+            out.push('\n');
+            for i in 0..nplurals {
+                let src = if i == 0 {
+                    e.msgid.as_str()
+                } else {
+                    pl.as_str()
+                };
+                let t = lookup_tr(translations, src, i);
+                out.push_str(&format!("msgstr[{i}] "));
                 out.push_str(&quote(&t));
                 out.push('\n');
             }
-            idx += 1;
-        } else if in_msgstr && line.starts_with('"') && skipping_msgstr_cont {
-            continue;
         } else {
-            if line.trim().is_empty() {
-                in_msgstr = false;
-                skipping_msgstr_cont = false;
-            }
-            out.push_str(line);
+            let t = if e.msgid.is_empty() {
+                e.msgstr.first().cloned().unwrap_or_default()
+            } else if monolingual {
+                lookup_tr(translations, e.msgstr.first().map(|s| s.as_str()).unwrap_or(""), 0)
+            } else {
+                lookup_tr(translations, &e.msgid, 0)
+            };
+            out.push_str("msgstr ");
+            out.push_str(&quote(&t));
             out.push('\n');
         }
+        out.push('\n');
+    }
+    if out.ends_with("\n\n") {
+        out.pop();
     }
     out
+}
+
+fn lookup_tr(translations: &HashMap<String, String>, source: &str, _plural: usize) -> String {
+    translations
+        .get(source)
+        .cloned()
+        .or_else(|| translations.get(&source.to_string()).cloned())
+        .unwrap_or_default()
 }
 
 fn unquote(s: &str) -> String {

@@ -13,11 +13,11 @@ wave’s Java goldens are green.
 |---|---|---|
 | Java reference tree at `reference/java` | G0 | parity |
 | Honest STATUS + ACCEPTANCE (this file) | G0 | scaffold |
-| Java Gradle exporter `exportGoldens` | G0 | scaffold |
-| Text / PO / HTML Java-exported goldens | G0 | scaffold |
+| Java Gradle exporter `exportGoldens` | G0 | parity |
+| Text / PO / HTML Java-exported goldens | G0 | parity |
 | Filter / align / SRX fixtures under `fixtures/` | G0 | scaffold |
 | Sidecar method contract tests | G0 | scaffold |
-| RealProject / SRX / TMX / matching / stats / tags | G1 | scaffold |
+| RealProject / SRX / TMX / matching / stats / tags | G1 | parity |
 | filters2: 21 Filter classes, one module each | G2 | scaffold |
 | filters3: XML event engine + 23 Dialect modules | G3 | scaffold |
 | filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | scaffold |
@@ -47,6 +47,22 @@ Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 - Python “export” that never ran Java
 - handwritten goldens with fake `java_test` strings
 
+## G1 notes
+
+Accepted against Java-exported goldens (`assert_eq`):
+
+- Text / PO / HTML parse + empty write + translated write
+- Session compile of those three files matches `translated_write`
+- Java sample project (`testAcceptance/.../data/project`) opens; `project_save.tmx` save/reload keeps the same segment count and translations
+- SRX en/de/fr/zh/ja sentence lists; DefaultTokenizer + CJK bigram token lists; FuzzyMatcher scores (`Hello world`/`Hello word` = 50)
+- Glossary TSV (`test.tab`) + `GlossarySearcher` query cases
+- `MatchStatCounts.getRowByPercent`: **101 = exact**, **100 = fuzzy_95**, then 95 / 85 / 75 / 50 / none
+- `Statistics.numberOfWords`: `"你好"` = **1** (letter-or-digit run, not per-character)
+- en/de fuzzy top-1 is the same entry; **score delta = 0** on `Hello word` vs `{Hello world, Hallo Welt}`
+- `--tag-validation abort` returns `TAG_VALIDATION`; `warn` compiles and still reports tag issues
+
+Not this wave (stay `scaffold`): INI / SRT / YAML / Android goldens are committed Java exports but Rust `assert_eq` is G2+. `simple_filter!` / `dialect_filter!` / `contentEditable` remain.
+
 ## G0 notes
 
 - Goldens under `fixtures/goldens/` are valid only when
@@ -54,8 +70,9 @@ Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
   `org.omegat…#method` name.
 - Handwritten / fake-provenance files were moved to
   `fixtures/goldens/_voided/`.
-- Rust filter tests use `assert_eq` on the Java source list and on
-  Java-exported empty / translated write text. They may be red until G2–G4.
+- Rust G1 filter tests `assert_eq` Text / PO / HTML against Java-exported
+  source lists and write-back. INI / SRT / YAML / Android stay provenance-only
+  until G2.
 - CI checks that the three G0 goldens exist and that `cargo test` runs.
   `./gradlew exportGoldens` is **not** the product build.
 

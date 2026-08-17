@@ -70,23 +70,48 @@ pub fn lookup(entries: &[GlossaryEntry], segment: &str) -> Vec<GlossaryHitDto> {
 }
 
 pub fn lookup_opts(entries: &[GlossaryEntry], segment: &str, ignore_case: bool, use_stem: bool) -> Vec<GlossaryHitDto> {
-    let hay = if ignore_case { segment.to_lowercase() } else { segment.to_string() };
+    lookup_opts_lang(entries, segment, ignore_case, use_stem, "en")
+}
+
+/// `stem_lang` is the project target language (Java glossary stemmer follows the project).
+pub fn lookup_opts_lang(
+    entries: &[GlossaryEntry],
+    segment: &str,
+    ignore_case: bool,
+    use_stem: bool,
+    stem_lang: &str,
+) -> Vec<GlossaryHitDto> {
+    // Java `GlossarySearcher.tokenize` always lowercases with the source locale.
+    // `GLOSSARY_REQUIRE_SIMILAR_CASE` only drops an ALL-CAPS glossary term when
+    // the matched source tokens are not also all caps.
+    let hay = segment.to_lowercase();
     entries
         .iter()
         .filter(|e| {
             if e.source.is_empty() {
                 return false;
             }
-            let needle = if ignore_case { e.source.to_lowercase() } else { e.source.clone() };
-            if hay.contains(&needle) {
-                return true;
+            let needle = e.source.to_lowercase();
+            let matched = if hay.contains(&needle) {
+                true
+            } else if use_stem {
+                let ns = crate::tokenize::stem(&needle, stem_lang);
+                hay.split_whitespace()
+                    .any(|w| crate::tokenize::stem(w, stem_lang) == ns)
+            } else {
+                false
+            };
+            if !matched {
+                return false;
             }
-            if use_stem {
-                let hs = crate::tokenize::stem(&hay, "en");
-                let ns = crate::tokenize::stem(&needle, "en");
-                return hs.contains(&ns) || hay.split_whitespace().any(|w| crate::tokenize::stem(w, "en") == ns);
+            if !ignore_case && e.source.chars().any(|c| c.is_alphabetic()) && e.source.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) {
+                let idx = hay.find(&needle).unwrap_or(0);
+                let orig = segment.get(idx..idx + e.source.len()).unwrap_or("");
+                if !orig.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) {
+                    return false;
+                }
             }
-            false
+            true
         })
         .map(|e| GlossaryHitDto {
             source: e.source.clone(),

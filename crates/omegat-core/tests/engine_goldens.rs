@@ -97,18 +97,73 @@ fn fuzzy_token_levenshtein_matches_java() {
 }
 
 #[test]
-fn glossary_stats_require_java_export() {
-    for name in ["glossary.json", "stats.json"] {
-        let path = goldens().join(name);
-        assert!(
-            path.is_file(),
-            "missing Java-exported {name} — G1 must export it with ExportGoldens"
-        );
-        let spec: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+fn glossary_tsv_and_query_match_java() {
+    let spec = load_exported("glossary.json");
+    let tab = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../reference/java/src/test/resources/data/glossaries/test.tab");
+    let raw = std::fs::read_to_string(&tab).unwrap();
+    let parsed = omegat_core::glossary::parse_glossary(&raw);
+    let expected = spec["entries"].as_array().unwrap();
+    assert_eq!(parsed.len(), expected.len());
+    for (got, exp) in parsed.iter().zip(expected) {
+        assert_eq!(got.source, exp["source"].as_str().unwrap());
+        assert_eq!(got.target, exp["target"].as_str().unwrap());
+        assert_eq!(got.comment, exp["comment"].as_str().unwrap_or(""));
+    }
+    let mut entries = parsed;
+    entries.push(omegat_core::glossary::GlossaryEntry {
+        source: "running".into(),
+        target: "courir".into(),
+        comment: "verb".into(),
+    });
+    entries.push(omegat_core::glossary::GlossaryEntry {
+        source: "Cat".into(),
+        target: "chat".into(),
+        comment: String::new(),
+    });
+    for case in spec["cases"].as_array().unwrap() {
+        let segment = case["segment"].as_str().unwrap();
+        let ignore_case = case["ignore_case"].as_bool().unwrap();
+        let use_stem = case["use_stem"].as_bool().unwrap();
+        let tgt = case["tgt_lang"].as_str().unwrap_or("fr");
+        let expected: Vec<String> = case["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        let hits = omegat_core::glossary::lookup_opts_lang(&entries, segment, ignore_case, use_stem, tgt);
+        let got: Vec<String> = hits.into_iter().map(|h| h.target).collect();
+        assert_eq!(got, expected, "glossary {segment:?} ignore_case={ignore_case} stem={use_stem}");
+    }
+}
+
+#[test]
+fn stats_bins_and_word_counts_match_java() {
+    let spec = load_exported("stats.json");
+    assert_eq!(spec["percent_exact_match"].as_i64(), Some(101));
+    for case in spec["cases"].as_array().unwrap() {
+        let percent = case["percent"].as_i64().unwrap() as i32;
+        let bin = case["bin"].as_str().unwrap();
         assert_eq!(
-            spec["exported_by"].as_str(),
-            Some("org.omegat.tools.ExportGoldens"),
-            "{name} is handwritten and voided"
+            omegat_core::stats::bin_for_percent(percent),
+            bin,
+            "bin for {percent}"
+        );
+    }
+    for case in spec["word_counts"].as_array().unwrap() {
+        let text = case["text"].as_str().unwrap();
+        assert_eq!(
+            omegat_core::stats::number_of_words(text) as i64,
+            case["words"].as_i64().unwrap(),
+            "words {text:?}"
+        );
+        let nosp = text.chars().filter(|c| !c.is_whitespace()).count() as i64;
+        assert_eq!(nosp, case["chars_nosp"].as_i64().unwrap(), "chars_nosp {text:?}");
+        assert_eq!(
+            text.chars().count() as i64,
+            case["chars"].as_i64().unwrap(),
+            "chars {text:?}"
         );
     }
 }

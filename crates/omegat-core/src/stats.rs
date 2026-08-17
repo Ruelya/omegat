@@ -1,5 +1,6 @@
-use crate::session::Entry;
-use crate::tokenize::word_count;
+use crate::matching::score_pair;
+use crate::source_text_entry::Entry;
+use crate::tmx::TmxEntry;
 use omegat_ipc::{FileStatDto, MatchBinDto, StatCountDto, StatsDto};
 use std::collections::{HashMap, HashSet};
 
@@ -7,9 +8,27 @@ fn chars_nosp(s: &str) -> usize {
     s.chars().filter(|c| !c.is_whitespace()).count()
 }
 
-fn count_source(text: &str, lang: &str) -> (usize, usize, usize) {
+/// Java `Statistics.numberOfWords` / `WordIterator`: a letter-or-digit run is one word.
+/// Consecutive CJK letters count as a single word (not per-character).
+pub fn number_of_words(text: &str) -> usize {
+    let mut n = 0usize;
+    let mut in_word = false;
+    for ch in text.chars() {
+        if ch.is_alphanumeric() {
+            if !in_word {
+                n += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+        }
+    }
+    n
+}
+
+fn count_source(text: &str, _lang: &str) -> (usize, usize, usize) {
     (
-        word_count(text, lang),
+        number_of_words(text),
         chars_nosp(text),
         text.chars().count(),
     )
@@ -23,6 +42,16 @@ fn add_count(dst: &mut StatCountDto, words: usize, nosp: usize, chars: usize) {
 }
 
 pub fn compute(entries: &[Entry], source_lang: &str, target_lang: &str) -> StatsDto {
+    compute_with_memory(entries, &[], source_lang, target_lang)
+}
+
+/// Java `CalcMatchStatistics` / `MatchStatCounts.getRowByPercent`.
+pub fn compute_with_memory(
+    entries: &[Entry],
+    memory: &[TmxEntry],
+    source_lang: &str,
+    _target_lang: &str,
+) -> StatsDto {
     let mut files_set = HashSet::new();
     let mut unique_src = HashSet::new();
     let mut unique_remaining = HashSet::new();
@@ -48,7 +77,7 @@ pub fn compute(entries: &[Entry], source_lang: &str, target_lang: &str) -> Stats
         let (w, nosp, chars) = count_source(&e.source, source_lang);
         source_words += w;
         source_chars += chars;
-        target_words += word_count(&e.translation, target_lang);
+        target_words += number_of_words(&e.translation);
         target_chars += e.translation.chars().count();
         add_count(&mut total, w, nosp, chars);
 
@@ -73,7 +102,7 @@ pub fn compute(entries: &[Entry], source_lang: &str, target_lang: &str) -> Stats
                 bins.exact += 1;
             } else {
                 match_fuzzy += 1;
-                bins.fuzzy_85 += 1;
+                add_bin(&mut bins, best_score(&e.source, memory, source_lang));
             }
         } else {
             add_count(&mut remaining, w, nosp, chars);
@@ -124,6 +153,46 @@ pub fn compute(entries: &[Entry], source_lang: &str, target_lang: &str) -> Stats
         unique_remaining: unique_rem,
         file_stats,
         match_bins: bins,
+    }
+}
+
+fn best_score(source: &str, memory: &[TmxEntry], lang: &str) -> i32 {
+    memory
+        .iter()
+        .map(|m| score_pair(source, &m.source, lang).0)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Java `Statistics.PERCENT_EXACT_MATCH` — not a FuzzyMatcher 100 score.
+pub const PERCENT_EXACT_MATCH: i32 = 101;
+
+/// Java `MatchStatCounts.getRowByPercent`.
+/// Exact is only `101`. A FuzzyMatcher score of 100 lands in the 95% bin.
+pub fn bin_for_percent(percent: i32) -> &'static str {
+    if percent == PERCENT_EXACT_MATCH {
+        "exact"
+    } else if percent >= 95 {
+        "fuzzy_95"
+    } else if percent >= 85 {
+        "fuzzy_85"
+    } else if percent >= 75 {
+        "fuzzy_75"
+    } else if percent >= 50 {
+        "fuzzy_50"
+    } else {
+        "none"
+    }
+}
+
+fn add_bin(bins: &mut MatchBinDto, percent: i32) {
+    match bin_for_percent(percent) {
+        "exact" => bins.exact += 1,
+        "fuzzy_95" => bins.fuzzy_95 += 1,
+        "fuzzy_85" => bins.fuzzy_85 += 1,
+        "fuzzy_75" => bins.fuzzy_75 += 1,
+        "fuzzy_50" => bins.fuzzy_50 += 1,
+        _ => bins.none += 1,
     }
 }
 
@@ -218,7 +287,7 @@ fn xml_esc(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::Entry;
+    use crate::source_text_entry::Entry;
 
     fn entry(file: &str, src: &str, tgt: &str) -> Entry {
         Entry {

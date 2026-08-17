@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use omegat_core::error::CoreError;
 use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_ipc::SearchParams;
@@ -52,6 +53,9 @@ struct Cli {
     /// Java `--script`
     #[arg(long)]
     script: Option<PathBuf>,
+    /// Java `--tag-validation` (`abort` or `warn`)
+    #[arg(long = "tag-validation")]
+    tag_validation: Option<String>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -193,10 +197,13 @@ fn main() -> Result<()> {
             let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
             let prefs = Preferences::load_or_default(&default_config_dir());
             let mut session = ProjectSession::open(&root, prefs)?;
-            if let Some(mode) = tag_validation.as_deref() {
-                session.prefs.extra.insert("tag_validation".into(), mode.to_string());
+            if let Some(mode) = tag_validation.as_deref().or(cli.tag_validation.as_deref()) {
+                apply_tag_validation(&mut session, mode);
             }
-            let n = session.compile(source_pattern.as_deref().or(cli.source_pattern.as_deref()))?;
+            let n = compile_reporting(
+                &mut session,
+                source_pattern.as_deref().or(cli.source_pattern.as_deref()),
+            )?;
             let script_path = script.or(cli.script.clone());
             if let Some(script) = script_path {
                 let src = std::fs::read_to_string(script)?;
@@ -349,7 +356,10 @@ fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
         "console-translate" => {
             let root = cli.project.clone().unwrap_or_else(|| PathBuf::from("."));
             let mut session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
-            session.compile(cli.source_pattern.as_deref())?;
+            if let Some(mode) = cli.tag_validation.as_deref() {
+                apply_tag_validation(&mut session, mode);
+            }
+            compile_reporting(&mut session, cli.source_pattern.as_deref())?;
             Ok(())
         }
         "console-stats" => {
@@ -379,6 +389,39 @@ fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
         }
         "console-align" => legacy_align(cli),
         other => anyhow::bail!("unknown --mode {other}. Supported: console-translate, console-stats, console-createpseudotranslatetmx, console-align"),
+    }
+}
+
+fn apply_tag_validation(session: &mut ProjectSession, mode: &str) {
+    session
+        .prefs
+        .extra
+        .insert("tag_validation".into(), mode.to_string());
+    if mode == "warn" {
+        let n = session
+            .issues()
+            .iter()
+            .filter(|i| i.kind == "tag")
+            .count();
+        if n > 0 {
+            eprintln!("TAG_VALIDATION: {n} issue(s)");
+        }
+    }
+}
+
+fn compile_reporting(session: &mut ProjectSession, source_pattern: Option<&str>) -> Result<usize> {
+    match session.compile(source_pattern) {
+        Ok(n) => Ok(n),
+        Err(CoreError::TagValidation(msg)) => {
+            let line = if msg.contains("TAG_VALIDATION") {
+                msg
+            } else {
+                format!("TAG_VALIDATION: {msg}")
+            };
+            eprintln!("{line}");
+            Err(anyhow!("{line}"))
+        }
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -488,6 +531,7 @@ mod tests {
             "--output-file",
             "--stats-type",
             "--script",
+            "--tag-validation",
         ] {
             assert!(help.contains(flag), "help missing {flag}\n{help}");
         }

@@ -1,3 +1,5 @@
+//! Plain-text filter. Line/paragraph rules follow Java `TextFilter`.
+
 use crate::{
     apply_skeleton_with_originals, ensure_parent, merge_translations, placeholder, read_to_string,
     ExtractedSegment, Filter, FilterContext, ParsedFile, Result,
@@ -41,81 +43,108 @@ impl Filter for TextFilter {
     }
 }
 
+/// Java `LinebreakPreservingReader` + `processSegEmptyLines` / `processSegLineBreaks` / `processNonSeg`.
 fn parse_text(raw: &str, segment_on: &str) -> Result<ParsedFile> {
-    let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
     let mode = segment_on.to_ascii_uppercase();
-    let parts: Vec<String> = match mode.as_str() {
-        "NEVER" => {
-            let t = normalized.trim_end_matches('\n');
-            if t.is_empty() {
-                vec![]
-            } else {
-                vec![t.to_string()]
-            }
-        }
-        "BREAKS" => normalized
-            .split('\n')
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => normalized
-            .split("\n\n")
-            .map(|s| s.trim_end_matches('\n').to_string())
-            .filter(|s| !s.trim().is_empty())
-            .collect(),
-    };
+    match mode.as_str() {
+        "NEVER" => parse_never(raw),
+        "BREAKS" => parse_breaks(raw),
+        _ => parse_empty_lines(raw),
+    }
+}
 
+fn parse_never(raw: &str) -> Result<ParsedFile> {
+    if raw.is_empty() {
+        return Ok(ParsedFile {
+            segments: vec![],
+            skeleton: Some(String::new()),
+        });
+    }
+    Ok(ParsedFile {
+        segments: vec![text_seg(0, raw)],
+        skeleton: Some(placeholder(0)),
+    })
+}
+
+fn parse_breaks(raw: &str) -> Result<ParsedFile> {
     let mut segments = Vec::new();
     let mut skeleton = String::new();
-    if mode == "NEVER" {
-        if let Some(text) = parts.first() {
-            skeleton.push_str(&placeholder(0));
-            if raw.ends_with('\n') {
-                skeleton.push('\n');
-            }
-            segments.push(text_seg(0, text));
-        }
-        return Ok(ParsedFile {
-            segments,
-            skeleton: Some(skeleton),
-        });
-    }
-
-    if mode == "BREAKS" {
-        let lines: Vec<&str> = normalized.split('\n').collect();
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                skeleton.push('\n');
-            }
-            if line.is_empty() {
-                continue;
-            }
-            skeleton.push_str(&placeholder(segments.len()));
-            segments.push(text_seg(segments.len(), line));
-        }
-        return Ok(ParsedFile {
-            segments,
-            skeleton: Some(skeleton),
-        });
-    }
-
-    let chunks: Vec<&str> = normalized.split("\n\n").collect();
-    for (i, part) in chunks.iter().enumerate() {
-        if i > 0 {
-            skeleton.push_str("\n\n");
-        }
-        let text = part.trim_end_matches('\n');
-        if text.trim().is_empty() {
-            skeleton.push_str(part);
+    let mut nontrans = String::new();
+    for (line, br) in lines_with_breaks(raw) {
+        if line.trim().is_empty() {
+            nontrans.push_str(line);
+            nontrans.push_str(br);
             continue;
         }
+        skeleton.push_str(&nontrans);
+        nontrans.clear();
         skeleton.push_str(&placeholder(segments.len()));
-        segments.push(text_seg(segments.len(), text));
+        segments.push(text_seg(segments.len(), line));
+        nontrans.push_str(br);
+    }
+    skeleton.push_str(&nontrans);
+    Ok(ParsedFile {
+        segments,
+        skeleton: Some(skeleton),
+    })
+}
+
+fn parse_empty_lines(raw: &str) -> Result<ParsedFile> {
+    let mut segments = Vec::new();
+    let mut skeleton = String::new();
+    let mut nontrans = String::new();
+    let mut trans = String::new();
+    for (line, br) in lines_with_breaks(raw) {
+        if line.is_empty() {
+            skeleton.push_str(&nontrans);
+            nontrans.clear();
+            if !trans.is_empty() {
+                skeleton.push_str(&placeholder(segments.len()));
+                segments.push(text_seg(segments.len(), &trans));
+                trans.clear();
+            }
+            nontrans.push_str(br);
+        } else if line.trim().is_empty() && trans.is_empty() {
+            nontrans.push_str(line);
+            nontrans.push_str(br);
+        } else {
+            trans.push_str(line);
+            trans.push_str(br);
+        }
+    }
+    skeleton.push_str(&nontrans);
+    if !trans.is_empty() {
+        skeleton.push_str(&placeholder(segments.len()));
+        segments.push(text_seg(segments.len(), &trans));
     }
     Ok(ParsedFile {
         segments,
         skeleton: Some(skeleton),
     })
+}
+
+fn lines_with_breaks(raw: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let bytes = raw.as_bytes();
+    let mut i = 0usize;
+    let mut start = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' && i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+            out.push((&raw[start..i], &raw[i..i + 2]));
+            i += 2;
+            start = i;
+        } else if bytes[i] == b'\n' || bytes[i] == b'\r' {
+            out.push((&raw[start..i], &raw[i..i + 1]));
+            i += 1;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if start < raw.len() {
+        out.push((&raw[start..], ""));
+    }
+    out
 }
 
 fn text_seg(i: usize, source: &str) -> ExtractedSegment {

@@ -14,8 +14,8 @@ pub fn tokenize(text: &str, lang: &str) -> Vec<Token> {
     if matches!(lang, "zh" | "ja" | "th" | "km") {
         return cjk_bigrams(text);
     }
-    text.to_lowercase()
-        .unicode_words()
+    // Java DefaultTokenizer keeps original case (BreakIterator substrings).
+    text.unicode_words()
         .map(|w| Token {
             stem: stem(w, lang),
             text: w.to_string(),

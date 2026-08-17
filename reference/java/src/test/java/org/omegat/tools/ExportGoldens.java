@@ -25,11 +25,16 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import org.omegat.core.Core;
+import org.omegat.core.data.EntryKey;
+import org.omegat.core.data.SourceTextEntry;
 import org.omegat.core.matching.FuzzyMatcher;
 import org.omegat.core.matching.LevenshteinDistance;
 import org.omegat.core.segmentation.Rule;
 import org.omegat.core.segmentation.SRX;
 import org.omegat.core.segmentation.Segmenter;
+import org.omegat.core.statistics.Statistics;
+import org.omegat.core.statistics.dso.MatchStatCounts;
+import org.omegat.core.statistics.dso.StatCount;
 import org.omegat.filters2.FilterContext;
 import org.omegat.filters2.IFilter;
 import org.omegat.filters2.IParseCallback;
@@ -42,11 +47,15 @@ import org.omegat.filters2.text.ini.INIFilter;
 import org.omegat.filters2.text.yaml.YamlFilter;
 import org.omegat.filters2.subtitles.SrtFilter;
 import org.omegat.filters3.xml.android.AndroidFilter;
+import org.omegat.gui.glossary.GlossaryEntry;
+import org.omegat.gui.glossary.GlossaryReaderTSV;
+import org.omegat.gui.glossary.GlossarySearcher;
 import org.omegat.tokenizer.DefaultTokenizer;
 import org.omegat.tokenizer.ITokenizer;
 import org.omegat.tokenizer.LuceneCJKTokenizer;
 import org.omegat.tokenizer.LuceneEnglishTokenizer;
 import org.omegat.util.Language;
+import org.omegat.util.Preferences;
 import org.omegat.util.TestPreferencesInitializer;
 import org.omegat.util.Token;
 
@@ -95,6 +104,8 @@ public final class ExportGoldens {
         exportYaml();
         exportAndroid();
         exportEngine();
+        exportGlossary();
+        exportStats();
         System.out.println("ExportGoldens wrote " + goldenRoot);
     }
 
@@ -338,6 +349,106 @@ public final class ExportGoldens {
         writeJson(goldenRoot.resolve("engine/tokens.json"), tokens);
 
         System.out.println("wrote engine srx/fuzzy/tokens");
+    }
+
+    private void exportGlossary() throws Exception {
+        File tab = javaRoot.resolve("src/test/resources/data/glossaries/test.tab").toFile();
+        List<GlossaryEntry> entries = GlossaryReaderTSV.read(tab, false);
+        List<Map<String, Object>> parsed = new ArrayList<>();
+        for (GlossaryEntry e : entries) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("source", e.getSrcText());
+            m.put("target", e.getLocText());
+            m.put("comment", e.getCommentText() == null ? "" : e.getCommentText());
+            parsed.add(m);
+        }
+        List<GlossaryEntry> extra = new ArrayList<>(entries);
+        extra.add(new GlossaryEntry("running", "courir", "verb", false, "origin"));
+        extra.add(new GlossaryEntry("Cat", "chat", "", false, "origin"));
+        List<Map<String, Object>> cases = new ArrayList<>();
+        cases.add(glossaryCase(extra, "I use kde daily", true, false, "en", "fr"));
+        cases.add(glossaryCase(extra, "The CAT sat", true, false, "en", "fr"));
+        cases.add(glossaryCase(extra, "The CAT sat", false, false, "en", "fr"));
+        cases.add(glossaryCase(extra, "I was running yesterday", true, true, "en", "fr"));
+        cases.add(glossaryCase(extra, "I was running yesterday", true, false, "en", "fr"));
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.gui.glossary.GlossaryReaderTSVTest#testRead");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("fixture", "src/test/resources/data/glossaries/test.tab");
+        json.put("entries", parsed);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/glossary.json"), json);
+        System.out.println("wrote engine/glossary.json entries=" + parsed.size());
+    }
+
+    private Map<String, Object> glossaryCase(List<GlossaryEntry> entries, String segment, boolean ignoreCase,
+            boolean useStem, String srcLang, String tgtLang) {
+        Preferences.setPreference(Preferences.GLOSSARY_STEMMING, useStem);
+        Preferences.setPreference(Preferences.GLOSSARY_STEMMING_FULL, useStem);
+        Preferences.setPreference(Preferences.GLOSSARY_NOT_EXACT_MATCH, true);
+        Preferences.setPreference(Preferences.GLOSSARY_REQUIRE_SIMILAR_CASE, !ignoreCase);
+        GlossarySearcher searcher = new GlossarySearcher(new DefaultTokenizer(), new Language(srcLang),
+                new Language(tgtLang), false);
+        EntryKey key = new EntryKey("f", segment, null, null, null, null);
+        SourceTextEntry ste = new SourceTextEntry(key, 1, null, null, Collections.emptyList());
+        List<String> targets = new ArrayList<>();
+        for (GlossaryEntry hit : searcher.searchSourceMatches(ste, entries)) {
+            targets.add(hit.getLocText());
+        }
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("segment", segment);
+        c.put("ignore_case", ignoreCase);
+        c.put("use_stem", useStem);
+        c.put("src_lang", srcLang);
+        c.put("tgt_lang", tgtLang);
+        c.put("targets", targets);
+        return c;
+    }
+
+    private void exportStats() throws Exception {
+        String[] headers = { "repetition", "repetition_other", "exact", "fuzzy_95", "fuzzy_85", "fuzzy_75",
+                "fuzzy_50", "none", "total" };
+        int[] percents = { Statistics.PERCENT_EXACT_MATCH, 100, 95, 94, 85, 84, 75, 74, 50, 49, 0 };
+        List<Map<String, Object>> cases = new ArrayList<>();
+        for (int p : percents) {
+            MatchStatCounts counts = new MatchStatCounts();
+            StatCount sc = new StatCount();
+            sc.segments = 1;
+            if (p == Statistics.PERCENT_EXACT_MATCH) {
+                counts.addExact(sc);
+            } else {
+                counts.addForPercents(p, sc);
+            }
+            String[][] table = counts.calcTable(headers);
+            String bin = "none";
+            for (int i = 0; i < 8; i++) {
+                if ("1".equals(table[i][1])) {
+                    bin = headers[i];
+                    break;
+                }
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("percent", p);
+            row.put("bin", bin);
+            cases.add(row);
+        }
+        List<Map<String, Object>> wordCounts = new ArrayList<>();
+        for (String text : List.of("Hello world", "Second line", "你好")) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("text", text);
+            m.put("words", Statistics.numberOfWords(text));
+            m.put("chars_nosp", Statistics.numberOfCharactersWithoutSpaces(text));
+            m.put("chars", Statistics.numberOfCharactersWithSpaces(text));
+            wordCounts.add(m);
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.statistics.CalcMatchStatisticsTest#testCalcMatchStatics");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        json.put("word_counts", wordCounts);
+        json.put("percent_exact_match", Statistics.PERCENT_EXACT_MATCH);
+        writeJson(goldenRoot.resolve("engine/stats.json"), json);
+        System.out.println("wrote engine/stats.json bins=" + cases.size());
     }
 
     private Map<String, Object> srxCase(Segmenter segmenter, String lang, String input, String javaTest) {

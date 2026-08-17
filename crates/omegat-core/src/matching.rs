@@ -168,13 +168,27 @@ pub fn find_matches_threshold(
     out
 }
 
-/// Token-level alignment bytes for match highlighting (Java `buildSimilarityData`).
+/// Java `StringData.UNIQ` / `StringData.PAIR` (not a 0/1 contains bitmap).
+pub const SIM_UNIQ: u8 = 0x01;
+pub const SIM_PAIR: u8 = 0x02;
+
+/// Token-level alignment bytes for match highlighting (Java `FuzzyMatcher.buildSimilarityData`).
 pub fn similarity_data(source: &str, r#match: &str, lang: &str) -> Vec<u8> {
     let src = tokens(source, lang, false);
     let cand = tokens(r#match, lang, false);
-    cand.iter()
-        .map(|t| if src.contains(t) { 1 } else { 0 })
-        .collect()
+    let mut result = vec![0u8; cand.len()];
+    let mut leftfound = true;
+    for i in 0..cand.len() {
+        let rightfound = i + 1 == cand.len() || src.iter().any(|t| t == &cand[i + 1]);
+        let found = src.iter().any(|t| t == &cand[i]);
+        if found && (!leftfound || !rightfound) {
+            result[i] = SIM_PAIR;
+        } else if !found {
+            result[i] = SIM_UNIQ;
+        }
+        leftfound = found;
+    }
+    result
 }
 
 #[cfg(test)]
