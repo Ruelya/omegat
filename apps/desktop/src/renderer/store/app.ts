@@ -303,11 +303,11 @@ export const useApp = create<AppState>((set, get) => ({
       }
     }
     const dict = await rpc<DictHitDto[]>("dict.query", { word: e.source.split(/\s+/)[0] || "" });
-    const completer = get().completerAuto
-      ? await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "" })
-      : [];
     let draft = e.translation;
     if (!draft && insert_best && matches[0]) draft = matches[0].translation;
+    const completer = get().completerAuto
+      ? await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "", text: draft })
+      : [];
     set({
       index,
       matches,
@@ -339,7 +339,13 @@ export const useApp = create<AppState>((set, get) => ({
       set({ completer: [] });
       return;
     }
-    set({ completer: await rpc<CompleterItemDto[]>("completer.query", { index: get().index, prefix }) });
+    set({
+      completer: await rpc<CompleterItemDto[]>("completer.query", {
+        index: get().index,
+        prefix,
+        text: get().draft,
+      }),
+    });
   },
   loadFilters: async () => set({ filters: await rpc<FilterInfoDto[]>("filters.list") }),
   loadPrefs: async () => {

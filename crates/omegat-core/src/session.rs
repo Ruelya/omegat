@@ -515,12 +515,13 @@ impl ProjectSession {
             .entries
             .get(index)
             .ok_or(CoreError::InvalidProject("entry".into()))?;
-        mt::translate(
+        mt::translate_with_creds(
             engine,
             &e.source,
             &self.props.source_lang,
             &self.props.target_lang,
             &self.mt_cache,
+            &mt::MtCreds::from_extra(&self.prefs.extra),
         )
         .map_err(CoreError::Filter)
     }
@@ -529,67 +530,66 @@ impl ProjectSession {
         dict::lookup(&self.props.dictionary_dir, word)
     }
 
-    pub fn completer(&self, index: usize, prefix: &str) -> Vec<CompleterItemDto> {
+    pub fn completer(&self, index: usize, prefix: &str, draft: Option<&str>) -> Vec<CompleterItemDto> {
+        let extra = &self.prefs.extra;
+        let on = |k: &str, default: bool| extra.get(k).map(|s| s != "false").unwrap_or(default);
         let mut items = Vec::new();
         if let Some(e) = self.entries.get(index) {
-            for g in glossary::lookup(&self.glossary, &e.source) {
-                if g.target.to_lowercase().starts_with(&prefix.to_lowercase()) || prefix.is_empty() {
+            if on("completer_glossary", true) {
+                for g in glossary::lookup(&self.glossary, &e.source) {
+                    if g.target.to_lowercase().starts_with(&prefix.to_lowercase()) || prefix.is_empty() {
+                        items.push(CompleterItemDto {
+                            kind: "glossary".into(),
+                            text: g.target,
+                            detail: g.source,
+                        });
+                    }
+                }
+            }
+            if on("completer_tags", true) {
+                for t in tags::extract_tags(&e.source) {
                     items.push(CompleterItemDto {
-                        kind: "glossary".into(),
-                        text: g.target,
-                        detail: g.source,
+                        kind: "tag".into(),
+                        text: t,
+                        detail: "source tag".into(),
                     });
                 }
             }
-            for t in tags::extract_tags(&e.source) {
-                items.push(CompleterItemDto {
-                    kind: "tag".into(),
-                    text: t,
-                    detail: "source tag".into(),
-                });
-            }
-            if let Some(at) = self.prefs.extra.get("autotext") {
-                for pair in at.split(';') {
-                    if let Some((k, v)) = pair.split_once('=') {
-                        if k.starts_with(prefix) || prefix.is_empty() {
-                            items.push(CompleterItemDto {
-                                kind: "autotext".into(),
-                                text: v.to_string(),
-                                detail: k.to_string(),
-                            });
+            if on("completer_autotext", true) {
+                if let Some(at) = extra.get("autotext") {
+                    for pair in at.split(';') {
+                        if let Some((k, v)) = pair.split_once('=') {
+                            if k.starts_with(prefix) || prefix.is_empty() {
+                                items.push(CompleterItemDto {
+                                    kind: "autotext".into(),
+                                    text: v.to_string(),
+                                    detail: k.to_string(),
+                                });
+                            }
                         }
                     }
                 }
             }
-            for (ch, name) in [
-                ("\u{00a0}", "NBSP"),
-                ("\u{2014}", "em dash"),
-                ("\u{2026}", "ellipsis"),
-                ("\u{00ab}", "guillemet"),
-                ("\u{00bb}", "guillemet"),
-            ] {
-                if prefix.is_empty() || name.starts_with(prefix) {
+            if on("completer_chartable", true) {
+                let table = extra.get("chartable").cloned().unwrap_or_else(|| "©®™…—–«»\u{00a0}".into());
+                for ch in table.chars() {
                     items.push(CompleterItemDto {
                         kind: "charset".into(),
                         text: ch.to_string(),
-                        detail: name.into(),
+                        detail: "chartable".into(),
                     });
                 }
             }
         }
-        let mut seen = std::collections::HashSet::new();
-        for e in &self.entries {
-            for w in e.translation.split_whitespace() {
-                if w.to_lowercase().starts_with(&prefix.to_lowercase()) && seen.insert(w.to_string()) {
-                    items.push(CompleterItemDto {
-                        kind: "history".into(),
-                        text: w.to_string(),
-                        detail: "history".into(),
-                    });
-                }
-            }
+        let translations: Vec<&str> = self.entries.iter().map(|e| e.translation.as_str()).collect();
+        if on("history_completion", true) {
+            items.extend(crate::completer::history_complete(&translations, prefix));
         }
-        items.truncate(20);
+        if on("history_prediction", true) {
+            let model = crate::completer::train_predictor(&translations);
+            items.extend(crate::completer::history_predict(&model, draft.unwrap_or(prefix)));
+        }
+        items.truncate(40);
         items
     }
 

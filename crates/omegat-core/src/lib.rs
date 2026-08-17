@@ -1,6 +1,7 @@
 //! OmegaT core engine: projects, TMX, segmentation, matching, compile.
 
 pub mod align;
+pub mod completer;
 pub mod consts;
 pub mod dict;
 pub mod error;

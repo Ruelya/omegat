@@ -33,6 +33,8 @@ pub fn parse_finder_xml(raw: &str) -> Vec<FinderItem> {
 pub fn expand(item: &FinderItem, selection: &str, source: &str, target: &str) -> Option<String> {
     let mut t = item.url.clone().or(item.command.clone())?;
     t = t.replace("{selection}", &urlencoding::encode(selection));
+    t = t.replace("{sourceText}", &urlencoding::encode(source));
+    t = t.replace("{targetText}", &urlencoding::encode(target));
     t = t.replace("{source}", &urlencoding::encode(source));
     t = t.replace("{target}", &urlencoding::encode(target));
     Some(t)
@@ -64,5 +66,8 @@ mod tests {
         assert_eq!(items[0].name, "Wiktionary");
         let u = expand(&items[0], "cat", "", "").unwrap();
         assert!(u.contains("cat"));
+        let cmd = parse_finder_xml(r#"<item><name>echo</name><command>echo {sourceText}</command></item>"#);
+        let exp = expand(&cmd[0], "x", "hello world", "").unwrap();
+        assert!(exp.contains("hello"));
     }
 }

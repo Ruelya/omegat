@@ -158,11 +158,23 @@ impl App {
                 Ok(serde_json::to_value(omegat_core::languagetool::check(url.as_deref(), text, &lang, 0, "")).unwrap())
             }
             "finder.run" => {
-                let xml = params.get("xml").and_then(|v| v.as_str()).unwrap_or("");
+                let xml = params.get("xml").and_then(|v| v.as_str()).or_else(|| self.prefs.extra.get("finder_xml").map(|s| s.as_str())).unwrap_or("");
                 let sel = params.get("selection").and_then(|v| v.as_str()).unwrap_or("");
+                let source = params.get("source").and_then(|v| v.as_str()).unwrap_or(sel);
+                let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let items = omegat_core::finder::parse_finder_xml(xml);
-                let urls: Vec<String> = items.iter().filter_map(|i| omegat_core::finder::expand(i, sel, sel, "")).collect();
-                Ok(json!({"urls": urls, "items": items.len()}))
+                let mut urls = Vec::new();
+                let mut commands = Vec::new();
+                for i in &items {
+                    if let Some(exp) = omegat_core::finder::expand(i, sel, source, target) {
+                        if i.command.is_some() {
+                            commands.push(exp);
+                        } else {
+                            urls.push(exp);
+                        }
+                    }
+                }
+                Ok(json!({"urls": urls, "commands": commands, "items": items.len()}))
             }
             "team.conflicts" => {
                 let s = self.session()?;
@@ -242,7 +254,8 @@ impl App {
             "completer.query" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let prefix = params.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
-                Ok(serde_json::to_value(self.session()?.completer(index, prefix)).unwrap())
+                let draft = params.get("text").and_then(|v| v.as_str());
+                Ok(serde_json::to_value(self.session()?.completer(index, prefix, draft)).unwrap())
             }
             "spell.install" => {
                 let lang = params.get("lang").and_then(|v| v.as_str()).unwrap_or("en");
