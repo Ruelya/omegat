@@ -146,6 +146,65 @@ including the Japanese Wikipedia sentence (NONE/GLOSSARY/MATCHING), Thai
 `ภาษาไทย…`, and Arabic `اللغة العربية…`. The P5 STATUS row stays `scaffold`:
 editor / menu / locale / git2 gates remain red.
 
+## P6 notes
+
+Hunspell reads `PFX`/`SFX` with FLAG char/long/num. Lucene-Hunspell and
+Morfologik load from distinct `fixtures/spell/{hunspell,lucene,morfologik}`
+paths (colour / color / kolor). `ensure_lang` copies real `.aff`/`.dic`
+from `reference/java/language-modules` for **ca / es / fa / fr / ga / gl /
+pt / uk**. StarDict is `.ifo`+`.idx`+`.dict`/`.dict.dz`; DSL includes
+`.dsl.dz`. LanguageTool with no URL emits `severity=info`; `fixture:`
+parses `v2/check` `matches[].message` / `rule.id` / `offset`.
+
+Languages in `language-modules` **without** an affix pair (download to
+`config/spell` or keep as `parity_gap`): ar, ast, be, br, da, de, el, en,
+eo, it, ja, km, nl, pl, ro, ru, sk, sl, sv, ta, tl, zh. CI uses the small
+aff/dic fixtures; those are not 30-language product dictionaries.
+
+The P6 STATUS row stays `scaffold` until later-wave honesty gates are green.
+
+## P7 notes
+
+`gui/editor` 63 Java classes each have a TS file. `Document3` holds the
+active translation range, dirty flag, tag atoms, and styled spans.
+`IEditor` implements the exported method set (gap empty vs
+`ieditor_methods.json`). Each Marker computes intervals; goldens
+`assert_eq` NBSP / whitespace / bidi / protected-tag ranges. Autocompleter
+views: Glossary / Autotext / CharTable / HistoryCompleter /
+HistoryPredictor (next-word) / Tag. The P7 row stays `scaffold`.
+
+## P8 notes
+
+120 `*ActionPerformed` ids are wired to observable behavior (`project.edit`
+opens the properties dialog, not the wizard; `project.team-new` opens the
+team flow; `edit.pdf` inserts U+202C). 25 preference controllers have
+pages; Java keys are typed `controller_keys` (save still drops `extra`).
+`SegmentationCustomizer` is a rule table. Nine docks are splitters (Dict/MT
+are not a pinned aside). `RepositoriesMappingController` UI exists.
+`className="placeholder"` is gone. The P8 row stays `scaffold`.
+
+## P9 notes
+
+Seven MT connectors use recorded HTTP under `fixtures/mt/<engine>/`.
+Offline without a fixture fails and does not block the editor. External
+Finder GUI edits XML and `finder.run` opens the URL. Five completer views
+are keyboard-insertable. The P9 row stays `scaffold`.
+
+## P10 notes
+
+`GITRemoteRepository2` product path is `git2` (clone/fetch/reset/commit/push
++ credential callback). `Command::new("git")` remains only in `lib.rs`
+tests that seed a bare repo. Mapping include/exclude UI is
+`RepositoriesMappingController`. TMX and glossary rebase plus Keep
+ours/theirs/manual stay. The P10 row stays `scaffold`.
+
+## P11 notes
+
+Aligner: HEAPWISE / PARSEWISE / ID; Viterbi ≠ Forward-Backward; CHAR/WORD
+and Poisson vs Normal. Boa `editor` bindings cover the IEditor method set.
+Wiki MediaWiki XML → source; MED unzip; CLI leftover flags remain in
+`--help`. No `fallback_eval`. The P11 row stays `scaffold`.
+
 ## Intentional non-goals (must still have a full replacement)
 
 - Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib.
