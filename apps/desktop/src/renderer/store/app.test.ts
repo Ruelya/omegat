@@ -170,4 +170,29 @@ describe("app store", () => {
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")[0]).toBe("/p");
     expect(extraFromMarks(useApp.getState().marks).mark_nbsp).toBe("true");
   });
+
+  it("resolves a team conflict through team.resolve", async () => {
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "team.resolve") return { conflicts: [] };
+      if (method === "prefs.set") return { extra: { team_conflict_resolution: "theirs" } };
+      return {};
+    });
+    useApp.setState({
+      teamConflicts: [{ kind: "tmx", source: "Hi", ours: "Bonjour", theirs: "Salut" }],
+      prefs: {
+        theme: "light",
+        locale: "en",
+        autosave_seconds: 180,
+        fuzzy_threshold: 30,
+        insert_best_match: true,
+        font_ui: "IBM Plex Sans",
+        font_editor: "IBM Plex Sans",
+        mt_enabled: [],
+        extra: {},
+      },
+    });
+    await useApp.getState().resolveConflict("theirs", "Hi");
+    expect(rpc.mock.calls.some((c) => c[0] === "team.resolve")).toBe(true);
+    expect(useApp.getState().teamConflicts).toEqual([]);
+  });
 });

@@ -178,8 +178,15 @@ impl App {
             }
             "team.conflicts" => {
                 let s = self.session()?;
-                let c = omegat_team::rebase_project(&s.props).map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
-                Ok(json!({"conflicts": c}))
+                Ok(json!({"conflicts": omegat_team::list_conflicts(&s.props)}))
+            }
+            "team.resolve" => {
+                let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let side = params.get("side").and_then(|v| v.as_str()).unwrap_or("ours");
+                let translation = params.get("translation").and_then(|v| v.as_str());
+                let left = omegat_team::resolve(&self.session()?.props, source, side, translation)
+                    .map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
+                Ok(json!({"conflicts": left}))
             }
             "wiki.import" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -271,8 +278,13 @@ impl App {
             }
             "team.sync" => {
                 let s = self.session()?;
-                let r = omegat_team::sync(&s.props).map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
-                Ok(json!({"action": r.action, "message": r.message}))
+                match omegat_team::sync(&s.props) {
+                    Ok(r) => Ok(json!({"action": r.action, "message": r.message, "conflicts": r.conflicts})),
+                    Err(omegat_team::TeamError::Conflict(msg)) => {
+                        Err((error_code::TEAM_CONFLICT, msg))
+                    }
+                    Err(e) => Err((error_code::INTERNAL_ERROR, e.to_string())),
+                }
             }
             "team.commit" => {
                 let which = params.get("which").and_then(|v| v.as_str()).unwrap_or("target");

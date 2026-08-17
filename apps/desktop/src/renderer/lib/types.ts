@@ -131,7 +131,13 @@ export type Preferences = {
   extra: Record<string, string>;
   config_dir?: string;
 };
-export type TeamConflict = { source?: string; ours?: string; theirs?: string; message?: string };
+export type TeamConflict = {
+  kind?: string;
+  source?: string;
+  ours?: string;
+  theirs?: string;
+  message?: string;
+};
 export type WindowId =
   | "search"
   | "replace"

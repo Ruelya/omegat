@@ -9,9 +9,11 @@ description = "Team project sync: Git, SVN, HTTP, and file repositories"
 omegat-ipc.workspace = true
 omegat-core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 log.workspace = true
 walkdir.workspace = true
+globset.workspace = true
 
 [dev-dependencies]
 tempfile = "=3.10.1"

@@ -141,7 +141,7 @@ export type AppState = {
   replaceAll: () => Promise<number>;
   teamSync: () => Promise<void>;
   teamCommit: (which: "source" | "target") => Promise<void>;
-  resolveConflict: (side: "ours" | "theirs") => Promise<void>;
+  resolveConflict: (side: "ours" | "theirs" | "manual", source?: string, translation?: string) => Promise<void>;
   learnWord: (word: string) => Promise<void>;
   ignoreWord: (word: string) => Promise<void>;
   addGlossary: (source: string, target: string, comment?: string) => Promise<void>;
@@ -440,9 +440,18 @@ export const useApp = create<AppState>((set, get) => ({
     set({ teamMessage: `${r.action}: ${r.message}` });
     get().logLine(`commit ${which}`);
   },
-  resolveConflict: async (side) => {
+  resolveConflict: async (side, source, translation) => {
+    const src = source ?? get().teamConflicts[0]?.source ?? "";
+    const r = await rpc<{ conflicts: TeamConflict[] }>("team.resolve", {
+      source: src,
+      side,
+      translation,
+    });
+    set({
+      teamConflicts: r.conflicts ?? [],
+      teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
+    });
     await get().patchPrefs({}, { team_conflict_resolution: side });
-    set({ teamMessage: `keep ${side}` });
   },
   learnWord: async (word) => {
     await rpc("spell.learn", { word });

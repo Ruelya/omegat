@@ -143,11 +143,32 @@ impl ProjectProperties {
                         .unwrap_or_default()
                 ));
                 for m in &r.mappings {
-                    repos.push_str(&format!(
-                        "                <mapping local=\"{}\" repository=\"{}\"/>\n",
-                        xml_escape(&m.local),
-                        xml_escape(&m.repository)
-                    ));
+                    if m.includes.is_empty() && m.excludes.is_empty() {
+                        repos.push_str(&format!(
+                            "                <mapping local=\"{}\" repository=\"{}\"/>\n",
+                            xml_escape(&m.local),
+                            xml_escape(&m.repository)
+                        ));
+                    } else {
+                        repos.push_str(&format!(
+                            "                <mapping local=\"{}\" repository=\"{}\">\n",
+                            xml_escape(&m.local),
+                            xml_escape(&m.repository)
+                        ));
+                        for inc in &m.includes {
+                            repos.push_str(&format!(
+                                "                    <includes>{}</includes>\n",
+                                xml_escape(inc)
+                            ));
+                        }
+                        for exc in &m.excludes {
+                            repos.push_str(&format!(
+                                "                    <excludes>{}</excludes>\n",
+                                xml_escape(exc)
+                            ));
+                        }
+                        repos.push_str("                </mapping>\n");
+                    }
                 }
                 repos.push_str("            </repository>\n");
             }
@@ -312,7 +333,6 @@ fn parse_project_xml(root: &Path, raw: &str) -> Result<ProjectProperties> {
     if !excludes.is_empty() {
         props.source_dir_excludes = excludes;
     }
-    // Preserve repository blocks without implementing sync (P1); P7 fills them.
     if raw.contains("<repository") {
         let mut search = raw;
         while let Some(start) = search.find("<repository") {
@@ -326,7 +346,7 @@ fn parse_project_xml(root: &Path, raw: &str) -> Result<ProjectProperties> {
                 repo_type,
                 url,
                 branch,
-                mappings: vec![],
+                mappings: parse_mappings(block),
             });
             search = &search[start + 12..];
         }
@@ -334,9 +354,115 @@ fn parse_project_xml(root: &Path, raw: &str) -> Result<ProjectProperties> {
     Ok(props)
 }
 
+fn parse_mappings(block: &str) -> Vec<RepositoryMapping> {
+    let mut out = Vec::new();
+    let mut rest = block;
+    while let Some(start) = rest.find("<mapping") {
+        let slice = &rest[start..];
+        let after = &slice["<mapping".len()..];
+        let Some(gt) = after.find('>') else { break };
+        let open = &slice[.."<mapping".len() + gt + 1];
+        let self_close = after[..gt].trim_end().ends_with('/');
+        let local = attr(open, "local").unwrap_or_default();
+        let repository = attr(open, "repository").unwrap_or_default();
+        let (inner, next) = if self_close {
+            ("", &slice["<mapping".len() + gt + 1..])
+        } else if let Some(end) = slice.find("</mapping>") {
+            (
+                &slice["<mapping".len() + gt + 1..end],
+                &slice[end + "</mapping>".len()..],
+            )
+        } else {
+            break;
+        };
+        out.push(RepositoryMapping {
+            local,
+            repository,
+            includes: collect_tags(inner, "includes"),
+            excludes: collect_tags(inner, "excludes"),
+        });
+        rest = next;
+    }
+    out
+}
+
+fn collect_tags(raw: &str, tag: &str) -> Vec<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let mut out = Vec::new();
+    let mut rest = raw;
+    while let Some(s) = rest.find(&open) {
+        rest = &rest[s + open.len()..];
+        if let Some(e) = rest.find(&close) {
+            out.push(html_escape::decode_html_entities(&rest[..e]).into_owned());
+            rest = &rest[e + close.len()..];
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 fn attr(block: &str, name: &str) -> Option<String> {
     let key = format!("{name}=\"");
     let s = block.find(&key)? + key.len();
     let e = block[s..].find('"')? + s;
     Some(block[s..e].to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_repository_mappings_and_filters() {
+        let raw = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<omegat>
+    <project version="1.0">
+        <source_lang>en</source_lang>
+        <target_lang>fr</target_lang>
+        <repositories>
+            <repository type="git" url="https://example.com/p.git" branch="main">
+                <mapping local="/" repository="/">
+                    <includes>**/*.tmx</includes>
+                    <excludes>**/*.bak</excludes>
+                </mapping>
+                <mapping local="source/" repository="src/"/>
+            </repository>
+        </repositories>
+    </project>
+</omegat>
+"#;
+        let props = parse_project_xml(Path::new("/tmp/proj"), raw).unwrap();
+        assert_eq!(props.repositories.len(), 1);
+        assert_eq!(props.repositories[0].repo_type, "git");
+        assert_eq!(props.repositories[0].branch.as_deref(), Some("main"));
+        assert_eq!(props.repositories[0].mappings.len(), 2);
+        assert_eq!(props.repositories[0].mappings[0].local, "/");
+        assert_eq!(props.repositories[0].mappings[0].includes, vec!["**/*.tmx"]);
+        assert_eq!(props.repositories[0].mappings[0].excludes, vec!["**/*.bak"]);
+        assert_eq!(props.repositories[0].mappings[1].repository, "src/");
+    }
+
+    #[test]
+    fn write_roundtrips_mapping_includes() {
+        let mut props = ProjectProperties::create(PathBuf::from("/tmp/p"), "en".into(), "fr".into(), true);
+        props.repositories.push(RepositoryDef {
+            repo_type: "http".into(),
+            url: "https://example.com/mem.tmx".into(),
+            branch: None,
+            mappings: vec![RepositoryMapping {
+                local: "omegat/project_save.tmx".into(),
+                repository: "project_save.tmx".into(),
+                includes: vec![],
+                excludes: vec!["*.bak".into()],
+            }],
+        });
+        let xml = props.to_xml();
+        assert!(xml.contains("type=\"http\""));
+        assert!(xml.contains("<excludes>*.bak</excludes>"));
+        let again = parse_project_xml(Path::new("/tmp/p"), &xml).unwrap();
+        assert_eq!(again.repositories[0].mappings[0].excludes, vec!["*.bak"]);
+    }
 }

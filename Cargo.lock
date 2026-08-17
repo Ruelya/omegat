@@ -517,10 +517,12 @@ dependencies = [
 name = "omegat-team"
 version = "6.2.0"
 dependencies = [
+ "globset",
  "log",
  "omegat-core",
  "omegat-ipc",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "walkdir",

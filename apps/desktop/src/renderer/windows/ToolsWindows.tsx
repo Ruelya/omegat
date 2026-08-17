@@ -50,15 +50,28 @@ export function TeamWindow() {
   const conflicts = useApp((s) => s.teamConflicts);
   const sync = useApp((s) => s.teamSync);
   const resolve = useApp((s) => s.resolveConflict);
+  const [manual, setManual] = useState("");
   return (
     <Modal id="team" title={t("team")}>
       <p>{msg || "Git / SVN / HTTP / file · prepare → rebase → commit"}</p>
       {conflicts.map((c, i) => (
-        <div key={i} className="hit">
-          {c.message || c.source}
+        <div key={`${c.kind ?? "tmx"}-${c.source ?? i}`} className="hit">
+          <div>
+            <strong>{c.source}</strong>
+            {c.kind ? ` · ${c.kind}` : ""}
+          </div>
+          <div>ours: {c.ours}</div>
+          <div>theirs: {c.theirs}</div>
+          <p>{c.message}</p>
+          <input
+            placeholder="manual"
+            value={manual}
+            onChange={(e) => setManual(e.target.value)}
+          />
           <div className="btn-row">
-            <button type="button" onClick={() => void resolve("ours")}>{t("keepOurs")}</button>
-            <button type="button" onClick={() => void resolve("theirs")}>{t("keepTheirs")}</button>
+            <button type="button" onClick={() => void resolve("ours", c.source)}>{t("keepOurs")}</button>
+            <button type="button" onClick={() => void resolve("theirs", c.source)}>{t("keepTheirs")}</button>
+            <button type="button" onClick={() => void resolve("manual", c.source, manual)}>手工</button>
           </div>
         </div>
       ))}

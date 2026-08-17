@@ -42,6 +42,7 @@ const METHODS: &[&str] = &[
     "team.sync",
     "team.commit",
     "team.conflicts",
+    "team.resolve",
     "script.run",
     "align.run",
     "aligner.configure",
