@@ -2,8 +2,8 @@
 //! write translations back into a target file.
 
 mod csv;
-mod dialect;
 mod dokuwiki;
+mod filters3;
 mod hhc;
 mod html;
 mod ilias;
@@ -28,7 +28,10 @@ mod srt;
 mod subtitle;
 mod text;
 mod webvtt;
-mod xml_simple;
+mod xml_dialect;
+mod xml_engine;
+mod xml_filter;
+mod xml_zip;
 mod xliff;
 mod xtag;
 mod yaml;
@@ -169,29 +172,29 @@ impl FilterRegistry {
             Box::new(sbv::SbvFilter),
             Box::new(webvtt::WebVttFilter),
             Box::new(xtag::XtagFilter),
-            Box::new(xml_simple::AndroidFilter),
-            Box::new(xml_simple::XhtmlFilter),
-            Box::new(xml_simple::PropertiesXmlFilter),
-            Box::new(xml_simple::ResxFilter),
-            Box::new(xml_simple::WixFilter),
-            Box::new(xml_simple::SvgFilter),
-            Box::new(xml_simple::HelpAndManualFilter),
-            Box::new(xml_simple::SchematronFilter),
-            Box::new(xml_simple::RelaxNgFilter),
-            Box::new(xml_simple::CamtasiaFilter),
-            Box::new(xml_simple::Typo3Filter),
-            Box::new(xml_simple::L10nMgrFilter),
-            Box::new(xml_simple::InfixFilter),
-            Box::new(xml_simple::FlashFilter),
-            Box::new(xml_simple::TxmlFilter),
-            Box::new(xml_simple::WordpressFilter),
-            Box::new(xml_simple::ScribusFilter),
-            Box::new(xml_simple::XmlSpreadsheetFilter),
-            // P4
-            Box::new(office::OpenDocumentFilter),
-            Box::new(office::OpenXmlFilter),
-            Box::new(xml_simple::DocBookFilter),
-            Box::new(xml_simple::VisioFilter),
+            Box::new(filters3::android_filter::AndroidFilter),
+            Box::new(filters3::xhtml_filter::XhtmlFilter),
+            Box::new(filters3::properties_xml_filter::PropertiesXmlFilter),
+            Box::new(filters3::resx_filter::ResXFilter),
+            Box::new(filters3::wix_filter::WiXFilter),
+            Box::new(filters3::svg_filter::SvgFilter),
+            Box::new(filters3::helpandmanual_filter::HelpAndManualFilter),
+            Box::new(filters3::schematron_filter::SchematronFilter),
+            Box::new(filters3::relaxng_filter::RelaxNGFilter),
+            Box::new(filters3::camtasia_filter::CamtasiaWindowsFilter),
+            Box::new(filters3::typo3_filter::Typo3Filter),
+            Box::new(filters3::l10nmgr_filter::L10nmgrFilter),
+            Box::new(filters3::infix_filter::InfixFilter),
+            Box::new(filters3::flash_filter::FlashFilter),
+            Box::new(filters3::txml_filter::TXMLFilter),
+            Box::new(filters3::wordpress_filter::WordpressFilter),
+            Box::new(filters3::scribus_filter::ScribusFilter),
+            Box::new(filters3::xmlspreadsheet_filter::XMLSpreadsheetFilter),
+            Box::new(filters3::opendoc_filter::OpenDocFilter),
+            Box::new(filters3::openxml_filter::OpenXmlFilter),
+            Box::new(filters3::docbook_filter::DocBookFilter),
+            Box::new(filters3::visio_filter::VisioFilter),
+            Box::new(filters3::xliff_filter::XliffFilter),
             Box::new(xliff::Xliff2Filter),
             Box::new(xliff::SdlXliffFilter),
             Box::new(xliff::SdlProjectFilter),
@@ -289,28 +292,18 @@ impl FilterRegistry {
 
     fn sniff_xml(&self, path: &Path) -> Option<&dyn Filter> {
         let raw = read_to_string(path).ok()?;
-        let id = if raw.contains("<string ") && raw.contains("resources") {
-            "android"
-        } else if raw.contains("<entry") && raw.contains("properties") {
-            "propxml"
-        } else if raw.contains("DocBook") || raw.contains("<para") && raw.contains("<book") {
-            "docbook"
-        } else if raw.contains("http://www.w3.org/1999/xhtml") || path.extension().and_then(|e| e.to_str()) == Some("xhtml") {
-            "xhtml"
-        } else if raw.contains("WordPress") || raw.contains("content:encoded") {
-            "wordpress"
-        } else if raw.contains("Spreadsheet") && raw.contains("<Data") {
-            "xmlss"
-        } else if raw.contains("HelpAndManual") || raw.contains("<topic") {
-            "helpandmanual"
-        } else if raw.contains("<string") && raw.contains("name=") && raw.contains("resources") {
-            "android"
-        } else if raw.contains("<para") || raw.contains("<chapter") {
-            "docbook"
-        } else {
-            return None;
-        };
-        self.by_id(id)
+        if let Some(id) = filters3::sniff_xml_id(&raw) {
+            return self.by_id(id);
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .eq_ignore_ascii_case("xhtml");
+        if ext {
+            return self.by_id("xhtml");
+        }
+        None
     }
 
     pub fn by_id(&self, id: &str) -> Option<&dyn Filter> {
@@ -439,6 +432,46 @@ mod tests {
         for id in ["text", "html", "po", "xliff1", "json", "properties", "srt"] {
             assert!(reg.by_id(id).is_some(), "missing {id}");
         }
-        assert!(reg.all().len() >= 40);
+        for id in [
+            "android",
+            "camtasia",
+            "docbook",
+            "flash",
+            "helpandmanual",
+            "infix",
+            "l10nmgr",
+            "opendoc",
+            "openxml",
+            "propxml",
+            "relaxng",
+            "resx",
+            "schematron",
+            "scribus",
+            "svg",
+            "txml",
+            "typo3",
+            "visio",
+            "wix",
+            "wordpress",
+            "xhtml",
+            "xliff",
+            "xmlss",
+        ] {
+            assert!(reg.by_id(id).is_some(), "missing G3 id {id}");
+        }
+    }
+
+    #[test]
+    fn sniff_xml_does_not_default_unknown_to_android() {
+        assert_eq!(filters3::sniff_xml_id("<foo><bar>hi</bar></foo>"), None);
+        assert_eq!(
+            filters3::sniff_xml_id("<resources><string name=\"a\">x</string></resources>"),
+            Some("android")
+        );
+        let dir = tempdir().unwrap();
+        let unknown = dir.path().join("unknown.xml");
+        std::fs::write(&unknown, "<foo><bar>hi</bar></foo>").unwrap();
+        let reg = FilterRegistry::new();
+        assert!(reg.for_path(&unknown).is_none());
     }
 }

@@ -1,1 +1,6 @@
-<item><title>Hello</title></item>
+<?xml version="1.0"?>
+<rss>
+  <channel>
+    <description>Hello WordPress</description>
+  </channel>
+</rss>

@@ -19,7 +19,7 @@ wave’s Java goldens are green.
 | Sidecar method contract tests | G0 | scaffold |
 | RealProject / SRX / TMX / matching / stats / tags | G1 | parity |
 | filters2: 21 Filter classes, one module each | G2 | parity |
-| filters3: XML event engine + 23 Dialect modules | G3 | scaffold |
+| filters3: XML event engine + 23 Dialect modules | G3 | parity |
 | filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | scaffold |
 | Desktop: document-model editor, 113 menus, 28 prefs | G5 | scaffold |
 | Tokenizers / spell / dictionaries / LanguageTool | G6 | scaffold |
@@ -35,7 +35,7 @@ finished rewrite of Java 6.2.
 
 Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 
-- `dialect_filter!` / one `XmlDialect` tag-name table (G3)
+- `dialect_filter!` / one `XmlDialect` tag-name table (**removed in G3**)
 - `filters.options` returning a generic `extra` map
 - full-file `replacen` / first `find` as the only XML / Office / SDL write-back
 - `filter_goldens.rs` `contains` / `must_contain` / `n >= 49` (removed in G0)
@@ -85,7 +85,24 @@ Accepted against Java-exported goldens (`assert_eq`) for all **21** filters2 mod
 
 Options that change parse/write: ResourceBundle (`dontUnescapeULiterals`, `unremoveStringsUntranslated`, `forceJava8LiteralsEscape`, `dontTargetCommentValue`); DTD / MoodlePHP / FTL (`unremoveStringsUntranslated`); PO (`skipHeader`, `disallowBlank`, `monolingualFormat`); Text (`segmentOn`).
 
-Not this wave: Android / `dialect_filter!` (G3). HTML still matches the Java `HTMLFilter2` golden without a full htmlparser `FilterVisitor` port.
+Not this wave: HTML still matches the Java `HTMLFilter2` golden without a full htmlparser `FilterVisitor` port.
+
+## G3 notes
+
+Accepted against Java-exported goldens (`assert_eq`) for all **23** filters3 Filter+Dialect pairs. Shared event-stream engine (`Handler`/`Entry`/`XMLWriter`). `dialect_filter!` and the single tag-name table are gone. `sniff_xml` does not default unknown XML to Android.
+
+| Filter | Golden |
+|---|---|
+| Android | `android/file-AndroidFilter.json` (`<f0>` / `<x0>`, `\'`, `<skip/>`) |
+| DocBook | `docbook/file-DocBookFilter.json` (internal entity `&mystring;` → `My String`) |
+| ResX / WiX | `resx/Resources.json` `wix/fr-fr.json` |
+| XHTML | `xhtml/file-XHTMLFilter.json` (DOCTYPE reconstructed, CRLF normalized) |
+| SVG / RelaxNG / HelpAndManual | `svg/` `relaxng/` `helpandmanual/paragraph-tags.json` |
+| XML Spreadsheet / XLIFF (filters3) | `xmlss/` `xliff/file-XLIFFFilter.json` |
+| OpenDoc / OpenXML (filters3 ZIP) | sources/ids only (binary write not stored) |
+| Camtasia / Flash / Infix / L10nmgr / Properties XML / Schematron / Scribus / TXML / Typo3 / Visio / Wordpress | Java-exported `simple` / Java fixture goldens |
+
+Not this wave: filters4 `Xliff1Filter` / `Xliff2Filter` / `SdlXliff` / Office node write-back (G4). `office.rs` G4 stubs remain unregistered.
 
 ## G0 notes
 

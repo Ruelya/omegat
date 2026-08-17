@@ -62,6 +62,28 @@ import org.omegat.filters2.subtitles.SrtFilter;
 import org.omegat.filters2.subtitles.WebVttFilter;
 import org.omegat.filters2.xtagqxp.XtagFilter;
 import org.omegat.filters3.xml.android.AndroidFilter;
+import org.omegat.filters3.xml.camtasiawindows.CamtasiaWindowsFilter;
+import org.omegat.filters3.xml.docbook.DocBookFilter;
+import org.omegat.filters3.xml.flash.FlashFilter;
+import org.omegat.filters3.xml.helpandmanual.HelpAndManualFilter;
+import org.omegat.filters3.xml.infix.InfixFilter;
+import org.omegat.filters3.xml.l10nmgr.L10nmgrFilter;
+import org.omegat.filters3.xml.opendoc.OpenDocFilter;
+import org.omegat.filters3.xml.openxml.OpenXMLFilter;
+import org.omegat.filters3.xml.properties.PropertiesFilter;
+import org.omegat.filters3.xml.relaxng.RelaxNGFilter;
+import org.omegat.filters3.xml.resx.ResXFilter;
+import org.omegat.filters3.xml.schematron.SchematronFilter;
+import org.omegat.filters3.xml.scribus.ScribusFilter;
+import org.omegat.filters3.xml.svg.SvgFilter;
+import org.omegat.filters3.xml.txml.TXMLFilter;
+import org.omegat.filters3.xml.typo3.Typo3Filter;
+import org.omegat.filters3.xml.visio.VisioFilter;
+import org.omegat.filters3.xml.wix.WiXFilter;
+import org.omegat.filters3.xml.wordpress.WordpressFilter;
+import org.omegat.filters3.xml.xhtml.XHTMLFilter;
+import org.omegat.filters3.xml.xliff.XLIFFFilter;
+import org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetFilter;
 import org.omegat.gui.glossary.GlossaryEntry;
 import org.omegat.gui.glossary.GlossaryReaderTSV;
 import org.omegat.gui.glossary.GlossarySearcher;
@@ -118,6 +140,7 @@ public final class ExportGoldens {
         exportSrt();
         exportYaml();
         exportAndroid();
+        exportFilters3();
         exportResourceBundle();
         exportMozillaFtl();
         exportMagento();
@@ -303,13 +326,149 @@ public final class ExportGoldens {
                 "MyApp", "MonApp");
     }
 
+    private void exportFilters3() throws Exception {
+        exportFilter("docbook", "docbook/file-DocBookFilter.json",
+                "docBook/file-DocBookFilter.xml",
+                "org.omegat.filters.DocBookFilterTest#testParse",
+                new DocBookFilter(), Collections.emptyMap(), "My String", "GOLDEN_T");
+        exportFilter("resx", "resx/Resources.json",
+                "ResX/Resources.resx",
+                "org.omegat.filters.ResXFilterTest#testParse",
+                new ResXFilter(), Collections.emptyMap(),
+                "This is a text displayed in the UI.", "GOLDEN_T");
+        exportFilter("wix", "wix/fr-fr.json",
+                "Wix/fr-fr.wxl",
+                "org.omegat.filters.WiXFilterTest#testLoad",
+                new WiXFilter(), Collections.emptyMap(),
+                "This installation requires XXX. Setup will now exit.", "GOLDEN_T");
+        exportFilter("xhtml", "xhtml/file-XHTMLFilter.json",
+                "xhtml/file-XHTMLFilter.html",
+                "org.omegat.filters.XHTMLFilterTest#testParse",
+                new XHTMLFilter(), Collections.emptyMap(),
+                "XHTML 1.0 Example", "GOLDEN_T");
+        exportFilter("svg", "svg/Neural_network_example.json",
+                "SVG/Neural_network_example.svg",
+                "org.omegat.filters.SvgFilterTest#testLoad",
+                new SvgFilter(), Collections.emptyMap(), null, null);
+        exportFilter("relaxng", "relaxng/relaxng.json",
+                "relaxng/relaxng.rng",
+                "org.omegat.filters.RelaxNGFilterTest#testParse",
+                new RelaxNGFilter(), Collections.emptyMap(),
+                "RELAX NG is a schema language for XML.", "GOLDEN_T");
+        exportFilter("helpandmanual", "helpandmanual/paragraph-tags.json",
+                "helpandmanual/paragraph-tags.xml",
+                "org.omegat.filters.HelpAndManualFilterTest#testParagraphTagsAreExtracted",
+                new HelpAndManualFilter(), Collections.emptyMap(),
+                "Caption Text", "GOLDEN_T");
+        exportFilter("xmlss", "xmlss/XMLSpreadsheet2003.json",
+                "XMLSpreadsheet/XMLSpreadsheet2003.xml",
+                "org.omegat.filters.XMLSpreadsheetTest#testParse",
+                new XMLSpreadsheetFilter(), Collections.emptyMap(), null, null);
+        exportFilter("xliff", "xliff/file-XLIFFFilter.json",
+                "xliff/filters3/file-XLIFFFilter.xlf",
+                "org.omegat.filters.XLIFFFilterTest#testParse",
+                new XLIFFFilter(), Collections.emptyMap(), null, null);
+        exportZipFilter("opendoc", "opendoc/file-OpenDocFilter.json",
+                "openDoc/file-OpenDocFilter.odt",
+                "org.omegat.filters.OpenDocFilterTest#testParse",
+                new OpenDocFilter(), Collections.emptyMap());
+        exportZipFilter("openxml", "openxml/file-OpenXMLFilter.json",
+                "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters.OpenXMLFilterTest#testParse",
+                new OpenXMLFilter(), Collections.emptyMap());
+        exportFilter("camtasia", "camtasia/simple.json",
+                "CamtasiaWindows/simple.camproj",
+                "org.omegat.filters3.xml.camtasiawindows.CamtasiaWindowsFilter#processFile",
+                new CamtasiaWindowsFilter(), Collections.emptyMap(),
+                "Hello Camtasia", "GOLDEN_T");
+        exportFilter("flash", "flash/simple.json",
+                "flash/simple.xml",
+                "org.omegat.filters3.xml.flash.FlashFilter#processFile",
+                new FlashFilter(), Collections.emptyMap(), "Hello", "GOLDEN_T");
+        exportFilter("infix", "infix/simple.json",
+                "infix/simple.xml",
+                "org.omegat.filters3.xml.infix.InfixFilter#processFile",
+                new InfixFilter(), Collections.emptyMap(), null, null);
+        exportFilter("l10nmgr", "l10nmgr/simple.json",
+                "l10nmgr/simple.xml",
+                "org.omegat.filters3.xml.l10nmgr.L10nmgrFilter#processFile",
+                new L10nmgrFilter(), Collections.emptyMap(), "Hello", "GOLDEN_T");
+        exportFilter("propxml", "propxml/simple.json",
+                "propxml/simple.xml",
+                "org.omegat.filters3.xml.properties.PropertiesFilter#processFile",
+                new PropertiesFilter(), Collections.emptyMap(), "Alpha", "GOLDEN_T");
+        exportFilter("schematron", "schematron/simple.json",
+                "schematron/simple.sch",
+                "org.omegat.filters3.xml.schematron.SchematronFilter#processFile",
+                new SchematronFilter(), Collections.emptyMap(), null, null);
+        exportFilter("scribus", "scribus/Scribus.json",
+                "Scribus/Scribus.sla",
+                "org.omegat.filters3.xml.scribus.ScribusFilter#processFile",
+                new ScribusFilter(), Collections.emptyMap(), null, null);
+        exportFilter("txml", "txml/simple.json",
+                "txml/simple.txml",
+                "org.omegat.filters3.xml.txml.TXMLFilter#processFile",
+                new TXMLFilter(), Collections.emptyMap(),
+                "Hello target", "GOLDEN_T");
+        exportFilter("typo3", "typo3/simple.json",
+                "typo3/simple.xml",
+                "org.omegat.filters3.xml.typo3.Typo3Filter#processFile",
+                new Typo3Filter(), Collections.emptyMap(),
+                "Hello Typo3", "GOLDEN_T");
+        exportFilter("visio", "visio/simple.json",
+                "visio/simple.vdx",
+                "org.omegat.filters3.xml.visio.VisioFilter#processFile",
+                new VisioFilter(), Collections.emptyMap(), null, null);
+        exportFilter("wordpress", "wordpress/simple.json",
+                "wordpress/simple.xml",
+                "org.omegat.filters3.xml.wordpress.WordpressFilter#processFile",
+                new WordpressFilter(), Collections.emptyMap(),
+                "Hello WordPress", "GOLDEN_T");
+    }
+
+    private File resolveFixture(String fixtureRel) {
+        Path a = javaRoot.resolve("src/test/resources/data/filters").resolve(fixtureRel);
+        if (Files.isRegularFile(a)) {
+            return a.toFile();
+        }
+        Path b = javaRoot.resolve("../../fixtures/filters").normalize().resolve(fixtureRel);
+        if (Files.isRegularFile(b)) {
+            return b.toFile();
+        }
+        throw new IllegalStateException("missing fixture " + fixtureRel + " tried " + a + " and " + b);
+    }
+
+    private void exportZipFilter(String id, String outRel, String fixtureRel, String javaTest,
+            IFilter filter, Map<String, String> options) throws Exception {
+        File in = resolveFixture(fixtureRel);
+        filter.isFileSupported(in, options, context);
+        List<Parsed> parsed = parse(filter, in, options);
+        List<String> sources = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
+        for (Parsed p : parsed) {
+            sources.add(p.source);
+            ids.add(p.id == null ? "" : p.id);
+        }
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("id", id);
+        json.put("fixture", fixtureRel);
+        json.put("java_test", javaTest);
+        json.put("exported_by", EXPORTED_BY);
+        json.put("options", options);
+        json.put("sources", sources);
+        json.put("ids", ids);
+        writeJson(goldenRoot.resolve("filters").resolve(outRel), json);
+        System.out.println("wrote filters/" + outRel + " sources=" + sources.size() + " (zip, no write text)");
+    }
+
     private void exportFilter(String id, String outRel, String fixtureRel, String javaTest,
             IFilter filter, Map<String, String> options, String trSource, String trTarget)
             throws Exception {
-        File in = javaRoot.resolve("src/test/resources/data/filters").resolve(fixtureRel).toFile();
+        File in = resolveFixture(fixtureRel);
         if (!in.isFile()) {
             throw new IllegalStateException("missing Java fixture " + in);
         }
+        filter.isFileSupported(in, options, context);
         List<Parsed> parsed = parse(filter, in, options);
         List<String> sources = new ArrayList<>();
         List<String> ids = new ArrayList<>();

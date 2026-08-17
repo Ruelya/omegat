@@ -263,6 +263,52 @@ fn g2_properties_dtd_php_lang_ftl_csv_ilias_rc_must_match() {
 
 
 #[test]
+fn g3_android_java_golden_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert_rel("android/file-AndroidFilter.json", tmp.path());
+}
+
+#[test]
+fn g3_xml_dialects_java_goldens_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "docbook/file-DocBookFilter.json",
+        "resx/Resources.json",
+        "wix/fr-fr.json",
+        "xhtml/file-XHTMLFilter.json",
+        "svg/Neural_network_example.json",
+        "relaxng/relaxng.json",
+        "helpandmanual/paragraph-tags.json",
+        "xmlss/XMLSpreadsheet2003.json",
+        "xliff/file-XLIFFFilter.json",
+        "flash/simple.json",
+        "infix/simple.json",
+        "l10nmgr/simple.json",
+        "propxml/simple.json",
+        "schematron/simple.json",
+        "scribus/Scribus.json",
+        "visio/simple.json",
+        "camtasia/simple.json",
+        "txml/simple.json",
+        "typo3/simple.json",
+        "wordpress/simple.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g3_opendoc_openxml_java_goldens_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "opendoc/file-OpenDocFilter.json",
+        "openxml/file-OpenXMLFilter.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
 fn committed_filter_goldens_have_java_provenance() {
     let mut files = Vec::new();
     collect_json(&goldens_dir(), &mut files);

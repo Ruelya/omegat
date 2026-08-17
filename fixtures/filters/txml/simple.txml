@@ -1,1 +1,5 @@
-<txml><source>Hello</source></txml>
+<?xml version="1.0"?>
+<txml>
+  <source>Hello source</source>
+  <target>Hello target</target>
+</txml>

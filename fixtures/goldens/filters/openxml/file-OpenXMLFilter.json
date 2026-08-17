@@ -1,0 +1,17 @@
+{
+  "id": "openxml",
+  "fixture": "openXML/file-OpenXMLFilter.docx",
+  "java_test": "org.omegat.filters.OpenXMLFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    ""
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "id": "helpandmanual",
+  "fixture": "helpandmanual/paragraph-tags.xml",
+  "java_test": "org.omegat.filters.HelpAndManualFilterTest#testParagraphTagsAreExtracted",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "Title Text",
+    "Caption Text",
+    "Config Value Text",
+    "Variable Text",
+    "Para Text",
+    "Keyword Text",
+    "List Item Text"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<topic template=\"Default\">\n  <title>Title Text</title>\n  <body>\n    <caption>Caption Text</caption>\n    <config-value>Config Value Text</config-value>\n    <variable>Variable Text</variable>\n    <para><text>Para Text</text></para>\n    <keyword>Keyword Text</keyword>\n    <list type=\"ul\"><li>List Item Text</li></list>\n  </body>\n</topic>",
+  "translated": {
+    "source": "Caption Text",
+    "translation": "GOLDEN_T"
+  },
+  "translated_write": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<topic template=\"Default\">\n  <title>Title Text</title>\n  <body>\n    <caption>GOLDEN_T</caption>\n    <config-value>Config Value Text</config-value>\n    <variable>Variable Text</variable>\n    <para><text>Para Text</text></para>\n    <keyword>Keyword Text</keyword>\n    <list type=\"ul\"><li>List Item Text</li></list>\n  </body>\n</topic>"
+}

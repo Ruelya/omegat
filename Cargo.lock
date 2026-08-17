@@ -457,6 +457,7 @@ dependencies = [
  "log",
  "omegat-ipc",
  "once_cell",
+ "quick-xml",
  "regex",
  "roxmltree",
  "serde",

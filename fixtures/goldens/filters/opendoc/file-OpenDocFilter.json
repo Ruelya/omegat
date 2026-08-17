@@ -1,0 +1,17 @@
+{
+  "id": "opendoc",
+  "fixture": "openDoc/file-OpenDocFilter.odt",
+  "java_test": "org.omegat.filters.OpenDocFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    ""
+  ]
+}
