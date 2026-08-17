@@ -85,7 +85,12 @@ pub fn reset_hard(dir: &Path, spec: &str) -> Result<()> {
 }
 
 pub fn has_ref(dir: &Path, spec: &str) -> bool {
-    open(dir).ok().and_then(|r| r.revparse_single(spec).ok()).is_some()
+    let Ok(repo) = open(dir) else {
+        return false;
+    };
+    let ok = repo.revparse_single(spec).is_ok();
+    drop(repo);
+    ok
 }
 
 pub fn current_branch(dir: &Path) -> Result<String> {

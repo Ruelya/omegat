@@ -7,7 +7,7 @@
   "sourceLang": "Sprache der Quelldateien:",
   "targetLang": "Sprache der Zieldateien:",
   "sentenceSeg": "Satzsegmentierung",
-  "create": "OK",
+  "create": "Erstellen",
   "cancel": "Abbrechen",
   "files": "Quelldateien",
   "editor": "Editor (de)",

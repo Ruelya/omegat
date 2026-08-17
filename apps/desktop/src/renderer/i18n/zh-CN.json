@@ -7,7 +7,7 @@
   "sourceLang": "原文文件语言：",
   "targetLang": "译文文件语言：",
   "sentenceSeg": "语句级别分割(N)",
-  "create": "确定(O)",
+  "create": "创建",
   "cancel": "取消(C)",
   "files": "原文文件(U)",
   "editor": "编辑器",

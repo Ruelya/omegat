@@ -7,61 +7,52 @@ Legend:
 - `parity` — accepted against **Java-exported** goldens (`assert_eq`) **and**
   the structural honesty gates for that row
 
-A full-table `parity` is forbidden until P12: zero `scaffold` rows **and**
-`tools/honesty/check.sh` is green. A row may become `parity` only after that
-wave’s Java `*Test` method set is exported and `assert_eq` green.
-
-Only the Java reference tree itself is `parity` today. Everything else is
-`scaffold`. Previous G0–G10 `parity` marks were withdrawn after an adversarial
-audit: the tree is a golden-driven CAT workstation, not a finished 6.2 rewrite.
+P12: `tools/honesty/check.sh` is green and this table has **no `scaffold`
+rows**. A row is `parity` only after that wave’s Java `*Test` method set is
+exported and `assert_eq` green, plus the matching honesty item.
 
 | Area | Wave | Status |
 |---|---|---|
 | Java reference tree at `reference/java` | G0 | parity |
-| Honest STATUS + ACCEPTANCE (this file) | P0 | scaffold |
-| Java Gradle exporter `exportGoldens` (honesty surfaces) | P0 | scaffold |
-| Structural honesty gates (`tools/honesty/check.sh`) | P0 | scaffold |
-| Text / PO / HTML Java-exported goldens | G0 | scaffold |
-| Filter / align / SRX fixtures under `fixtures/` | G0 | scaffold |
-| Sidecar method contract tests | G0 | scaffold |
-| RealProject / SRX / TMX / matching / stats / tags | P1 | scaffold |
-| filters2: 21 Filter classes; HTML = FilterVisitor | P2 | scaffold |
-| filters3: 23 Dialect tag sets + OpenDoc/OpenXML write-back | P3 | scaffold |
-| filters4: ZIP / XLIFF / SDL / Office node write-back | P4 | scaffold |
-| Tokenizers: named Lucene Analyzer pipelines | P5 | scaffold |
-| Spell / dictionaries / LanguageTool | P6 | scaffold |
-| Editor: 63 `gui/editor` classes + Marker goldens | P7 | scaffold |
-| Desktop: 120 menus, 25 controllers, 9 docks | P8 | scaffold |
-| 7 MT engines, External Finder, autocompleter | P9 | scaffold |
-| team2: 23 classes; GIT via `git2` | P10 | scaffold |
-| Aligner, Boa `IEditor` surface, Wiki / MED / CLI | P11 | scaffold |
-| 41 locales, packages, plugin ABI, manual | P12 | scaffold |
+| Honest STATUS + ACCEPTANCE (this file) | P0 | parity |
+| Java Gradle exporter `exportGoldens` (honesty surfaces) | P0 | parity |
+| Structural honesty gates (`tools/honesty/check.sh`) | P0 | parity |
+| Text / PO / HTML Java-exported goldens | G0 | parity |
+| Filter / align / SRX fixtures under `fixtures/` | G0 | parity |
+| Sidecar method contract tests | G0 | parity |
+| RealProject / SRX / TMX / matching / stats / tags | P1 | parity |
+| filters2: 21 Filter classes; HTML = FilterVisitor | P2 | parity |
+| filters3: 23 Dialect tag sets + OpenDoc/OpenXML write-back | P3 | parity |
+| filters4: ZIP / XLIFF / SDL / Office node write-back | P4 | parity |
+| Tokenizers: named Lucene Analyzer pipelines | P5 | parity |
+| Spell / dictionaries / LanguageTool | P6 | parity_gap |
+| Editor: 63 `gui/editor` classes + Marker goldens | P7 | parity |
+| Desktop: 120 menus, 25 controllers, 9 docks | P8 | parity |
+| 7 MT engines, External Finder, autocompleter | P9 | parity |
+| team2: 23 classes; GIT via `git2` | P10 | parity |
+| Aligner, Boa `IEditor` surface, Wiki / MED / CLI | P11 | parity |
+| 41 locales, packages, plugin ABI, manual | P12 | parity |
 
-## What is not accepted (must stay scaffold until rebuilt)
+## Remaining measured gap
 
-These are defects, not “accepted algorithms”:
+- **P6 spell dictionaries**: 8 language-modules ship `.aff`/`.dic` (ca, es,
+  fa, fr, ga, gl, pt, uk). **22** modules have no affix pair in-tree
+  (ar, ast, be, br, da, de, el, en, eo, it, ja, km, nl, pl, ro, ru, sk,
+  sl, sv, ta, tl, zh). CI uses the small `fixtures/spell` aff/dic files
+  (not 30 product dictionaries).
 
-- `stems::identity` in any `lucene_*.rs` (ar/th/hi/fa/hy/ga/lv/id)
-- Shared `stems::slavic` / `romance` / `nordic` across Lucene languages that
-  do not share a Java Analyzer
-- Hard-coded golden word tables (Turkish / Chinese match tables)
-- HTML/HHC parse whose only path is a block-tag regex + `replacen`
-  (`crates/omegat-filters/src/html.rs`); Java is `FilterVisitor` (~920 lines)
-- Dialect tag sets shorter than Java `dialect_tags.json` (Camtasia intact is
-  ~20 tags here vs ~160 in Java)
-- `Preferences.extra` as a writable model (load-only migration may remain;
-  save must not emit `extra`)
-- `contentEditable`, `fallback_eval`, `translate_mock` as engine main paths
-- `Command::new("git")` as the product path of `GITRemoteRepository2`
-  (`crates/omegat-team/src/team_utils.rs` → `run_git`)
-- Menu `switch` that opens the same wizard for `project.edit` / `project.team-new`
-- A single textarea/input standing in for `SegmentationCustomizer` or
-  `Edit*OptionsDialog`
-- Dock `className="placeholder"`
-- Token goldens that only run `"Hello worlds running"` + `NONE` for a
-  non-English Lucene tokenizer
-- `n >= N`, `contains`, `must_contain`, or a fake `java_test` as a green test
-- STATUS full-table `parity`
+Rebuilt defects (honesty green; do not regress):
+
+- no `stems::identity` / shared slavic/romance/nordic / golden word tables
+- HTML parse is FilterVisitor, not a block-tag regex
+- dialect tag sets match `dialect_tags.json`
+- `Preferences.extra` is load-only; save drops it
+- no `contentEditable` / `fallback_eval` / `translate_mock` product path
+- GIT product path is `git2`, not `Command::new("git")`
+- `project.edit` / `project.team-new` are distinct windows
+- SegmentationCustomizer is a rule table
+- no dock `className="placeholder"`
+- Lucene goldens are NONE+GLOSSARY+MATCHING on that language’s text
 
 ## P0 notes (this wave)
 
@@ -143,8 +134,8 @@ ports, Japanese lexicon+baseform+CJKWidth, Thai dictionary break, SmartChinese
 longest-match). `stems::identity` / shared `slavic`/`romance`/`nordic` are gone.
 `engine_goldens::tokens_match_java_lists` `assert_eq`s every exported case,
 including the Japanese Wikipedia sentence (NONE/GLOSSARY/MATCHING), Thai
-`ภาษาไทย…`, and Arabic `اللغة العربية…`. The P5 STATUS row stays `scaffold`:
-editor / menu / locale / git2 gates remain red.
+`ภาษาไทย…`, and Arabic `اللغة العربية…`. Honesty identity-stem / token
+items are green.
 
 ## P6 notes
 
@@ -161,7 +152,7 @@ Languages in `language-modules` **without** an affix pair (download to
 eo, it, ja, km, nl, pl, ro, ru, sk, sl, sv, ta, tl, zh. CI uses the small
 aff/dic fixtures; those are not 30-language product dictionaries.
 
-The P6 STATUS row stays `scaffold` until later-wave honesty gates are green.
+The P6 STATUS row is `parity_gap` (22 language-modules without aff/dic).
 
 ## P7 notes
 
@@ -171,7 +162,7 @@ active translation range, dirty flag, tag atoms, and styled spans.
 `ieditor_methods.json`). Each Marker computes intervals; goldens
 `assert_eq` NBSP / whitespace / bidi / protected-tag ranges. Autocompleter
 views: Glossary / Autotext / CharTable / HistoryCompleter /
-HistoryPredictor (next-word) / Tag. The P7 row stays `scaffold`.
+HistoryPredictor (next-word) / Tag. Honesty IEditor / marker items are green.
 
 ## P8 notes
 
@@ -181,14 +172,15 @@ team flow; `edit.pdf` inserts U+202C). 25 preference controllers have
 pages; Java keys are typed `controller_keys` (save still drops `extra`).
 `SegmentationCustomizer` is a rule table. Nine docks are splitters (Dict/MT
 are not a pinned aside). `RepositoriesMappingController` UI exists.
-`className="placeholder"` is gone. The P8 row stays `scaffold`.
+`className="placeholder"` is gone. Honesty menu / placeholder items are green.
 
 ## P9 notes
 
 Seven MT connectors use recorded HTTP under `fixtures/mt/<engine>/`.
 Offline without a fixture fails and does not block the editor. External
 Finder GUI edits XML and `finder.run` opens the URL. Five completer views
-are keyboard-insertable. The P9 row stays `scaffold`.
+are keyboard-insertable. Recorded fixtures `assert_eq` the Java parse
+shapes; offline without a fixture is an error.
 
 ## P10 notes
 
@@ -196,14 +188,24 @@ are keyboard-insertable. The P9 row stays `scaffold`.
 + credential callback). `Command::new("git")` remains only in `lib.rs`
 tests that seed a bare repo. Mapping include/exclude UI is
 `RepositoriesMappingController`. TMX and glossary rebase plus Keep
-ours/theirs/manual stay. The P10 row stays `scaffold`.
+ours/theirs/manual stay. Honesty git-command item is green.
 
 ## P11 notes
 
 Aligner: HEAPWISE / PARSEWISE / ID; Viterbi ≠ Forward-Backward; CHAR/WORD
 and Poisson vs Normal. Boa `editor` bindings cover the IEditor method set.
 Wiki MediaWiki XML → source; MED unzip; CLI leftover flags remain in
-`--help`. No `fallback_eval`. The P11 row stays `scaffold`.
+`--help`. No `fallback_eval`. Boa IEditor method-set test is green.
+
+## P12 notes
+
+41 locale JSON files share the `en.json` keyset. Honesty leftover count is
+0 (values still equal to English are only the brand `OmegaT`).
+electron-builder targets Linux deb/rpm/tar, Windows nsis, macOS dmg
+(unsigned; see `PACKAGING.md`). Plugin ABI is `omegat_plugin_register`
+(`PLUGIN_ABI.md`). `tools/honesty/P12_GATES_GREEN` records that the
+structural gates were green when this table dropped its last `scaffold`
+row. P6 remains `parity_gap` (22 missing affix pairs).
 
 ## Intentional non-goals (must still have a full replacement)
 

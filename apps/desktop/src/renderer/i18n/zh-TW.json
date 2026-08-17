@@ -7,7 +7,7 @@
   "sourceLang": "原文語言(S)：",
   "targetLang": "譯文語言(T)：",
   "sentenceSeg": "啟用句子階層分節(N)",
-  "create": "確定(O)",
+  "create": "建立",
   "cancel": "取消(C)",
   "files": "專案檔案(F)",
   "editor": "編輯行為(E)",

@@ -7,7 +7,7 @@
   "sourceLang": "原文ファイル言語：",
   "targetLang": "訳文ファイル言語：",
   "sentenceSeg": "文単位の分節化(N)",
-  "create": "確定(O)",
+  "create": "作成",
   "cancel": "取り消し(C)",
   "files": "翻訳対象ファイル一覧(F)",
   "editor": "編集",

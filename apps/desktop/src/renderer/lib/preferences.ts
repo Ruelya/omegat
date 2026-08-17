@@ -466,6 +466,9 @@ export function mutatePref(base: Preferences, key: string): Preferences {
     case "search_window.search_type":
       next.search_window = { ...next.search_window, search_type: "regex" };
       break;
+    case "controller_keys":
+      next.controller_keys = { ...next.controller_keys, team_Author: "tester" };
+      break;
     default:
       throw new Error(`no mutator for ${key}`);
   }

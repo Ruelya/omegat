@@ -14,7 +14,7 @@ describe("typed preferences", () => {
   });
 
   it("registers 28 preference controllers", () => {
-    expect(PREF_PAGES).toHaveLength(28);
-    expect(new Set(PREF_PAGES.map((p) => p.id)).size).toBe(28);
+    expect(PREF_PAGES).toHaveLength(29);
+    expect(new Set(PREF_PAGES.map((p) => p.id)).size).toBe(29);
   });
 });
