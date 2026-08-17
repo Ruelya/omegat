@@ -327,6 +327,21 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
             assert_eq!(got_paths, exp_paths, "paths mismatch {}", path.display());
         }
     }
+    if let Some(existing) = spec["existing"].as_object() {
+        let mut got: HashMap<String, String> = HashMap::new();
+        for seg in &parsed.segments {
+            if let Some(t) = &seg.existing_translation {
+                if !t.is_empty() {
+                    got.insert(seg.source.clone(), t.clone());
+                }
+            }
+        }
+        let exp: HashMap<String, String> = existing
+            .iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect();
+        assert_eq!(got, exp, "existing translations {}", path.display());
+    }
     if let Some(false_src) = spec["sources_remove_tags_false"].as_array() {
         let mut ctx_keep = ctx.clone();
         ctx_keep.remove_tags = false;
@@ -354,7 +369,13 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
             .unwrap_or_else(|e| panic!("empty write {}: {e}", path.display()));
         let back = normalize_ws(&std::fs::read_to_string(&dest).unwrap_or_default());
         let exp = normalize_ws(empty_text);
-        assert_eq!(back, exp, "empty write mismatch {}", path.display());
+        if back != exp {
+            panic!(
+                "empty write mismatch {}\n{}",
+                path.display(),
+                first_diff(&back, &exp)
+            );
+        }
     }
     if let Some(tr) = spec.get("translated") {
         let source = tr["source"].as_str().unwrap();
@@ -447,6 +468,34 @@ fn zip_xml_part(zip_path: &Path, name: &str) -> String {
     raw
 }
 
+fn first_diff(got: &str, exp: &str) -> String {
+    let g: Vec<char> = got.chars().collect();
+    let e: Vec<char> = exp.chars().collect();
+    let n = g.len().min(e.len());
+    for i in 0..n {
+        if g[i] != e[i] {
+            let lo = i.saturating_sub(40);
+            let hi_g = (i + 80).min(g.len());
+            let hi_e = (i + 80).min(e.len());
+            return format!(
+                "first diff at {i} got_len={} exp_len={}\n got[…]: {:?}\n exp[…]: {:?}",
+                g.len(),
+                e.len(),
+                g[lo..hi_g].iter().collect::<String>(),
+                e[lo..hi_e].iter().collect::<String>()
+            );
+        }
+    }
+    let tail = 120.min(g.len()).min(e.len());
+    format!(
+        "prefix equal; got_len={} exp_len={}\n got_tail: {:?}\n exp_tail: {:?}",
+        g.len(),
+        e.len(),
+        g[g.len().saturating_sub(tail)..].iter().collect::<String>(),
+        e[e.len().saturating_sub(tail)..].iter().collect::<String>()
+    )
+}
+
 fn assert_zip_parts(
     dest: &Path,
     parts: &serde_json::Map<String, Value>,
@@ -455,7 +504,9 @@ fn assert_zip_parts(
     for (name, exp) in parts {
         let got = normalize_ws(&zip_xml_part(dest, name));
         let exp = normalize_ws(exp.as_str().unwrap_or(""));
-        assert_eq!(got, exp, "{label} part {name}");
+        if got != exp {
+            panic!("{label} part {name}\n{}", first_diff(&got, &exp));
+        }
     }
 }
 
@@ -752,6 +803,100 @@ fn g4_msoffice_java_goldens_must_match() {
     ] {
         assert_rel(rel, tmp.path());
     }
+}
+
+#[test]
+fn p4_filters4_all_java_test_goldens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let inv: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json")).unwrap(),
+    )
+    .unwrap();
+    let mut n = 0;
+    let mut fails = Vec::new();
+    for t in inv["tests"].as_array().unwrap() {
+        let class = t["class"].as_str().unwrap_or("");
+        if !class.contains("filters4") {
+            continue;
+        }
+        let golden = t["golden"].as_str().unwrap();
+        let path = repo_root().join("fixtures/goldens").join(golden);
+        if !path.is_file() {
+            fails.push(format!("missing {}", path.display()));
+            continue;
+        }
+        let spec: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        check_provenance(&path, &spec);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_unit_or_filter(&path, &spec, tmp.path());
+        }));
+        if let Err(e) = result {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "panic".into());
+            fails.push(format!("{}: {msg}", path.display()));
+        }
+        n += 1;
+    }
+    if !fails.is_empty() {
+        panic!("{} filters4 goldens failed:\n{}", fails.len(), fails.join("\n"));
+    }
+    let expected = inv["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| {
+            t["class"]
+                .as_str()
+                .unwrap_or("")
+                .contains("filters4")
+        })
+        .count();
+    assert_eq!(n, expected, "filters4 inventory goldens");
+}
+
+#[test]
+fn p4_docx_for_path_uses_filters3_openxml() {
+    let root = repo_root();
+    let spec_path = root.join("fixtures/goldens/engine/for_path_office.json");
+    let spec: Value = serde_json::from_str(&std::fs::read_to_string(&spec_path).unwrap())
+        .unwrap_or_else(|e| panic!("{}: {e}", spec_path.display()));
+    check_provenance(&spec_path, &spec);
+    assert_eq!(spec["docx"].as_str(), Some("openxml"));
+    assert_eq!(spec["xlsx"].as_str(), Some("openxml"));
+    assert_eq!(spec["pptx"].as_str(), Some("openxml"));
+    let docx = resolve_fixture("openXML/file-OpenXMLFilter.docx");
+    let reg = FilterRegistry::new();
+    let filter = reg
+        .for_path(&docx)
+        .unwrap_or_else(|| panic!("for_path({})", docx.display()));
+    assert_eq!(
+        filter.id(),
+        "openxml",
+        "FilterRegistry.for_path(*.docx) must select filters3 OpenXMLFilter"
+    );
+    let openxml_parse = goldens_dir().join("openxml/testParse.json");
+    let parse_spec: Value =
+        serde_json::from_str(&std::fs::read_to_string(&openxml_parse).unwrap()).unwrap();
+    check_provenance(&openxml_parse, &parse_spec);
+    let parsed = filter
+        .parse(&docx, &FilterContext::default())
+        .expect("openxml parse via for_path");
+    let expected: Vec<String> = parse_spec["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let got: Vec<String> = parsed.segments.iter().map(|s| s.source.clone()).collect();
+    assert_eq!(got, expected, "docx for_path parse vs openxml/testParse.json");
+    assert!(
+        reg.by_id("msoffice").is_some(),
+        "filters4 MsOfficeFileFilter remains selectable by id=msoffice"
+    );
 }
 
 #[test]

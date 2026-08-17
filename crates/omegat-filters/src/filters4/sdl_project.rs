@@ -1,6 +1,7 @@
 //! Java `org.omegat.filters4.xml.xliff.SdlProject`.
 
-use super::abstract_xml::{process_xml_string};
+use super::abstract_xml::process_xml_string_ex;
+use super::stax::XmlDeclStyle;
 use super::abstract_zip::{parse_zip_parts, write_zip_parts};
 use super::xliff1_filter::Xliff1Proc;
 use crate::{Filter, FilterContext, ParsedFile, Result};
@@ -29,7 +30,7 @@ fn parse_inner(raw: &str) -> Result<Vec<crate::ExtractedSegment>> {
     let mut proc = Xliff1Proc::new();
     proc.standard_state = false;
     proc.event_on_cmt_defs = true;
-    let (segments, _) = process_xml_string(raw, &mut proc, false)?;
+    let (segments, _) = process_xml_string_ex(raw, &mut proc, false, XmlDeclStyle::AbstractXml)?;
     Ok(segments)
 }
 
@@ -37,7 +38,8 @@ fn write_inner(raw: &str, translations: &HashMap<String, String>) -> Result<Stri
     let mut proc = Xliff1Proc::with_translations(translations);
     proc.standard_state = false;
     proc.event_on_cmt_defs = true;
-    let (_, text) = process_xml_string(raw, &mut proc, true)?;
+    proc.fill_missing_with_source = true;
+    let (_, text) = process_xml_string_ex(raw, &mut proc, true, XmlDeclStyle::AbstractXml)?;
     Ok(text)
 }
 

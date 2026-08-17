@@ -13,6 +13,7 @@ pub struct Xliff2Proc {
     pub xliff: XliffState,
     seg_id: Option<String>,
     flushed_segment: bool,
+    error: Option<String>,
 }
 
 impl Xliff2Proc {
@@ -21,6 +22,7 @@ impl Xliff2Proc {
             xliff: XliffState::new(),
             seg_id: None,
             flushed_segment: false,
+            error: None,
         }
     }
 
@@ -230,6 +232,8 @@ impl StaxFilter for Xliff2Proc {
                 if let Some(id) = ev.attr("id") {
                     self.xliff.path.push('/');
                     self.xliff.path.push_str(id);
+                } else {
+                    self.error = Some(format!("Attribute 'id' is missing in <{local}>"));
                 }
                 self.xliff.update_ignore_scope(ev);
             }
@@ -319,6 +323,10 @@ impl StaxFilter for Xliff2Proc {
 
     fn take_segments(&mut self) -> Vec<ExtractedSegment> {
         std::mem::take(&mut self.xliff.segments)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.error.clone()
     }
 }
 

@@ -6,6 +6,8 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "Title Text",
     "Caption Text",
@@ -16,6 +18,15 @@
     "List Item Text"
   ],
   "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
     "",
     "",
     "",

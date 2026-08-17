@@ -50,5 +50,11 @@
     "",
     ""
   ],
+  "existing": {
+    "source1": "trans12",
+    "source2": "trans2",
+    "True fuzzy!": "trans5",
+    "True fuzzy 2!": "trans6"
+  },
   "empty_write_text": "msgid \"\"\nmsgstr \"Plural-Forms: nplurals=3; plural\"\n\n#Some invalid comment\n# A valid comment\n# Another valid comment\n#. Some extracted comments\n#. More extracted comments\n#: /my/source/file\n#: /my/source/file2\nmsgctxt \"some context\"\nmsgid \"source1\"\nmsgstr \"\"\n\nmsgid \"source2\"\nmsgstr \"\"\n\n#Some Invalid comment\nmsgid \"source3\"\nmsgstr \"\"\n\nmsgid \"source1\"\nmsgstr \"\"\n\nmsgctxt \"other context\"\nmsgid \"source1\"\nmsgstr \"\"\n\nmsgctxt \"one more context\"\nmsgid \"source4\"\nmsgid_plural \"source4\"\nmsgstr[0] \"\"\nmsgstr[1] \"\"\nmsgstr[2] \"\"\n\nmsgid \"source5\"\nmsgstr \"\"\n\nmsgid \"source6\"\nmsgstr \"\"\n"
 }

@@ -153,6 +153,30 @@ impl Filter for MsOfficeFileFilter {
     fn phase(&self) -> u8 {
         4
     }
+    /// ZIP with a translatable Office part, or the inner `OpenXmlFilter`
+    /// document (`document.xml`) used by `OpenXmlFilterTest`.
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if accept_internal(&name) {
+            return true;
+        }
+        if let Ok(file) = std::fs::File::open(path) {
+            if let Ok(mut zip) = zip::ZipArchive::new(file) {
+                for i in 0..zip.len() {
+                    if let Ok(entry) = zip.by_index(i) {
+                        if accept_internal(entry.name()) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
         let docs = documents_pattern(&ctx.options);
         let options = ctx.options.clone();

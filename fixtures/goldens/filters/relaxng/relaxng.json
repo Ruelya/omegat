@@ -6,11 +6,17 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "RELAX NG is a schema language for XML.",
     "RELAX NG is simple and easy to learn."
   ],
   "ids": [
+    "",
+    ""
+  ],
+  "paths": [
     "",
     ""
   ],

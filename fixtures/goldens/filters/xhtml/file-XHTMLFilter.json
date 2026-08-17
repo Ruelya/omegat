@@ -6,6 +6,8 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "en",
     "en",
@@ -18,6 +20,17 @@
     "This is second line."
   ],
   "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
     "",
     "",
     "",

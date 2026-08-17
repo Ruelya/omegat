@@ -6,10 +6,15 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "Hello Typo3"
   ],
   "ids": [
+    ""
+  ],
+  "paths": [
     ""
   ],
   "empty_write_text": "<?xml version=\"1.0\"?>\n<t3_tt_content>\n  <title localizable=\"1\">Hello Typo3</title>\n</t3_tt_content>",

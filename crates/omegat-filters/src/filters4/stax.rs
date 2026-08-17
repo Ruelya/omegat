@@ -46,11 +46,17 @@ pub enum XmlEvent {
     StartDocument {
         version: Option<String>,
         encoding: Option<String>,
+        standalone: Option<String>,
     },
     StartElement {
         name: QName,
         attrs: Vec<Attribute>,
         namespaces: Vec<(String, String)>,
+    },
+    /// Java StAX `XMLEvent.ATTRIBUTE` (OpenXmlFilter rewrites `w:lang` this way).
+    Attribute {
+        name: QName,
+        value: String,
     },
     EndElement {
         name: QName,
@@ -158,7 +164,11 @@ pub fn read_xml_events(raw: &str) -> Result<Vec<XmlEvent>, String> {
                     .encoding()
                     .and_then(|r| r.ok())
                     .and_then(|v| String::from_utf8(v.as_ref().to_vec()).ok());
-                events.push(XmlEvent::StartDocument { version, encoding });
+                events.push(XmlEvent::StartDocument {
+                    version,
+                    encoding,
+                    standalone: None,
+                });
             }
             Ok(Event::Start(e)) => {
                 let elem_raw = reader
@@ -362,6 +372,14 @@ impl StaxWriter {
         self.out.push('>');
     }
 
+    /// Java `XMLStreamWriter.close()` / `writeEndDocument`: close leftover
+    /// open elements (Office LOOP2 can leave the writer stack unbalanced).
+    pub fn close_remaining(&mut self) {
+        while !self.stack.is_empty() {
+            self.write_end_element();
+        }
+    }
+
     pub fn write_characters(&mut self, data: &str) {
         self.close_pending_start();
         self.out.push_str(&escape_text(data));
@@ -423,6 +441,9 @@ pub fn from_event_to_writer(ev: &XmlEvent, writer: &mut StaxWriter) {
                 writer.write_attribute(&a.name.prefix, &a.name.uri, &a.name.local, &a.value);
             }
         }
+        XmlEvent::Attribute { name, value } => {
+            writer.write_attribute(&name.prefix, &name.uri, &name.local, value);
+        }
         XmlEvent::EndElement { .. } => writer.write_end_element(),
         XmlEvent::Characters { data } => writer.write_characters(data),
         XmlEvent::CData { data } => writer.write_cdata(data),
@@ -459,6 +480,13 @@ pub fn escape_attr(s: &str) -> String {
         }
     }
     out
+}
+
+/// Java `XMLStreamReader.standaloneSet` / `isStandalone`.
+pub fn detect_xml_standalone(raw: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"standalone\s*=\s*"(yes|no)""#).unwrap());
+    re.captures(raw).map(|c| c[1].to_string())
 }
 
 /// Java `PatternConsts.XML_ENCODING` — double quotes only.
@@ -509,11 +537,82 @@ pub fn normalize_xml_newlines(s: &str) -> String {
 /// Java `XMLWriter`: replace first `<?xml ...?>` then map `\n` → detected EOL.
 /// Assumes the body uses LF only (StAX / XML 1.0). Existing CRLF is not
 /// expanded a second time.
+/// How Java emits the XML prolog for filters4.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XmlDeclStyle {
+    /// `AbstractXmlFilter` START_DOCUMENT: `<?xml  version="…" encoding="…" ?>`
+    /// (space after `xml`, space before `?>`). Used for ZIP inner parts
+    /// (`AbstractZipFilter` + `XMLReader`).
+    AbstractXml,
+    /// Woodstox `XMLStreamWriter.writeStartDocument`: `<?xml version="1.0"?>`
+    /// or `<?xml version="1.0" encoding="UTF-8"?>`. Used for standalone
+    /// XLIFF / SDL XLIFF files (Reader already decoded; encoding often omitted).
+    Woodstox,
+}
+
+/// Java `AbstractXmlFilter` START_DOCUMENT / Woodstox `writeStartDocument`.
+pub fn java_xml_declaration(
+    version: Option<&str>,
+    encoding: Option<&str>,
+    standalone: Option<&str>,
+    style: XmlDeclStyle,
+) -> String {
+    match style {
+        XmlDeclStyle::AbstractXml => {
+            let mut sb = String::from("<?xml ");
+            if let Some(v) = version.filter(|s| !s.is_empty()) {
+                sb.push_str(" version=\"");
+                sb.push_str(v);
+                sb.push('"');
+            }
+            if let Some(e) = encoding.filter(|s| !s.is_empty()) {
+                sb.push_str(" encoding=\"");
+                sb.push_str(e);
+                sb.push('"');
+            }
+            if let Some(s) = standalone.filter(|s| !s.is_empty()) {
+                sb.push_str(" standalone=\"");
+                sb.push_str(s);
+                sb.push('"');
+            }
+            sb.push_str(" ?>");
+            sb
+        }
+        XmlDeclStyle::Woodstox => {
+            let mut sb = String::from("<?xml");
+            if let Some(v) = version.filter(|s| !s.is_empty()) {
+                sb.push_str(" version=\"");
+                sb.push_str(v);
+                sb.push('"');
+            }
+            if let Some(e) = encoding.filter(|s| !s.is_empty()) {
+                sb.push_str(" encoding=\"");
+                sb.push_str(e);
+                sb.push('"');
+            }
+            if let Some(s) = standalone.filter(|s| !s.is_empty()) {
+                sb.push_str(" standalone=\"");
+                sb.push_str(s);
+                sb.push('"');
+            }
+            sb.push_str("?>");
+            sb
+        }
+    }
+}
+
 pub fn finalize_xml_writer(body: &str, encoding: Option<&str>, eol: &str) -> String {
-    let header = match encoding {
-        Some(e) if !e.is_empty() => format!("<?xml version=\"1.0\" encoding=\"{e}\"?>"),
-        _ => "<?xml version=\"1.0\"?>".into(),
-    };
+    finalize_xml_writer_ex(body, encoding, None, eol, XmlDeclStyle::AbstractXml)
+}
+
+pub fn finalize_xml_writer_ex(
+    body: &str,
+    encoding: Option<&str>,
+    standalone: Option<&str>,
+    eol: &str,
+    style: XmlDeclStyle,
+) -> String {
+    let header = java_xml_declaration(Some("1.0"), encoding, standalone, style);
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"<\?xml.*?\?>").unwrap());
     let with_header = if re.is_match(body) {

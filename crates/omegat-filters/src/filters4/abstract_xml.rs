@@ -1,8 +1,8 @@
 //! Java `AbstractXmlFilter` process loop.
 
 use super::stax::{
-    detect_eol, detect_xml_encoding, finalize_xml_writer, from_event_to_writer, read_xml_events,
-    StaxWriter, XmlEvent,
+    detect_eol, detect_xml_encoding, detect_xml_standalone, finalize_xml_writer_ex,
+    from_event_to_writer, java_xml_declaration, read_xml_events, StaxWriter, XmlDeclStyle, XmlEvent,
 };
 use crate::{ensure_parent, ExtractedSegment, FilterError, Result};
 use std::path::Path;
@@ -13,6 +13,10 @@ pub trait StaxFilter {
     fn process_end(&mut self, ev: &XmlEvent, writer: Option<&mut StaxWriter>) -> bool;
     fn process_characters(&mut self, ev: &XmlEvent, writer: Option<&mut StaxWriter>) -> bool;
     fn take_segments(&mut self) -> Vec<ExtractedSegment>;
+    /// Java `XMLStreamException` / `TranslationException` from a required attribute.
+    fn fatal_error(&self) -> Option<String> {
+        None
+    }
 }
 
 pub fn process_xml(
@@ -20,15 +24,31 @@ pub fn process_xml(
     filter: &mut dyn StaxFilter,
     writing: bool,
 ) -> Result<(Vec<ExtractedSegment>, String)> {
+    process_xml_ex(raw, filter, writing, XmlDeclStyle::Woodstox)
+}
+
+/// `decl` selects Java `AbstractXmlFilter` prolog vs Woodstox `writeStartDocument`.
+pub fn process_xml_ex(
+    raw: &str,
+    filter: &mut dyn StaxFilter,
+    writing: bool,
+    decl: XmlDeclStyle,
+) -> Result<(Vec<ExtractedSegment>, String)> {
     let events = read_xml_events(raw).map_err(|e| FilterError::Parse {
         format: "filters4".into(),
         message: e,
     })?;
     let encoding = detect_xml_encoding(raw);
+    let standalone = detect_xml_standalone(raw);
     let eol = detect_eol(raw);
     let mut writer = StaxWriter::default();
     if writing {
-        writer.out.push_str("<?xml version=\"1.0\"?>");
+        writer.out.push_str(&java_xml_declaration(
+            Some("1.0"),
+            encoding.as_deref(),
+            standalone.as_deref(),
+            decl,
+        ));
     }
     let mut is_event_mode = false;
     let mut depth: i32 = 0;
@@ -83,10 +103,25 @@ pub fn process_xml(
         } else if writing {
             from_event_to_writer(ev, &mut writer);
         }
+        if let Some(msg) = filter.fatal_error() {
+            return Err(FilterError::Parse {
+                format: "filters4".into(),
+                message: msg,
+            });
+        }
+    }
+    if writing {
+        writer.close_remaining();
     }
     let segments = filter.take_segments();
     let text = if writing {
-        finalize_xml_writer(&writer.out, encoding.as_deref(), &eol)
+        finalize_xml_writer_ex(
+            &writer.out,
+            encoding.as_deref(),
+            standalone.as_deref(),
+            &eol,
+            decl,
+        )
     } else {
         String::new()
     };
@@ -117,4 +152,13 @@ pub fn process_xml_string(
     writing: bool,
 ) -> Result<(Vec<ExtractedSegment>, String)> {
     process_xml(raw, filter, writing)
+}
+
+pub fn process_xml_string_ex(
+    raw: &str,
+    filter: &mut dyn StaxFilter,
+    writing: bool,
+    decl: XmlDeclStyle,
+) -> Result<(Vec<ExtractedSegment>, String)> {
+    process_xml_ex(raw, filter, writing, decl)
 }

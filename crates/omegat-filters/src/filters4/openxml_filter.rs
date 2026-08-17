@@ -1,8 +1,8 @@
 //! Java `org.omegat.filters4.xml.openxml.OpenXmlFilter`.
 
 use super::abstract_xliff::omegat_tag;
-use super::abstract_xml::{process_xml_string, StaxFilter};
-use super::stax::{from_event_to_writer, QName, StaxWriter, XmlEvent};
+use super::abstract_xml::{process_xml_string_ex, StaxFilter};
+use super::stax::{from_event_to_writer, QName, StaxWriter, XmlDeclStyle, XmlEvent};
 use crate::{ExtractedSegment, FilterContext, Result};
 use regex::Regex;
 use std::collections::BTreeMap;
@@ -193,58 +193,99 @@ impl OpenXmlProc {
         res
     }
 
-    /// Java `buildTags` LOOP2: keep defaults only if every run has rPr and no
-    /// conflicting rPr child. Empty run buffers are removed (Java `remove(j)`).
+    /// Java `buildTags` LOOP2, including in-place collapse of a start whose
+    /// attributes arrived as later `ATTRIBUTE` events (or, when they did not,
+    /// replacement by an attribute-less start — which is what produces the
+    /// `w:szCs`/`w:t` nesting in `testParseTables`).
     fn apply_paragraph_defaults(&mut self) {
         let mut j = 1;
         while j < self.current_para.len() {
             if self.current_para[j].is_empty() {
                 self.current_para.remove(j);
-                j += 1; // Java `continue LOOP2` still increments the for-loop
+                j += 1; // Java `continue LOOP2` still increments
                 continue;
             }
-            let run = self.current_para[j].clone();
             let mut ir = 0;
-            if ir >= run.len() {
+            if ir >= self.current_para[j].len() {
                 self.current_para.remove(j);
                 j += 1;
                 continue;
             }
-            if run[ir].local_name() != Some("r")
-                || !matches!(run[ir], XmlEvent::StartElement { .. })
-            {
+            let ev0 = self.current_para[j][ir].clone();
+            ir += 1;
+            if ev0.local_name() != Some("r") || !matches!(ev0, XmlEvent::StartElement { .. }) {
                 j += 1;
                 continue;
             }
-            ir += 1;
-            if ir >= run.len()
-                || run[ir].local_name() != Some("rPr")
-                || !matches!(run[ir], XmlEvent::StartElement { .. })
-            {
+            if ir >= self.current_para[j].len() {
                 self.defaults_for_paragraph = None;
                 return;
             }
+            let ev1 = self.current_para[j][ir].clone();
             ir += 1;
-            while ir < run.len() {
-                let ev = &run[ir];
+            if ev1.local_name() != Some("rPr") || !matches!(ev1, XmlEvent::StartElement { .. }) {
+                self.defaults_for_paragraph = None;
+                return;
+            }
+            loop {
+                if ir >= self.current_para[j].len() {
+                    break;
+                }
+                let ev = self.current_para[j][ir].clone();
+                ir += 1;
                 if ev.local_name() == Some("rPr") && matches!(ev, XmlEvent::EndElement { .. }) {
                     break;
                 }
                 if matches!(ev, XmlEvent::EndElement { .. }) {
-                    ir += 1;
                     continue;
                 }
                 if !matches!(ev, XmlEvent::StartElement { .. }) {
                     self.defaults_for_paragraph = None;
                     return;
                 }
-                if let Some(defaults) = &self.defaults_for_paragraph {
-                    if self.is_in_defaults(ev, defaults) == 1 {
-                        self.defaults_for_paragraph = None;
-                        return;
+                let differ = self
+                    .defaults_for_paragraph
+                    .as_ref()
+                    .map(|d| self.is_in_defaults(&ev, d) == 1)
+                    .unwrap_or(false);
+                if !differ {
+                    continue;
+                }
+                let start_idx = ir - 1;
+                let mut la = Vec::new();
+                while ir < self.current_para[j].len() {
+                    if let XmlEvent::Attribute { name, value } = &self.current_para[j][ir] {
+                        la.push(super::stax::Attribute {
+                            name: name.clone(),
+                            value: value.clone(),
+                        });
+                        ir += 1;
+                    } else {
+                        break;
                     }
                 }
-                ir += 1;
+                // Java: remove events until the iterator is back on `ev`, then
+                // replace `ev` with a start that only has the collected attrs.
+                if ir < self.current_para[j].len() && ir > start_idx {
+                    self.current_para[j].drain(start_idx + 1..=ir);
+                } else if ir > start_idx + 1 {
+                    self.current_para[j].drain(start_idx + 1..ir);
+                }
+                let mut collapsed = ev.clone();
+                if let XmlEvent::StartElement { attrs, .. } = &mut collapsed {
+                    *attrs = la;
+                }
+                self.current_para[j][start_idx] = collapsed.clone();
+                ir = start_idx + 1;
+                let still = self
+                    .defaults_for_paragraph
+                    .as_ref()
+                    .map(|d| self.is_in_defaults(&collapsed, d) == 1)
+                    .unwrap_or(true);
+                if still {
+                    self.defaults_for_paragraph = None;
+                    return;
+                }
             }
             j += 1;
         }
@@ -495,6 +536,7 @@ impl OpenXmlProc {
             namespaces: vec![],
         });
         if let Some(defaults) = &self.defaults_for_paragraph {
+            // Java: these are not really defaults; repeat rPr when generating target.
             let mut in_rpr = false;
             for ev in defaults {
                 if ev.local_name() == Some("rPr") && matches!(ev, XmlEvent::StartElement { .. }) {
@@ -538,40 +580,36 @@ impl OpenXmlProc {
         });
     }
 
-    fn rewrite_lang(&self, ev: XmlEvent) -> XmlEvent {
+    /// Java `processStartElement` for `lang` / `themeFontLang`: emit a start
+    /// with **no** attributes, then one `ATTRIBUTE` event per rewritten value.
+    fn rewrite_lang_events(&self, ev: &XmlEvent) -> Vec<XmlEvent> {
         let XmlEvent::StartElement {
             name,
             attrs,
             namespaces,
         } = ev
         else {
-            return ev;
+            return vec![ev.clone()];
         };
         if name.local != "lang" && name.local != "themeFontLang" {
-            return XmlEvent::StartElement {
-                name,
-                attrs,
-                namespaces,
-            };
+            return vec![ev.clone()];
         }
         if self.source_lang.is_empty() || self.target_lang.is_empty() {
-            return XmlEvent::StartElement {
-                name,
-                attrs,
-                namespaces,
-            };
+            return vec![ev.clone()];
         }
         let src = self.source_lang.clone();
         let tgt = self.target_lang.clone();
-        let attrs = attrs
-            .into_iter()
-            .map(|mut a| {
-                let aval = a.value.clone();
-                let mut pval = src.clone();
-                if aval.eq_ignore_ascii_case(&pval) {
-                    a.value = tgt.clone();
-                    return a;
-                }
+        let mut out = vec![XmlEvent::StartElement {
+            name: name.clone(),
+            attrs: vec![],
+            namespaces: namespaces.clone(),
+        }];
+        for a in attrs {
+            let aval = a.value.clone();
+            let mut pval = src.clone();
+            let value = if aval.eq_ignore_ascii_case(&pval) {
+                tgt.clone()
+            } else {
                 let aval2 = if aval.len() > 2 && aval.as_bytes().get(2) == Some(&b'-') {
                     aval[..2].to_string()
                 } else {
@@ -581,16 +619,17 @@ impl OpenXmlProc {
                     pval = pval[..2].to_string();
                 }
                 if aval2.eq_ignore_ascii_case(&pval) {
-                    a.value = tgt.clone();
+                    tgt.clone()
+                } else {
+                    a.value.clone()
                 }
-                a
-            })
-            .collect();
-        XmlEvent::StartElement {
-            name,
-            attrs,
-            namespaces,
+            };
+            out.push(XmlEvent::Attribute {
+                name: a.name.clone(),
+                value,
+            });
         }
+        out
     }
 }
 
@@ -704,11 +743,15 @@ impl StaxFilter for OpenXmlProc {
                 return false;
             }
             if self.writing && (name.local == "lang" || name.local == "themeFontLang") {
-                let rewritten = self.rewrite_lang(ev.clone());
+                let rewritten = self.rewrite_lang_events(ev);
                 if self.current_buf.is_some() {
-                    self.push_ev(rewritten);
+                    for ev in rewritten {
+                        self.push_ev(ev);
+                    }
                 } else if let Some(w) = writer {
-                    from_event_to_writer(&rewritten, w);
+                    for ev in rewritten {
+                        from_event_to_writer(&ev, w);
+                    }
                 }
                 return false;
             }
@@ -792,7 +835,7 @@ impl StaxFilter for OpenXmlProc {
 
 pub fn parse_openxml_part(raw: &str, ctx: &FilterContext, with_comments: bool) -> Result<Vec<ExtractedSegment>> {
     let mut proc = OpenXmlProc::new(ctx, with_comments, false);
-    let (segments, _) = process_xml_string(raw, &mut proc, false)?;
+    let (segments, _) = process_xml_string_ex(raw, &mut proc, false, XmlDeclStyle::AbstractXml)?;
     Ok(segments)
 }
 
@@ -804,6 +847,6 @@ pub fn write_openxml_part(
 ) -> Result<String> {
     let mut proc = OpenXmlProc::new(ctx, with_comments, true);
     proc.set_translations(translations);
-    let (_, text) = process_xml_string(raw, &mut proc, true)?;
+    let (_, text) = process_xml_string_ex(raw, &mut proc, true, XmlDeclStyle::AbstractXml)?;
     Ok(text)
 }

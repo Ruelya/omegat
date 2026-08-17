@@ -901,6 +901,126 @@
       "class": "org.omegat.filters.XMLSpreadsheetTest",
       "method": "testTranslate",
       "golden": "filters/xmlss/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testParse",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testParse",
+      "golden": "filters/xliff1/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testParseMissingId",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testParseMissingId",
+      "golden": "filters/xliff1/testParseMissingId.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testBilingual",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testBilingual",
+      "golden": "filters/xliff1/testBilingual.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testKey",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testKey",
+      "golden": "filters/xliff1/testKey.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testTranslation",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testTranslation",
+      "golden": "filters/xliff1/testTranslation.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testTranslationRFE1506",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testTranslationRFE1506",
+      "golden": "filters/xliff1/testTranslationRFE1506.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testBugs418",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testBugs418",
+      "golden": "filters/xliff1/testBugs418.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testBugs1247",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testBugs1247",
+      "golden": "filters/xliff1/testBugs1247.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff1FilterTest#testBugs1247_2",
+      "class": "org.omegat.filters4.Xliff1FilterTest",
+      "method": "testBugs1247_2",
+      "golden": "filters/xliff1/testBugs1247_2.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.xml.openxml.OpenXmlFilterTest#testOpenXmlFilterIsFileSupported",
+      "class": "org.omegat.filters4.xml.openxml.OpenXmlFilterTest",
+      "method": "testOpenXmlFilterIsFileSupported",
+      "golden": "filters/msoffice/testOpenXmlFilterIsFileSupported.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff2FilterTest#testParse",
+      "class": "org.omegat.filters4.Xliff2FilterTest",
+      "method": "testParse",
+      "golden": "filters/xliff2/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff2FilterTest#testBilingual",
+      "class": "org.omegat.filters4.Xliff2FilterTest",
+      "method": "testBilingual",
+      "golden": "filters/xliff2/testBilingual.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff2FilterTest#testKey",
+      "class": "org.omegat.filters4.Xliff2FilterTest",
+      "method": "testKey",
+      "golden": "filters/xliff2/testKey.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff2FilterTest#testTranslation",
+      "class": "org.omegat.filters4.Xliff2FilterTest",
+      "method": "testTranslation",
+      "golden": "filters/xliff2/testTranslation.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.Xliff2FilterTest#testTranslation_glossary_14_5",
+      "class": "org.omegat.filters4.Xliff2FilterTest",
+      "method": "testTranslation_glossary_14_5",
+      "golden": "filters/xliff2/testTranslation_glossary_14_5.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testParse",
+      "class": "org.omegat.filters4.MsOfficeFileFilterTest",
+      "method": "testParse",
+      "golden": "filters/msoffice/testParse.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testParseTables",
+      "class": "org.omegat.filters4.MsOfficeFileFilterTest",
+      "method": "testParseTables",
+      "golden": "filters/msoffice/testParseTables.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testTranslate",
+      "class": "org.omegat.filters4.MsOfficeFileFilterTest",
+      "method": "testTranslate",
+      "golden": "filters/msoffice/testTranslate.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testLoad",
+      "class": "org.omegat.filters4.MsOfficeFileFilterTest",
+      "method": "testLoad",
+      "golden": "filters/msoffice/testLoad.json"
+    },
+    {
+      "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testIsFileSupported",
+      "class": "org.omegat.filters4.MsOfficeFileFilterTest",
+      "method": "testIsFileSupported",
+      "golden": "filters/msoffice/testIsFileSupported.json"
     }
   ]
 }

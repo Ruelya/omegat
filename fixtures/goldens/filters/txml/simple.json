@@ -6,10 +6,15 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "Hello target"
   ],
   "ids": [
+    ""
+  ],
+  "paths": [
     ""
   ],
   "empty_write_text": "<?xml version=\"1.0\"?>\n<txml>\n  <source>Hello source</source>\n  <target>Hello target</target>\n</txml>",

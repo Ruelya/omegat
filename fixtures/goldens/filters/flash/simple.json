@@ -6,10 +6,15 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "Hello"
   ],
   "ids": [
+    ""
+  ],
+  "paths": [
     ""
   ],
   "empty_write_text": "<?xml version=\"1.0\"?>\n<font><characters>Hello</characters></font>",

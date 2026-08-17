@@ -23,5 +23,9 @@
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident",
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\\nReprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.\\nExcepteur sint occaecat cupidatat non proident"
   ],
+  "existing": {
+    "Long context in only one line.": "Placeholder target",
+    "Long context in several lines.": "Placeholder target"
+  },
   "empty_write_text": "#: multiple_lines\nmsgid \"\"\n\"Multiline\\n\"\n\"message ID with linefeed character.\"\nmsgstr \"\"\n\n#: one_line_only_with_ctx\nmsgctxt \"Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident\"\nmsgid \"Long context in only one line.\"\nmsgstr \"\"\n\n#: multiple_lines_with_ctx\nmsgctxt \"\"\n\"Lorem ipsum dolor sit amet, consectetur adipiscing elit, \"\n\"sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.\\n\"\n\"Reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.\\n\"\n\"Excepteur sint occaecat cupidatat non proident\"\nmsgid \"Long context in several lines.\"\nmsgstr \"\"\n"
 }

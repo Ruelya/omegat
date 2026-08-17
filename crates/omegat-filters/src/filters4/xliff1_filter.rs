@@ -21,6 +21,10 @@ pub struct Xliff1Proc {
     target_start: Option<XmlEvent>,
     pub standard_state: bool,
     pub event_on_cmt_defs: bool,
+    /// Java `AbstractFilter` default `isBilingual()==false` (SdlProject ZIP).
+    /// Missing translations fall back to the source text.
+    pub fill_missing_with_source: bool,
+    error: Option<String>,
 }
 
 impl Xliff1Proc {
@@ -33,6 +37,8 @@ impl Xliff1Proc {
             target_start: None,
             standard_state: true,
             event_on_cmt_defs: false,
+            fill_missing_with_source: false,
+            error: None,
         }
     }
 
@@ -49,8 +55,12 @@ impl Xliff1Proc {
             .unwrap_or_else(|| XLIFF12.to_string())
     }
 
-    fn required_attr(ev: &XmlEvent, name: &str) -> Option<String> {
-        ev.attr(name).map(|s| s.to_string())
+    fn required_attr(&mut self, ev: &XmlEvent, name: &str, element: &str) -> Option<String> {
+        if let Some(v) = ev.attr(name) {
+            return Some(v.to_string());
+        }
+        self.error = Some(format!("Attribute '{name}' is missing in <{element}>"));
+        None
     }
 
     fn build_tags(&mut self, src_list: &[XmlEvent], reuse: bool) -> String {
@@ -287,7 +297,16 @@ impl Xliff1Proc {
             let list = self.xliff.source.clone();
             self.build_tags(&list, false)
         };
-        let tra = self.xliff.lookup_translation(&unit_id, &src, &self.xliff.path);
+        let tra = self
+            .xliff
+            .lookup_translation(&unit_id, &src, &self.xliff.path)
+            .or_else(|| {
+                if self.fill_missing_with_source {
+                    Some(src.clone())
+                } else {
+                    None
+                }
+            });
         if let Some(tra) = tra {
             self.generate_target_start(writer, true);
             let restored = restore_tags(&tra, &self.xliff.tags_map);
@@ -353,7 +372,7 @@ impl StaxFilter for Xliff1Proc {
                 }
             }
             "file" => {
-                if let Some(orig) = Self::required_attr(ev, "original") {
+                if let Some(orig) = self.required_attr(ev, "original", "file") {
                     self.xliff.path.push('/');
                     self.xliff.path.push_str(&orig);
                 }
@@ -373,7 +392,7 @@ impl StaxFilter for Xliff1Proc {
                 self.xliff.update_ignore_scope(ev);
             }
             "trans-unit" => {
-                self.unit_id = Self::required_attr(ev, "id");
+                self.unit_id = self.required_attr(ev, "id", "trans-unit");
                 self.flushed_unit = false;
                 self.target_start = None;
                 self.xliff.update_ignore_scope(ev);
@@ -493,6 +512,10 @@ impl StaxFilter for Xliff1Proc {
 
     fn take_segments(&mut self) -> Vec<crate::ExtractedSegment> {
         std::mem::take(&mut self.xliff.segments)
+    }
+
+    fn fatal_error(&self) -> Option<String> {
+        self.error.clone()
     }
 }
 

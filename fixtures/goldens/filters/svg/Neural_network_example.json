@@ -6,6 +6,8 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "<t0><t1>input</t1></t0><t2><t3>layer</t3></t2>",
     "<t0><t1>hidden</t1></t0><t2><t3>layer</t3></t2>",
@@ -13,6 +15,12 @@
     "A simple neural network"
   ],
   "ids": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
     "",
     "",
     "",

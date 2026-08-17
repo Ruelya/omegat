@@ -154,6 +154,7 @@ import org.omegat.filters3.xml.xliff.XLIFFOptions;
 import org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetDialect;
 import org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetFilter;
 import org.omegat.filters4.xml.openxml.MsOfficeFileFilter;
+import org.omegat.filters4.xml.openxml.OpenXmlFilter;
 import org.omegat.filters4.xml.xliff.SdlProject;
 import org.omegat.filters4.xml.xliff.SdlXliff;
 import org.omegat.filters4.xml.xliff.Xliff1Filter;
@@ -553,6 +554,7 @@ public final class ExportGoldens {
     }
 
     private void exportFilters4() throws Exception {
+        bindProjectLangs("en", "be");
         exportFilter("xliff1", "xliff1/en-xx.json",
                 "xliff/filters4-xliff1/en-xx.xlf",
                 "org.omegat.filters4.Xliff1FilterTest#testParse",
@@ -616,7 +618,30 @@ public final class ExportGoldens {
         if ("openxml".equals(id) || "msoffice".equals(id)) {
             return new String[] { "word/document.xml" };
         }
+        if ("sdlproject".equals(id)) {
+            return new String[] { "be/hello.sdlxliff" };
+        }
         return new String[] {};
+    }
+
+    /** OpenXmlFilter rewrites w:lang from Core project properties. */
+    private void bindProjectLangs(String sourceLang, String targetLang) {
+        Core.setProject(new NotLoadedProject() {
+            @Override
+            public ProjectProperties getProjectProperties() {
+                return new ProjectProperties() {
+                    @Override
+                    public Language getSourceLanguage() {
+                        return new Language(sourceLang);
+                    }
+
+                    @Override
+                    public Language getTargetLanguage() {
+                        return new Language(targetLang);
+                    }
+                };
+            }
+        });
     }
 
     private void exportZipFilter(String id, String outRel, String fixtureRel, String javaTest,
@@ -716,10 +741,14 @@ public final class ExportGoldens {
         List<String> sources = new ArrayList<>();
         List<String> ids = new ArrayList<>();
         List<String> paths = new ArrayList<>();
+        Map<String, String> existing = new LinkedHashMap<>();
         for (Parsed p : parsed) {
             sources.add(p.source);
             ids.add(p.id == null ? "" : p.id);
             paths.add(p.path == null ? "" : p.path);
+            if (p.translation != null && !p.translation.isEmpty()) {
+                existing.put(p.source, p.translation);
+            }
         }
         Path tmp = Files.createTempDirectory("omegat-export-");
         File emptyOut = tmp.resolve("empty-" + in.getName()).toFile();
@@ -751,6 +780,9 @@ public final class ExportGoldens {
         json.put("sources", sources);
         json.put("ids", ids);
         json.put("paths", paths);
+        if (!existing.isEmpty()) {
+            json.put("existing", existing);
+        }
         json.put("empty_write_text", emptyText);
         if (translated != null) {
             json.put("translated", translated);
@@ -778,11 +810,13 @@ public final class ExportGoldens {
         final String id;
         final String source;
         final String path;
+        final String translation;
 
-        Parsed(String id, String source, String path) {
+        Parsed(String id, String source, String path, String translation) {
             this.id = id;
             this.source = source;
             this.path = path;
+            this.translation = translation;
         }
     }
 
@@ -800,7 +834,7 @@ public final class ExportGoldens {
                     String[] props, String path, IFilter filter,
                     List<org.omegat.core.data.ProtectedPart> protectedParts) {
                 if (source != null && !source.isEmpty()) {
-                    result.add(new Parsed(id, source, path));
+                    result.add(new Parsed(id, source, path, translation));
                 }
             }
 
@@ -1908,7 +1942,9 @@ public final class ExportGoldens {
         exportFilters2AllTests();
         exportFilters3();
         exportFilters3AllTests();
-        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html/filters3)");
+        exportFilters4();
+        exportFilters4AllTests();
+        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html/filters3/filters4)");
     }
 
     private Object[][] languageTokenizerFixtures() {
@@ -2182,10 +2218,13 @@ public final class ExportGoldens {
     }
 
     private void exportFilterTestInventory() throws Exception {
-        Path testDir = javaRoot.resolve("src/test/java/org/omegat/filters");
         Pattern testMethod = Pattern.compile("public void (test\\w+)\\s*\\(");
         List<Map<String, Object>> tests = new ArrayList<>();
-        if (Files.isDirectory(testDir)) {
+        for (String pkg : List.of("org/omegat/filters", "org/omegat/filters4")) {
+            Path testDir = javaRoot.resolve("src/test/java").resolve(pkg);
+            if (!Files.isDirectory(testDir)) {
+                continue;
+            }
             try (var stream = Files.walk(testDir)) {
                 for (Path p : stream.filter(x -> x.getFileName().toString().endsWith("Test.java")).toList()) {
                     String rel = javaRoot.relativize(p).toString().replace('\\', '/');
@@ -2215,7 +2254,15 @@ public final class ExportGoldens {
     private static String guessFilterGolden(String className, String method) {
         String simple = className.substring(className.lastIndexOf('.') + 1);
         String id = simple.replace("FilterTest", "").replace("Filter2Test", "").replace("Test", "").toLowerCase();
-        if (simple.contains("XHTML")) {
+        if (className.contains("filters4")) {
+            if (simple.contains("Xliff1")) {
+                id = "xliff1";
+            } else if (simple.contains("Xliff2")) {
+                id = "xliff2";
+            } else if (simple.contains("MsOffice") || simple.contains("OpenXml")) {
+                id = "msoffice";
+            }
+        } else if (simple.contains("XHTML")) {
             id = "xhtml";
         } else if (simple.contains("HTML")) {
             id = "html";
@@ -2400,6 +2447,108 @@ public final class ExportGoldens {
         exportXliff3AllTests();
         exportFiltersComparison();
         System.out.println("wrote filters3 *FilterTest goldens");
+    }
+
+    /**
+     * One golden per filters4 {@code *FilterTest#test*}.
+     * {@code .docx} {@code for_path} is documented as filters3 {@code openxml}.
+     */
+    private void exportFilters4AllTests() throws Exception {
+        bindProjectLangs("en", "be");
+        Map<String, String> empty = Collections.emptyMap();
+        Xliff1Filter xliff1 = new Xliff1Filter();
+        exportFilter("xliff1", "xliff1/testParse.json", "xliff/filters4-xliff1/en-xx.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testParse", xliff1, empty,
+                "Should translate in result.", "Devrait traduire dans le résultat.");
+        writeExpectError("xliff1", "xliff1/testParseMissingId.json",
+                "xliff/filters3/file-XLIFFFilter.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testParseMissingId");
+        exportFilter("xliff1", "xliff1/testBilingual.json", "xliff/filters4-xliff1/en-xx.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testBilingual", xliff1, empty, null, null);
+        exportFilter("xliff1", "xliff1/testKey.json", "xliff/filters4-xliff1/en-xx.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testKey", xliff1, empty, null, null);
+        exportFilter("xliff1", "xliff1/testTranslation.json", "xliff/filters4-xliff1/en-xx.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testTranslation", xliff1, empty,
+                "Should translate in result.", "Devrait traduire dans le résultat.");
+        exportFilter("xliff1", "xliff1/testTranslationRFE1506.json",
+                "xliff/filters3/file-xliff-RFE1506.xliff",
+                "org.omegat.filters4.Xliff1FilterTest#testTranslationRFE1506", xliff1, empty, "Create",
+                "作成");
+        exportFilter("xliff1", "xliff1/testBugs418.json",
+                "xliff/filters3/file-XLIFFFilter-cdata-bugs418.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testBugs418", xliff1, empty, null, null);
+        exportFilter("xliff1", "xliff1/testBugs1247.json",
+                "xliff/filters4-xliff1/file-XLIFFFilter1-multiple-file-tag.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testBugs1247", xliff1, empty, null, null);
+        exportFilter("xliff1", "xliff1/testBugs1247_2.json",
+                "xliff/filters4-xliff1/file-XLIFFFilter1-multiple-file-tag.xlf",
+                "org.omegat.filters4.Xliff1FilterTest#testBugs1247_2", xliff1, empty, null, null);
+
+        Xliff2Filter xliff2 = new Xliff2Filter();
+        exportFilter("xliff2", "xliff2/testParse.json", "xliff/filters4-xliff2/ex.9.5.xlf",
+                "org.omegat.filters4.Xliff2FilterTest#testParse", xliff2, empty, "Birds in Oregon",
+                "Oiseaux en Oregon");
+        exportFilter("xliff2", "xliff2/testBilingual.json", "xliff/filters4-xliff2/ex.9.5.xlf",
+                "org.omegat.filters4.Xliff2FilterTest#testBilingual", xliff2, empty, null, null);
+        exportFilter("xliff2", "xliff2/testKey.json", "xliff/filters4-xliff2/ex.9.5.xlf",
+                "org.omegat.filters4.Xliff2FilterTest#testKey", xliff2, empty, null, null);
+        exportFilter("xliff2", "xliff2/testTranslation.json", "xliff/filters4-xliff2/ex.9.5.xlf",
+                "org.omegat.filters4.Xliff2FilterTest#testTranslation", xliff2, empty, "Birds in Oregon",
+                "Oiseaux en Oregon");
+        exportFilter("xliff2", "xliff2/testTranslation_glossary_14_5.json",
+                "xliff/filters4-xliff2/ex.14.5.xlf",
+                "org.omegat.filters4.Xliff2FilterTest#testTranslation_glossary_14_5", xliff2, empty, null,
+                null);
+
+        exportZipFilter("msoffice", "msoffice/testParse.json", "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testParse", new MsOfficeFileFilter(), empty);
+        exportZipFilter("msoffice", "msoffice/testParseTables.json",
+                "openXML/file-OpenXMLFilter-tables.docx",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testParseTables", new MsOfficeFileFilter(),
+                empty);
+        exportZipFilter("msoffice", "msoffice/testTranslate.json", "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testTranslate", new MsOfficeFileFilter(), empty);
+        exportZipFilter("msoffice", "msoffice/testLoad.json", "openXML/file-OpenXMLFilter.docx",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testLoad", new MsOfficeFileFilter(), empty);
+        writeSupported("msoffice", "msoffice/testIsFileSupported.json",
+                "org.omegat.filters4.MsOfficeFileFilterTest#testIsFileSupported",
+                List.of(supportedRow("openXML/file-OpenXMLFilter.docx", true)));
+        writeSupported("msoffice", "msoffice/testOpenXmlFilterIsFileSupported.json",
+                "org.omegat.filters4.xml.openxml.OpenXmlFilterTest#testOpenXmlFilterIsFileSupported",
+                List.of(supportedRow("openXML/document.xml", true)));
+
+        Map<String, Object> forPath = new LinkedHashMap<>();
+        forPath.put("java_test", "org.omegat.filters4.MsOfficeFileFilterTest#testIsFileSupported");
+        forPath.put("exported_by", EXPORTED_BY);
+        forPath.put("docx", "openxml");
+        forPath.put("xlsx", "openxml");
+        forPath.put("pptx", "openxml");
+        forPath.put("note",
+                "FilterRegistry.for_path uses filters3 OpenXMLFilter for *.docx/*.xlsx/*.pptx. "
+                        + "filters4 MsOfficeFileFilter is selected by id=msoffice.");
+        List<Map<String, Object>> cases = new ArrayList<>();
+        for (String ext : List.of("docx", "xlsx", "pptx")) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("extension", ext);
+            row.put("for_path_id", "openxml");
+            cases.add(row);
+        }
+        forPath.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/for_path_office.json"), forPath);
+
+        exportFilter("sdlxliff", "sdlxliff/simple.json", "sdl/simple.sdlxliff",
+                "org.omegat.filters4.xml.xliff.SdlXliff#processFile", new SdlXliff(), empty, "Hello SDL",
+                "GOLDEN_T");
+        SdlProject sdlProject = new SdlProject() {
+            @Override
+            protected java.util.Comparator<java.util.zip.ZipEntry> getEntryComparator() {
+                return java.util.Comparator.comparing(java.util.zip.ZipEntry::getName);
+            }
+        };
+        exportZipFilter("sdlproject", "sdlproject/simple.json", "sdl/simple.sdlppx",
+                "org.omegat.filters4.xml.xliff.SdlProject#processFile", sdlProject, empty,
+                zipPartNames("sdlproject"), "Hello SDL", "GOLDEN_T");
+        System.out.println("wrote filters4 *FilterTest goldens");
     }
 
     private Map<String, Object> supportedRow(String fixture, boolean ok) {

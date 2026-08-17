@@ -111,8 +111,29 @@ unknown XML. Each filters3 `*FilterTest#test*` has an ExportGoldens JSON
 and `p3_filters3_all_java_test_goldens` `assert_eq`s them (DocBook SYSTEM
 entities, XLIFF `constructShortcuts` / `bpt`+`ept` pairing, FilterVisitor
 HTML already in P2). The P3 STATUS row stays `scaffold`: Lucene identity
-stems, editor / menu / locale gates, and filters4 test-method goldens
-remain red.
+stems, editor / menu / locale gates, and later-wave honesty gates remain
+red.
+
+## P4 notes
+
+filters4 Java `*FilterTest` methods are exported one JSON each
+(`Xliff1FilterTest` 9, `Xliff2FilterTest` 5, `MsOfficeFileFilterTest` 5,
+`OpenXmlFilterTest` 1). `p4_filters4_all_java_test_goldens` `assert_eq`s
+sources / ids / paths / existing translations / write-back. Office ZIP
+write lands on the corresponding `w:t` node; repeated sources each get
+one replacement.
+
+`.docx` / `.xlsx` / `.pptx` `FilterRegistry.for_path` selects filters3
+`openxml` (`org.omegat.filters3.xml.openxml.OpenXMLFilter`). That path
+has a golden (`engine/for_path_office.json` + parse vs
+`openxml/testParse.json`). filters4 `msoffice`
+(`MsOfficeFileFilter`) is selected by **id**, not by those extensions.
+`OpenXmlFilter` (filters4 StAX part parser) is the ZIP inner processor;
+`document.xml` `isFileSupported` is covered by
+`msoffice/testOpenXmlFilterIsFileSupported.json`.
+
+SdlXliff / SdlProject have no `*Test`; they keep `processFile` fixture
+goldens. The P4 STATUS row stays `scaffold`.
 
 ## Intentional non-goals (must still have a full replacement)
 

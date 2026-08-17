@@ -6,11 +6,17 @@
   "options": {
 
   },
+  "source_lang": "en",
+  "target_lang": "be",
   "sources": [
     "tr1=This is test",
     "tr2=test2"
   ],
   "ids": [
+    "",
+    ""
+  ],
+  "paths": [
     "",
     ""
   ],
