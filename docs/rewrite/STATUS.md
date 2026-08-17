@@ -8,7 +8,7 @@ Legend: `scaffold` = present but not accepted · `parity` = accepted against Jav
 | Filter / align / SRX fixtures under `fixtures/` | R0 | parity |
 | Golden export tool + committed `fixtures/goldens/` | H0 | parity |
 | Sidecar method contract tests | R0 | parity |
-| Project / TMX / SRX / matching / glossary / compile / CLI | R1 | scaffold |
+| Project / TMX / SRX / matching / glossary / compile / CLI | R1 | parity |
 | 49 filters + Office write-back + tag QA | R2 | scaffold |
 | Desktop docks, menus, search/replace, preference pages | R3 | scaffold |
 | Spell backends, dictionaries, LanguageTool HTTP, Issues | R4 | scaffold |
@@ -19,7 +19,9 @@ Legend: `scaffold` = present but not accepted · `parity` = accepted against Jav
 
 ## Quantified remaining deltas
 
-See each wave as it leaves `scaffold`. Do not mark `parity` while tests use `>= N` or skip read-back of translations.
+- R1 matching: token-Levenshtein scores on committed `fixtures/goldens/engine/fuzzy.json` are exact (en `Hello world`/`Hello word` = 50). CJK n-gram vs Lucene CJKTokenizer not yet measured on a held-out set — record when R4 tokenizers land.
+- R1 TMX: `omegat`/`level1`/`level2` fields (`changeid`, `creationid`, dates, `prop` file/id, level2 `bpt`/`ept`/`ph`) are asserted in unit tests; Java `project_save.tmx` fixture round-trips entry count. Whitespace-only serialization differences vs StAX are allowed.
+- See later waves as they leave `scaffold`. Do not mark `parity` while tests use `>= N` or skip read-back of translations.
 
 ## Sidecar methods
 

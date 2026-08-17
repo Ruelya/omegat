@@ -10,6 +10,7 @@ pub const DEFAULT_INTERNAL: &str = "omegat";
 pub const AUTO_TM: &str = "auto";
 pub const ENFORCE_TM: &str = "enforce";
 pub const MT_TM: &str = "mt";
+pub const TMX2SOURCE: &str = "tmx2source";
 pub const FILES_ORDER: &str = "files_order.txt";
 pub const LAST_ENTRY: &str = "last_entry.properties";
 pub const BACKUP_EXT: &str = ".bak";

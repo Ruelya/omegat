@@ -1,7 +1,10 @@
 //! Engine goldens transcribed from Java Segmenter / tokenizer / FuzzyMatcher.
 
+use omegat_core::glossary::{lookup_opts, parse_glossary};
 use omegat_core::matching::{find_matches_threshold, score_pair};
 use omegat_core::segment::{load_srx_file, split_with_srx, table_for};
+use omegat_core::session::Entry;
+use omegat_core::stats::{compute, render};
 use omegat_core::tokenize::{stem, tokenize};
 use omegat_core::tmx::TmxEntry;
 use serde_json::Value;
@@ -78,4 +81,67 @@ fn fuzzy_token_levenshtein_matches_java() {
             assert_eq!(hits[0].score, 100);
         }
     }
+}
+
+#[test]
+fn glossary_options_change_hits() {
+    let spec: Value = serde_json::from_str(&std::fs::read_to_string(goldens().join("glossary.json")).unwrap()).unwrap();
+    let entries = parse_glossary(spec["entries"].as_str().unwrap());
+    for case in spec["cases"].as_array().unwrap() {
+        let hits = lookup_opts(
+            &entries,
+            case["segment"].as_str().unwrap(),
+            case["ignore_case"].as_bool().unwrap(),
+            case["use_stem"].as_bool().unwrap(),
+        );
+        let got: Vec<String> = hits.into_iter().map(|h| h.target).collect();
+        let exp: Vec<String> = case["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(got, exp, "glossary {:?}", case);
+    }
+}
+
+#[test]
+fn stats_formats_match_java_shape() {
+    let spec: Value = serde_json::from_str(&std::fs::read_to_string(goldens().join("stats.json")).unwrap()).unwrap();
+    let entries: Vec<Entry> = spec["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| Entry {
+            file: e["file"].as_str().unwrap().into(),
+            id: e["source"].as_str().unwrap().into(),
+            source: e["source"].as_str().unwrap().into(),
+            translation: e["translation"].as_str().unwrap().into(),
+            note: String::new(),
+            comment: String::new(),
+            default_translation: true,
+            revision: 1,
+            from_tm_exact: e["exact"].as_bool().unwrap_or(false),
+            properties: vec![],
+        })
+        .collect();
+    let s = compute(&entries, "en", "fr");
+    let exp = &spec["expect"];
+    assert_eq!(s.total.segments, exp["total_segments"].as_u64().unwrap() as usize);
+    assert_eq!(s.remaining.segments, exp["remaining_segments"].as_u64().unwrap() as usize);
+    assert_eq!(s.unique.segments, exp["unique_segments"].as_u64().unwrap() as usize);
+    assert_eq!(
+        s.unique_remaining.segments,
+        exp["unique_remaining_segments"].as_u64().unwrap() as usize
+    );
+    let text = render(&s, "text");
+    for needle in exp["text_contains"].as_array().unwrap() {
+        assert!(text.contains(needle.as_str().unwrap()), "missing {needle} in {text}");
+    }
+    let xml = render(&s, "xml");
+    for needle in exp["xml_contains"].as_array().unwrap() {
+        assert!(xml.contains(needle.as_str().unwrap()), "missing {needle} in {xml}");
+    }
+    let json = render(&s, "json");
+    assert!(json.contains("\"unique-remaining\""));
 }

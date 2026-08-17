@@ -1,4 +1,5 @@
 use crate::error::Result;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,6 +16,10 @@ pub struct TmxEntry {
     pub default_translation: bool,
     pub file: Option<String>,
     pub id: Option<String>,
+    #[serde(default)]
+    pub penalty: i32,
+    #[serde(default)]
+    pub props: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -67,58 +72,200 @@ impl ProjectTmx {
     }
 
     pub fn to_xml_level(&self, source_lang: &str, target_lang: &str, level: &str) -> String {
+        self.to_xml_level_ex(source_lang, target_lang, level, true)
+    }
+
+    /// Java `TMXWriter2` levels: `omegat` (internal + props), `level1` (tags stripped),
+    /// `level2` (bpt/ept/ph). Target tuv carries changeid/changedate/creationid/creationdate.
+    pub fn to_xml_level_ex(
+        &self,
+        source_lang: &str,
+        target_lang: &str,
+        level: &str,
+        sentence_seg: bool,
+    ) -> String {
         let mut body = String::new();
         for e in &self.entries {
             if e.translation.is_empty() {
                 continue;
             }
-            let src = if level == "level1" {
-                strip_tags(&e.source)
-            } else {
-                e.source.clone()
+            let src = match level {
+                "level1" => strip_tags(&e.source),
+                _ => e.source.clone(),
             };
-            let tgt = if level == "level1" {
-                strip_tags(&e.translation)
-            } else {
-                e.translation.clone()
+            let tgt = match level {
+                "level1" => strip_tags(&e.translation),
+                _ => e.translation.clone(),
             };
-            body.push_str("    <tu>\n");
+            body.push_str("    <tu");
+            if level == "level2" {
+                if let Some(id) = e.id.as_deref().filter(|s| !s.is_empty()) {
+                    body.push_str(&format!(" tuid=\"{}\"", xml_escape(id)));
+                }
+            }
+            body.push_str(">\n");
             if level == "omegat" {
+                if let Some(file) = e.file.as_deref().filter(|s| !s.is_empty()) {
+                    body.push_str(&format!(
+                        "      <prop type=\"file\">{}</prop>\n",
+                        xml_escape(file)
+                    ));
+                }
+                if let Some(id) = e.id.as_deref().filter(|s| !s.is_empty()) {
+                    body.push_str(&format!(
+                        "      <prop type=\"id\">{}</prop>\n",
+                        xml_escape(id)
+                    ));
+                }
+                for (k, v) in &e.props {
+                    if k == "file" || k == "id" {
+                        continue;
+                    }
+                    body.push_str(&format!(
+                        "      <prop type=\"{}\">{}</prop>\n",
+                        xml_escape(k),
+                        xml_escape(v)
+                    ));
+                }
                 if let Some(note) = &e.note {
-                    if !note.is_empty() {
-                        body.push_str(&format!(
-                            "      <note>{}</note>\n",
-                            xml_escape(note)
-                        ));
+                    if !note.is_empty() && !note.starts_with("penalty:") {
+                        body.push_str(&format!("      <note>{}</note>\n", xml_escape(note)));
                     }
                 }
             }
-            body.push_str(&format!(
-                "      <tuv xml:lang=\"{}\"><seg>{}</seg></tuv>\n",
-                xml_escape(source_lang),
+            let src_seg = if level == "level2" {
+                write_level_two(&src)
+            } else {
                 xml_escape(&src)
-            ));
-            body.push_str(&format!(
-                "      <tuv xml:lang=\"{}\"><seg>{}</seg></tuv>\n",
-                xml_escape(target_lang),
+            };
+            let tgt_seg = if level == "level2" {
+                write_level_two(&tgt)
+            } else {
                 xml_escape(&tgt)
+            };
+            let lang_attr = if level == "level1" { "lang" } else { "xml:lang" };
+            body.push_str(&format!(
+                "      <tuv {lang_attr}=\"{}\">\n        <seg>{}</seg>\n      </tuv>\n",
+                xml_escape(source_lang),
+                src_seg
             ));
-            body.push_str("    </tu>\n");
+            body.push_str("      <tuv");
+            body.push_str(&format!(
+                " {lang_attr}=\"{}\"",
+                xml_escape(target_lang)
+            ));
+            if let Some(c) = e.changer.as_deref().filter(|s| !s.is_empty()) {
+                body.push_str(&format!(" changeid=\"{}\"", xml_escape(c)));
+            }
+            if let Some(d) = e.changed.as_deref().filter(|s| !s.is_empty()) {
+                body.push_str(&format!(" changedate=\"{}\"", xml_escape(&to_tmx_date(d))));
+            }
+            if let Some(c) = e.creator.as_deref().filter(|s| !s.is_empty()) {
+                body.push_str(&format!(" creationid=\"{}\"", xml_escape(c)));
+            }
+            if let Some(d) = e.created.as_deref().filter(|s| !s.is_empty()) {
+                body.push_str(&format!(" creationdate=\"{}\"", xml_escape(&to_tmx_date(d))));
+            }
+            body.push_str(&format!(
+                ">\n        <seg>{}</seg>\n      </tuv>\n    </tu>\n",
+                tgt_seg
+            ));
         }
+        let dtd = if level == "level1" {
+            "tmx11.dtd"
+        } else {
+            "tmx14.dtd"
+        };
+        let ver = if level == "level1" { "1.1" } else { "1.4" };
+        let segtype = if sentence_seg { "sentence" } else { "paragraph" };
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE tmx SYSTEM "tmx14.dtd">
-<tmx version="1.4">
-  <header creationtool="OmegaT" creationtoolversion="{ver}" segtype="sentence" o-tmf="OmegaT TMX" adminlang="EN-US" srclang="{src}" datatype="plaintext"/>
+<!DOCTYPE tmx SYSTEM "{dtd}">
+<tmx version="{ver}">
+  <header creationtool="OmegaT" creationtoolversion="{app}" segtype="{segtype}" o-tmf="OmegaT TMX" adminlang="EN-US" srclang="{src}" datatype="plaintext"/>
   <body>
 {body}  </body>
 </tmx>
 "#,
-            ver = omegat_ipc::APP_VERSION,
+            app = omegat_ipc::APP_VERSION,
             src = xml_escape(source_lang),
             body = body
         )
     }
+}
+
+/// Java `TMXWriter2.writeLevelTwo`: `<f0>` → bpt/ept, `<x0/>` → ph.
+fn write_level_two(segment: &str) -> String {
+    let re = Regex::new(r"<(/?)([^\s/<>\d]+)(\d+)(/?)>").unwrap();
+    let mut out = String::new();
+    let mut last = 0;
+    for cap in re.captures_iter(segment) {
+        let m = cap.get(0).unwrap();
+        out.push_str(&xml_escape(&segment[last..m.start()]));
+        last = m.end();
+        let is_end = !cap[1].is_empty();
+        let is_single = !cap[4].is_empty();
+        let name = &cap[2];
+        let num = &cap[3];
+        let raw = xml_escape(m.as_str());
+        if is_single {
+            out.push_str(&format!("<ph x=\"{num}\">{raw}</ph>"));
+        } else if is_end {
+            let start = format!("<{name}{num}>");
+            if segment.contains(&start) {
+                out.push_str(&format!("<ept i=\"{num}\">{raw}</ept>"));
+            } else {
+                out.push_str(&format!("<it pos=\"end\" x=\"{num}\">{raw}</it>"));
+            }
+        } else {
+            let end = format!("</{name}{num}>");
+            if segment.contains(&end) {
+                out.push_str(&format!("<bpt i=\"{num}\" x=\"{num}\">{raw}</bpt>"));
+            } else {
+                out.push_str(&format!("<it pos=\"begin\" x=\"{num}\">{raw}</it>"));
+            }
+        }
+    }
+    out.push_str(&xml_escape(&segment[last..]));
+    out
+}
+
+fn unwrap_level2(seg: &str) -> String {
+    let re = Regex::new(r"<(ph|bpt|ept|it)\b[^>]*>(.*?)</\1>").unwrap();
+    let inner = re.replace_all(seg, "$2");
+    html_escape::decode_html_entities(&inner).into_owned()
+}
+
+fn to_tmx_date(raw: &str) -> String {
+    if raw.len() == 16 && raw.chars().nth(8) == Some('T') && raw.ends_with('Z') {
+        return raw.to_string();
+    }
+    if raw.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(secs) = raw.parse::<i64>() {
+            let days = secs / 86400;
+            let rem = secs % 86400;
+            let (y, m, d) = civil_from_days(days);
+            let hh = rem / 3600;
+            let mm = (rem % 3600) / 60;
+            let ss = rem % 60;
+            return format!("{y:04}{m:02}{d:02}T{hh:02}{mm:02}{ss:02}Z");
+        }
+    }
+    raw.to_string()
+}
+
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
 }
 
 pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx {
@@ -131,8 +278,15 @@ pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx 
         let tu_end = slice.find("</tu>").unwrap_or(slice.len());
         let tu = &slice[..tu_end];
         let note = extract_tag(tu, "note");
+        let tuid = attr(tu, "tuid");
+        let file = extract_prop(tu, "file");
+        let id = extract_prop(tu, "id").or(tuid);
         let mut source = None;
         let mut translation = None;
+        let mut changer = None;
+        let mut changed = None;
+        let mut creator = None;
+        let mut created = None;
         let mut search = tu;
         while let Some(p) = search.find("<tuv") {
             let tuv = &search[p..];
@@ -142,13 +296,20 @@ pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx 
                 .or_else(|| attr(block, "lang"))
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            let seg = extract_tag(block, "seg").unwrap_or_default();
+            let seg_raw = extract_tag(block, "seg").unwrap_or_default();
+            let seg = if seg_raw.contains("<ph") || seg_raw.contains("<bpt") {
+                unwrap_level2(&seg_raw)
+            } else {
+                seg_raw
+            };
             if lang_matches(&lang, &src_l) && source.is_none() {
                 source = Some(seg);
-            } else if lang_matches(&lang, &tgt_l) {
+            } else if lang_matches(&lang, &tgt_l) || (source.is_some() && translation.is_none() && !lang_matches(&lang, &src_l)) {
                 translation = Some(seg);
-            } else if source.is_some() && translation.is_none() && !lang_matches(&lang, &src_l) {
-                translation = Some(seg);
+                changer = attr(block, "changeid");
+                changed = attr(block, "changedate");
+                creator = attr(block, "creationid");
+                created = attr(block, "creationdate");
             }
             search = &search[p + 4..];
         }
@@ -158,6 +319,12 @@ pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx 
                 translation: t,
                 note,
                 default_translation: true,
+                file,
+                id,
+                changer,
+                changed,
+                creator,
+                created,
                 ..Default::default()
             });
         }
@@ -166,11 +333,21 @@ pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx 
     tmx
 }
 
+fn extract_prop(tu: &str, ty: &str) -> Option<String> {
+    let needle = format!("<prop type=\"{ty}\">");
+    let s = tu.find(&needle)? + needle.len();
+    let e = tu[s..].find("</prop>")? + s;
+    Some(html_escape::decode_html_entities(&tu[s..e]).into_owned())
+}
+
 fn lang_matches(a: &str, b: &str) -> bool {
     if a.is_empty() || b.is_empty() {
         return false;
     }
-    a == b || a.starts_with(b) || b.starts_with(a) || a.split(['-', '_']).next() == b.split(['-', '_']).next()
+    a == b
+        || a.starts_with(b)
+        || b.starts_with(a)
+        || a.split(['-', '_']).next() == b.split(['-', '_']).next()
 }
 
 fn extract_tag(raw: &str, tag: &str) -> Option<String> {
@@ -194,10 +371,11 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 fn strip_tags(s: &str) -> String {
-    let re = regex::Regex::new(r"<[^>]+>").unwrap();
+    let re = Regex::new(r"<[^>]+>").unwrap();
     re.replace_all(s, "").into_owned()
 }
 
@@ -230,7 +408,10 @@ mod tests {
         assert!(l1.contains("<seg>"));
         assert!(l2.contains("<seg>"));
         let back = parse_tmx(&omegat, "en", "fr");
-        assert_eq!(back.entries.len(), tmx.entries.iter().filter(|e| !e.translation.is_empty()).count());
+        assert_eq!(
+            back.entries.len(),
+            tmx.entries.iter().filter(|e| !e.translation.is_empty()).count()
+        );
     }
 
     #[test]
@@ -244,5 +425,35 @@ mod tests {
         let xml = tmx.to_xml_level("en", "fr", "level1");
         assert!(!xml.contains("<b>"));
         assert!(xml.contains("Hello x"));
+    }
+
+    #[test]
+    fn omegat_level_writes_tuv_attrs_and_props() {
+        let mut tmx = ProjectTmx::new();
+        tmx.insert(TmxEntry {
+            source: "Hello <f0>x</f0>".into(),
+            translation: "Bonjour <f0>x</f0>".into(),
+            changer: Some("alice".into()),
+            changed: Some("20200101T000000Z".into()),
+            creator: Some("bob".into()),
+            created: Some("20190101T000000Z".into()),
+            note: Some("dev note".into()),
+            file: Some("a.txt".into()),
+            id: Some("id-1".into()),
+            ..Default::default()
+        });
+        let omegat = tmx.to_xml_level("en-US", "fr-FR", "omegat");
+        assert!(omegat.contains("changeid=\"alice\""));
+        assert!(omegat.contains("creationid=\"bob\""));
+        assert!(omegat.contains("changedate=\"20200101T000000Z\""));
+        assert!(omegat.contains("<prop type=\"file\">a.txt</prop>"));
+        assert!(omegat.contains("<prop type=\"id\">id-1</prop>"));
+        assert!(omegat.contains("<note>dev note</note>"));
+        let l2 = tmx.to_xml_level("en-US", "fr-FR", "level2");
+        assert!(l2.contains("<bpt i=\"0\" x=\"0\">"));
+        assert!(l2.contains("<ept i=\"0\">"));
+        assert!(l2.contains("tuid=\"id-1\""));
+        let back = parse_tmx(&omegat, "en-US", "fr-FR");
+        assert_eq!(back.get("Hello <f0>x</f0>").unwrap().changer.as_deref(), Some("alice"));
     }
 }

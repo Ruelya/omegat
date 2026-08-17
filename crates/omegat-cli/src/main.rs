@@ -144,11 +144,7 @@ fn main() -> Result<()> {
             let prefs = Preferences::load_or_default(&default_config_dir());
             let mut session = ProjectSession::open(&root, prefs)?;
             if let Some(mode) = tag_validation.as_deref() {
-                let issues = session.issues();
-                let tags: Vec<_> = issues.iter().filter(|i| i.kind == "tag" && i.severity == "error").collect();
-                if !tags.is_empty() && mode == "abort" {
-                    anyhow::bail!("tag validation failed ({} issues)", tags.len());
-                }
+                session.prefs.extra.insert("tag_validation".into(), mode.to_string());
             }
             let n = session.compile(source_pattern.as_deref().or(cli.source_pattern.as_deref()))?;
             if let Some(script) = script {
@@ -169,22 +165,7 @@ fn main() -> Result<()> {
             let prefs = Preferences::load_or_default(&default_config_dir());
             let session = ProjectSession::open(&root, prefs)?;
             let stats = session.stats();
-            let text = match r#type.as_str() {
-                "json" => serde_json::to_string_pretty(&stats)?,
-                "xml" => format!(
-                    "<stats segments=\"{}\" translated=\"{}\" words=\"{}\"/>\n",
-                    stats.segments, stats.translated, stats.source_words
-                ),
-                _ => format!(
-                    "files={} segments={} translated={} unique={} source_words={} target_words={}\n",
-                    stats.files,
-                    stats.segments,
-                    stats.translated,
-                    stats.unique_segments,
-                    stats.source_words,
-                    stats.target_words
-                ),
-            };
+            let text = omegat_core::stats::render(&stats, &r#type);
             if let Some(p) = output {
                 std::fs::write(p, &text)?;
             } else {

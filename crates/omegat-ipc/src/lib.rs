@@ -226,6 +226,36 @@ pub struct GlossaryHitDto {
     pub comment: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StatCountDto {
+    pub segments: usize,
+    pub words: usize,
+    #[serde(rename = "characters-without-spaces", default)]
+    pub characters_without_spaces: usize,
+    pub characters: usize,
+    pub files: usize,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FileStatDto {
+    pub filename: String,
+    pub total: StatCountDto,
+    pub remaining: StatCountDto,
+    pub unique: StatCountDto,
+    #[serde(rename = "unique-remaining", default)]
+    pub unique_remaining: StatCountDto,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MatchBinDto {
+    pub exact: usize,
+    pub fuzzy_95: usize,
+    pub fuzzy_85: usize,
+    pub fuzzy_75: usize,
+    pub fuzzy_50: usize,
+    pub none: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsDto {
     pub files: usize,
@@ -239,6 +269,18 @@ pub struct StatsDto {
     pub match_exact: usize,
     pub match_fuzzy: usize,
     pub match_none: usize,
+    #[serde(default)]
+    pub total: StatCountDto,
+    #[serde(default)]
+    pub remaining: StatCountDto,
+    #[serde(default)]
+    pub unique: StatCountDto,
+    #[serde(rename = "unique-remaining", default)]
+    pub unique_remaining: StatCountDto,
+    #[serde(default)]
+    pub file_stats: Vec<FileStatDto>,
+    #[serde(default)]
+    pub match_bins: MatchBinDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

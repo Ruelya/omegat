@@ -206,17 +206,39 @@ impl ProjectSession {
     }
 
     fn apply_memory(&mut self) {
+        let mut enforce = HashMap::new();
+        let mut auto = HashMap::new();
+        let mut other_lang = HashMap::new();
+        for (hit, origin) in &self.external_tm {
+            let rel = origin.replace('\\', "/");
+            if folder_is(&rel, ENFORCE_TM) {
+                enforce.insert(hit.source.clone(), hit.clone());
+            } else if folder_is(&rel, AUTO_TM) {
+                auto.insert(hit.source.clone(), hit.clone());
+            } else if folder_is(&rel, TMX2SOURCE) {
+                other_lang.insert(hit.source.clone(), hit.translation.clone());
+            }
+        }
         for e in &mut self.entries {
+            if let Some(alt) = other_lang.get(&e.source) {
+                e.properties.push(("tmx2source".into(), alt.clone()));
+            }
+            if let Some(hit) = enforce.get(&e.source) {
+                e.translation = hit.translation.clone();
+                e.note = hit.note.clone().unwrap_or_default();
+                e.from_tm_exact = true;
+                e.properties.push(("tm".into(), ENFORCE_TM.into()));
+                continue;
+            }
             if e.translation.is_empty() {
                 if let Some(hit) = self.tmx.get(&e.source) {
                     e.translation = hit.translation.clone();
                     e.note = hit.note.clone().unwrap_or_default();
                     e.from_tm_exact = true;
-                } else if let Some((hit, origin)) = self.external_tm.iter().find(|(t, o)| {
-                    t.source == e.source && (o.contains(AUTO_TM) || o.contains(ENFORCE_TM))
-                }) {
+                } else if let Some(hit) = auto.get(&e.source) {
                     e.translation = hit.translation.clone();
-                    e.from_tm_exact = origin.contains(ENFORCE_TM);
+                    e.from_tm_exact = true;
+                    e.properties.push(("tm".into(), AUTO_TM.into()));
                 }
             }
         }
@@ -637,9 +659,17 @@ impl Drop for ProjectSession {
 
 fn penalty_from_origin(origin: &str) -> i32 {
     origin
+        .replace('\\', "/")
         .split('/')
         .find_map(|p| p.strip_prefix("penalty-")?.parse().ok())
         .unwrap_or(0)
+}
+
+fn folder_is(origin: &str, name: &str) -> bool {
+    let o = origin.replace('\\', "/");
+    o == name
+        || o.starts_with(&format!("{name}/"))
+        || o.contains(&format!("/{name}/"))
 }
 
 fn load_external_tm(props: &ProjectProperties) -> Vec<(TmxEntry, String)> {
@@ -651,18 +681,26 @@ fn load_external_tm(props: &ProjectProperties) -> Vec<(TmxEntry, String)> {
         if ent.path().extension().and_then(|e| e.to_str()) != Some("tmx") {
             continue;
         }
-        if let Ok(tmx) = ProjectTmx::load(ent.path(), &props.source_lang, &props.target_lang) {
-            let origin = ent
+        let origin = ent
+            .path()
+            .strip_prefix(&props.tm_dir)
+            .unwrap_or(ent.path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        let langs = if folder_is(&origin, TMX2SOURCE) {
+            let stem = ent
                 .path()
-                .strip_prefix(&props.tm_dir)
-                .unwrap_or(ent.path())
-                .to_string_lossy()
-                .into_owned();
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&props.target_lang);
+            (props.source_lang.as_str(), stem)
+        } else {
+            (props.source_lang.as_str(), props.target_lang.as_str())
+        };
+        if let Ok(tmx) = ProjectTmx::load(ent.path(), langs.0, langs.1) {
             let penalty = penalty_from_origin(&origin);
             for mut e in tmx.entries {
-                if origin.contains(crate::consts::MT_TM) {
-                    // MT memories are suggestions only; still searchable.
-                }
+                e.penalty = penalty;
                 if penalty > 0 {
                     e.note = Some(format!("penalty:{penalty}"));
                 }

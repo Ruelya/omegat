@@ -63,6 +63,15 @@ pub fn validate(source: &str, target: &str) -> Vec<TagErrorKind> {
     {
         errors.push(TagErrorKind::Whitespace);
     }
+    let pair_re = regex::Regex::new(r"<([A-Za-z][\w-]*)\b[^>]*>").unwrap();
+    for cap in pair_re.captures_iter(source) {
+        let name = &cap[1];
+        let close = format!("</{name}>");
+        if source.contains(&close) && target.contains(&cap[0]) && !target.contains(&close) {
+            errors.push(TagErrorKind::Orphaned);
+            break;
+        }
+    }
     errors.sort_by_key(|e| e.as_str());
     errors.dedup();
     errors
@@ -119,6 +128,7 @@ mod tests {
         assert!(validate("a {1} b {2}", "a {2} b {1}").contains(&TagErrorKind::Order));
         assert!(validate("a {1}", "a {1} {9}").contains(&TagErrorKind::Extraneous));
         assert!(validate("  hi", "hi").contains(&TagErrorKind::Whitespace));
+        assert!(validate("<b>x</b>", "<b>x").contains(&TagErrorKind::Orphaned));
         let fixed = repair("Hello <b>x</b>", "Hello x <i>");
         assert!(fixed.contains("<b>"));
         assert!(!fixed.contains("<i>"));

@@ -83,6 +83,7 @@ impl ProjectProperties {
             &self.tm_dir.join(AUTO_TM),
             &self.tm_dir.join(ENFORCE_TM),
             &self.tm_dir.join(MT_TM),
+            &self.tm_dir.join(TMX2SOURCE),
         ] {
             std::fs::create_dir_all(p)?;
         }

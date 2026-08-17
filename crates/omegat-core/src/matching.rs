@@ -135,11 +135,14 @@ pub fn find_matches_threshold(
     for (e, origin) in extra {
         let (s, ns, adj) = score_pair(query, &e.source, lang);
         if s >= threshold {
-            let penalty = e
-                .note
-                .as_deref()
-                .and_then(|n| n.strip_prefix("penalty:")?.parse::<i32>().ok())
-                .unwrap_or(0);
+            let penalty = if e.penalty > 0 {
+                e.penalty
+            } else {
+                e.note
+                    .as_deref()
+                    .and_then(|n| n.strip_prefix("penalty:")?.parse::<i32>().ok())
+                    .unwrap_or(0)
+            };
             let score = (s - penalty).max(0);
             let comes = if origin.contains("mt/") || origin.contains("/mt/") {
                 "MT".to_string()

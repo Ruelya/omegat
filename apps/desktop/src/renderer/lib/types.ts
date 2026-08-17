@@ -23,6 +23,28 @@ export type MatchDto = {
   project?: string | null;
 };
 export type GlossaryHitDto = { source: string; target: string; comment: string };
+export type StatCountDto = {
+  segments: number;
+  words: number;
+  "characters-without-spaces"?: number;
+  characters: number;
+  files: number;
+};
+export type FileStatDto = {
+  filename: string;
+  total: StatCountDto;
+  remaining: StatCountDto;
+  unique: StatCountDto;
+  "unique-remaining"?: StatCountDto;
+};
+export type MatchBinDto = {
+  exact: number;
+  fuzzy_95: number;
+  fuzzy_85: number;
+  fuzzy_75: number;
+  fuzzy_50: number;
+  none: number;
+};
 export type StatsDto = {
   files: number;
   segments: number;
@@ -35,6 +57,12 @@ export type StatsDto = {
   match_exact?: number;
   match_fuzzy?: number;
   match_none?: number;
+  total?: StatCountDto;
+  remaining?: StatCountDto;
+  unique?: StatCountDto;
+  "unique-remaining"?: StatCountDto;
+  file_stats?: FileStatDto[];
+  match_bins?: MatchBinDto;
 };
 export type ProjectPropsDto = {
   root: string;
