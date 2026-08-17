@@ -18,7 +18,7 @@ wave’s Java goldens are green.
 | Filter / align / SRX fixtures under `fixtures/` | G0 | scaffold |
 | Sidecar method contract tests | G0 | scaffold |
 | RealProject / SRX / TMX / matching / stats / tags | G1 | parity |
-| filters2: 21 Filter classes, one module each | G2 | scaffold |
+| filters2: 21 Filter classes, one module each | G2 | parity |
 | filters3: XML event engine + 23 Dialect modules | G3 | scaffold |
 | filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | scaffold |
 | Desktop: document-model editor, 113 menus, 28 prefs | G5 | scaffold |
@@ -35,7 +35,7 @@ finished rewrite of Java 6.2.
 
 Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 
-- `dialect_filter!` / `simple_filter!` / one `XmlDialect` tag-name table
+- `dialect_filter!` / one `XmlDialect` tag-name table (G3)
 - `filters.options` returning a generic `extra` map
 - full-file `replacen` / first `find` as the only XML / Office / SDL write-back
 - `filter_goldens.rs` `contains` / `must_contain` / `n >= 49` (removed in G0)
@@ -61,7 +61,31 @@ Accepted against Java-exported goldens (`assert_eq`):
 - en/de fuzzy top-1 is the same entry; **score delta = 0** on `Hello word` vs `{Hello world, Hallo Welt}`
 - `--tag-validation abort` returns `TAG_VALIDATION`; `warn` compiles and still reports tag issues
 
-Not this wave (stay `scaffold`): INI / SRT / YAML / Android goldens are committed Java exports but Rust `assert_eq` is G2+. `simple_filter!` / `dialect_filter!` / `contentEditable` remain.
+Not this wave: Android is G3. `dialect_filter!` / `contentEditable` remain.
+
+## G2 notes
+
+Accepted against Java-exported goldens (`assert_eq`) for all **21** filters2 modules. `simple_filter!` is gone.
+
+| Filter | Golden |
+|---|---|
+| Text / PO / HTML | G1 files |
+| INI / SRT / YAML | `ini/` `srt/` `yaml/` |
+| ResourceBundle | `properties/file-ResourceBundleFilter.json` |
+| Mozilla DTD / FTL / Lang | `mozdtd/` `mozftl/` `mozlang/` |
+| Moodle PHP | `moodlephp/file.json` |
+| Magento CSV / ILIAS | `magento/` `ilias/` |
+| Windows RC | `rc/prog.json` |
+| HHC | `hhc/file-HHCFilter2.json` (HTMLWriter charset meta) |
+| DokuWiki | `dokuwiki/dokuwiki.json` |
+| LaTeX | `latex/file-latex-items.json` (`<r0>` itemize) |
+| SBV / WebVTT | `sbv/simple.json` `webvtt/simple.json` |
+| Xtag | `xtag/file-XtagFilter.json` (`<b1/>` shortcuts) |
+| PDF | `pdf/file-PdfFilter.json` (FlateDecode `TJ` + Java paragraph join) |
+
+Options that change parse/write: ResourceBundle (`dontUnescapeULiterals`, `unremoveStringsUntranslated`, `forceJava8LiteralsEscape`, `dontTargetCommentValue`); DTD / MoodlePHP / FTL (`unremoveStringsUntranslated`); PO (`skipHeader`, `disallowBlank`, `monolingualFormat`); Text (`segmentOn`).
+
+Not this wave: Android / `dialect_filter!` (G3). HTML still matches the Java `HTMLFilter2` golden without a full htmlparser `FilterVisitor` port.
 
 ## G0 notes
 
@@ -71,8 +95,8 @@ Not this wave (stay `scaffold`): INI / SRT / YAML / Android goldens are committe
 - Handwritten / fake-provenance files were moved to
   `fixtures/goldens/_voided/`.
 - Rust G1 filter tests `assert_eq` Text / PO / HTML against Java-exported
-  source lists and write-back. INI / SRT / YAML / Android stay provenance-only
-  until G2.
+  source lists and write-back. G2 goldens are Java exports under
+  `fixtures/goldens/filters/` (Android stays G3).
 - CI checks that the three G0 goldens exist and that `cargo test` runs.
   `./gradlew exportGoldens` is **not** the product build.
 

@@ -123,7 +123,7 @@ fn parse_empty_lines(raw: &str) -> Result<ParsedFile> {
     })
 }
 
-fn lines_with_breaks(raw: &str) -> Vec<(&str, &str)> {
+pub(crate) fn lines_with_breaks(raw: &str) -> Vec<(&str, &str)> {
     let mut out = Vec::new();
     let bytes = raw.as_bytes();
     let mut i = 0usize;

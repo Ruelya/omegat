@@ -73,7 +73,9 @@ fn parse_po(raw: &str, ctx: &FilterContext) -> Result<ParsedFile> {
     let mut segments = Vec::new();
     for (i, e) in entries.iter().enumerate() {
         if e.msgid.is_empty() {
-            continue;
+            if skip_header {
+                continue;
+            }
         }
         if monolingual {
             let source = e.msgstr.first().cloned().unwrap_or_default();
@@ -137,7 +139,6 @@ fn parse_po(raw: &str, ctx: &FilterContext) -> Result<ParsedFile> {
             }
         }
     }
-    let _ = skip_header;
     Ok(ParsedFile {
         segments,
         skeleton: Some(raw.to_string()),
@@ -273,13 +274,16 @@ fn rewrite_po(raw: &str, translations: &HashMap<String, String>, ctx: &FilterCon
                 out.push('\n');
             }
         } else {
-            let t = if e.msgid.is_empty() {
+            let mut t = if e.msgid.is_empty() {
                 e.msgstr.first().cloned().unwrap_or_default()
             } else if monolingual {
                 lookup_tr(translations, e.msgstr.first().map(|s| s.as_str()).unwrap_or(""), 0)
             } else {
                 lookup_tr(translations, &e.msgid, 0)
             };
+            if ctx.option_flag("disallowBlank") && t.is_empty() && !e.msgid.is_empty() {
+                t = e.msgid.clone();
+            }
             out.push_str("msgstr ");
             out.push_str(&quote(&t));
             out.push('\n');

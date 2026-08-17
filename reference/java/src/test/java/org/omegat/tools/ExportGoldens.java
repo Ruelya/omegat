@@ -39,13 +39,28 @@ import org.omegat.filters2.FilterContext;
 import org.omegat.filters2.IFilter;
 import org.omegat.filters2.IParseCallback;
 import org.omegat.filters2.ITranslateCallback;
+import org.omegat.filters2.hhc.HHCFilter2;
 import org.omegat.filters2.html2.HTMLFilter2;
+import org.omegat.filters2.latex.LatexFilter;
 import org.omegat.filters2.master.FilterMaster;
+import org.omegat.filters2.moodlephp.MoodlePHPFilter;
+import org.omegat.filters2.mozdtd.MozillaDTDFilter;
+import org.omegat.filters2.mozlang.MozillaLangFilter;
 import org.omegat.filters2.po.PoFilter;
+import org.omegat.filters2.rc.RcFilter;
 import org.omegat.filters2.text.TextFilter;
+import org.omegat.filters2.text.bundles.ResourceBundleFilter;
+import org.omegat.filters2.text.dokuwiki.DokuWikiFilter;
+import org.omegat.filters2.text.ilias.ILIASFilter;
 import org.omegat.filters2.text.ini.INIFilter;
+import org.omegat.filters2.text.magento.MagentoFilter;
+import org.omegat.filters2.text.mozftl.MozillaFTLFilter;
 import org.omegat.filters2.text.yaml.YamlFilter;
+import org.omegat.filters2.pdf.PdfFilter;
+import org.omegat.filters2.subtitles.SbvFilter;
 import org.omegat.filters2.subtitles.SrtFilter;
+import org.omegat.filters2.subtitles.WebVttFilter;
+import org.omegat.filters2.xtagqxp.XtagFilter;
 import org.omegat.filters3.xml.android.AndroidFilter;
 import org.omegat.gui.glossary.GlossaryEntry;
 import org.omegat.gui.glossary.GlossaryReaderTSV;
@@ -103,6 +118,21 @@ public final class ExportGoldens {
         exportSrt();
         exportYaml();
         exportAndroid();
+        exportResourceBundle();
+        exportMozillaFtl();
+        exportMagento();
+        exportDokuWiki();
+        exportIlias();
+        exportLatex();
+        exportRc();
+        exportMozillaDtd();
+        exportMozillaLang();
+        exportMoodlePhp();
+        exportHhc();
+        exportSbv();
+        exportWebVtt();
+        exportXtag();
+        exportPdf();
         exportEngine();
         exportGlossary();
         exportStats();
@@ -158,6 +188,111 @@ public final class ExportGoldens {
                 "org.omegat.filters.YamlFilterTest#testParse",
                 new YamlFilter(), Collections.emptyMap(),
                 null, null);
+    }
+
+    private void exportResourceBundle() throws Exception {
+        exportFilter("properties", "properties/file-ResourceBundleFilter.json",
+                "resourceBundle/file-ResourceBundleFilter.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testParse",
+                new ResourceBundleFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportMozillaFtl() throws Exception {
+        exportFilter("mozftl", "mozftl/MozillaFTLFilter.json",
+                "MozillaFTL/MozillaFTLFilter.ftl",
+                "org.omegat.filters.MozillaFTLFilterTest#testParse",
+                new MozillaFTLFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportMagento() throws Exception {
+        exportFilter("magento", "magento/MagentoFilter.json",
+                "magento/MagentoFilter.csv",
+                "org.omegat.filters.MagentoFilterTest#testParse",
+                new MagentoFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportDokuWiki() throws Exception {
+        exportFilter("dokuwiki", "dokuwiki/dokuwiki.json",
+                "dokuwiki/dokuwiki.txt",
+                "org.omegat.filters.DokuWikiFilterTest#testTextFilterParsing",
+                new DokuWikiFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportIlias() throws Exception {
+        exportFilter("ilias", "ilias/ILIASFilter.json",
+                "ilias/ILIASFilter.lang",
+                "org.omegat.filters.ILIASFilterTest#testParse",
+                new ILIASFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportLatex() throws Exception {
+        exportFilter("latex", "latex/file-latex-items.json",
+                "Latex/file-latex-items.tex",
+                "org.omegat.filters.LatexFilterTest#testLoadItemize",
+                new LatexFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportRc() throws Exception {
+        exportFilter("rc", "rc/prog.json",
+                "Rc/prog.rc",
+                "org.omegat.filters.RcFilterTest#testLoad",
+                new RcFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportMozillaDtd() throws Exception {
+        exportFilter("mozdtd", "mozdtd/file.json",
+                "MozillaDTD/file.dtd",
+                "org.omegat.filters.MozillaDTDFilterTest#testLoad",
+                new MozillaDTDFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportMozillaLang() throws Exception {
+        exportFilter("mozlang", "mozlang/file-MozillaLangFilter-de.json",
+                "MozillaLang/file-MozillaLangFilter-de.lang",
+                "org.omegat.filters2.mozlang.MozillaLangFilter#processFile",
+                new MozillaLangFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportMoodlePhp() throws Exception {
+        exportFilter("moodlephp", "moodlephp/file.json",
+                "MoodlePHP/file.php",
+                "org.omegat.filters.MoodlePHPFilterTest#testParse",
+                new MoodlePHPFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportHhc() throws Exception {
+        exportFilter("hhc", "hhc/file-HHCFilter2.json",
+                "hhc/file-HHCFilter2.hhc",
+                "org.omegat.filters.HHCFilter2Test#testParse",
+                new HHCFilter2(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportSbv() throws Exception {
+        exportFilter("sbv", "sbv/simple.json",
+                "sbv/simple.sbv",
+                "org.omegat.filters2.subtitles.SbvFilter#processFile",
+                new SbvFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportWebVtt() throws Exception {
+        exportFilter("webvtt", "webvtt/simple.json",
+                "webvtt/simple.vtt",
+                "org.omegat.filters2.subtitles.WebVttFilter#processFile",
+                new WebVttFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportXtag() throws Exception {
+        exportFilter("xtag", "xtag/file-XtagFilter.json",
+                "xtag/file-XtagFilter.xtg",
+                "org.omegat.filters2.xtagqxp.XtagFilter#processFile",
+                new XtagFilter(), Collections.emptyMap(), null, null);
+    }
+
+    private void exportPdf() throws Exception {
+        exportFilter("pdf", "pdf/file-PdfFilter.json",
+                "pdf/file-PdfFilter.pdf",
+                "org.omegat.filters.PdfFilterTest#testParse",
+                new PdfFilter(), Collections.emptyMap(), null, null);
     }
 
     private void exportAndroid() throws Exception {

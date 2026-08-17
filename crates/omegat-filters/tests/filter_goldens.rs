@@ -189,8 +189,15 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
     }
 }
 
-/// G1 gate: Text / PO / HTML only. Other committed filter goldens are G2+
-/// and must not block this wave.
+fn assert_rel(rel: &str, tmp: &Path) {
+    let path = goldens_dir().join(rel);
+    let spec: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    check_provenance(&path, &spec);
+    assert_filter_golden(&path, &spec, tmp);
+}
+
+/// G1 gate: Text / PO / HTML only.
 #[test]
 fn g1_text_po_html_java_goldens_must_match() {
     let tmp = tempfile::tempdir().unwrap();
@@ -199,13 +206,61 @@ fn g1_text_po_html_java_goldens_must_match() {
         "po/file-POFilter-multiple.json",
         "html/file-HTMLFilter2.json",
     ] {
-        let path = goldens_dir().join(rel);
-        let spec: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
-            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        check_provenance(&path, &spec);
-        assert_filter_golden(&path, &spec, tmp.path());
+        assert_rel(rel, tmp.path());
     }
 }
+
+#[test]
+fn g2_ini_srt_yaml_java_goldens_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "ini/file-INIFilter.json",
+        "srt/file-SrtFilter.json",
+        "yaml/sample1.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g2_hhc_dokuwiki_sbv_vtt_xtag_latex_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "hhc/file-HHCFilter2.json",
+        "dokuwiki/dokuwiki.json",
+        "sbv/simple.json",
+        "webvtt/simple.json",
+        "xtag/file-XtagFilter.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g2_latex_pdf_java_goldens_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in ["latex/file-latex-items.json", "pdf/file-PdfFilter.json"] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
+#[test]
+fn g2_properties_dtd_php_lang_ftl_csv_ilias_rc_must_match() {
+    let tmp = tempfile::tempdir().unwrap();
+    for rel in [
+        "properties/file-ResourceBundleFilter.json",
+        "mozdtd/file.json",
+        "moodlephp/file.json",
+        "mozlang/file-MozillaLangFilter-de.json",
+        "mozftl/MozillaFTLFilter.json",
+        "magento/MagentoFilter.json",
+        "ilias/ILIASFilter.json",
+        "rc/prog.json",
+    ] {
+        assert_rel(rel, tmp.path());
+    }
+}
+
 
 #[test]
 fn committed_filter_goldens_have_java_provenance() {

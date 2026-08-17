@@ -452,6 +452,7 @@ version = "6.2.0"
 dependencies = [
  "csv",
  "encoding_rs",
+ "flate2",
  "html-escape",
  "log",
  "omegat-ipc",

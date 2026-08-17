@@ -3,18 +3,34 @@
 
 mod csv;
 mod dialect;
+mod dokuwiki;
+mod hhc;
 mod html;
+mod ilias;
+mod ini;
 mod json;
+mod latex;
+mod magento;
 mod markdown;
 mod misc;
+mod moodlephp;
+mod mozdtd;
+mod mozftl;
+mod mozlang;
 mod office;
 mod pdf;
 mod po;
 mod properties;
+mod rc;
+mod sbv;
+mod skeleton_write;
+mod srt;
 mod subtitle;
 mod text;
+mod webvtt;
 mod xml_simple;
 mod xliff;
+mod xtag;
 mod yaml;
 
 use std::collections::HashMap;
@@ -137,23 +153,22 @@ impl FilterRegistry {
             Box::new(properties::PropertiesFilter),
             Box::new(csv::CsvFilter),
             Box::new(yaml::YamlFilter),
-            Box::new(subtitle::SrtFilter),
+            Box::new(srt::SrtFilter),
             Box::new(markdown::MarkdownFilter),
-            // P3
-            Box::new(misc::LatexFilter),
-            Box::new(misc::RcFilter),
-            Box::new(misc::MoodlePhpFilter),
-            Box::new(misc::MozillaDtdFilter),
-            Box::new(misc::MozillaLangFilter),
-            Box::new(misc::MozillaFtlFilter),
-            Box::new(misc::HhcFilter),
-            Box::new(misc::IniFilter),
-            Box::new(misc::DokuWikiFilter),
-            Box::new(misc::MagentoFilter),
-            Box::new(misc::IliasFilter),
-            Box::new(subtitle::SbvFilter),
-            Box::new(subtitle::WebVttFilter),
-            Box::new(misc::XtagFilter),
+            Box::new(latex::LatexFilter),
+            Box::new(rc::RcFilter),
+            Box::new(moodlephp::MoodlePhpFilter),
+            Box::new(mozdtd::MozillaDtdFilter),
+            Box::new(mozlang::MozillaLangFilter),
+            Box::new(mozftl::MozillaFtlFilter),
+            Box::new(hhc::HhcFilter),
+            Box::new(ini::IniFilter),
+            Box::new(dokuwiki::DokuWikiFilter),
+            Box::new(magento::MagentoFilter),
+            Box::new(ilias::IliasFilter),
+            Box::new(sbv::SbvFilter),
+            Box::new(webvtt::WebVttFilter),
+            Box::new(xtag::XtagFilter),
             Box::new(xml_simple::AndroidFilter),
             Box::new(xml_simple::XhtmlFilter),
             Box::new(xml_simple::PropertiesXmlFilter),
