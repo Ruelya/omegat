@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci || npm install
+      - run: npm run typecheck
+      - run: npm test
+  pack-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo build --release -p omegat-sidecar -p omegat-cli
+      - working-directory: apps/desktop
+        run: |
+          npm ci || npm install
+          npm run build
+          npx electron-builder --linux dir tar.gz --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegat-linux-unsigned
+          path: apps/desktop/release/**
+          if-no-files-found: warn

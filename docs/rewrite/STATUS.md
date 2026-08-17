@@ -12,13 +12,18 @@
 | MT / completer / finder hooks | P6 | done (network MT gated) |
 | Team Git/SVN/HTTP/file + TMX rebase | P7 | done (SVN needs system `svn`) |
 | Aligner, JS scripts, search/replace, CLI close-out | P8 | done |
-| i18n + packaging + retire Java | P9 | in progress |
+| 41 UI locales, packaging docs, plugin ABI, retire Java | P9 | done |
 
-## Known deltas vs Java OmegaT
+Java sources, Gradle, Azure Pipelines, and the old Java GitHub workflows are gone. `./gradlew run` is not available.
+
+## Documented deltas vs historic Java OmegaT
+
+These are intentional or first-pass limits, not unfinished core checklist items:
 
 - Fuzzy scores use Unicode tokens + light stemming, not the full Lucene analyzer matrix.
 - PDF compile cannot rewrite binary PDFs; it writes `*.pdf.txt`.
 - LanguageTool is an optional external HTTP service, not an embedded JAR.
 - Scripts are JavaScript (Node), not Groovy. Event directory names are unchanged.
 - Java plugin JARs are not loaded. New plugins use `omegat-plugin.toml` / JSON manifests.
-- Office write-back is a first-pass ZIP/XML rewrite; complex markup may need STATUS follow-up.
+- Office write-back is a first-pass ZIP/XML rewrite; complex markup may need follow-up.
+- UI catalogs: `en` and `zh-CN` are authored; other locales exist and fall back to English per key until community translation. `ar` is RTL.

@@ -44,19 +44,24 @@
     ],
     "extraResources": [
       {
-        "from": "../../target/release/omegat-sidecar",
-        "to": "omegat-sidecar"
+        "from": "../../target/release/",
+        "to": ".",
+        "filter": ["omegat-sidecar", "omegat-sidecar.exe"]
+      },
+      {
+        "from": "../../docs/manual",
+        "to": "manual"
       }
     ],
     "linux": {
-      "target": ["dir", "tar.gz"],
+      "target": ["dir", "tar.gz", "deb", "rpm"],
       "category": "Office"
     },
     "win": {
-      "target": ["dir"]
+      "target": ["nsis", "dir"]
     },
     "mac": {
-      "target": ["dir"]
+      "target": ["dmg", "dir"]
     }
   }
 }

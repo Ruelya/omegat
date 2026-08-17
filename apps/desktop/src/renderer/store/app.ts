@@ -7,7 +7,23 @@ import type {
   ProjectPropsDto,
   StatsDto,
 } from "../lib/types";
-import { t } from "../i18n";
+import { applyDocumentLocale, detectLocale, t } from "../i18n";
+
+function readLocal(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocal(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
 
 async function rpc<T>(method: string, params?: unknown): Promise<T> {
   if (!window.omegat) {
@@ -34,6 +50,8 @@ type State = {
   note: string;
   query: string;
   firstRun: boolean;
+  locale: string;
+  setLocale: (locale: string) => void;
   loadVersion: () => Promise<void>;
   open: (root: string) => Promise<void>;
   create: (root: string, sl: string, tl: string, seg: boolean) => Promise<void>;
@@ -61,7 +79,19 @@ export const useApp = create<State>((set, get) => ({
   draft: "",
   note: "",
   query: "",
-  firstRun: !localStorage.getItem("omegat.first"),
+  firstRun: !readLocal("omegat.first"),
+  locale: (() => {
+    const saved = readLocal("omegat.locale");
+    const nav = typeof navigator !== "undefined" ? navigator.language : "en";
+    const loc = detectLocale(saved || nav);
+    applyDocumentLocale(loc);
+    return loc;
+  })(),
+  setLocale: (locale) => {
+    applyDocumentLocale(locale);
+    writeLocal("omegat.locale", locale);
+    set({ locale });
+  },
   loadVersion: async () => {
     try {
       const v = await rpc<{ version: string }>("sys.version");
@@ -77,9 +107,9 @@ export const useApp = create<State>((set, get) => ({
     set({ props, entries, screen: "workspace", index: 0 });
     set({ stats });
     await get().select(0);
-    const rec = JSON.parse(localStorage.getItem("omegat.recent") || "[]") as string[];
-    localStorage.setItem("omegat.recent", JSON.stringify([root, ...rec.filter((r) => r !== root)].slice(0, 8)));
-    localStorage.setItem("omegat.first", "1");
+    const rec = JSON.parse(readLocal("omegat.recent") || "[]") as string[];
+    writeLocal("omegat.recent", JSON.stringify([root, ...rec.filter((r) => r !== root)].slice(0, 8)));
+    writeLocal("omegat.first", "1");
     set({ firstRun: false });
   },
   create: async (root, sl, tl, seg) => {

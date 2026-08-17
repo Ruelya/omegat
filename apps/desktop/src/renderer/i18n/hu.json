@@ -26,10 +26,7 @@
   "about": "About",
   "save": "Save",
   "compile": "Compile",
-  "comingLater": "No issues in this project.",
-  "noIssues": "No issues in this project.",
+  "comingLater": "This panel is wired; engine support lands with the matching rewrite phase.",
   "firstRun": "First run",
-  "tip": "Tip of the day: Enter commits the segment and moves forward. Ctrl+I inserts the best match.",
-  "uiLanguage": "UI language",
-  "root": "Project root"
+  "tip": "Tip of the day: Enter commits the segment and moves forward. Ctrl+I inserts the best match."
 }

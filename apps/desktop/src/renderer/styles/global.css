@@ -180,6 +180,9 @@ input, textarea, select {
   color: var(--ink-soft);
   font-style: italic;
 }
+[dir="rtl"] .col:last-child { border-right: 1px solid var(--line); }
+[dir="rtl"] .col:first-child { border-right: none; }
+[dir="rtl"] .card { text-align: right; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

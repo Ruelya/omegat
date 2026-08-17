@@ -14,12 +14,24 @@ const pending = new Map<number, Pending>();
 let nextId = 1;
 let buf = "";
 
+function sidecarName(): string {
+  return process.platform === "win32" ? "omegat-sidecar.exe" : "omegat-sidecar";
+}
+
 function sidecarPath(): string {
-  const extra = join(process.resourcesPath, "omegat-sidecar");
-  const dev = join(app.getAppPath(), "..", "..", "target", "debug", "omegat-sidecar");
-  const rel = join(app.getAppPath(), "..", "..", "target", "release", "omegat-sidecar");
+  const name = sidecarName();
+  const extra = join(process.resourcesPath, name);
+  const dev = join(app.getAppPath(), "..", "..", "target", "debug", name);
+  const rel = join(app.getAppPath(), "..", "..", "target", "release", name);
   if (existsSync(extra)) return extra;
   if (existsSync(rel)) return rel;
+  return dev;
+}
+
+function manualPath(): string {
+  const bundled = join(process.resourcesPath, "manual", "en.md");
+  const dev = join(app.getAppPath(), "..", "..", "docs", "manual", "en.md");
+  if (existsSync(bundled)) return bundled;
   return dev;
 }
 
@@ -146,7 +158,11 @@ function createWindow() {
         submenu: [
           {
             label: "Manual",
-            click: () => shell.openExternal("https://omegat.org"),
+            click: () => {
+              const local = manualPath();
+              if (existsSync(local)) void shell.openPath(local);
+              else void shell.openExternal("https://omegat.org");
+            },
           },
         ],
       },

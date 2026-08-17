@@ -7,7 +7,7 @@ import {
   Sun,
   Translate,
 } from "@phosphor-icons/react";
-import { t, setLocale } from "./i18n";
+import { availableLocales, t } from "./i18n";
 import { useApp } from "./store/app";
 
 export function App() {
@@ -18,8 +18,6 @@ export function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
 
   useEffect(() => {
-    const nav = navigator.language || "en";
-    if (nav.startsWith("zh")) setLocale("zh-CN");
     app.loadVersion();
     const offs = [
       window.omegat?.onMenu("menu:open", (p) => {
@@ -102,7 +100,13 @@ export function App() {
 }
 
 function Welcome({ onOpen, onNew }: { onOpen: () => void; onNew: () => void }) {
-  const recent = JSON.parse(localStorage.getItem("omegat.recent") || "[]") as string[];
+  const recent = JSON.parse((() => {
+    try {
+      return localStorage.getItem("omegat.recent") || "[]";
+    } catch {
+      return "[]";
+    }
+  })()) as string[];
   const open = useApp((s) => s.open);
   return (
     <div className="welcome">
@@ -146,7 +150,7 @@ function Wizard({ onClose }: { onClose: () => void }) {
         <h2>{t("newProject")}</h2>
         <div className="form">
           <label>
-            Root
+            {t("root")}
             <input value={root} onChange={(e) => setRoot(e.target.value)} />
             <button type="button" onClick={async () => {
               const d = await window.omegat?.pickDir();
@@ -255,7 +259,7 @@ function Workspace() {
                 <span className="score">{iss.kind}</span> {iss.message}
               </div>
             ))}
-            {app.issues.length === 0 && <div className="placeholder">{t("comingLater")}</div>}
+            {app.issues.length === 0 && <div className="placeholder">{t("noIssues")}</div>}
           </div>
         </div>
       </div>
@@ -294,10 +298,20 @@ function SearchModal({ onClose }: { onClose: () => void }) {
 }
 
 function PrefsModal({ onClose }: { onClose: () => void }) {
+  const locale = useApp((s) => s.locale);
+  const setLocale = useApp((s) => s.setLocale);
   return (
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>{t("prefs")}</h2>
+        <label className="form">
+          {t("uiLanguage")}
+          <select value={locale} onChange={(e) => setLocale(e.target.value)}>
+            {availableLocales().map((code) => (
+              <option key={code} value={code}>{code}</option>
+            ))}
+          </select>
+        </label>
         <p className="muted">General · Appearance · Save · Editing · TM matches · View</p>
         <p className="muted">File Filters · Segmentation · Spellchecker · LanguageTool · Dictionary · Glossary · MT · Autocompleter · External Finder · Team · Plugins</p>
         <button type="button" onClick={onClose}>{t("cancel")}</button>

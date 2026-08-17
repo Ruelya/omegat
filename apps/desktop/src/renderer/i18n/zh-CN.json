@@ -26,7 +26,10 @@
   "about": "关于",
   "save": "保存",
   "compile": "编译",
-  "comingLater": "面板已接通，对应引擎按重写期次提供。",
+  "comingLater": "当前项目没有问题。",
+  "noIssues": "当前项目没有问题。",
   "firstRun": "首次运行",
-  "tip": "每日提示：Enter 提交并前进到下一段。Ctrl+I 插入最佳匹配。"
+  "tip": "每日提示：Enter 提交并前进到下一段。Ctrl+I 插入最佳匹配。",
+  "uiLanguage": "界面语言",
+  "root": "项目根目录"
 }

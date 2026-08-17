@@ -1,5 +1,0 @@
-[user]
-        email = git@example.com
-        name = example user
-[http]
-        sslVerify = false
