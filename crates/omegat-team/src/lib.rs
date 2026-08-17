@@ -6,6 +6,7 @@
 
 mod error;
 mod file_repository;
+mod git2_ops;
 mod git_credentials_provider;
 mod git_remote_repository2;
 mod glossary_rebase;
@@ -80,7 +81,7 @@ pub const TEAM2_JAVA_CLASSES: &[&str] = &[
 mod tests {
     use super::*;
     use crate::mapping::default_mapping;
-    use crate::team_utils::{run_cmd, run_git, which};
+    use crate::team_utils::{run_cmd, which};
     use omegat_core::properties::{ProjectProperties, RepositoryDef, RepositoryMapping};
     use omegat_core::tmx::parse_tmx;
     use std::path::{Path, PathBuf};
@@ -369,14 +370,20 @@ mod tests {
             .args(["checkout", "-B", "main"])
             .current_dir(seed)
             .status();
-        let _ = run_git(Some(seed), &["add", "-A"]);
+        let _ = Command::new("git").args(["add", "-A"]).current_dir(seed).status();
         crate::git_remote_repository2::commit(seed, "seed").unwrap();
-        run_git(
-            Some(seed),
-            &["remote", "add", "origin", &bare.to_string_lossy()],
-        )
-        .unwrap();
-        run_git(Some(seed), &["push", "-u", "origin", "HEAD:refs/heads/main"]).unwrap();
+        assert!(Command::new("git")
+            .args(["remote", "add", "origin", &bare.to_string_lossy()])
+            .current_dir(seed)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["push", "-u", "origin", "HEAD:refs/heads/main"])
+            .current_dir(seed)
+            .status()
+            .unwrap()
+            .success());
     }
 
     #[test]

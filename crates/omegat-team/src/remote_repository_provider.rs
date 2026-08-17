@@ -77,10 +77,7 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
         remote_repository_factory::commit(props, repo)?;
     }
     if props.repositories.is_empty() && props.root.join(".git").exists() {
-        let _ = crate::team_utils::run_git(
-            Some(&props.root),
-            &["add", "-A", &dir.to_string_lossy()],
-        );
+        let _ = crate::git2_ops::add_all(&props.root);
         let _ = crate::git_remote_repository2::commit(&props.root, &format!("OmegaT commit {label} files"));
     }
     Ok(SyncReport {

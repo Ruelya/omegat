@@ -3,7 +3,7 @@
 use crate::error::{Result, TeamError};
 use crate::git_remote_repository2;
 use crate::mapping::default_mapping;
-use crate::team_utils::run_git;
+use crate::git2_ops;
 use omegat_core::properties::{ProjectProperties, RepositoryDef};
 use std::path::Path;
 
@@ -27,8 +27,8 @@ pub fn init(dir: &Path, source_lang: &str, target_lang: &str) -> Result<()> {
     props
         .write()
         .map_err(|e| TeamError::Command(e.to_string()))?;
-    if run_git(Some(dir), &["init"]).is_ok() {
-        let _ = run_git(Some(dir), &["add", "-A"]);
+    if git2_ops::init(dir).is_ok() {
+        let _ = git2_ops::add_all(dir);
         let _ = git_remote_repository2::commit(dir, "OmegaT team init");
     }
     Ok(())

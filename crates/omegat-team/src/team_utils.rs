@@ -77,22 +77,18 @@ pub fn copy_tree(from: &Path, to: &Path, skip_vcs: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn run_git(dir: Option<&Path>, args: &[&str]) -> Result<String> {
-    run_cmd("git", dir, args)
-}
-
-pub fn run_cmd(bin: &str, dir: Option<&Path>, args: &[&str]) -> Result<String> {
-    let mut c = Command::new(bin);
+pub fn run_cmd(program: &str, dir: Option<&Path>, args: &[&str]) -> Result<String> {
+    let mut c = Command::new(program);
     if let Some(d) = dir {
         c.current_dir(d);
     }
     let out = c
         .args(args)
         .output()
-        .map_err(|e| TeamError::Command(format!("{bin}: {e}")))?;
+        .map_err(|e| TeamError::Command(format!("{program}: {e}")))?;
     if !out.status.success() {
         return Err(TeamError::Command(format!(
-            "{bin} {} : {}",
+            "{program} {} : {}",
             args.join(" "),
             String::from_utf8_lossy(&out.stderr)
         )));
@@ -100,8 +96,8 @@ pub fn run_cmd(bin: &str, dir: Option<&Path>, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-pub fn which(bin: &str) -> bool {
-    Command::new(bin).arg("--version").output().is_ok()
+pub fn which(program: &str) -> bool {
+    Command::new(program).arg("--version").output().is_ok()
 }
 
 pub fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Option<T> {

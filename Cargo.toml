@@ -54,3 +54,4 @@ libloading = "=0.8.6"
 flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
 boa_engine = { version = "=0.20.0", default-features = false }
 rust-stemmers = "=1.2.0"
+git2 = { version = "=0.19.0", default-features = false, features = ["vendored-libgit2"] }
