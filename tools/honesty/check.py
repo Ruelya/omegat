@@ -313,7 +313,11 @@ def check_locales() -> None:
                 break
         if not bundle:
             continue
-        same = sum(1 for k, v in data.items() if isinstance(v, str) and v == en.get(k))
+        same = sum(
+            1
+            for k, v in data.items()
+            if isinstance(v, str) and v == en.get(k) and v != "OmegaT"
+        )
         if same:
             english_tails.append(f"{loc} {same}/{len(en)}")
     ok = not key_mismatches and not english_tails
