@@ -103,7 +103,7 @@ fn collect_text_nodes(xml: &str, file: &str, segments: &mut Vec<ExtractedSegment
             continue;
         }
         let name = node.tag_name().name();
-        if !matches!(name, "t" | "a:t" | "text:p" | "text:h" | "text:span") {
+        if !matches!(name, "t" | "p" | "h" | "span") {
             continue;
         }
         let text = node
@@ -181,26 +181,55 @@ fn rewrite_zip(
 }
 
 fn apply_office_translations(xml: &str, translations: &HashMap<String, String>) -> String {
+    let Ok(doc) = roxmltree::Document::parse(xml) else {
+        let mut out = xml.to_string();
+        let mut pairs: Vec<(String, String)> = translations
+            .iter()
+            .filter(|(k, v)| !k.is_empty() && !v.is_empty() && *k != *v)
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        pairs.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (src, tgt) in pairs {
+            if let Some(pos) = out.find(&src) {
+                out.replace_range(pos..pos + src.len(), &html_escape::encode_text(&tgt));
+            }
+        }
+        return out;
+    };
+    let mut replacements = Vec::new();
+    for node in doc.descendants() {
+        if !node.is_element() {
+            continue;
+        }
+        let name = node.tag_name().name();
+        if !matches!(name, "t" | "p" | "h" | "span") {
+            continue;
+        }
+        let text = node
+            .children()
+            .filter(|n| n.is_text())
+            .map(|n| n.text().unwrap_or(""))
+            .collect::<String>();
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let Some(tgt) = translations.get(text).filter(|t| !t.is_empty() && *t != text) else {
+            continue;
+        };
+        let range = node.range();
+        let slice = &xml[range.start..range.end];
+        if let (Some(gt), Some(lt)) = (slice.find('>'), slice.rfind("</")) {
+            let start = range.start + gt + 1;
+            let end = range.start + lt;
+            replacements.push((start, end, html_escape::encode_text(tgt).to_string()));
+        }
+    }
+    replacements.sort_by(|a, b| b.0.cmp(&a.0));
     let mut out = xml.to_string();
-    let mut pairs: Vec<(String, String)> = translations
-        .iter()
-        .filter(|(k, v)| !k.is_empty() && !v.is_empty() && !k.contains('/') && !k.chars().all(|c| c.is_ascii_digit()))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    // Prefer longer sources so we do not clobber substrings.
-    pairs.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-    for (src, tgt) in pairs {
-        if src == tgt {
-            continue;
-        }
-        let from = html_escape::encode_text(&src).to_string();
-        let to = html_escape::encode_text(&tgt).to_string();
-        if out.contains(&from) {
-            out = out.replacen(&from, &to, 1);
-            continue;
-        }
-        if out.contains(&src) {
-            out = out.replacen(&src, &tgt, 1);
+    for (start, end, text) in replacements {
+        if start < end && end <= out.len() {
+            out.replace_range(start..end, &text);
         }
     }
     out

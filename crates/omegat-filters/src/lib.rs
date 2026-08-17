@@ -2,6 +2,7 @@
 //! write translations back into a target file.
 
 mod csv;
+mod dialect;
 mod html;
 mod json;
 mod markdown;
@@ -283,12 +284,12 @@ impl FilterRegistry {
             "xmlss"
         } else if raw.contains("HelpAndManual") || raw.contains("<topic") {
             "helpandmanual"
-        } else if raw.contains("<string") && raw.contains("name=") {
+        } else if raw.contains("<string") && raw.contains("name=") && raw.contains("resources") {
             "android"
         } else if raw.contains("<para") || raw.contains("<chapter") {
             "docbook"
         } else {
-            "android"
+            return None;
         };
         self.by_id(id)
     }

@@ -1,0 +1,15 @@
+{
+  "id": "propxml",
+  "fixture": "propxml/simple.xml",
+  "java_test": "org.omegat.filters dialect/table for propxml",
+  "options": {},
+  "sources": [
+    "Alpha"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Alpha",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

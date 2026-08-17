@@ -9,7 +9,7 @@ Legend: `scaffold` = present but not accepted · `parity` = accepted against Jav
 | Golden export tool + committed `fixtures/goldens/` | H0 | parity |
 | Sidecar method contract tests | R0 | parity |
 | Project / TMX / SRX / matching / glossary / compile / CLI | R1 | parity |
-| 49 filters + Office write-back + tag QA | R2 | scaffold |
+| 49 filters + Office write-back + tag QA | R2 | parity |
 | Desktop docks, menus, search/replace, preference pages | R3 | scaffold |
 | Spell backends, dictionaries, LanguageTool HTTP, Issues | R4 | scaffold |
 | 7 MT engines, External Finder, autocompleter | R5 | scaffold |
@@ -21,6 +21,7 @@ Legend: `scaffold` = present but not accepted · `parity` = accepted against Jav
 
 - R1 matching: token-Levenshtein scores on committed `fixtures/goldens/engine/fuzzy.json` are exact (en `Hello world`/`Hello word` = 50). CJK n-gram vs Lucene CJKTokenizer not yet measured on a held-out set — record when R4 tokenizers land.
 - R1 TMX: `omegat`/`level1`/`level2` fields (`changeid`, `creationid`, dates, `prop` file/id, level2 `bpt`/`ept`/`ph`) are asserted in unit tests; Java `project_save.tmx` fixture round-trips entry count. Whitespace-only serialization differences vs StAX are allowed.
+- R2 XML: inline tags become OmegaT shortcuts (`<f0>`, `<x0>` for `xliff:g`). Empty write keeps the original tree (Java `translateXML`). Office write replaces `w:t` / `text:p` node ranges, not file-wide `replacen`. `sniff_xml` no longer defaults unknown XML to Android.
 - See later waves as they leave `scaffold`. Do not mark `parity` while tests use `>= N` or skip read-back of translations.
 
 ## Sidecar methods

@@ -1,5 +1,5 @@
 use crate::{
-    apply_skeleton, ensure_parent, placeholder, read_to_string, ExtractedSegment, Filter,
+    apply_skeleton_with_originals, ensure_parent, placeholder, read_to_string, ExtractedSegment, Filter,
     FilterContext, ParsedFile, Result,
 };
 use std::collections::HashMap;
@@ -142,9 +142,10 @@ fn write_blocks(
     is_meta: fn(&str) -> bool,
 ) -> Result<()> {
     let parsed = parse_blocks(&read_to_string(source_path)?, is_meta)?;
+    let originals: Vec<String> = parsed.segments.iter().map(|s| s.source.clone()).collect();
     let out = parsed
         .skeleton
-        .map(|sk| apply_skeleton(&sk, translations))
+        .map(|sk| apply_skeleton_with_originals(&sk, translations, &originals))
         .unwrap_or_default();
     ensure_parent(dest_path)?;
     std::fs::write(dest_path, out)?;

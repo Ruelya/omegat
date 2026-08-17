@@ -110,28 +110,53 @@ impl Filter for SdlProjectFilter {
         4
     }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
+        let raw = read_to_string(path)?;
+        let mut segments = Vec::new();
+        if let Ok(doc) = roxmltree::Document::parse(&raw) {
+            for node in doc.descendants() {
+                if node.is_element() && node.tag_name().name().eq_ignore_ascii_case("name") {
+                    let t = node
+                        .children()
+                        .filter(|n| n.is_text())
+                        .map(|n| n.text().unwrap_or(""))
+                        .collect::<String>();
+                    if !t.trim().is_empty() {
+                        segments.push(ExtractedSegment {
+                            id: segments.len().to_string(),
+                            source: t.trim().to_string(),
+                            existing_translation: None,
+                            note: None,
+                            comment: None,
+                            path: Some("Name".into()),
+                            protected_parts: vec![],
+                        });
+                    }
+                }
+            }
+        }
         Ok(ParsedFile {
-            segments: vec![ExtractedSegment {
-                id: "0".into(),
-                source: format!("SDL project: {}", path.display()),
-                existing_translation: None,
-                note: Some("Open the contained .sdlxliff files instead".into()),
-                comment: None,
-                path: None,
-                protected_parts: vec![],
-            }],
-            skeleton: None,
+            segments,
+            skeleton: Some(raw),
         })
     }
     fn write(
         &self,
         source_path: &Path,
         dest_path: &Path,
-        _translations: &HashMap<String, String>,
+        translations: &HashMap<String, String>,
         _ctx: &FilterContext,
     ) -> Result<()> {
+        let parsed = self.parse(source_path, _ctx)?;
+        let mut raw = read_to_string(source_path)?;
+        for seg in parsed.segments {
+            if let Some(t) = translations.get(&seg.id).or_else(|| translations.get(&seg.source)) {
+                if !t.is_empty() {
+                    raw = raw.replacen(&seg.source, t, 1);
+                }
+            }
+        }
         ensure_parent(dest_path)?;
-        std::fs::copy(source_path, dest_path)?;
+        std::fs::write(dest_path, raw)?;
         Ok(())
     }
 }

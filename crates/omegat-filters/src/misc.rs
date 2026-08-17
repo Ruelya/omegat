@@ -1,8 +1,8 @@
 //! P3 leftover text-like formats.
 
 use crate::{
-    apply_skeleton, ensure_parent, placeholder, read_to_string, ExtractedSegment, Filter,
-    FilterContext, ParsedFile, Result,
+    apply_skeleton_with_originals, ensure_parent, placeholder, read_to_string, ExtractedSegment,
+    Filter, FilterContext, ParsedFile, Result,
 };
 use regex::Regex;
 use std::collections::HashMap;
@@ -35,9 +35,10 @@ macro_rules! simple_filter {
                 _ctx: &FilterContext,
             ) -> Result<()> {
                 let parsed = $parser(&read_to_string(source_path)?)?;
+                let originals: Vec<String> = parsed.segments.iter().map(|s| s.source.clone()).collect();
                 let out = parsed
                     .skeleton
-                    .map(|sk| apply_skeleton(&sk, translations))
+                    .map(|sk| apply_skeleton_with_originals(&sk, translations, &originals))
                     .unwrap_or_else(|| read_to_string(source_path).unwrap_or_default());
                 ensure_parent(dest_path)?;
                 std::fs::write(dest_path, out)?;
@@ -155,7 +156,30 @@ fn parse_hhc(raw: &str) -> Result<ParsedFile> {
     token_replace(raw, &re, 1)
 }
 fn parse_magento(raw: &str) -> Result<ParsedFile> {
-    kv_parser(raw, &[','])
+    let mut segments = Vec::new();
+    let mut skeleton = String::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            skeleton.push('\n');
+            continue;
+        }
+        let src = line.split(',').next().unwrap_or(line).trim().trim_matches('"');
+        skeleton.push_str(&placeholder(segments.len()));
+        skeleton.push('\n');
+        segments.push(ExtractedSegment {
+            id: segments.len().to_string(),
+            source: src.to_string(),
+            existing_translation: None,
+            note: None,
+            comment: None,
+            path: None,
+            protected_parts: vec![],
+        });
+    }
+    Ok(ParsedFile {
+        segments,
+        skeleton: Some(skeleton),
+    })
 }
 
 fn crate_text_paragraphs(raw: &str) -> Result<ParsedFile> {
@@ -173,7 +197,7 @@ fn crate_text_paragraphs(raw: &str) -> Result<ParsedFile> {
         skeleton.push_str(&placeholder(segments.len()));
         segments.push(ExtractedSegment {
             id: segments.len().to_string(),
-            source: part.to_string(),
+            source: part.trim().to_string(),
             existing_translation: None,
             note: None,
             comment: None,

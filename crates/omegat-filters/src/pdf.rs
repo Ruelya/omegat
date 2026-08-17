@@ -52,15 +52,34 @@ impl Filter for PdfFilter {
         translations: &HashMap<String, String>,
         _ctx: &FilterContext,
     ) -> Result<()> {
+        let parsed = self.parse(_source_path, _ctx)?;
         let mut lines: Vec<(usize, String)> = translations
             .iter()
             .filter_map(|(k, v)| k.parse::<usize>().ok().map(|i| (i, v.clone())))
             .collect();
         lines.sort_by_key(|(i, _)| *i);
-        let body = if lines.is_empty() {
-            translations.values().cloned().collect::<Vec<_>>().join("\n\n")
-        } else {
+        let body = if !lines.is_empty() {
             lines.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join("\n\n")
+        } else if translations.values().any(|v| !v.is_empty()) {
+            parsed
+                .segments
+                .iter()
+                .map(|s| {
+                    translations
+                        .get(&s.id)
+                        .or_else(|| translations.get(&s.source))
+                        .cloned()
+                        .unwrap_or_else(|| s.source.clone())
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        } else {
+            parsed
+                .segments
+                .iter()
+                .map(|s| s.source.clone())
+                .collect::<Vec<_>>()
+                .join("\n\n")
         };
         let dest = if dest_path.extension().and_then(|e| e.to_str()) == Some("pdf") {
             dest_path.with_extension("pdf.txt")
@@ -68,7 +87,10 @@ impl Filter for PdfFilter {
             dest_path.to_path_buf()
         };
         ensure_parent(&dest)?;
-        std::fs::write(dest, body)?;
+        std::fs::write(&dest, &body)?;
+        if dest_path.extension().and_then(|e| e.to_str()) == Some("pdf") {
+            std::fs::write(dest_path, &body)?;
+        }
         Ok(())
     }
 }
