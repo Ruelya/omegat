@@ -1,14 +1,14 @@
 //! JavaScript event scripts with a Java-comparable binding surface.
 //!
 //! `AbstractScriptRunner.setupBindings` exposes `project`, `editor`, `glossary`,
-//! `console`, `mainWindow`, and `Core`. Groovy is not executed; scripts are JS.
-//! Prefers Node when available. Without Node, a host-call interpreter still
-//! runs `editor.replaceEditText` / `setTranslation` / `console.println` / arithmetic.
+//! `console`, `mainWindow`, and `Core`. Groovy is not executed; scripts are JS
+//! evaluated by the embedded Boa engine. Node is not required.
+
+mod engine;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
-use std::process::Command;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -110,206 +110,7 @@ pub fn run_source(source: &str, bindings: &Value) -> Result<String, ScriptError>
 }
 
 pub fn run_source_state(source: &str, state: &mut ScriptState) -> Result<String, ScriptError> {
-    if let Some(out) = run_node(source, state) {
-        return out;
-    }
-    fallback_eval(source, state)
-}
-
-fn run_node(source: &str, state: &mut ScriptState) -> Option<Result<String, ScriptError>> {
-    let prelude = node_prelude();
-    let wrapped = format!(
-        r#"{prelude}
-const __user = {src};
-let __result;
-try {{
-  __result = (function() {{ return eval(__user); }})();
-}} catch (e) {{
-  process.stderr.write(String(e));
-  process.exit(2);
-}}
-process.stdout.write('___STATE___' + JSON.stringify(state));
-if (__result !== undefined && __result !== null) {{
-  process.stderr.write('___RESULT___' + String(__result));
-}}
-"#,
-        src = serde_json::to_string(source).unwrap_or_else(|_| "\"\"".into()),
-    );
-    let out = Command::new("node")
-        .arg("-e")
-        .arg(&wrapped)
-        .env("OMEGAT_STATE", serde_json::to_string(state).unwrap())
-        .output()
-        .ok()?;
-    if !out.status.success() && out.status.code() != Some(2) {
-        return Some(Err(ScriptError::Engine(
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        )));
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    if let Some(json) = stdout.split("___STATE___").nth(1) {
-        if let Ok(next) = serde_json::from_str::<ScriptState>(json.trim()) {
-            *state = next;
-        }
-    }
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let result = stderr
-        .split("___RESULT___")
-        .nth(1)
-        .unwrap_or("")
-        .to_string();
-    if out.status.code() == Some(2) {
-        return Some(Err(ScriptError::Engine(stderr.into_owned())));
-    }
-    Some(Ok(result))
-}
-
-fn node_prelude() -> &'static str {
-    r#"
-const state = JSON.parse(process.env.OMEGAT_STATE || '{}');
-const console = {
-  println(x) { state.console = state.console || []; state.console.push(String(x)); },
-  print(x) { this.println(x); }
-};
-const editor = {
-  getCurrentTranslation() { return state.translation || ''; },
-  getCurrentSource() { return state.source || ''; },
-  setTranslation(t) { state.translation = String(t == null ? '' : t); return state.translation; },
-  replaceEditText(t) { state.translation = String(t == null ? '' : t); return state.translation; },
-  insertText(t) { const s = String(t == null ? '' : t); state.translation = (state.translation || '') + s; state.inserted = s; },
-  gotoNextUntranslatedEntry() { state.jumped = (state.index || 0) + 1; },
-  gotoEntry(n) { state.jumped = Number(n); state.index = Number(n); },
-  commitAndDeactivate() { state.saved = true; }
-};
-const project = {
-  getSourceLanguage() { return state.source_lang; },
-  getTargetLanguage() { return state.target_lang; },
-  sourceLang: state.source_lang,
-  targetLang: state.target_lang,
-  save() { state.saved = true; return true; },
-  compileProject() { state.compiled = true; return true; },
-  saveProject() { state.saved = true; return true; }
-};
-const glossary = {
-  addEntry(s, t, c) { state.glossary_adds = state.glossary_adds || []; state.glossary_adds.push([String(s), String(t), String(c || '')]); },
-  search(s) { return []; },
-  writable: true
-};
-const mainWindow = {
-  showStatusMessageRB() { return true; },
-  status: true
-};
-const Core = {
-  getProject() { return project; },
-  getEditor() { return editor; },
-  getGlossary() { return glossary; },
-  getMainWindow() { return mainWindow; }
-};
-"#
-}
-
-fn fallback_eval(source: &str, state: &mut ScriptState) -> Result<String, ScriptError> {
-    let src = source.trim();
-    if src == "1 + 2" || src == "1+2" {
-        return Ok("3".into());
-    }
-    if src == "null" || src.is_empty() {
-        return Ok("null".into());
-    }
-    apply_host_calls(src, state);
-    if let Some(n) = simple_arith(src) {
-        return Ok(n);
-    }
-    Ok(state.translation.clone())
-}
-
-fn apply_host_calls(src: &str, state: &mut ScriptState) {
-    for (method, field) in [
-        ("replaceEditText", "translation"),
-        ("setTranslation", "translation"),
-        ("insertText", "insert"),
-    ] {
-        if let Some(arg) = call_arg(src, "editor", method) {
-            match field {
-                "insert" => {
-                    state.translation.push_str(&arg);
-                    state.inserted = arg;
-                }
-                _ => state.translation = arg,
-            }
-        }
-    }
-    if let Some(arg) = call_arg(src, "console", "println").or_else(|| call_arg(src, "console", "print"))
-    {
-        state.console.push(arg);
-    }
-    if src.contains("project.save") || src.contains("saveProject") || src.contains("commitAndDeactivate")
-    {
-        state.saved = true;
-    }
-    if src.contains("compileProject") {
-        state.compiled = true;
-    }
-    if let Some(n) = call_arg(src, "editor", "gotoEntry") {
-        if let Ok(i) = n.parse::<i64>() {
-            state.jumped = Some(i);
-            state.index = i as usize;
-        }
-    }
-    if let Some((s, t, c)) = call_args3(src, "glossary", "addEntry") {
-        state.glossary_adds.push([s, t, c]);
-    }
-}
-
-fn call_arg(src: &str, obj: &str, method: &str) -> Option<String> {
-    let pat = format!("{obj}.{method}(");
-    let i = src.find(&pat)?;
-    let rest = &src[i + pat.len()..];
-    parse_string_arg(rest)
-}
-
-fn call_args3(src: &str, obj: &str, method: &str) -> Option<(String, String, String)> {
-    let pat = format!("{obj}.{method}(");
-    let i = src.find(&pat)?;
-    let rest = &src[i + pat.len()..];
-    let a = parse_string_arg(rest)?;
-    let after = rest.splitn(2, ',').nth(1)?;
-    let b = parse_string_arg(after)?;
-    let after2 = after.splitn(2, ',').nth(1).unwrap_or("''");
-    let c = parse_string_arg(after2).unwrap_or_default();
-    Some((a, b, c))
-}
-
-fn parse_string_arg(rest: &str) -> Option<String> {
-    let rest = rest.trim_start();
-    let quote = rest.chars().next()?;
-    if quote != '\'' && quote != '"' {
-        let end = rest.find([')', ',']).unwrap_or(rest.len());
-        return Some(rest[..end].trim().to_string());
-    }
-    let mut out = String::new();
-    let mut it = rest.chars();
-    it.next();
-    for c in it {
-        if c == quote {
-            return Some(out);
-        }
-        if c == '\\' {
-            continue;
-        }
-        out.push(c);
-    }
-    Some(out)
-}
-
-fn simple_arith(src: &str) -> Option<String> {
-    let s = src.replace(' ', "");
-    if let Some((a, b)) = s.split_once('+') {
-        let a: i64 = a.parse().ok()?;
-        let b: i64 = b.trim_end_matches(';').parse().ok()?;
-        return Some((a + b).to_string());
-    }
-    None
+    engine::eval(source, state)
 }
 
 fn state_from_bindings(bindings: &Value) -> ScriptState {
@@ -426,11 +227,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eval_js() {
+    fn eval_js_arithmetic_is_real_engine() {
         let out = run_source("1 + 2", &serde_json::json!({})).unwrap();
-        assert!(out.contains('3') || out.is_empty());
-        let mut state = ScriptState::default();
-        let _ = run_source_state("1 + 2", &mut state).unwrap();
+        assert_eq!(out, "3");
+        let out = run_source("(function () { return 10 + 20; })()", &serde_json::json!({})).unwrap();
+        assert_eq!(out, "30");
     }
 
     #[test]
@@ -442,6 +243,32 @@ mod tests {
         };
         run_source_state("editor.replaceEditText('Bonjour')", &mut state).unwrap();
         assert_eq!(state.translation, "Bonjour");
+    }
+
+    #[test]
+    fn bindings_are_real_js_not_string_scan() {
+        let mut state = ScriptState::default();
+        run_source_state(
+            "const t = 'Bonjour'; editor.replaceEditText(t);",
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(state.translation, "Bonjour");
+
+        let mut state = ScriptState::default();
+        run_source_state(
+            "function twice(s) { return s + s; } editor.replaceEditText(twice('X'));",
+            &mut state,
+        )
+        .unwrap();
+        assert_eq!(state.translation, "XX");
+    }
+
+    #[test]
+    fn invalid_js_is_an_error() {
+        let mut state = ScriptState::default();
+        let err = run_source_state("this is not valid javascript !!!", &mut state).unwrap_err();
+        assert!(matches!(err, ScriptError::Engine(_)));
     }
 
     #[test]
@@ -475,5 +302,15 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert_eq!(state.console, vec!["e".to_string()]);
         assert_eq!(ScriptEvent::all().len(), 6);
+    }
+
+    #[test]
+    fn source_has_no_string_eval_shim() {
+        let src = concat!(include_str!("lib.rs"), include_str!("engine.rs"));
+        let shim = ["fn ", "fallback", "_eval"].concat();
+        let arith = ["fn ", "simple", "_arith"].concat();
+        assert!(!src.contains(&shim));
+        assert!(!src.contains(&arith));
+        assert!(!src.contains("Command::new(\"node\")"));
     }
 }

@@ -41,7 +41,7 @@ Known compression that **must stay `scaffold` / `parity_gap` until rebuilt**:
 - `filter_goldens.rs` `contains` / `must_contain` / `n >= 49` (removed in G0)
 - `Preferences.extra: HashMap` as the preference model (**removed in G5**)
 - `contentEditable` as the segment editor (**removed in G5**)
-- `fallback_eval("1+2")` as a script engine
+- `fallback_eval("1+2")` as a script engine (**removed in G9**: embedded Boa)
 - toy `resources/languages` word lists with no `.aff` (**removed in G6**)
 - match bins that record every non-exact hit as `fuzzy_85`
 - Python “export” that never ran Java
@@ -61,7 +61,7 @@ Accepted against Java-exported goldens (`assert_eq`):
 - en/de fuzzy top-1 is the same entry; **score delta = 0** on `Hello word` vs `{Hello world, Hallo Welt}`
 - `--tag-validation abort` returns `TAG_VALIDATION`; `warn` compiles and still reports tag issues
 
-Not this wave: Android is G3. `dialect_filter!` / `contentEditable` remain.
+G3 removed `dialect_filter!`. G5 removed `contentEditable`.
 
 ## G2 notes
 
@@ -143,12 +143,12 @@ Accepted against Java-exported `fixtures/goldens/engine/tokens.json` (`assert_eq
 
 ## G8 notes
 
-`omegat-team` covers mapping include/exclude, file/HTTP/git/SVN, prepare→rebase (TMX **and** glossary)→commit. Two git clients merge different segments; same-segment conflict keeps both sides and resolves. HTTP downloads a remote TMX into rebase. SVN is tested when the `svn` binary exists.
+`omegat-team` is one Rust file per Java `team2` class (23). Mapping include/exclude, file/HTTP/git/SVN, prepare→rebase (TMX **and** glossary)→commit. Two git clients merge different segments; same-segment conflict keeps both sides and resolves. HTTP downloads a remote TMX into rebase. SVN is tested when the `svn` binary exists. Credentials are typed (`UserPass` / `Passphrase`) and persisted by `RepositoriesCredentialsController`.
 
 ## G9 notes
 
 - Aligner: HEAPWISE / PARSEWISE / ID; Viterbi ≠ Forward-Backward; CHAR/WORD Poisson vs Normal. Java aligner fixtures `assert_eq`. GUI merge/split/move in `align::tests::edit_merge_split_move`.
-- Embedded JS: `project` / `editor` / `glossary` / `console` / `mainWindow` / `Core`. `entry_activated` can change the current translation without Node. Six event dirs + 12 slots. Groovy is not executed (`docs/rewrite/MIGRATION.md`).
+- Embedded **Boa** JS engine (Node is not used). Bindings: `project` / `editor` / `glossary` / `console` / `mainWindow` / `Core`. `const` / `function` / arithmetic run as real ECMAScript. `fallback_eval("1+2")` is gone. `entry_activated` can change the current translation without Node. Six event dirs + 12 slots. Groovy is not executed (`docs/rewrite/MIGRATION.md`).
 - Wiki MediaWiki XML → source; MED unzip; CLI `--help` lists legacy flags.
 
 ## G10 notes

@@ -6,7 +6,7 @@
 
 | Java | 等价 |
 |---|---|
-| Groovy / GraalJS | JavaScript（优先 Node；无 Node 时仍执行 `editor`/`project`/`glossary`/`console` 调用） |
+| Groovy / GraalJS | 嵌入式 Boa JavaScript 引擎（无 Node）。绑定 `editor`/`project`/`glossary`/`console`/`mainWindow`/`Core` |
 | `project` | `getSourceLanguage`, `getTargetLanguage`, `save` / `saveProject`, `compileProject` |
 | `editor` | `getCurrentTranslation`, `getCurrentSource`, `setTranslation`, `replaceEditText`, `insertText`, `gotoEntry`, `gotoNextUntranslatedEntry`, `commitAndDeactivate` |
 | `glossary` | `addEntry(source, target, comment)`, `search` |

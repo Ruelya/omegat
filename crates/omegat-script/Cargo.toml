@@ -3,7 +3,7 @@ name = "omegat-script"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "JavaScript event scripts for OmegaT (rquickjs-compatible via Boa)"
+description = "Embedded Boa JavaScript engine with Java AbstractScriptRunner bindings"
 
 [dependencies]
 omegat-ipc.workspace = true
@@ -11,6 +11,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 log.workspace = true
+boa_engine.workspace = true
 
 [dev-dependencies]
 tempfile = "=3.10.1"

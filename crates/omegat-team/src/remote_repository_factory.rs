@@ -1,0 +1,35 @@
+//! Java `RemoteRepositoryFactory`.
+
+use crate::error::{Result, TeamError};
+use crate::file_repository::FileRepository;
+use crate::git_remote_repository2::GITRemoteRepository2;
+use crate::http_remote_repository::HTTPRemoteRepository;
+use crate::i_remote_repository2::IRemoteRepository2;
+use crate::svn_remote_repository2::SVNRemoteRepository2;
+use omegat_core::properties::{ProjectProperties, RepositoryDef};
+
+pub fn create(repo_type: &str) -> Result<Box<dyn IRemoteRepository2>> {
+    let repo: Box<dyn IRemoteRepository2> = match repo_type {
+        "git" => Box::new(GITRemoteRepository2),
+        "svn" => Box::new(SVNRemoteRepository2),
+        "http" => Box::new(HTTPRemoteRepository),
+        "file" => Box::new(FileRepository),
+        other => return Err(TeamError::Unsupported(other.into())),
+    };
+    if repo.repo_type() != repo_type {
+        return Err(TeamError::Unsupported(format!(
+            "factory type {} != {}",
+            repo.repo_type(),
+            repo_type
+        )));
+    }
+    Ok(repo)
+}
+
+pub fn prepare(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
+    create(&repo.repo_type)?.prepare(props, repo)
+}
+
+pub fn commit(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
+    create(&repo.repo_type)?.commit(props, repo)
+}

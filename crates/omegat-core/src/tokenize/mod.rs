@@ -270,7 +270,7 @@ mod tests {
         for lang in ["en", "de", "fr", "zh", "ja", "ru", "ar"] {
             assert!(tokenizer_id(lang).contains("Lucene"), "{}", tokenizer_id(lang));
         }
-        assert!(registered_lucene_tokenizers().len() >= 33);
+        assert_eq!(registered_lucene_tokenizers().len(), 34);
     }
 
     #[test]
