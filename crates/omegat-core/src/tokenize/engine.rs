@@ -71,6 +71,42 @@ pub fn lucene_words_to_strings(
         .collect()
 }
 
+/// Java `BaseTokenizer.tokenizeWords`: analyzer terms only (no surface pair).
+pub fn lucene_word_tokens(
+    text: &str,
+    mode: StemmingMode,
+    stem: impl Fn(&str, bool) -> String,
+    stopwords: &[&str],
+) -> Vec<String> {
+    let stems_allowed = mode.stems_allowed();
+    let stop = mode.stop_words();
+    let filter_digits = mode.filter_digits();
+    let full = mode.full();
+    let mut out = Vec::new();
+    for surf in standard_surfaces(text) {
+        if !accept_token(surf.text, filter_digits) {
+            continue;
+        }
+        let lower = fold_lower(surf.text);
+        if stop && is_stop(&lower, stopwords) {
+            continue;
+        }
+        let term = if stems_allowed {
+            stem(&lower, full)
+        } else {
+            surf.text.to_string()
+        };
+        if !accept_token(&term, filter_digits) {
+            continue;
+        }
+        if stop && is_stop(&term, stopwords) {
+            continue;
+        }
+        out.push(term);
+    }
+    out
+}
+
 pub fn lucene_tokens(
     text: &str,
     mode: StemmingMode,
@@ -145,6 +181,12 @@ pub fn default_word_tokens(text: &str) -> Vec<Token> {
     out
 }
 
+/// Java `WordIterator` + `BreakIterator.getWordInstance` heuristics used by
+/// `DefaultTokenizer` / `Statistics.numberOfWords`.
+///
+/// CJK stays a script run (not per-ideograph). Latin hyphen joins only
+/// letter–letter (`Content-Type`, `X-Language`), not letter–digit (`UTF-8`),
+/// matching UAX #29 WB6 (`AHLetter × MidNumLet × AHLetter`).
 pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
     let mut out = Vec::new();
     let chars: Vec<(usize, char)> = text.char_indices().collect();
@@ -163,9 +205,18 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
             }
         }
         if ch.is_whitespace() {
+            // Java `BreakIterator.getWordInstance` keeps a line break (`\n`)
+            // separate from a following space run (`        `).
             let mut j = i + 1;
-            while j < chars.len() && chars[j].1.is_whitespace() {
-                j += 1;
+            if matches!(ch, '\n' | '\r') {
+                if ch == '\r' && j < chars.len() && chars[j].1 == '\n' {
+                    j += 1;
+                }
+            } else {
+                while j < chars.len() && chars[j].1.is_whitespace() && !matches!(chars[j].1, '\n' | '\r')
+                {
+                    j += 1;
+                }
             }
             let end = if j < chars.len() { chars[j].0 } else { text.len() };
             out.push(Surface {
@@ -179,8 +230,35 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
         if is_word_char(ch) {
             let script = script_kind(ch);
             let mut j = i + 1;
-            while j < chars.len() && is_word_char(chars[j].1) && script_kind(chars[j].1) == script {
-                j += 1;
+            while j < chars.len() {
+                let next = chars[j].1;
+                if is_word_char(next) && (script_kind(next) == script || is_intra_word_mark(next)) {
+                    j += 1;
+                    continue;
+                }
+                // WB6 MidNumLet: letter -/. letter stays one token (`blog.discourse.org`,
+                // `understanding-discourse-trust-levels`). `UTF-8` stays two.
+                if matches!(next, '-' | '.')
+                    && j + 1 < chars.len()
+                    && chars[j - 1].1.is_alphabetic()
+                    && chars[j + 1].1.is_alphabetic()
+                    && script_kind(chars[j + 1].1) == script
+                {
+                    j += 1;
+                    continue;
+                }
+                // Java BreakIterator: `upload_bucket` stays one token; `s3_upload`
+                // splits as `s3` + `_` + `upload` (underscore after a digit).
+                if next == '_'
+                    && j + 1 < chars.len()
+                    && chars[j - 1].1.is_alphabetic()
+                    && chars[j + 1].1.is_alphabetic()
+                    && script_kind(chars[j + 1].1) == script
+                {
+                    j += 1;
+                    continue;
+                }
+                break;
             }
             let end = if j < chars.len() { chars[j].0 } else { text.len() };
             out.push(Surface {
@@ -203,7 +281,13 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
 }
 
 fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}' || ch == '-'
+    // ASCII apostrophe only: Java `BreakIterator` keeps `can't` together but
+    // splits U+2019 (`don’t` → `don` + `t`).
+    ch.is_alphanumeric() || ch == '\''
+}
+
+fn is_intra_word_mark(ch: char) -> bool {
+    ch == '\''
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -220,7 +304,7 @@ fn script_kind(ch: char) -> ScriptKind {
         ScriptKind::Kana
     } else if (0x3400..=0x9FFF).contains(&u) || (0xF900..=0xFAFF).contains(&u) {
         ScriptKind::Cjk
-    } else if ch.is_ascii_alphanumeric() || ch.is_alphabetic() {
+    } else if ch.is_ascii_alphanumeric() || ch.is_alphabetic() || ch == '_' {
         ScriptKind::Latin
     } else {
         ScriptKind::Other
@@ -228,8 +312,9 @@ fn script_kind(ch: char) -> ScriptKind {
 }
 
 pub fn is_omegat_tag(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.first() == Some(&b'<') && b.last() == Some(&b'>') && s.len() >= 3
+    static RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"^</?[a-zA-Z]+[0-9]+/?>$").unwrap());
+    RE.is_match(s)
 }
 
 fn find_tag_end(text: &str, start: usize) -> Option<usize> {
@@ -239,10 +324,56 @@ fn find_tag_end(text: &str, start: usize) -> Option<usize> {
     }
     let close = rest.find('>')?;
     let tag = &rest[..=close];
-    if tag.len() >= 3 && tag.as_bytes()[1].is_ascii_alphabetic() || tag.starts_with("</") || tag.starts_with("<x") {
+    // Java `WordIterator` groups only `OMEGAT_TAG_ONLY` (`x0`, `/x0`). HTML
+    // `<a href="...">` must stay split so `tokenizeVerbatim` / word counts match.
+    if is_omegat_tag(tag) {
         return Some(start + close + 1);
     }
     None
+}
+
+#[cfg(test)]
+mod word_iterator_tests {
+    use super::*;
+
+    fn texts(s: &str) -> Vec<String> {
+        word_iterator_surfaces(s)
+            .into_iter()
+            .map(|t| t.text.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn java_verbatim_contraction_and_linebreak() {
+        assert_eq!(
+            texts("can't have emoji"),
+            ["can't", " ", "have", " ", "emoji"]
+        );
+        let tm = "sorry, this account confirmation link is no longer valid. perhaps your account is\n        already";
+        let got = texts(tm);
+        assert_eq!(got[got.len() - 3], "\n", "{got:?}");
+        assert_eq!(got[got.len() - 2], "        ", "{got:?}");
+        assert_eq!(got[got.len() - 1], "already", "{got:?}");
+        assert_eq!(
+            texts("s3_upload_bucket"),
+            ["s3", "_", "upload_bucket"]
+        );
+        let flag = "This badge is granted the first time you flag a post. Flagging is how we all help keep this a nice place for everyone. If you notice any posts that require moderator attention for any reason please don’t hesitate to flag. If you see a problem, :flag_black: flag it!\n";
+        let words: Vec<_> = texts(flag)
+            .into_iter()
+            .filter(|t| t.chars().any(|c| c.is_alphanumeric()))
+            .collect();
+        assert_eq!(words.len(), 50, "{words:?}");
+        assert!(words.contains(&"don".into()), "{words:?}");
+        assert!(words.contains(&"t".into()), "{words:?}");
+        assert_eq!(texts("blog.discourse.org"), ["blog.discourse.org"]);
+        let href = "<a href=\"https://blog.discourse.org/2018/06/understanding-discourse-trust-levels/\">Granted</a> invitations, group messaging, more likes";
+        let href_words: Vec<_> = texts(href)
+            .into_iter()
+            .filter(|t| t.chars().any(|c| c.is_alphanumeric()))
+            .collect();
+        assert_eq!(href_words.len(), 14, "{href_words:?}");
+    }
 }
 
 /// Lucene CJKTokenizer: overlapping CJK bigrams, Latin words intact.

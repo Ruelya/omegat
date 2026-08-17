@@ -80,6 +80,15 @@ P0 does **not** mark any product feature `parity`. It only:
 Existing `exported_by=org.omegat.tools.ExportGoldens` goldens stay as a
 **minimum floor**. They are not class-complete proof.
 
+## P1 notes
+
+`engine_goldens` now `assert_eq`s the Java method sets for Segmenter,
+LevenshteinDistance, TagValidation, TagRepair, TMXWriter, FindMatches, and
+CalcMatchStatistics (including per-source `StatCount` + `calcMaxSimilarity`).
+The P1 STATUS row stays `scaffold`: honesty gates are still red (identity
+stems, HTML regex, dialect tag sets, …) and this wave does not claim HTML
+compile parity.
+
 ## Intentional non-goals (must still have a full replacement)
 
 - Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib.

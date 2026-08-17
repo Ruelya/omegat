@@ -14,6 +14,7 @@
 package org.omegat.tools;
 
 import java.io.File;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -34,15 +36,39 @@ import org.omegat.core.Core;
 import org.omegat.core.data.EntryKey;
 import org.omegat.core.data.NotLoadedProject;
 import org.omegat.core.data.ProjectProperties;
+import org.omegat.core.data.ProtectedPart;
+import org.omegat.core.data.RealProjectTest;
 import org.omegat.core.data.SourceTextEntry;
+import org.omegat.core.events.IStopped;
 import org.omegat.core.matching.FuzzyMatcher;
 import org.omegat.core.matching.LevenshteinDistance;
+import org.omegat.core.matching.NearString;
 import org.omegat.core.segmentation.Rule;
 import org.omegat.core.segmentation.SRX;
 import org.omegat.core.segmentation.Segmenter;
+import org.omegat.core.statistics.CalcMatchStatistics;
+import org.omegat.core.statistics.CalcPerFileMatchStatistics;
+import org.omegat.core.statistics.CalcStandardStatistics;
+import org.omegat.core.statistics.FindMatches;
+import org.omegat.core.statistics.FindMatchesTest;
+import org.omegat.core.statistics.ICalcStatistics;
 import org.omegat.core.statistics.Statistics;
+import org.omegat.core.statistics.TestingProject;
+import org.omegat.core.statistics.TestingStatsConsumer;
 import org.omegat.core.statistics.dso.MatchStatCounts;
 import org.omegat.core.statistics.dso.StatCount;
+import org.omegat.core.tagvalidation.ErrorReport;
+import org.omegat.core.tagvalidation.TagRepair;
+import org.omegat.core.tagvalidation.TagValidation;
+import org.omegat.core.threads.CancellationToken;
+import org.omegat.core.threads.Completion;
+import org.omegat.tokenizer.ITokenizer;
+import org.omegat.util.OConsts;
+import org.omegat.util.StringUtil;
+import org.omegat.util.Token;
+import org.omegat.util.TMXReader2;
+import org.omegat.util.TMXWriter2;
+import org.omegat.util.TagUtil.Tag;
 import org.omegat.filters2.FilterContext;
 import org.omegat.filters2.IFilter;
 import org.omegat.filters2.IParseCallback;
@@ -216,6 +242,7 @@ public final class ExportGoldens {
             exporter.exportEngine();
             exporter.exportGlossary();
             exporter.exportStats();
+            exporter.exportP1Core();
             exporter.exportHonesty();
             System.out.println("ExportGoldens wrote engine goldens to " + goldenRoot);
         } else {
@@ -252,6 +279,7 @@ public final class ExportGoldens {
         exportEngine();
         exportGlossary();
         exportStats();
+        exportP1Core();
         System.out.println("ExportGoldens wrote " + goldenRoot);
     }
 
@@ -960,6 +988,755 @@ public final class ExportGoldens {
         json.put("percent_exact_match", Statistics.PERCENT_EXACT_MATCH);
         writeJson(goldenRoot.resolve("engine/stats.json"), json);
         System.out.println("wrote engine/stats.json bins=" + cases.size());
+    }
+
+    /**
+     * P1: every public test* on Segmenter / Levenshtein / TagValidation /
+     * TagRepair / TMXWriter / FindMatches / CalcMatchStatistics.
+     */
+    private void exportP1Core() throws Exception {
+        exportSegmenterTests();
+        exportLevenshteinTests();
+        exportTagValidationTests();
+        exportTagRepairTests();
+        exportTmxWriterTests();
+        exportFindMatchesTests();
+        exportCalcMatchStatisticsTests();
+    }
+
+    private void exportSegmenterTests() throws Exception {
+        Segmenter segmenter = new Segmenter(SRX.getDefault());
+        List<Map<String, Object>> cases = new ArrayList<>();
+
+        List<StringBuilder> spaces = new ArrayList<>();
+        List<Rule> brules = new ArrayList<>();
+        String input = "<br7>\n\n<br5>\n\nother";
+        List<String> segs = segmenter.segment(new Language("en"), input, spaces, brules);
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.segmentation.SegmenterTest#testSegment");
+        c.put("name", "testSegment");
+        c.put("lang", "en");
+        c.put("input", input);
+        c.put("sentences", segs);
+        c.put("spaces", spaces.stream().map(StringBuilder::toString).toList());
+        cases.add(c);
+
+        spaces = new ArrayList<>();
+        brules = new ArrayList<>();
+        String oldString = "<br7>\n\n<br5>\n\nother";
+        segs = segmenter.segment(new Language("en"), oldString, spaces, brules);
+        String glued = segmenter.glue(new Language("en"), new Language("fr"), segs, spaces, brules);
+        c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.segmentation.SegmenterTest#testGlue");
+        c.put("name", "testGlue");
+        c.put("source_lang", "en");
+        c.put("target_lang", "fr");
+        c.put("input", oldString);
+        c.put("sentences", segs);
+        c.put("spaces", spaces.stream().map(StringBuilder::toString).toList());
+        c.put("glued", glued);
+        cases.add(c);
+
+        String[] glueInputs = {
+                "Foo. Bar.\nHere.\n\nThere.\r\nThis.\tThat.\n\tOther.",
+                "Foo. \n Bar.",
+                "Foo. \t Bar."
+        };
+        for (String src : glueInputs) {
+            spaces = new ArrayList<>();
+            brules = new ArrayList<>();
+            segs = new ArrayList<>(segmenter.segment(new Language("en"), src, spaces, brules));
+            for (int i = 0; i < segs.size(); i++) {
+                segs.set(i, segs.get(i).replace(".", "\\u3002"));
+            }
+            glued = segmenter.glue(new Language("en"), new Language("ja"), segs, spaces, brules);
+            c = new LinkedHashMap<>();
+            c.put("java_test", "org.omegat.core.segmentation.SegmenterTest#testGlueCJK");
+            c.put("name", "testGlueCJK");
+            c.put("source_lang", "en");
+            c.put("target_lang", "ja");
+            c.put("input", src);
+            c.put("sentences", segs);
+            c.put("spaces", spaces.stream().map(StringBuilder::toString).toList());
+            c.put("glued", glued);
+            cases.add(c);
+        }
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.segmentation.SegmenterTest#testSegment");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/segmenter_tests.json"), json);
+        System.out.println("wrote engine/segmenter_tests.json cases=" + cases.size());
+    }
+
+    private void exportLevenshteinTests() throws Exception {
+        LevenshteinDistance calc = new LevenshteinDistance();
+        List<Map<String, Object>> cases = new ArrayList<>();
+        cases.add(levCase("testIdenticalTokens",
+                new String[] { "test", "example" }, new String[] { "test", "example" },
+                calc.compute(tokens("test", "example"), tokens("test", "example")), false));
+        cases.add(levCase("testSourceNonEmptyTargetEmpty",
+                new String[] { "alpha", "beta" }, new String[] {},
+                calc.compute(tokens("alpha", "beta"), new Token[0]), false));
+        cases.add(levCase("testSourceEmptyTargetNonEmpty",
+                new String[] {}, new String[] { "gamma", "delta", "epsilon" },
+                calc.compute(new Token[0], tokens("gamma", "delta", "epsilon")), false));
+        cases.add(levCase("testCompletelyDifferentTokens",
+                new String[] { "A", "B", "C" }, new String[] { "X", "Y", "Z" },
+                calc.compute(tokens("A", "B", "C"), tokens("X", "Y", "Z")), false));
+        cases.add(levCase("testPartiallySimilarTokens",
+                new String[] { "cat", "dog", "fish" }, new String[] { "cat", "wolf", "fish" },
+                calc.compute(tokens("cat", "dog", "fish"), tokens("cat", "wolf", "fish")), false));
+        Map<String, Object> nullCase = levCase("testNullInputs", new String[] { "null" }, new String[] {},
+                -1, true);
+        cases.add(nullCase);
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.matching.LevenshteinDistanceTest#testIdenticalTokens");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/levenshtein.json"), json);
+        System.out.println("wrote engine/levenshtein.json cases=" + cases.size());
+    }
+
+    private static Token[] tokens(String... words) {
+        Token[] t = new Token[words.length];
+        int pos = 0;
+        for (int i = 0; i < words.length; i++) {
+            t[i] = new Token(words[i], pos);
+            pos += words[i].length() + 1;
+        }
+        return t;
+    }
+
+    private Map<String, Object> levCase(String method, String[] source, String[] target, int distance,
+            boolean nullInputs) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.matching.LevenshteinDistanceTest#" + method);
+        c.put("name", method);
+        c.put("source", List.of(source));
+        c.put("target", List.of(target));
+        c.put("distance", distance);
+        c.put("null_inputs", nullInputs);
+        return c;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void exportTagValidationTests() throws Exception {
+        Method ordered = TagValidation.class.getDeclaredMethod("inspectOrderedTags", List.class, List.class,
+                boolean.class, ErrorReport.class);
+        ordered.setAccessible(true);
+        Method unordered = TagValidation.class.getDeclaredMethod("inspectUnorderedTags", List.class,
+                List.class, ErrorReport.class);
+        unordered.setAccessible(true);
+        Constructor<ErrorReport> empty = ErrorReport.class.getDeclaredConstructor();
+        empty.setAccessible(true);
+        Constructor<ErrorReport> pair = ErrorReport.class.getDeclaredConstructor(String.class, String.class);
+        pair.setAccessible(true);
+
+        List<Map<String, Object>> cases = new ArrayList<>();
+        Object[][] orderedCases = {
+                { "no_errors", new String[] { "<g0>", "<g1>", "</g1>", "</g0>" },
+                        new String[] { "<g0>", "<g1>", "</g1>", "</g0>" }, false },
+                { "html_input_single", new String[] { "<s0>", "<i1>", "</s0>" },
+                        new String[] { "<s0>", "<i1>", "</s0>" }, false },
+                { "missing_end", new String[] { "<g0>", "<g1>", "</g1>", "</g0>" },
+                        new String[] { "<g0>", "<g1>", "</g1>" }, false },
+                { "duplicate_end", new String[] { "<g0>", "<g1>", "</g1>", "</g0>" },
+                        new String[] { "<g0>", "<g1>", "</g1>", "</g0>", "</g0>" }, false },
+                { "extraneous", new String[] { "<g0>", "<g1>", "</g1>", "</g0>" },
+                        new String[] { "<g0>", "<g1>", "<x2/>", "</g1>", "</g0>" }, false },
+                { "malformed", new String[] { "<g0>", "</g0>", "<g1>", "</g1>" },
+                        new String[] { "<g0>", "</g0>", "</g1>", "<g1>" }, false },
+                { "order", new String[] { "<g0>", "</g0>", "<g1>", "</g1>" },
+                        new String[] { "<g1>", "</g1>", "<g0>", "</g0>" }, false },
+                { "order_loose", new String[] { "<g0>", "</g0>", "<g1>", "</g1>" },
+                        new String[] { "<g1>", "</g1>", "<g0>", "</g0>" }, true },
+        };
+        for (Object[] row : orderedCases) {
+            ErrorReport report = empty.newInstance();
+            ordered.invoke(null, tagList((String[]) row[1]), tagList((String[]) row[2]), row[3], report);
+            cases.add(tagReportCase("testOrderedTagValidation", (String) row[0], (String[]) row[1],
+                    (String[]) row[2], (Boolean) row[3], "ordered", report));
+        }
+
+        Object[][] unorderedCases = {
+                { "no_errors", new String[] { "a", "b", "c", "d" }, new String[] { "a", "b", "c", "d" } },
+                { "missing", new String[] { "a", "b", "c", "d" }, new String[] { "a", "b", "c" } },
+                { "count_mismatch_ok", new String[] { "a", "b", "c", "d" },
+                        new String[] { "a", "b", "c", "d", "d" } },
+        };
+        for (Object[] row : unorderedCases) {
+            ErrorReport report = empty.newInstance();
+            unordered.invoke(null, tagList((String[]) row[1]), tagList((String[]) row[2]), report);
+            cases.add(tagReportCase("testUnorderedTagValidation", (String) row[0], (String[]) row[1],
+                    (String[]) row[2], false, "unordered", report));
+        }
+        ErrorReport extra = empty.newInstance();
+        ordered.invoke(null, tagList(new String[] { "a", "b", "c", "d" }),
+                tagList(new String[] { "a", "b", "e", "c", "d" }), false, extra);
+        cases.add(tagReportCase("testUnorderedTagValidation", "extraneous_via_ordered",
+                new String[] { "a", "b", "c", "d" }, new String[] { "a", "b", "e", "c", "d" }, false,
+                "ordered", extra));
+
+        Object[][] printfCases = {
+                { "ok", "Foo %s bar %d", "Foo %s bar %d" },
+                { "missing", "Foo %s bar %d", "Foo %s bar" },
+                { "extraneous", "Foo %s bar %d", "Foo %s bar %d baz %d" },
+        };
+        for (Object[] row : printfCases) {
+            ErrorReport report = pair.newInstance(row[1], row[2]);
+            TagValidation.inspectPrintfVariables(true, report);
+            cases.add(tagReportCase("testPrintfTagValidation", (String) row[0], new String[] { (String) row[1] },
+                    new String[] { (String) row[2] }, false, "printf", report));
+        }
+
+        Preferences.setPreference(Preferences.CHECK_REMOVE_PATTERN, "foo");
+        ErrorReport ok = pair.newInstance("foo bar baz", "bar baz");
+        TagValidation.inspectRemovePattern(ok);
+        cases.add(tagReportCase("testRemovePattern", "ok", new String[] { "foo bar baz" },
+                new String[] { "bar baz" }, false, "remove", ok));
+        ErrorReport bad = pair.newInstance("foo bar baz", "foo bar baz");
+        TagValidation.inspectRemovePattern(bad);
+        cases.add(tagReportCase("testRemovePattern", "extraneous", new String[] { "foo bar baz" },
+                new String[] { "foo bar baz" }, false, "remove", bad));
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/tag_validation.json"), json);
+        System.out.println("wrote engine/tag_validation.json cases=" + cases.size());
+    }
+
+    private Map<String, Object> tagReportCase(String method, String name, String[] src, String[] loc,
+            boolean loose, String kind, ErrorReport report) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.tagvalidation.TagValidationTest#" + method);
+        c.put("name", name);
+        c.put("kind", kind);
+        c.put("loose", loose);
+        c.put("src_tags", List.of(src));
+        c.put("loc_tags", List.of(loc));
+        c.put("src_errors", errorMap(report.srcErrors));
+        c.put("trans_errors", errorMap(report.transErrors));
+        return c;
+    }
+
+    private List<Map<String, Object>> errorMap(Map<Tag, ErrorReport.TagError> errors) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<Tag, ErrorReport.TagError> e : errors.entrySet()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("tag", e.getKey().tag);
+            row.put("pos", e.getKey().pos);
+            row.put("error", e.getValue().name());
+            out.add(row);
+        }
+        out.sort((a, b) -> {
+            int t = String.valueOf(a.get("tag")).compareTo(String.valueOf(b.get("tag")));
+            if (t != 0) {
+                return t;
+            }
+            return String.valueOf(a.get("error")).compareTo(String.valueOf(b.get("error")));
+        });
+        return out;
+    }
+
+    private static List<Tag> tagList(String[] array) {
+        List<Tag> list = new ArrayList<>();
+        for (String item : array) {
+            list.add(new Tag(-1, item));
+        }
+        return list;
+    }
+
+    private void exportTagRepairTests() throws Exception {
+        Method fixExtraneous = TagRepair.class.getDeclaredMethod("fixExtraneous", StringBuilder.class, Tag.class);
+        Method fixMissing = TagRepair.class.getDeclaredMethod("fixMissing", List.class, StringBuilder.class,
+                Tag.class);
+        Method fixMalformed = TagRepair.class.getDeclaredMethod("fixMalformed", List.class, StringBuilder.class,
+                Tag.class);
+        Method fixWhitespace = TagRepair.class.getDeclaredMethod("fixWhitespace", StringBuilder.class,
+                String.class);
+        fixExtraneous.setAccessible(true);
+        fixMissing.setAccessible(true);
+        fixMalformed.setAccessible(true);
+        fixWhitespace.setAccessible(true);
+
+        List<Map<String, Object>> cases = new ArrayList<>();
+
+        StringBuilder text = new StringBuilder("Foo bar baz bar bonkers");
+        fixExtraneous.invoke(null, text, new Tag(-1, "bar"));
+        fixExtraneous.invoke(null, text, new Tag(-1, "bar"));
+        cases.add(repairCase("extraneous", "Foo bar baz bar bonkers", text.toString(),
+                List.of("bar", "bar"), null));
+
+        text = new StringBuilder("Foo bar {tag2}baz");
+        fixMissing.invoke(null, tagList(new String[] { "{tag1}", "{tag2}" }), text, new Tag(-1, "{tag1}"));
+        cases.add(repairCase("missing_before", "Foo bar {tag2}baz", text.toString(), List.of("{tag1}"),
+                List.of("{tag1}", "{tag2}")));
+
+        text = new StringBuilder("Foo bar {tag2}baz");
+        fixMissing.invoke(null, tagList(new String[] { "{tag2}", "{tag1}" }), text, new Tag(-1, "{tag1}"));
+        cases.add(repairCase("missing_after", "Foo bar {tag2}baz", text.toString(), List.of("{tag1}"),
+                List.of("{tag2}", "{tag1}")));
+
+        text = new StringBuilder("Foo bar baz");
+        fixMissing.invoke(null, tagList(new String[] { "{tag1}" }), text, new Tag(-1, "{tag1}"));
+        cases.add(repairCase("missing_no_anchor", "Foo bar baz", text.toString(), List.of("{tag1}"),
+                List.of("{tag1}")));
+
+        text = new StringBuilder("Foo bar {tag2}baz{tag1}");
+        fixMalformed.invoke(null, tagList(new String[] { "{tag1}", "{tag2}" }), text, new Tag(-1, "{tag1}"));
+        cases.add(repairCase("malformed", "Foo bar {tag2}baz{tag1}", text.toString(), List.of("{tag1}"),
+                List.of("{tag1}", "{tag2}")));
+
+        text = new StringBuilder("\nFoo\n");
+        fixWhitespace.invoke(null, text, "Foo");
+        cases.add(repairCase("whitespace_strip", "\nFoo\n", text.toString(), List.of(), null));
+
+        text = new StringBuilder("Foo");
+        fixWhitespace.invoke(null, text, "\nFoo\n");
+        cases.add(repairCase("whitespace_add", "Foo", text.toString(), List.of(), null));
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/tag_repair.json"), json);
+        System.out.println("wrote engine/tag_repair.json cases=" + cases.size());
+    }
+
+    private Map<String, Object> repairCase(String name, String input, String output, List<String> tags,
+            List<String> sourceOrder) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags");
+        c.put("name", name);
+        c.put("input", input);
+        c.put("output", output);
+        c.put("tags", tags);
+        if (sourceOrder != null) {
+            c.put("source_order", sourceOrder);
+        }
+        return c;
+    }
+
+    private void exportTmxWriterTests() throws Exception {
+        Path tmp = Files.createTempDirectory("omegat-tmx-export");
+        File outFile = tmp.resolve("out.tmx").toFile();
+        List<Map<String, Object>> cases = new ArrayList<>();
+
+        String invalid = "" + (char) 0x00 + (char) 0x01 + (char) 0x02 + (char) 0x18 + (char) 0x19
+                + (char) 0xD8FF + (char) 0xFFFE + (char) 0x12FFFF;
+        try (TMXWriter2 wr = new TMXWriter2(outFile, new Language("en-US"), new Language("be-BY"), false,
+                true, false)) {
+            wr.writeEntry(invalid, "test", RealProjectTest.createEmptyTMXEntry(), null);
+        }
+        List<String> sources = loadTmxSources(outFile, true, false);
+        Map<String, Object> inv = new LinkedHashMap<>();
+        inv.put("java_test", "org.omegat.util.TMXWriterTest#testWriteInvalidChars");
+        inv.put("name", "testWriteInvalidChars");
+        inv.put("sanitized_source", StringUtil.removeXMLInvalidChars(invalid));
+        inv.put("read_sources", sources);
+        cases.add(inv);
+
+        try (TMXWriter2 wr = new TMXWriter2(outFile, new Language("en-US"), new Language("be-BY"), false,
+                true, false)) {
+            wr.writeEntry("source", "target", RealProjectTest.createEmptyTMXEntry(), null);
+            wr.writeEntry("1<a1/>2", "zz", RealProjectTest.createEmptyTMXEntry(), null);
+            wr.writeEntry("3<a1>4</a1>5", "zz", RealProjectTest.createEmptyTMXEntry(), null);
+            wr.writeEntry("6<a1>7", "zz", RealProjectTest.createEmptyTMXEntry(), null);
+        }
+        String written = Files.readString(outFile.toPath());
+        Map<String, Object> level2 = new LinkedHashMap<>();
+        level2.put("java_test", "org.omegat.util.TMXWriterTest#testLevel2write");
+        level2.put("name", "testLevel2write");
+        level2.put("sources", List.of("source", "1<a1/>2", "3<a1>4</a1>5", "6<a1>7"));
+        level2.put("targets", List.of("target", "zz", "zz", "zz"));
+        level2.put("xml", written);
+        level2.put("level2_fragments", List.of(
+                writeLevelTwoFragment("source"),
+                writeLevelTwoFragment("1<a1/>2"),
+                writeLevelTwoFragment("3<a1>4</a1>5"),
+                writeLevelTwoFragment("6<a1>7")));
+        cases.add(level2);
+
+        File fixture = javaRoot.resolve("src/test/resources/data/tmx/test-save-tmx14.tmx").toFile();
+        Object[][] reads = {
+                { "omegat", true, false },
+                { "ext_l1", false, false },
+                { "ext_l2", true, false },
+                { "ext_l2_slash", true, true },
+        };
+        for (Object[] row : reads) {
+            File patched = tmp.resolve(row[0] + ".tmx").toFile();
+            String tool = "omegat".equals(row[0]) ? "OmegaT" : "ext";
+            patchCreationTool(fixture, tool, patched);
+            List<String> read = loadTmxSources(patched, (Boolean) row[1], (Boolean) row[2]);
+            Map<String, Object> rc = new LinkedHashMap<>();
+            rc.put("java_test", "org.omegat.util.TMXWriterTest#testLevel2reads");
+            rc.put("name", "testLevel2reads");
+            rc.put("mode", row[0]);
+            rc.put("ext_level2", row[1]);
+            rc.put("use_slash", row[2]);
+            rc.put("sources", read);
+            cases.add(rc);
+        }
+
+        try (TMXWriter2 wr = new TMXWriter2(outFile, new Language("en-US"), new Language("be-BY"), false,
+                true, false)) {
+            wr.writeEntry("source", "tar\nget", RealProjectTest.createEmptyTMXEntry(), null);
+        }
+        String eolXml = Files.readString(outFile.toPath());
+        List<String> trs = loadTmxTranslations(outFile, true, false);
+        Map<String, Object> eol = new LinkedHashMap<>();
+        eol.put("java_test", "org.omegat.util.TMXWriterTest#testEOLwrite");
+        eol.put("name", "testEOLwrite");
+        eol.put("contains_platform_eol", eolXml.contains("tar" + System.lineSeparator() + "get"));
+        eol.put("read_translation", trs.isEmpty() ? "" : trs.get(0));
+        cases.add(eol);
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.util.TMXWriterTest#testLevel2write");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/tmx_writer.json"), json);
+        System.out.println("wrote engine/tmx_writer.json cases=" + cases.size());
+    }
+
+    private static String writeLevelTwoFragment(String segment) {
+        java.util.regex.Pattern tags = java.util.regex.Pattern.compile("<(/?)([\\S&&[^/\\d]]+)(\\d+)(/?)>");
+        StringBuilder out = new StringBuilder();
+        java.util.regex.Matcher m = tags.matcher(segment);
+        int pos = 0;
+        while (m.find(pos)) {
+            out.append(segment, pos, m.start());
+            pos = m.end();
+            boolean end = !m.group(1).isEmpty();
+            boolean single = !m.group(4).isEmpty();
+            String name = m.group(2);
+            String num = m.group(3);
+            if (single) {
+                out.append("<ph x=\"").append(num).append("\">").append(m.group()).append("</ph>");
+            } else if (end) {
+                String start = "<" + name + num + ">";
+                if (segment.contains(start)) {
+                    out.append("<ept i=\"").append(num).append("\">").append(m.group()).append("</ept>");
+                } else {
+                    out.append("<it pos=\"end\" x=\"").append(num).append("\">").append(m.group())
+                            .append("</it>");
+                }
+            } else {
+                String close = "</" + name + num + ">";
+                if (segment.contains(close)) {
+                    out.append("<bpt i=\"").append(num).append("\" x=\"").append(num).append("\">")
+                            .append(m.group()).append("</bpt>");
+                } else {
+                    out.append("<it pos=\"begin\" x=\"").append(num).append("\">").append(m.group())
+                            .append("</it>");
+                }
+            }
+        }
+        out.append(segment.substring(pos));
+        return out.toString();
+    }
+
+    private void patchCreationTool(File in, String tool, File out) throws Exception {
+        String raw = Files.readString(in.toPath());
+        raw = raw.replaceFirst("creationtool=\"[^\"]*\"", "creationtool=\"" + tool + "\"");
+        Files.writeString(out.toPath(), raw);
+    }
+
+    private List<String> loadTmxSources(File file, boolean extLevel2, boolean useSlash) throws Exception {
+        List<String> sources = new ArrayList<>();
+        TMXReader2 reader = new TMXReader2.Builder().setExtTmxLevel2(extLevel2).setUseSlash(useSlash)
+                .setSegmentingEnabled(false).setNeedValidate(true).build();
+        reader.readTMX(file, new Language("en-US"), new Language("be-BY"),
+                (tu, tuvSource, tuvTarget, isParagraphSegtype) -> {
+                    sources.add(tuvSource.text);
+                    return true;
+                });
+        return sources;
+    }
+
+    private List<String> loadTmxTranslations(File file, boolean extLevel2, boolean useSlash) throws Exception {
+        List<String> trs = new ArrayList<>();
+        TMXReader2 reader = new TMXReader2.Builder().setExtTmxLevel2(extLevel2).setUseSlash(useSlash)
+                .setSegmentingEnabled(false).setNeedValidate(true).build();
+        reader.readTMX(file, new Language("en-US"), new Language("be-BY"),
+                (tu, tuvSource, tuvTarget, isParagraphSegtype) -> {
+                    trs.add(tuvTarget.text);
+                    return true;
+                });
+        return trs;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void exportFindMatchesTests() throws Exception {
+        Path tmpDir = Files.createTempDirectory("omegat-find-matches");
+        Preferences.setPreference(Preferences.EXT_TMX_SHOW_LEVEL2, false);
+        Preferences.setPreference(Preferences.EXT_TMX_KEEP_FOREIGN_MATCH, true);
+        Method search = FindMatches.class.getDeclaredMethod("search", String.class, boolean.class,
+                IStopped.class, boolean.class);
+        search.setAccessible(true);
+        IStopped never = () -> false;
+        Segmenter segmenter = new Segmenter(SRX.getDefault());
+        List<Map<String, Object>> cases = new ArrayList<>();
+
+        File tmxMatch = javaRoot.resolve("src/test/resources/data/tmx/test-match-stat-en-ca.tmx").toFile();
+        File tmxEnUsSr = javaRoot.resolve("src/test/resources/data/tmx/en-US_sr.tmx").toFile();
+        File tmxEnUsGb = javaRoot.resolve("src/test/resources/data/tmx/en-US_en-GB_fr_sr.tmx").toFile();
+        File tmxSeg = javaRoot.resolve("src/test/resources/data/tmx/penalty-010/segment_1.tmx").toFile();
+        File tmxSeg2 = javaRoot.resolve("src/test/resources/data/tmx/segment_2.tmx").toFile();
+        File tmxMulti = javaRoot.resolve("src/test/resources/data/tmx/test-multiple-entries.tmx").toFile();
+
+        String badge = "This badge is granted when you’ve invited 5 people who subsequently spent enough "
+                + "time on the site to become full members. " + "Wow! "
+                + "Thanks for expanding the diversity of our community with new members!";
+
+        ProjectProperties prop = new ProjectProperties(tmpDir.toFile());
+        prop.setSourceLanguage("en");
+        prop.setTargetLanguage("ca");
+        prop.setSupportDefaultTranslations(true);
+        prop.setSentenceSegmentingEnabled(false);
+        FindMatchesTest.TestProject project = new FindMatchesTest.TestProject(prop, tmxMatch, null,
+                new LuceneEnglishTokenizer(), new DefaultTokenizer(), segmenter);
+        FindMatches finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, 30);
+        List<NearString> result = (List<NearString>) search.invoke(finder, badge, true, never, false);
+        cases.add(findCase("testSegmented", "without_separate", badge, result));
+        finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, 30);
+        result = (List<NearString>) search.invoke(finder, badge, false, never, true);
+        cases.add(findCase("testSegmented", "with_separate", badge, result));
+
+        prop = new ProjectProperties(tmpDir.toFile());
+        prop.setSourceLanguage("en");
+        prop.setTargetLanguage("cnr");
+        prop.setSupportDefaultTranslations(true);
+        prop.setSentenceSegmentingEnabled(false);
+        project = new FindMatchesTest.TestProject(prop, null, tmxEnUsSr, new LuceneEnglishTokenizer(),
+                new DefaultTokenizer(), segmenter);
+        finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, 30);
+        result = (List<NearString>) search.invoke(finder, "XXX", false, never, true);
+        cases.add(findCase("testSearchRFE1578", "rfe1578", "XXX", result));
+
+        project = new FindMatchesTest.TestProject(prop, null, tmxEnUsGb, new LuceneEnglishTokenizer(),
+                new DefaultTokenizer(), segmenter);
+        finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, 30);
+        result = (List<NearString>) search.invoke(finder, "XXX", false, never, true);
+        cases.add(findCase("testSearchRFE1578_2", "rfe1578_2", "XXX", result));
+
+        prop = new ProjectProperties(tmpDir.toFile());
+        prop.setSourceLanguage("ja");
+        prop.setTargetLanguage("fr");
+        prop.setSupportDefaultTranslations(true);
+        prop.setSentenceSegmentingEnabled(false);
+        Segmenter srxDefault = new Segmenter(SRX.getDefault());
+        project = new FindMatchesTest.TestProject(prop, null, tmxSeg, new LuceneCJKTokenizer(),
+                new LuceneFrenchTokenizer(), srxDefault);
+        String srcJa = project.getAllEntries().get(1).getSrcText();
+        finder = new FindMatches(project, srxDefault, OConsts.MAX_NEAR_STRINGS, false, 30);
+        result = (List<NearString>) search.invoke(finder, srcJa, false, never, true);
+        cases.add(findCase("testSearchBUGS1251", "bugs1251", srcJa, result));
+
+        project = new FindMatchesTest.TestProject(prop, null, tmxSeg2, new LuceneCJKTokenizer(),
+                new LuceneFrenchTokenizer(), srxDefault);
+        srcJa = project.getAllEntries().get(1).getSrcText();
+        finder = new FindMatches(project, srxDefault, OConsts.MAX_NEAR_STRINGS, false, 30);
+        result = (List<NearString>) search.invoke(finder, srcJa, false, never, true);
+        cases.add(findCase("testSearchForeign", "foreign", srcJa, result));
+
+        prop = new ProjectProperties(tmpDir.toFile());
+        prop.setSourceLanguage("en");
+        prop.setTargetLanguage("fr");
+        prop.setSupportDefaultTranslations(true);
+        prop.setSentenceSegmentingEnabled(false);
+        project = new FindMatchesTest.TestProject(prop, null, tmxMatch, new LuceneEnglishTokenizer(),
+                new DefaultTokenizer(), segmenter);
+        finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, 30);
+        result = (List<NearString>) search.invoke(finder, badge, false, never, true);
+        cases.add(findCase("testSearchForeignSegmented", "foreign_segmented", badge, result));
+
+        prop = new ProjectProperties(tmpDir.toFile());
+        prop.setSourceLanguage("en-US");
+        prop.setTargetLanguage("co");
+        prop.setSupportDefaultTranslations(true);
+        prop.setSentenceSegmentingEnabled(true);
+        project = new FindMatchesTest.TestProject(prop, tmxMulti, null, new LuceneEnglishTokenizer(),
+                new DefaultTokenizer(), segmenter);
+        finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, true, 85);
+        result = (List<NearString>) search.invoke(finder, "Other", false, never, false);
+        cases.add(findCase("testSearchMulti", "multi", "Other", result));
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.statistics.FindMatchesTest#testSegmented");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/find_matches.json"), json);
+        System.out.println("wrote engine/find_matches.json cases=" + cases.size());
+    }
+
+    private Map<String, Object> findCase(String method, String name, String query, List<NearString> result) {
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.statistics.FindMatchesTest#" + method);
+        c.put("name", name);
+        c.put("query", query);
+        List<Map<String, Object>> hits = new ArrayList<>();
+        for (NearString n : result) {
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("source", n.source);
+            h.put("translation", n.translation);
+            h.put("score", n.scores[0].score);
+            h.put("score_no_stem", n.scores[0].scoreNoStem);
+            h.put("adjusted_score", n.scores[0].adjustedScore);
+            h.put("penalty", n.scores[0].penalty);
+            h.put("comes_from", n.comesFrom == null ? "" : n.comesFrom.name());
+            h.put("proj", n.projs != null && n.projs.length > 0 ? n.projs[0] : "");
+            if (n.key != null) {
+                h.put("key_file", n.key.file);
+            }
+            hits.add(h);
+        }
+        c.put("hits", hits);
+        return c;
+    }
+
+    private void exportCalcMatchStatisticsTests() throws Exception {
+        Path tmpDir = Files.createTempDirectory("omegat-calc-stats");
+        TestingProject project = new TestingProject(tmpDir);
+        // Statistics.buildProjectStats constructs StatProjectProperties from
+        // Core.getProject(), not the TestingProject passed to the calculator.
+        Core.setProject(project);
+        Segmenter segmenter = new Segmenter(SRX.getDefault());
+        List<Map<String, Object>> cases = new ArrayList<>();
+
+        TestingStatsConsumer standardConsumer = new TestingStatsConsumer();
+        cases.add(runStatsCase("testStatistics", new CalcStandardStatistics(project, standardConsumer),
+                standardConsumer));
+        TestingStatsConsumer perFileConsumer = new TestingStatsConsumer();
+        cases.add(runStatsCase("testPerFileCalcMatchStatistics",
+                new CalcPerFileMatchStatistics(project, segmenter, perFileConsumer), perFileConsumer));
+        TestingStatsConsumer matchConsumer = new TestingStatsConsumer();
+        cases.add(runStatsCase("testCalcMatchStatics",
+                new CalcMatchStatistics(project, segmenter, matchConsumer), matchConsumer));
+
+        List<String> sources = new ArrayList<>();
+        List<Map<String, Object>> perSource = new ArrayList<>();
+        FindMatches finder = new FindMatches(project, segmenter, OConsts.MAX_NEAR_STRINGS, false, -1);
+        ITokenizer tok = project.getSourceTokenizer();
+        LevenshteinDistance distance = new LevenshteinDistance();
+        java.util.Set<String> seenSrc = new java.util.HashSet<>();
+        for (org.omegat.core.data.SourceTextEntry ste : project.getAllEntries()) {
+            sources.add(ste.getSrcText());
+            StatCount sc = new StatCount(ste);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("source", ste.getSrcText());
+            row.put("words", sc.words);
+            row.put("chars_nosp", sc.charsWithoutSpaces);
+            row.put("chars", sc.charsWithSpaces);
+            row.put("first", seenSrc.add(ste.getSrcText()));
+            String srcTrans = ste.getSourceTranslation();
+            row.put("source_translation", srcTrans == null ? "" : srcTrans);
+            row.put("source_translation_fuzzy", ste.isSourceTranslationFuzzy());
+            List<String> pps = new ArrayList<>();
+            if (ste.getProtectedParts() != null) {
+                for (ProtectedPart pp : ste.getProtectedParts()) {
+                    pps.add(pp.getTextInSourceSegment());
+                }
+            }
+            row.put("protected", pps);
+            String srcNoXml = ste.getSrcText();
+            if (ste.getProtectedParts() != null) {
+                for (ProtectedPart pp : ste.getProtectedParts()) {
+                    srcNoXml = srcNoXml.replace(pp.getTextInSourceSegment(),
+                            pp.getReplacementMatchCalculation());
+                }
+            }
+            List<NearString> nears = finder.search(srcNoXml, false, () -> false);
+            Token[] strTokens = tok.tokenizeVerbatim(ste.getSrcText().toLowerCase(Locale.ENGLISH));
+            int max = 0;
+            String bestFrom = "";
+            boolean bestFuzzy = false;
+            for (NearString near : nears) {
+                Token[] cand = tok.tokenizeVerbatim(near.source.toLowerCase(Locale.ENGLISH));
+                int sim = FuzzyMatcher.calcSimilarity(distance, strTokens, cand);
+                if (near.fuzzyMark) {
+                    sim -= 40;
+                }
+                if (sim > max) {
+                    max = sim;
+                    bestFrom = near.comesFrom == null ? "" : near.comesFrom.toString();
+                    bestFuzzy = near.fuzzyMark;
+                }
+                if (sim >= 95) {
+                    break;
+                }
+            }
+            row.put("percent", max);
+            row.put("best_from", bestFrom);
+            row.put("best_fuzzy", bestFuzzy);
+            perSource.add(row);
+        }
+
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("java_test", "org.omegat.core.statistics.CalcMatchStatisticsTest#testCalcMatchStatics");
+        json.put("exported_by", EXPORTED_BY);
+        json.put("source_lang", "en");
+        json.put("target_lang", "ca");
+        json.put("tokenizer", "org.omegat.tokenizer.LuceneEnglishTokenizer");
+        json.put("po", "src/test/resources/data/filters/po/file-POFilter-match-stat-en-ca.po");
+        json.put("tmx", "src/test/resources/data/tmx/test-match-stat-en-ca.tmx");
+        json.put("sources", sources);
+        json.put("per_source", perSource);
+        List<Map<String, Object>> verbatim = new ArrayList<>();
+        String[] samples = {
+            "can't have emoji",
+            "you've invited 5 people",
+            "Sorry, this account confirmation link is no longer valid. Perhaps your account is already active?",
+            "Sorry, this account confirmation link is no longer valid. Perhaps your account is\n        already",
+            "You cannot use the same bucket for 's3_upload_bucket' and 's3_backup_bucket'. Choose a different bucket or use a different path for each bucket.",
+            "This badge is granted the first time you flag a post. Flagging is how we all help keep this a nice place for everyone. If you notice any posts that require moderator attention for any reason please don’t hesitate to flag. If you see a problem, :flag_black: flag it!\n",
+            "<a href=\"https://blog.discourse.org/2018/06/understanding-discourse-trust-levels/\">Granted</a> invitations, group messaging, more likes"
+        };
+        org.omegat.tokenizer.DefaultTokenizer defTok = new org.omegat.tokenizer.DefaultTokenizer();
+        for (String sample : samples) {
+            Map<String, Object> v = new LinkedHashMap<>();
+            v.put("text", sample);
+            v.put("tokens", java.util.Arrays.asList(tok.tokenizeVerbatimToStrings(sample.toLowerCase(Locale.ENGLISH))));
+            v.put("default_tokens", java.util.Arrays.asList(defTok.tokenizeVerbatimToStrings(sample.toLowerCase(Locale.ENGLISH))));
+            verbatim.add(v);
+        }
+        json.put("verbatim_samples", verbatim);
+        json.put("cases", cases);
+        writeJson(goldenRoot.resolve("engine/calc_match_statistics.json"), json);
+        System.out.println("wrote engine/calc_match_statistics.json cases=" + cases.size()
+                + " sources=" + sources.size());
+    }
+
+    private Map<String, Object> runStatsCase(String method, ICalcStatistics calc, TestingStatsConsumer consumer)
+            throws Exception {
+        // The consumer passed to the constructor is the one that receives tables.
+        // Recreate so the same instance is used.
+        CancellationToken token = new CancellationToken();
+        calc.run(token);
+        Completion completion = consumer.completion().join();
+        Map<String, Object> c = new LinkedHashMap<>();
+        c.put("java_test", "org.omegat.core.statistics.CalcMatchStatisticsTest#" + method);
+        c.put("name", method);
+        c.put("success", completion.isSuccess());
+        List<String[][]> tables = consumer.getTable();
+        List<List<List<String>>> dumped = new ArrayList<>();
+        for (String[][] table : tables) {
+            List<List<String>> rows = new ArrayList<>();
+            if (table != null) {
+                for (String[] row : table) {
+                    rows.add(List.of(row));
+                }
+            }
+            dumped.add(rows);
+        }
+        c.put("tables", dumped);
+        return c;
     }
 
     private Map<String, Object> srxCase(Segmenter segmenter, String lang, String input, String javaTest) {

@@ -231,8 +231,11 @@ fn write_level_two(segment: &str) -> String {
 }
 
 fn unwrap_level2(seg: &str) -> String {
-    let re = Regex::new(r"<(ph|bpt|ept|it)\b[^>]*>(.*?)</\1>").unwrap();
-    let inner = re.replace_all(seg, "$2");
+    let mut inner = seg.to_string();
+    for tag in ["ph", "bpt", "ept", "it"] {
+        let re = Regex::new(&format!(r"<{tag}\b[^>]*>(.*?)</{tag}>")).unwrap();
+        inner = re.replace_all(&inner, "$1").into_owned();
+    }
     html_escape::decode_html_entities(&inner).into_owned()
 }
 
@@ -268,12 +271,71 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (y, m, d)
 }
 
-pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx {
+fn decode_seg(seg_raw: String) -> String {
+    if seg_raw.contains("<ph") || seg_raw.contains("<bpt") || seg_raw.contains("<ept") || seg_raw.contains("<it")
+    {
+        unwrap_level2(&seg_raw)
+    } else {
+        seg_raw
+    }
+}
+
+/// `<tu` must not match `<tuv`.
+fn find_tu_start(raw: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(rel) = raw[from..].find("<tu") {
+        let at = from + rel;
+        let after = raw.get(at + 3..).and_then(|s| s.chars().next());
+        if after == Some('>') || after == Some(' ') || after == Some('\n') || after == Some('\r') || after == Some('\t')
+        {
+            return Some(at);
+        }
+        from = at + 3;
+    }
+    None
+}
+
+#[derive(Clone)]
+struct Tuv {
+    lang: String,
+    text: String,
+    changeid: Option<String>,
+    changedate: Option<String>,
+    creationid: Option<String>,
+    creationdate: Option<String>,
+}
+
+fn collect_tuvs(tu: &str) -> Vec<Tuv> {
+    let mut tuvs = Vec::new();
+    let mut search = tu;
+    while let Some(p) = search.find("<tuv") {
+        let tuv = &search[p..];
+        let end = tuv.find("</tuv>").unwrap_or(tuv.len());
+        let block = &tuv[..end];
+        let lang = attr(block, "xml:lang")
+            .or_else(|| attr(block, "lang"))
+            .unwrap_or_default();
+        let seg = decode_seg(extract_tag(block, "seg").unwrap_or_default());
+        tuvs.push(Tuv {
+            lang,
+            text: seg,
+            changeid: attr(block, "changeid"),
+            changedate: attr(block, "changedate"),
+            creationid: attr(block, "creationid"),
+            creationdate: attr(block, "creationdate"),
+        });
+        search = &search[p + 4..];
+    }
+    tuvs
+}
+
+/// Project TMX: one entry per TU (defaults + alternatives kept; no collapse).
+pub fn parse_tmx_all(raw: &str, source_lang: &str, target_lang: &str) -> Vec<TmxEntry> {
     let src_l = source_lang.to_ascii_lowercase();
     let tgt_l = target_lang.to_ascii_lowercase();
-    let mut tmx = ProjectTmx::new();
+    let mut entries = Vec::new();
     let mut rest = raw;
-    while let Some(tu_start) = rest.find("<tu") {
+    while let Some(tu_start) = find_tu_start(rest) {
         let slice = &rest[tu_start..];
         let tu_end = slice.find("</tu>").unwrap_or(slice.len());
         let tu = &slice[..tu_end];
@@ -281,56 +343,107 @@ pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx 
         let tuid = attr(tu, "tuid");
         let file = extract_prop(tu, "file");
         let id = extract_prop(tu, "id").or(tuid);
-        let mut source = None;
-        let mut translation = None;
-        let mut changer = None;
-        let mut changed = None;
-        let mut creator = None;
-        let mut created = None;
-        let mut search = tu;
-        while let Some(p) = search.find("<tuv") {
-            let tuv = &search[p..];
-            let end = tuv.find("</tuv>").unwrap_or(tuv.len());
-            let block = &tuv[..end];
-            let lang = attr(block, "xml:lang")
-                .or_else(|| attr(block, "lang"))
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            let seg_raw = extract_tag(block, "seg").unwrap_or_default();
-            let seg = if seg_raw.contains("<ph") || seg_raw.contains("<bpt") {
-                unwrap_level2(&seg_raw)
-            } else {
-                seg_raw
-            };
-            if lang_matches(&lang, &src_l) && source.is_none() {
-                source = Some(seg);
-            } else if lang_matches(&lang, &tgt_l) || (source.is_some() && translation.is_none() && !lang_matches(&lang, &src_l)) {
-                translation = Some(seg);
-                changer = attr(block, "changeid");
-                changed = attr(block, "changedate");
-                creator = attr(block, "creationid");
-                created = attr(block, "creationdate");
-            }
-            search = &search[p + 4..];
-        }
-        if let (Some(s), Some(t)) = (source, translation) {
-            tmx.insert(TmxEntry {
+        let tuvs = collect_tuvs(tu);
+        let source = tuvs
+            .iter()
+            .find(|t| lang_matches(&t.lang.to_ascii_lowercase(), &src_l))
+            .map(|t| t.text.clone());
+        let target = tuvs.iter().find(|t| {
+            let ll = t.lang.to_ascii_lowercase();
+            lang_matches(&ll, &tgt_l) || (source.is_some() && !lang_matches(&ll, &src_l))
+        });
+        if let (Some(s), Some(t)) = (source, target) {
+            entries.push(TmxEntry {
                 source: s,
-                translation: t,
+                translation: t.text.clone(),
                 note,
-                default_translation: true,
+                default_translation: file.is_none(),
                 file,
                 id,
-                changer,
-                changed,
-                creator,
-                created,
+                changer: t.changeid.clone(),
+                changed: t.changedate.clone(),
+                creator: t.creationid.clone(),
+                created: t.creationdate.clone(),
                 ..Default::default()
             });
         }
         rest = &rest[tu_start + 3..];
     }
+    entries
+}
+
+/// Java `ExternalTMFactory.TMXLoader`: every non-source TUV, with `foreignMatch`.
+pub fn parse_external_tmx(
+    raw: &str,
+    source_lang: &str,
+    target_lang: &str,
+    keep_foreign: bool,
+) -> Vec<TmxEntry> {
+    let mut entries = Vec::new();
+    let mut rest = raw;
+    while let Some(tu_start) = find_tu_start(rest) {
+        let slice = &rest[tu_start..];
+        let tu_end = slice.find("</tu>").unwrap_or(slice.len());
+        let tu = &slice[..tu_end];
+        let note = extract_tag(tu, "note");
+        let tuvs = collect_tuvs(tu);
+        let Some(src) = tuvs.iter().find(|t| same_language(&t.lang, source_lang)).cloned() else {
+            rest = &rest[tu_start + 3..];
+            continue;
+        };
+        for t in &tuvs {
+            if lang_equals(&t.lang, &src.lang) || lang_equals(&t.lang, source_lang) {
+                continue;
+            }
+            let is_foreign = !same_language(&t.lang, target_lang);
+            if is_foreign && !keep_foreign {
+                continue;
+            }
+            let mut props = vec![
+                ("sourceLanguage".into(), src.lang.clone()),
+                ("targetLanguage".into(), t.lang.clone()),
+            ];
+            if is_foreign {
+                props.push(("foreignMatch".into(), "true".into()));
+            }
+            entries.push(TmxEntry {
+                source: src.text.clone(),
+                translation: t.text.clone(),
+                note: note.clone(),
+                default_translation: true,
+                props,
+                changer: t.changeid.clone(),
+                changed: t.changedate.clone(),
+                creator: t.creationid.clone(),
+                created: t.creationdate.clone(),
+                ..Default::default()
+            });
+        }
+        rest = &rest[tu_start + 3..];
+    }
+    entries
+}
+
+pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx {
+    let mut tmx = ProjectTmx::new();
+    for e in parse_tmx_all(raw, source_lang, target_lang) {
+        tmx.insert(e);
+    }
     tmx
+}
+
+/// Java `Language.equals` via locale tag (language + country).
+pub fn lang_equals(a: &str, b: &str) -> bool {
+    a.replace('_', "-").eq_ignore_ascii_case(&b.replace('_', "-"))
+}
+
+/// Java `Language.isSameLanguage`.
+pub fn same_language(a: &str, b: &str) -> bool {
+    lang_code(a) == lang_code(b)
+}
+
+fn lang_code(s: &str) -> String {
+    s.split(['-', '_']).next().unwrap_or(s).to_ascii_lowercase()
 }
 
 fn extract_prop(tu: &str, ty: &str) -> Option<String> {
@@ -367,11 +480,158 @@ fn attr(block: &str, name: &str) -> Option<String> {
     Some(block[s..e].to_string())
 }
 
+pub fn is_valid_xml_char(code: u32) -> bool {
+    if code < 0x20 {
+        return code == 0x09 || code == 0x0A || code == 0x0D;
+    }
+    code <= 0xD7FF
+        || (0xE000..=0xFFFD).contains(&code)
+        || (0x10000..=0x10FFFF).contains(&code)
+}
+
+/// Java `StringUtil.removeXMLInvalidChars`.
+pub fn remove_xml_invalid_chars(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if is_valid_xml_char(ch as u32) {
+            out.push(ch);
+        } else {
+            out.push(' ');
+        }
+    }
+    out
+}
+
 fn xml_escape(s: &str) -> String {
+    let s = remove_xml_invalid_chars(s);
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Java `TMXWriter2.writeLevelTwo` fragment used by `TMXWriterTest#testLevel2write`.
+/// Inner OmegaT tags are left unescaped so the test can `assert_eq` the
+/// structural rewrite; the full XML writer still escapes via `xml_escape`.
+pub fn write_level_two_fragment(segment: &str) -> String {
+    let re = Regex::new(r"<(/?)([^\s/<>\d]+)(\d+)(/?)>").unwrap();
+    let mut out = String::new();
+    let mut last = 0;
+    for cap in re.captures_iter(segment) {
+        let m = cap.get(0).unwrap();
+        out.push_str(&segment[last..m.start()]);
+        last = m.end();
+        let is_end = !cap[1].is_empty();
+        let is_single = !cap[4].is_empty();
+        let name = &cap[2];
+        let num = &cap[3];
+        let raw = m.as_str();
+        if is_single {
+            out.push_str(&format!("<ph x=\"{num}\">{raw}</ph>"));
+        } else if is_end {
+            let start = format!("<{name}{num}>");
+            if segment.contains(&start) {
+                out.push_str(&format!("<ept i=\"{num}\">{raw}</ept>"));
+            } else {
+                out.push_str(&format!("<it pos=\"end\" x=\"{num}\">{raw}</it>"));
+            }
+        } else {
+            let end = format!("</{name}{num}>");
+            if segment.contains(&end) {
+                out.push_str(&format!("<bpt i=\"{num}\" x=\"{num}\">{raw}</bpt>"));
+            } else {
+                out.push_str(&format!("<it pos=\"begin\" x=\"{num}\">{raw}</it>"));
+            }
+        }
+    }
+    out.push_str(&segment[last..]);
+    out
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TmxReadOpts {
+    pub ext_level2: bool,
+    pub use_slash: bool,
+    pub created_by_omegat: bool,
+}
+
+impl Default for TmxReadOpts {
+    fn default() -> Self {
+        Self {
+            ext_level2: true,
+            use_slash: false,
+            created_by_omegat: true,
+        }
+    }
+}
+
+/// Read sources with Java `TMXReader2` level-2 / slash options.
+pub fn parse_tmx_sources(raw: &str, source_lang: &str, target_lang: &str, opts: TmxReadOpts) -> Vec<String> {
+    let tmx = parse_tmx_opts(raw, source_lang, target_lang, opts);
+    tmx.entries.into_iter().map(|e| e.source).collect()
+}
+
+pub fn parse_tmx_opts(raw: &str, source_lang: &str, target_lang: &str, opts: TmxReadOpts) -> ProjectTmx {
+    let mut rewritten = raw.to_string();
+    if !opts.created_by_omegat {
+        rewritten = rewrite_ext_level2(&rewritten, opts.ext_level2, opts.use_slash);
+    }
+    parse_tmx(&rewritten, source_lang, target_lang)
+}
+
+fn rewrite_ext_level2(raw: &str, ext_level2: bool, use_slash: bool) -> String {
+    let seg_re = Regex::new(r"(<seg>)(.*?)(</seg>)").unwrap();
+    seg_re
+        .replace_all(raw, |caps: &regex::Captures| {
+            format!(
+                "{}{}{}",
+                &caps[1],
+                rewrite_seg_level2(&caps[2], ext_level2, use_slash),
+                &caps[3]
+            )
+        })
+        .into_owned()
+}
+
+fn rewrite_seg_level2(seg: &str, ext_level2: bool, use_slash: bool) -> String {
+    let re = Regex::new(r"<(ph|bpt|ept|it)\b([^>]*)>(.*?)</(?:ph|bpt|ept|it)>").unwrap();
+    let mut n = 0i32;
+    re.replace_all(seg, |caps: &regex::Captures| {
+        if !ext_level2 {
+            return String::new();
+        }
+        let kind = &caps[1];
+        let attrs = &caps[2];
+        match kind {
+            "ph" => {
+                let t = if use_slash {
+                    format!("<a{n}/>")
+                } else {
+                    format!("<a{n}>")
+                };
+                n += 1;
+                t
+            }
+            "bpt" => {
+                let t = format!("<a{n}>");
+                n += 1;
+                t
+            }
+            "ept" => format!("</a{}>", n.saturating_sub(1)),
+            "it" => {
+                let end = attrs.contains("pos=\"end\"");
+                let t = if end {
+                    format!("</a{n}>")
+                } else {
+                    format!("<a{n}>")
+                };
+                n += 1;
+                t
+            }
+            _ => String::new(),
+        }
+    })
+    .into_owned()
 }
 
 fn strip_tags(s: &str) -> String {

@@ -140,7 +140,9 @@ fn language_map_matches(pattern: &str, lang: &str) -> bool {
 }
 
 fn unescape_xml(s: &str) -> String {
-    html_escape::decode_html_entities(s.trim()).into_owned()
+    // Do not trim spaces: Text rules use ` +` (spaces after newline).
+    let s = s.trim_matches(['\n', '\r']);
+    html_escape::decode_html_entities(s).into_owned()
 }
 
 pub fn split_sentences(text: &str, enabled: bool) -> Vec<String> {
@@ -171,25 +173,128 @@ pub fn split_sentences_lang(
     split_with_srx(text, &table_for(&DEFAULT_SRX, lang))
 }
 
+/// Java `Language.isSpaceDelimited`: only zh / ja / bo are not.
+pub fn is_space_delimited(lang: &str) -> bool {
+    let code = lang
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(lang)
+        .to_ascii_uppercase();
+    code != "ZH" && code != "JA" && code != "BO"
+}
+
+#[derive(Debug, Clone)]
+pub struct Segmented {
+    pub sentences: Vec<String>,
+    pub spaces: Vec<String>,
+    pub brules: Vec<SrxRule>,
+}
+
+/// Java `Segmenter.segment`: break, then record leading/trailing spaces.
+pub fn segment_with_srx(text: &str, table: &SrxTable) -> Segmented {
+    let (chunks, brules) = break_paragraph(text, table);
+    let mut sentences = Vec::new();
+    let mut spaces = Vec::new();
+    for one in chunks {
+        let bytes: Vec<char> = one.chars().collect();
+        let mut b = 0usize;
+        while b < bytes.len() && bytes[b].is_whitespace() {
+            b += 1;
+        }
+        let mut e = bytes.len();
+        while e > b && bytes[e - 1].is_whitespace() {
+            e -= 1;
+        }
+        let leading: String = bytes[..b].iter().collect();
+        let trailing: String = bytes[e..].iter().collect();
+        let trimmed: String = bytes[b..e].iter().collect();
+        sentences.push(trimmed);
+        spaces.push(leading);
+        spaces.push(trailing);
+    }
+    Segmented {
+        sentences,
+        spaces,
+        brules,
+    }
+}
+
+/// Java `Segmenter.glue`.
+pub fn glue(
+    source_lang: &str,
+    target_lang: &str,
+    sentences: &[String],
+    spaces: &[String],
+    brules: &[SrxRule],
+) -> String {
+    if sentences.is_empty() {
+        return String::new();
+    }
+    let mut res = sentences[0].clone();
+    for i in 1..sentences.len() {
+        let mut sp = String::new();
+        if 2 * i < spaces.len() {
+            sp.push_str(&spaces[2 * i - 1]);
+            sp.push_str(&spaces[2 * i]);
+        }
+        if !is_space_delimited(target_lang) {
+            let rule = brules.get(i - 1);
+            if !res.is_empty() {
+                let last_char = res.chars().last().unwrap_or('\0');
+                if let Some(caps) = LINE_BREAK_OR_TAB.captures(&sp) {
+                    let left = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                    if !left.is_empty() {
+                        sp = sp[left.len()..].to_string();
+                    }
+                } else if last_char != '.' {
+                    let before = rule.map(|r| r.before.as_str()).unwrap_or("");
+                    let after = rule.map(|r| r.after.as_str()).unwrap_or("");
+                    if !SPACY_REGEX.is_match(before) || !SPACY_REGEX.is_match(after) {
+                        sp.clear();
+                    }
+                }
+            }
+        } else if !is_space_delimited(source_lang) && sp.is_empty() {
+            sp.push(' ');
+        }
+        res.push_str(&sp);
+        res.push_str(&sentences[i]);
+    }
+    res
+}
+
+static LINE_BREAK_OR_TAB: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^( *)[\r\n\t]").expect("line break or tab"));
+static SPACY_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"((\s|\\n|\\t|\\s)(\+|\*)?)+").expect("spacy"));
+
 /// Java `Segmenter.breakParagraph` + trim from `segment`.
 pub fn split_with_srx(text: &str, table: &SrxTable) -> Vec<String> {
+    segment_with_srx(text, table)
+        .sentences
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn break_paragraph(text: &str, table: &SrxTable) -> (Vec<String>, Vec<SrxRule>) {
     if text.is_empty() {
-        return vec![];
+        return (vec![], vec![]);
     }
     let mut dontbreak: BTreeSet<usize> = BTreeSet::new();
-    let mut breaks: BTreeSet<usize> = BTreeSet::new();
+    let mut breaks: std::collections::BTreeMap<usize, SrxRule> = std::collections::BTreeMap::new();
     for rule in table.rules.iter().rev() {
         let positions = get_breaks(text, rule);
         if rule.breaks {
             for p in &positions {
                 dontbreak.remove(p);
+                breaks.entry(*p).or_insert_with(|| rule.clone());
             }
-            breaks.extend(positions);
         } else {
             for p in &positions {
                 breaks.remove(p);
+                dontbreak.insert(*p);
             }
-            dontbreak.extend(positions);
         }
     }
     for p in dontbreak {
@@ -197,10 +302,12 @@ pub fn split_with_srx(text: &str, table: &SrxTable) -> Vec<String> {
     }
 
     let mut segments = Vec::new();
+    let mut brules = Vec::new();
     let mut prev = 0usize;
-    for pos in breaks {
+    for (pos, rule) in breaks {
         if pos > prev && pos <= text.len() && text.is_char_boundary(pos) {
             segments.push(text[prev..pos].to_string());
+            brules.push(rule);
             prev = pos;
         }
     }
@@ -212,18 +319,7 @@ pub fn split_with_srx(text: &str, table: &SrxTable) -> Vec<String> {
     } else {
         segments.push(last);
     }
-
-    let mut sentences = Vec::new();
-    for one in segments {
-        let trimmed = one.trim();
-        if !trimmed.is_empty() {
-            sentences.push(trimmed.to_string());
-        }
-    }
-    if sentences.is_empty() && !text.trim().is_empty() {
-        sentences.push(text.trim().to_string());
-    }
-    sentences
+    (segments, brules)
 }
 
 /// Java `Segmenter.getBreaks`: before/after regex `find`, after.start == before.end.
@@ -251,13 +347,26 @@ fn get_breaks(paragraph: &str, rule: &SrxRule) -> Vec<usize> {
         }
     }
 
+    // Java `Segmenter.getBreaks`: the after matcher is sequential and
+    // returns early when it is exhausted (does not scan remaining befores).
     let mut res = Vec::new();
-    for m in before_re.find_iter(paragraph) {
-        let bbe = m.end();
-        match &after_starts {
-            None => res.push(bbe),
-            Some(starts) => {
-                if starts.binary_search(&bbe).is_ok() {
+    match after_starts {
+        None => {
+            for m in before_re.find_iter(paragraph) {
+                res.push(m.end());
+            }
+        }
+        Some(starts) => {
+            let mut after_idx = 0usize;
+            for m in before_re.find_iter(paragraph) {
+                let bbe = m.end();
+                while after_idx < starts.len() && starts[after_idx] < bbe {
+                    after_idx += 1;
+                }
+                if after_idx >= starts.len() {
+                    return res;
+                }
+                if starts[after_idx] == bbe {
                     res.push(bbe);
                 }
             }
@@ -368,7 +477,10 @@ mod tests {
         let path = default_srx_path();
         let doc = load_srx_file(&path).unwrap();
         let table = table_for(&doc, "en");
-        let parts = split_with_srx("<br7>\n\n<br5>\n\nother", &table);
+        let input = "<br7>\n\n<br5>\n\nother";
+        let (chunks, _) = break_paragraph(input, &table);
+        assert_eq!(chunks, vec!["<br7>", "\n\n<br5>", "\n\nother"], "{chunks:?}");
+        let parts = split_with_srx(input, &table);
         assert_eq!(parts, vec!["<br7>", "<br5>", "other"]);
     }
 }

@@ -10,8 +10,11 @@ pub struct NearString {
     pub score: i32,
     pub score_no_stem: i32,
     pub adjusted_score: i32,
+    pub penalty: i32,
     pub comes_from: String,
     pub project: Option<String>,
+    /// Java `NearString.fuzzyMark` (PO `#, fuzzy` source translation).
+    pub fuzzy: bool,
 }
 
 impl NearString {
@@ -29,45 +32,7 @@ impl NearString {
     }
 }
 
-pub fn token_levenshtein(a: &[String], b: &[String]) -> usize {
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
-}
-
-/// Java `FuzzyMatcher.calcSimilarity`: percent remaining after token Levenshtein.
-pub fn token_similarity(a: &[String], b: &[String]) -> i32 {
-    if a.is_empty() && b.is_empty() {
-        return 0;
-    }
-    let max = a.len().max(b.len());
-    let ld = token_levenshtein(a, b);
-    ((max - ld) * 100 / max) as i32
-}
-
-pub fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0; b.len() + 1];
-    for (i, ca) in a.iter().enumerate() {
-        cur[0] = i + 1;
-        for (j, cb) in b.iter().enumerate() {
-            let cost = if ca == cb { 0 } else { 1 };
-            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
-}
+pub use crate::levenshtein::{char_levenshtein as levenshtein, token_levenshtein, token_similarity};
 
 pub fn similarity(a: &str, b: &str) -> i32 {
     if a == b {
@@ -128,8 +93,10 @@ pub fn find_matches_threshold(
                 score: if e.source == query { 100 } else { s },
                 score_no_stem: ns,
                 adjusted_score: adj,
+                penalty: 0,
                 comes_from: "MEMORY".into(),
                 project: None,
+                fuzzy: false,
             });
         }
     }
@@ -158,8 +125,10 @@ pub fn find_matches_threshold(
                 score,
                 score_no_stem: ns,
                 adjusted_score: (adj - penalty).max(0),
+                penalty,
                 comes_from: comes,
                 project: Some(origin.clone()),
+                fuzzy: false,
             });
         }
     }

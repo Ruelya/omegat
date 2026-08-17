@@ -342,7 +342,7 @@ public class FindMatchesTest {
         Preferences.setPreference(Preferences.EXT_TMX_KEEP_FOREIGN_MATCH, true);
     }
 
-    static class TestProject extends NotLoadedProject implements IProject {
+    public static class TestProject extends NotLoadedProject implements IProject {
         private final ProjectProperties prop;
         private ProjectTMXMock projectTMX;
         private final File externalTmx;
@@ -365,7 +365,7 @@ public class FindMatchesTest {
             }
         };
 
-        TestProject(final ProjectProperties prop, File testTmx, File externalTmx, ITokenizer sourceTokenizer,
+        public TestProject(final ProjectProperties prop, File testTmx, File externalTmx, ITokenizer sourceTokenizer,
                 ITokenizer targetTokenizer, Segmenter segmenter) {
             this.prop = prop;
             this.sourceTokenizer = sourceTokenizer;

@@ -1,7 +1,7 @@
 //! One module per Java `*Tokenizer`. Shared event-like engine lives in `engine`.
 
 mod default;
-mod engine;
+pub(crate) mod engine;
 mod hunspell;
 mod lucene_arabic;
 mod lucene_armenian;
@@ -198,6 +198,28 @@ pub fn tokenize(text: &str, lang: &str) -> Vec<Token> {
 
 pub fn tokenize_words(text: &str, class: &str, mode: StemmingMode) -> Vec<String> {
     for_class(class).tokenize_words(text, mode)
+}
+
+/// Java `ITokenizer.tokenizeWords` (Token[]): analyzer terms only, no surface pair.
+pub fn tokenize_word_tokens(text: &str, class: &str, mode: StemmingMode) -> Vec<String> {
+    if class.contains("LuceneCJK") || class.contains("DefaultTokenizer") {
+        return for_class(class).tokenize_words(text, mode);
+    }
+    for_class(class)
+        .tokenize_tokens(text, mode)
+        .into_iter()
+        .filter(|t| !mode.stems_allowed() || t.text == t.stem)
+        .map(|t| t.text)
+        .collect()
+}
+
+/// Java `DefaultTokenizer.tokenizeVerbatim`: every WordIterator token, including
+/// numbers, tags, and whitespace.
+pub fn tokenize_verbatim(text: &str) -> Vec<String> {
+    engine::word_iterator_surfaces(text)
+        .into_iter()
+        .map(|s| s.text.to_string())
+        .collect()
 }
 
 pub fn stem(word: &str, lang: &str) -> String {
