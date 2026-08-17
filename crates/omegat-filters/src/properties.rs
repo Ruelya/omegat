@@ -79,7 +79,7 @@ fn process(
 
         let first = trimmed.chars().next().unwrap();
         if first == '#' || first == '!' {
-            written.push_str(&to_ascii(raw_line, EscapeMode::Comment, force_escape));
+            written.push_str(&to_ascii(raw_line, EscapeMode::Comment, force_escape, dont_unescape));
             written.push_str(br);
             comments = Some(match comments {
                 None => processed,
@@ -134,9 +134,9 @@ fn process(
             };
 
             if noi18n && dont_translate_comment {
-                written.push_str(&to_ascii(&key, EscapeMode::Key, force_escape));
+                written.push_str(&to_ascii(&key, EscapeMode::Key, force_escape, dont_unescape));
                 written.push_str(&equals);
-                written.push_str(&to_ascii(&value, EscapeMode::Value, force_escape));
+                written.push_str(&to_ascii(&value, EscapeMode::Value, force_escape, dont_unescape));
                 written.push_str(br);
                 noi18n = false;
             } else {
@@ -157,12 +157,12 @@ fn process(
                     (value.clone(), true)
                 };
                 let mut trans = trans.replace("\n \n", "\n\n");
-                trans = to_ascii(&trans, EscapeMode::Value, force_escape);
+                trans = to_ascii(&trans, EscapeMode::Value, force_escape, dont_unescape);
                 if trans.starts_with(' ') {
                     trans = format!("\\{trans}");
                 }
                 if translated || !remove_untranslated {
-                    written.push_str(&to_ascii(&key, EscapeMode::Key, force_escape));
+                    written.push_str(&to_ascii(&key, EscapeMode::Key, force_escape, dont_unescape));
                     written.push_str(&equals);
                     written.push_str(&trans);
                     written.push_str(br);
@@ -232,14 +232,16 @@ fn normalize_input_line(line: &str, dont_unescape: bool) -> std::result::Result<
     Ok(result)
 }
 
-fn to_ascii(text: &str, mode: EscapeMode, force_escape: bool) -> String {
+fn to_ascii(text: &str, mode: EscapeMode, force_escape: bool, dont_unescape: bool) -> String {
     let mut result = String::new();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0usize;
     while i < chars.len() {
         let cp = chars[i];
         if !matches!(mode, EscapeMode::Comment) && cp == '\\' {
-            if matches!(mode, EscapeMode::Value | EscapeMode::Key) {
+            if dont_unescape && contains_u_escape_at(text, i) {
+                result.push('\\');
+            } else if matches!(mode, EscapeMode::Value | EscapeMode::Key) {
                 result.push_str("\\\\");
             }
         } else if cp == '\n' {

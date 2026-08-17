@@ -6,7 +6,7 @@ mod dokuwiki;
 mod filters3;
 mod filters4;
 mod hhc;
-mod html;
+pub mod html;
 mod ilias;
 mod ini;
 mod json;
@@ -53,13 +53,28 @@ pub enum FilterError {
 
 pub type Result<T> = std::result::Result<T, FilterError>;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FilterContext {
     pub source_lang: String,
     pub target_lang: String,
+    /// Java `FilterMaster` / `Filters.removeTags` (XSD default true).
     pub remove_tags: bool,
+    /// Java `Filters.removeSpacesNonseg` (XSD default true).
+    pub remove_spaces_nonseg: bool,
     /// Java `processOptions` map (e.g. `segmentOn`, `skipHeader`).
     pub options: HashMap<String, String>,
+}
+
+impl Default for FilterContext {
+    fn default() -> Self {
+        Self {
+            source_lang: String::new(),
+            target_lang: String::new(),
+            remove_tags: true,
+            remove_spaces_nonseg: true,
+            options: HashMap::new(),
+        }
+    }
 }
 
 impl FilterContext {
@@ -105,6 +120,10 @@ pub trait Filter: Send + Sync {
     fn default_masks(&self) -> &'static [&'static str];
     fn phase(&self) -> u8 {
         1
+    }
+    /// Java `AbstractFilter.isFileSupported` (content sniff). Default: mask match.
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        self.matches(path)
     }
     fn matches(&self, path: &Path) -> bool {
         let name = path

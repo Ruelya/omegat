@@ -53,6 +53,59 @@ pub struct TimedOutcome {
     pub written: String,
 }
 
+/// Java `MixedEolHandlingReader`: detect majority EOL, then split on that
+/// sequence only (other EOL chars stay in the line).
+fn mixed_eol_lines(raw: &str) -> Vec<String> {
+    let bytes = raw.as_bytes();
+    let mut cr = 0;
+    let mut lf = 0;
+    let mut crlf = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\r' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                crlf += 1;
+                i += 2;
+            } else {
+                cr += 1;
+                i += 1;
+            }
+        } else if bytes[i] == b'\n' {
+            lf += 1;
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+    let detected: &[u8] = if cr > lf && cr > crlf {
+        b"\r"
+    } else if lf > cr && lf > crlf {
+        b"\n"
+    } else if crlf > lf && crlf > cr {
+        b"\r\n"
+    } else if crlf > 0 {
+        b"\r\n"
+    } else {
+        b"\n"
+    };
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    i = 0;
+    while i + detected.len() <= bytes.len() {
+        if &bytes[i..i + detected.len()] == detected {
+            out.push(raw[start..i].to_string());
+            i += detected.len();
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if start < raw.len() {
+        out.push(raw[start..].to_string());
+    }
+    out
+}
+
 /// Java `SrtFilter` / `SbvFilter` / `WebVttFilter` state machine. Time line is the id.
 pub fn process_timed(
     raw: &str,
@@ -90,7 +143,7 @@ pub fn process_timed(
         written.push_str(EOL);
     };
 
-    for (line, _) in crate::text::lines_with_breaks(raw) {
+    for line in mixed_eol_lines(raw) {
         let trimmed = line.trim();
         if !wait_text {
             if time_re.is_match(trimmed) {
@@ -98,7 +151,7 @@ pub fn process_timed(
             }
             key = trimmed.to_string();
             text.clear();
-            written.push_str(line);
+            written.push_str(&line);
             written.push_str(EOL);
         } else if trimmed.is_empty() {
             flush(&key, &text, &mut segments, &mut written, translations);
@@ -110,7 +163,7 @@ pub fn process_timed(
             if !text.is_empty() {
                 text.push('\n');
             }
-            text.push_str(line);
+            text.push_str(&line);
         }
     }
     flush(&key, &text, &mut segments, &mut written, translations);

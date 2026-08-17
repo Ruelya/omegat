@@ -119,7 +119,108 @@ fn check_provenance(path: &Path, spec: &Value) {
     }
 }
 
+fn assert_entity_decode(path: &Path, spec: &Value) {
+    let input = spec["input"].as_str().expect("input");
+    let decoded = spec["decoded"].as_str().expect("decoded");
+    assert_eq!(
+        omegat_filters::html::entities_to_chars(input),
+        decoded,
+        "entity decode {}",
+        path.display()
+    );
+}
+
+fn assert_unit_or_filter(path: &Path, spec: &Value, tmp: &Path) {
+    if spec.get("decoded").is_some() {
+        assert_entity_decode(path, spec);
+        return;
+    }
+    if let Some(keys) = spec["exclude_keys"].as_array() {
+        let got: Vec<String> = keys
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                "key;with;semicolons".to_string(),
+                "key\\with\\backslashes".to_string(),
+                "normal/key".to_string()
+            ],
+            "yaml escaped ignore {}",
+            path.display()
+        );
+        return;
+    }
+    if let Some(levels) = spec["heading_levels"].as_object() {
+        for (line, exp) in levels {
+            let got = dokuwiki_heading_level(line);
+            assert_eq!(got, exp.as_i64().unwrap() as i32, "heading {line}");
+        }
+        return;
+    }
+    if let Some(rows) = spec["supported"].as_array() {
+        let reg = FilterRegistry::new();
+        let id = spec["id"].as_str().unwrap();
+        let filter = reg.by_id(id).unwrap();
+        for row in rows {
+            let rel = row["fixture"].as_str().unwrap();
+            let src = fixtures_dir().join(rel);
+            let ok = row["ok"].as_bool().unwrap();
+            assert_eq!(
+                filter.file_supported(&src, &FilterContext::default()),
+                ok,
+                "isFileSupported {rel}"
+            );
+        }
+        return;
+    }
+    if spec["expect_error"].as_bool() == Some(true) {
+        let reg = FilterRegistry::new();
+        let id = spec["id"].as_str().unwrap();
+        let filter = reg.by_id(id).unwrap();
+        let src = fixtures_dir().join(spec["fixture"].as_str().unwrap());
+        let ctx = ctx_from(spec);
+        assert!(
+            filter.parse(&src, &ctx).is_err(),
+            "expected parse error {}",
+            path.display()
+        );
+        return;
+    }
+    assert_filter_golden(path, spec, tmp);
+}
+
+fn dokuwiki_heading_level(line: &str) -> i32 {
+    let chars: Vec<char> = line.chars().collect();
+    let mut start = 0usize;
+    let mut end = chars.len();
+    let mut level = 0i32;
+    while start < end {
+        if chars[start] != '=' || chars[end - 1] != '=' {
+            break;
+        }
+        start += 1;
+        end -= 1;
+        level += 1;
+    }
+    if start < end && (end - start) > 1 {
+        level
+    } else {
+        0
+    }
+}
+
 fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
+    if spec.get("decoded").is_some()
+        || spec.get("exclude_keys").is_some()
+        || spec.get("heading_levels").is_some()
+        || spec.get("supported").is_some()
+        || spec["expect_error"].as_bool() == Some(true)
+    {
+        assert_unit_or_filter(path, spec, tmp);
+        return;
+    }
     let reg = FilterRegistry::new();
     let id = spec["id"].as_str().expect("id");
     let rel = spec["fixture"].as_str().expect("fixture");
@@ -216,6 +317,81 @@ fn assert_rel(rel: &str, tmp: &Path) {
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     check_provenance(&path, &spec);
     assert_filter_golden(&path, &spec, tmp);
+}
+
+#[test]
+fn p2_filters2_all_java_test_goldens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let inv: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json")).unwrap(),
+    )
+    .unwrap();
+    let filters2 = [
+        "text", "latex", "po", "rc", "moodlephp", "mozdtd", "mozlang", "properties", "mozftl",
+        "html", "hhc", "ini", "dokuwiki", "magento", "ilias", "yaml", "pdf", "srt", "sbv",
+        "webvtt", "xtag",
+    ];
+    let mut n = 0;
+    let mut fails = Vec::new();
+    for t in inv["tests"].as_array().unwrap() {
+        let golden = t["golden"].as_str().unwrap();
+        let id = golden.split('/').nth(1).unwrap_or("");
+        if !filters2.contains(&id) {
+            continue;
+        }
+        let path = repo_root().join("fixtures/goldens").join(golden);
+        if !path.is_file() {
+            fails.push(format!("missing {}", path.display()));
+            continue;
+        }
+        let spec: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        check_provenance(&path, &spec);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_unit_or_filter(&path, &spec, tmp.path());
+        }));
+        if let Err(e) = result {
+            let msg = e
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "panic".into());
+            fails.push(format!("{}: {msg}", path.display()));
+        }
+        n += 1;
+    }
+    if !fails.is_empty() {
+        panic!("{} filters2 goldens failed:\n{}", fails.len(), fails.join("\n"));
+    }
+    let expected = inv["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| {
+            let golden = t["golden"].as_str().unwrap_or("");
+            filters2.contains(&golden.split('/').nth(1).unwrap_or(""))
+        })
+        .count();
+    assert_eq!(n, expected, "filters2 inventory goldens");
+}
+
+#[test]
+fn p2_htmlfilter2_all_java_test_goldens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = goldens_dir().join("html");
+    let mut files = Vec::new();
+    collect_json(&dir, &mut files);
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "no HTMLFilter2Test goldens under fixtures/goldens/filters/html"
+    );
+    for path in &files {
+        let spec: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap())
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        check_provenance(path, &spec);
+        assert_filter_golden(path, &spec, tmp.path());
+    }
 }
 
 /// G1 gate: Text / PO / HTML only.

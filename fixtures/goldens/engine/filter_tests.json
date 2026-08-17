@@ -312,31 +312,31 @@
       "java_test": "org.omegat.filters.XHTMLFilterTest#testParse",
       "class": "org.omegat.filters.XHTMLFilterTest",
       "method": "testParse",
-      "golden": "filters/html/testParse.json"
+      "golden": "filters/xhtml/testParse.json"
     },
     {
       "java_test": "org.omegat.filters.XHTMLFilterTest#testTranslate",
       "class": "org.omegat.filters.XHTMLFilterTest",
       "method": "testTranslate",
-      "golden": "filters/html/testTranslate.json"
+      "golden": "filters/xhtml/testTranslate.json"
     },
     {
       "java_test": "org.omegat.filters.XHTMLFilterTest#testLoad",
       "class": "org.omegat.filters.XHTMLFilterTest",
       "method": "testLoad",
-      "golden": "filters/html/testLoad.json"
+      "golden": "filters/xhtml/testLoad.json"
     },
     {
       "java_test": "org.omegat.filters.XHTMLFilterTest#testTagsOptimization",
       "class": "org.omegat.filters.XHTMLFilterTest",
       "method": "testTagsOptimization",
-      "golden": "filters/html/testTagsOptimization.json"
+      "golden": "filters/xhtml/testTagsOptimization.json"
     },
     {
       "java_test": "org.omegat.filters.XHTMLFilterTest#testBadDocTypeIgnore",
       "class": "org.omegat.filters.XHTMLFilterTest",
       "method": "testBadDocTypeIgnore",
-      "golden": "filters/html/testBadDocTypeIgnore.json"
+      "golden": "filters/xhtml/testBadDocTypeIgnore.json"
     },
     {
       "java_test": "org.omegat.filters.SvgFilterTest#testLoad",

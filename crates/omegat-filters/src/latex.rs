@@ -453,10 +453,11 @@ impl Engine<'_> {
         let mut sorted = commands.to_vec();
         sorted.sort_by_key(|b| std::cmp::Reverse(b.len()));
         for mut command in sorted {
+            // Java: extra escape only for \\, \{, \[, \| then Pattern.compile("\\"+command).
             if command == "\\\\" || command == "\\{" || command == "\\[" || command == "\\|" {
                 command = format!("\\{command}");
             }
-            let find = regex::escape(&command);
+            let find = format!("\\{command}");
             let Ok(p) = Regex::new(&find) else {
                 continue;
             };
@@ -510,13 +511,37 @@ fn parse_braced_command(line: &str, prefix: &str) -> Option<String> {
 }
 
 fn substitute_unicode(par: &str) -> String {
-    par.replace("\\\\", "<br0>")
-        .replace("{\\ss}", "ß")
-        .replace("\\ss", "ß")
-        .replace("\\%", "%")
-        .replace("\\-", "\u{00ad}")
-        .replace("\\,", "\u{2009}")
-        .replace('~', "\u{00a0}")
+    let mut par = Regex::new(r"\\\\").unwrap().replace_all(par, "<br0>").into_owned();
+    par = Regex::new(r"\{?\\ss}?")
+        .unwrap()
+        .replace_all(&par, "ß")
+        .into_owned();
+    par = Regex::new(r"\{?\\glqq}?(\{\})?")
+        .unwrap()
+        .replace_all(&par, "〟")
+        .into_owned();
+    par = Regex::new(r"\{?\\grqq}?(\{\})?")
+        .unwrap()
+        .replace_all(&par, "〝")
+        .into_owned();
+    par = Regex::new(r"\{?\\glq}?(\{\})?")
+        .unwrap()
+        .replace_all(&par, "‚")
+        .into_owned();
+    par = Regex::new(r"\{?\\grq}?(\{\})?")
+        .unwrap()
+        .replace_all(&par, "‘")
+        .into_owned();
+    par = Regex::new(r"\\%").unwrap().replace_all(&par, "%").into_owned();
+    par = Regex::new(r"\\-")
+        .unwrap()
+        .replace_all(&par, "\u{00ad}")
+        .into_owned();
+    par = Regex::new(r"\\,")
+        .unwrap()
+        .replace_all(&par, "\u{2009}")
+        .into_owned();
+    par.replace('~', "\u{00a0}")
 }
 
 fn resubstitute_tex(par: &str) -> String {

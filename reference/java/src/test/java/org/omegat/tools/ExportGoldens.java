@@ -1827,6 +1827,7 @@ public final class ExportGoldens {
         exportFilterTestInventory();
         exportHtmlFilter2AllTests();
         exportHtmlOptionKeys();
+        exportFilters2AllTests();
         System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html)");
     }
 
@@ -2134,7 +2135,9 @@ public final class ExportGoldens {
     private static String guessFilterGolden(String className, String method) {
         String simple = className.substring(className.lastIndexOf('.') + 1);
         String id = simple.replace("FilterTest", "").replace("Filter2Test", "").replace("Test", "").toLowerCase();
-        if (simple.contains("HTML")) {
+        if (simple.contains("XHTML")) {
+            id = "xhtml";
+        } else if (simple.contains("HTML")) {
             id = "html";
         } else if (simple.contains("HHC")) {
             id = "hhc";
@@ -2293,6 +2296,303 @@ public final class ExportGoldens {
         json.put("exported_by", EXPORTED_BY);
         json.put("keys", keys);
         writeJson(goldenRoot.resolve("engine/html_options_keys.json"), json);
+    }
+
+    /**
+     * One golden per filters2 {@code *FilterTest#test*} at the inventory path
+     * {@code filters/<id>/<method>.json}.
+     */
+    private void exportFilters2AllTests() throws Exception {
+        Map<String, String> empty = Collections.emptyMap();
+        Map<String, String> never = new TreeMap<>();
+        never.put(TextFilter.OPTION_SEGMENT_ON, TextFilter.SEGMENT_NEVER);
+        Map<String, String> emptyLines = new TreeMap<>();
+        emptyLines.put(TextFilter.OPTION_SEGMENT_ON, TextFilter.SEGMENT_EMPTYLINES);
+        Map<String, String> breaks = new TreeMap<>();
+        breaks.put(TextFilter.OPTION_SEGMENT_ON, TextFilter.SEGMENT_BREAKS);
+        Map<String, String> lineLimit = new TreeMap<>();
+        lineLimit.put(TextFilter.OPTION_SEGMENT_ON, TextFilter.SEGMENT_EMPTYLINES);
+        lineLimit.put(TextFilter.OPTION_LINE_LENGTH, "8");
+        lineLimit.put(TextFilter.OPTION_MAX_LINE_LENGTH, "10");
+
+        exportFilter("text", "text/testTextFilterParsing.json", "text/text1.txt",
+                "org.omegat.filters.TextFilterTest#testTextFilterParsing", new TextFilter(), empty, null, null);
+        exportFilter("text", "text/testTranslate.json", "text/text1.txt",
+                "org.omegat.filters.TextFilterTest#testTranslate", new TextFilter(), empty, null, null);
+        exportFilter("text", "text/testParseNeverBreak.json", "text/file-TextFilter.txt",
+                "org.omegat.filters.TextFilterTest#testParseNeverBreak", new TextFilter(), never, null, null);
+        exportFilter("text", "text/testParseEmptyLinesBreak.json", "text/file-TextFilter.txt",
+                "org.omegat.filters.TextFilterTest#testParseEmptyLinesBreak", new TextFilter(), emptyLines, null,
+                null);
+        exportFilter("text", "text/testParseLinesBreak.json", "text/file-TextFilter.txt",
+                "org.omegat.filters.TextFilterTest#testParseLinesBreak", new TextFilter(), breaks, null, null);
+        exportFilter("text", "text/testLoad.json", "text/file-TextFilter-multiple.txt",
+                "org.omegat.filters.TextFilterTest#testLoad", new TextFilter(), empty, null, null);
+        exportFilter("text", "text/testLineLengthLimit.json", "text/file-TextFilter-SMP.txt",
+                "org.omegat.filters.TextFilterTest#testLineLengthLimit", new TextFilter(), lineLimit, null, null);
+
+        exportFilter("ini", "ini/testParse.json", "ini/file-INIFilter.ini",
+                "org.omegat.filters.INIFilterTest#testParse", new INIFilter(), empty, null, null);
+        exportFilter("ini", "ini/testTranslate.json", "ini/file-INIFilter.ini",
+                "org.omegat.filters.INIFilterTest#testTranslate", new INIFilter(), empty, null, null);
+        exportFilter("ini", "ini/testLoad.json", "ini/file-INIFilter.ini",
+                "org.omegat.filters.INIFilterTest#testLoad", new INIFilter(), empty, null, null);
+
+        exportFilter("yaml", "yaml/testParse.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testParse", new YamlFilter(), empty, null, null);
+        exportFilter("yaml", "yaml/testTranslate.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testTranslate", new YamlFilter(), empty, null, null);
+        exportFilter("yaml", "yaml/testLoad.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testLoad", new YamlFilter(), empty, null, null);
+        Map<String, String> yEx = new TreeMap<>();
+        yEx.put("exclude", "footer/links/help;footer/links/terms");
+        exportFilter("yaml", "yaml/testParseWithExclude.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testParseWithExclude", new YamlFilter(), yEx, null, null);
+        Map<String, String> yIn = new TreeMap<>();
+        yIn.put("include", "menu/**");
+        exportFilter("yaml", "yaml/testParseWithInclude.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testParseWithInclude", new YamlFilter(), yIn, null, null);
+        Map<String, String> yWild = new TreeMap<>();
+        yWild.put("exclude", "footer/*/*");
+        exportFilter("yaml", "yaml/testParseWithWildcard.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testParseWithWildcard", new YamlFilter(), yWild, null, null);
+        Map<String, String> yBoth = new TreeMap<>();
+        yBoth.put("include", "footer/copyright");
+        yBoth.put("exclude", "**/links/**");
+        exportFilter("yaml", "yaml/testParseWithIncludeAndExclude.json", "yaml/sample1.yaml",
+                "org.omegat.filters.YamlFilterTest#testParseWithIncludeAndExclude", new YamlFilter(), yBoth, null,
+                null);
+        Map<String, String> yFile = new TreeMap<>();
+        yFile.put("exclude", "**/file");
+        exportFilter("yaml", "yaml/testParseWithExcludeFileKey.json", "yaml/tips.yaml",
+                "org.omegat.filters.YamlFilterTest#testParseWithExcludeFileKey", new YamlFilter(), yFile, null,
+                null);
+        Map<String, Object> yEsc = new LinkedHashMap<>();
+        yEsc.put("id", "yaml");
+        yEsc.put("java_test", "org.omegat.filters.YamlFilterTest#testParseWithEscapedIgnore");
+        yEsc.put("exported_by", EXPORTED_BY);
+        yEsc.put("sources", List.of());
+        yEsc.put("exclude_keys", List.of("key;with;semicolons", "key\\with\\backslashes", "normal/key"));
+        writeJson(goldenRoot.resolve("filters/yaml/testParseWithEscapedIgnore.json"), yEsc);
+
+        exportFilter("mozftl", "mozftl/testParse.json", "MozillaFTL/MozillaFTLFilter.ftl",
+                "org.omegat.filters.MozillaFTLFilterTest#testParse", new MozillaFTLFilter(), empty, null, null);
+        exportFilter("mozftl", "mozftl/testTranslate.json", "MozillaFTL/MozillaFTLFilter.ftl",
+                "org.omegat.filters.MozillaFTLFilterTest#testTranslate", new MozillaFTLFilter(), empty, null, null);
+        exportFilter("mozftl", "mozftl/testLoad.json", "MozillaFTL/MozillaFTLFilter.ftl",
+                "org.omegat.filters.MozillaFTLFilterTest#testLoad", new MozillaFTLFilter(), empty, null, null);
+
+        exportFilter("properties", "properties/testParse.json",
+                "resourceBundle/file-ResourceBundleFilter.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testParse", new ResourceBundleFilter(), empty, null,
+                null);
+        Map<String, String> rbEsc = new TreeMap<>();
+        rbEsc.put(ResourceBundleFilter.OPTION_FORCE_JAVA8_LITERALS_ESCAPE, "true");
+        exportFilter("properties", "properties/testTranslate.json",
+                "resourceBundle/file-ResourceBundleFilter.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testTranslate", new ResourceBundleFilter(), rbEsc,
+                null, null);
+        exportFilter("properties", "properties/testAlign.json",
+                "resourceBundle/file-ResourceBundleFilter.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testAlign", new ResourceBundleFilter(), empty, null,
+                null);
+        exportFilter("properties", "properties/testLoad.json",
+                "resourceBundle/file-ResourceBundleFilter.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testLoad", new ResourceBundleFilter(), empty, null,
+                null);
+        Map<String, String> rbNoU = new TreeMap<>();
+        rbNoU.put(ResourceBundleFilter.OPTION_DONT_UNESCAPE_U_LITERALS, "true");
+        exportFilter("properties", "properties/testDoNotEscapeUnicodeLiterals.json",
+                "resourceBundle/file-ResourceBundleFilter-UnicodeLiterals.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testDoNotEscapeUnicodeLiterals",
+                new ResourceBundleFilter(), rbNoU, null, null);
+        exportFilter("properties", "properties/testNonEscapeUnicode.json",
+                "resourceBundle/file-ResourceBundleFilter-UnicodeUTF8.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testNonEscapeUnicode", new ResourceBundleFilter(),
+                empty, null, null);
+        Map<String, String> rbU = new TreeMap<>();
+        rbU.put(ResourceBundleFilter.OPTION_DONT_UNESCAPE_U_LITERALS, "false");
+        rbU.put(ResourceBundleFilter.OPTION_FORCE_JAVA8_LITERALS_ESCAPE, "false");
+        exportFilter("properties", "properties/testEscapeUnicodeWhenASCII.json",
+                "resourceBundle/file-ResourceBundleFilter-UnicodeEscaped.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testEscapeUnicodeWhenASCII",
+                new ResourceBundleFilter(), rbU, null, null);
+        exportFilter("properties", "properties/testBadUnicodeLiterals.json",
+                "resourceBundle/file-ResourceBundleFilter-BadLiteral2.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testBadUnicodeLiterals", new ResourceBundleFilter(),
+                empty, null, null);
+        exportFilter("properties", "properties/testWhiteSpace.json",
+                "resourceBundle/file-ResourceBundleFilter-WhiteSpace.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testWhiteSpace", new ResourceBundleFilter(), empty,
+                null, null);
+        exportFilter("properties", "properties/testNOI18N.json",
+                "resourceBundle/file-ResourceBundleFilter-NOI18N.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testNOI18N", new ResourceBundleFilter(), empty, null,
+                null);
+        exportFilter("properties", "properties/testCommentEscaping.json",
+                "resourceBundle/file-ResourceBundleFilter-Comments.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testCommentEscaping", new ResourceBundleFilter(),
+                empty, null, null);
+        Map<String, String> rb227 = new TreeMap<>();
+        rb227.put(ResourceBundleFilter.OPTION_FORCE_JAVA8_LITERALS_ESCAPE, "false");
+        exportFilter("properties", "properties/testRegressionGithub227.json",
+                "resourceBundle/file-ResourceBundleFilter-NonASCIIComments.properties",
+                "org.omegat.filters.ResourceBundleFilterTest#testRegressionGithub227",
+                new ResourceBundleFilter(), rb227, null, null);
+
+        exportFilter("magento", "magento/testParse.json", "magento/MagentoFilter.csv",
+                "org.omegat.filters.MagentoFilterTest#testParse", new MagentoFilter(), empty, null, null);
+        exportFilter("magento", "magento/testTranslate.json", "magento/MagentoFilter.csv",
+                "org.omegat.filters.MagentoFilterTest#testTranslate", new MagentoFilter(), empty, null, null);
+        exportFilter("magento", "magento/testAlign.json", "magento/MagentoFilterAlign.csv",
+                "org.omegat.filters.MagentoFilterTest#testAlign", new MagentoFilter(), empty, null, null);
+
+        exportFilter("dokuwiki", "dokuwiki/testTextFilterParsing.json", "dokuwiki/dokuwiki.txt",
+                "org.omegat.filters.DokuWikiFilterTest#testTextFilterParsing", new DokuWikiFilter(), empty, null,
+                null);
+        exportFilter("dokuwiki", "dokuwiki/testTranslate.json", "dokuwiki/dokuwiki-translate.txt",
+                "org.omegat.filters.DokuWikiFilterTest#testTranslate", new DokuWikiFilter(), empty, null, null);
+        exportFilter("dokuwiki", "dokuwiki/testLoad.json", "dokuwiki/dokuwiki.txt",
+                "org.omegat.filters.DokuWikiFilterTest#testLoad", new DokuWikiFilter(), empty, null, null);
+        Map<String, Object> dwSup = new LinkedHashMap<>();
+        dwSup.put("id", "dokuwiki");
+        dwSup.put("java_test", "org.omegat.filters.DokuWikiFilterTest#testIsFileSupported");
+        dwSup.put("exported_by", EXPORTED_BY);
+        dwSup.put("sources", List.of());
+        dwSup.put("supported", List.of(
+                Map.of("fixture", "dokuwiki/dokuwiki.txt", "ok", true),
+                Map.of("fixture", "text/text1.txt", "ok", false)));
+        writeJson(goldenRoot.resolve("filters/dokuwiki/testIsFileSupported.json"), dwSup);
+        Map<String, Object> dwHead = new LinkedHashMap<>();
+        dwHead.put("id", "dokuwiki");
+        dwHead.put("java_test", "org.omegat.filters.DokuWikiFilterTest#testDetectHeadingLevel");
+        dwHead.put("exported_by", EXPORTED_BY);
+        dwHead.put("sources", List.of());
+        Map<String, Integer> levels = new LinkedHashMap<>();
+        levels.put("====== Title ======", DokuWikiFilter.getHeadingLevel("====== Title ======"));
+        levels.put("===== H =====", DokuWikiFilter.getHeadingLevel("===== H ====="));
+        levels.put("not a heading", DokuWikiFilter.getHeadingLevel("not a heading"));
+        dwHead.put("heading_levels", levels);
+        writeJson(goldenRoot.resolve("filters/dokuwiki/testDetectHeadingLevel.json"), dwHead);
+
+        exportFilter("ilias", "ilias/testParse.json", "ilias/ILIASFilter.lang",
+                "org.omegat.filters.ILIASFilterTest#testParse", new ILIASFilter(), empty, null, null);
+        exportFilter("ilias", "ilias/testTranslate.json", "ilias/ILIASFilter.lang",
+                "org.omegat.filters.ILIASFilterTest#testTranslate", new ILIASFilter(), empty, null, null);
+        exportFilter("ilias", "ilias/testAlign.json", "ilias/ILIASFilterAlign.lang",
+                "org.omegat.filters.ILIASFilterTest#testAlign", new ILIASFilter(), empty, null, null);
+
+        exportFilter("latex", "latex/testLoad.json", "Latex/latexexample.tex",
+                "org.omegat.filters.LatexFilterTest#testLoad", new LatexFilter(), empty, null, null);
+        exportFilter("latex", "latex/testLoadItemize.json", "Latex/file-latex-items.tex",
+                "org.omegat.filters.LatexFilterTest#testLoadItemize", new LatexFilter(), empty, null, null);
+        exportFilter("latex", "latex/testParseItemize.json", "Latex/file-latex-items.tex",
+                "org.omegat.filters.LatexFilterTest#testParseItemize", new LatexFilter(), empty, null, null);
+        exportFilter("latex", "latex/testLoadComments.json", "Latex/file-latex-comments.tex",
+                "org.omegat.filters.LatexFilterTest#testLoadComments", new LatexFilter(), empty, null, null);
+        exportFilter("latex", "latex/testArticle.json", "Latex/test-article.tex",
+                "org.omegat.filters.LatexFilterTest#testArticle", new LatexFilter(), empty, null, null);
+        exportFilter("latex", "latex/testBugOverlap.json", "Latex/bug_overlap.tex",
+                "org.omegat.filters.LatexFilterTest#testBugOverlap", new LatexFilter(), empty, null, null);
+        exportFilter("latex", "latex/testVerbatimPreserved.json", "Latex/latexverbatim.tex",
+                "org.omegat.filters.LatexFilterTest#testVerbatimPreserved", new LatexFilter(), empty, null, null);
+
+        exportFilter("rc", "rc/testLoad.json", "Rc/prog.rc",
+                "org.omegat.filters.RcFilterTest#testLoad", new RcFilter(), empty, null, null);
+        exportFilter("rc", "rc/testAlign.json", "Rc/prog.rc",
+                "org.omegat.filters.RcFilterTest#testAlign", new RcFilter(), empty, null, null);
+
+        exportFilter("mozdtd", "mozdtd/testLoad.json", "MozillaDTD/file.dtd",
+                "org.omegat.filters.MozillaDTDFilterTest#testLoad", new MozillaDTDFilter(), empty, null, null);
+        exportFilter("mozdtd", "mozdtd/testTranslate.json", "MozillaDTD/file.dtd",
+                "org.omegat.filters.MozillaDTDFilterTest#testTranslate", new MozillaDTDFilter(), empty, null,
+                null);
+        exportFilter("mozdtd", "mozdtd/testAlign.json", "MozillaDTD/file.dtd",
+                "org.omegat.filters.MozillaDTDFilterTest#testAlign", new MozillaDTDFilter(), empty, null, null);
+
+        exportFilter("moodlephp", "moodlephp/testParse.json", "MoodlePHP/file.php",
+                "org.omegat.filters.MoodlePHPFilterTest#testParse", new MoodlePHPFilter(), empty, null, null);
+        exportFilter("moodlephp", "moodlephp/testLoad.json", "MoodlePHP/file.php",
+                "org.omegat.filters.MoodlePHPFilterTest#testLoad", new MoodlePHPFilter(), empty, null, null);
+        exportFilter("moodlephp", "moodlephp/testTranslate.json", "MoodlePHP/file.php",
+                "org.omegat.filters.MoodlePHPFilterTest#testTranslate", new MoodlePHPFilter(), empty, null, null);
+        exportFilter("moodlephp", "moodlephp/testAlign.json", "MoodlePHP/filesAlign.php",
+                "org.omegat.filters.MoodlePHPFilterTest#testAlign", new MoodlePHPFilter(), empty, null, null);
+
+        exportFilter("pdf", "pdf/testParse.json", "pdf/file-PdfFilter.pdf",
+                "org.omegat.filters.PdfFilterTest#testParse", new PdfFilter(), empty, null, null);
+        exportFilter("pdf", "pdf/testTranslate.json", "pdf/file-PdfFilter.pdf",
+                "org.omegat.filters.PdfFilterTest#testTranslate", new PdfFilter(), empty, null, null);
+        exportFilter("pdf", "pdf/testLoad.json", "pdf/file-PdfFilter.pdf",
+                "org.omegat.filters.PdfFilterTest#testLoad", new PdfFilter(), empty, null, null);
+        Map<String, Object> pdfPw = new LinkedHashMap<>();
+        pdfPw.put("id", "pdf");
+        pdfPw.put("fixture", "pdf/file-PdfFilter-password.pdf");
+        pdfPw.put("java_test", "org.omegat.filters.PdfFilterTest#testPasswordProtected");
+        pdfPw.put("exported_by", EXPORTED_BY);
+        pdfPw.put("sources", List.of());
+        pdfPw.put("expect_error", true);
+        writeJson(goldenRoot.resolve("filters/pdf/testPasswordProtected.json"), pdfPw);
+
+        exportFilter("srt", "srt/testParse.json", "srt/file-SrtFilter.srt",
+                "org.omegat.filters.SrtFilterTest#testParse", new SrtFilter(), empty, null, null);
+        exportFilter("srt", "srt/testTranslate.json", "srt/file-SrtFilter.srt",
+                "org.omegat.filters.SrtFilterTest#testTranslate", new SrtFilter(), empty, null, null);
+        exportFilter("srt", "srt/testLoad.json", "srt/file-SrtFilter.srt",
+                "org.omegat.filters.SrtFilterTest#testLoad", new SrtFilter(), empty, null, null);
+        exportFilter("srt", "srt/testLoadMixedEol.json", "srt/file-SrtFilter-mixedEol.srt",
+                "org.omegat.filters.SrtFilterTest#testLoadMixedEol", new SrtFilter(), empty, null, null);
+
+        exportFilter("po", "po/testParse.json", "po/file-POFilter-be.po",
+                "org.omegat.filters.POFilterTest#testParse", new PoFilter(), empty, null, null);
+        Map<String, String> poSkip = new TreeMap<>();
+        poSkip.put(PoFilter.OPTION_SKIP_HEADER, "true");
+        exportFilter("po", "po/testLoad.json", "po/file-POFilter-multiple.po",
+                "org.omegat.filters.POFilterTest#testLoad", new PoFilter(), poSkip, null, null);
+        Map<String, String> poMono = new TreeMap<>();
+        poMono.put(PoFilter.OPTION_FORMAT_MONOLINGUAL, "true");
+        exportFilter("po", "po/testLoadMonolingual.json", "po/file-POFilter-Monolingual.po",
+                "org.omegat.filters.POFilterTest#testLoadMonolingual", new PoFilter(), poMono, null, null);
+        exportFilter("po", "po/testTranslateMonolingual.json", "po/file-POFilter-Monolingual.po",
+                "org.omegat.filters.POFilterTest#testTranslateMonolingual", new PoFilter(), poMono, null, null);
+        Map<String, String> poBlank = new TreeMap<>();
+        poBlank.put(PoFilter.OPTION_ALLOW_BLANK, "false");
+        exportFilter("po", "po/testTranslate.json", "po/file-POFilter-be.po",
+                "org.omegat.filters.POFilterTest#testTranslate", new PoFilter(), poBlank, null, null);
+        Map<String, String> po2 = new TreeMap<>();
+        po2.put(PoFilter.OPTION_SKIP_HEADER, "true");
+        po2.put(PoFilter.OPTION_ALLOW_EDITING_BLANK_SEGMENT, "true");
+        exportFilter("po", "po/testLoad2.json", "po/file-POFilter-multiple2.po",
+                "org.omegat.filters.POFilterTest#testLoad2", new PoFilter(), po2, null, null);
+        Map<String, String> po3 = new TreeMap<>();
+        po3.put(PoFilter.OPTION_SKIP_HEADER, "true");
+        po3.put(PoFilter.OPTION_ALLOW_EDITING_BLANK_SEGMENT, "false");
+        exportFilter("po", "po/testLoad3.json", "po/file-POFilter-multiple2.po",
+                "org.omegat.filters.POFilterTest#testLoad3", new PoFilter(), po3, null, null);
+        exportFilter("po", "po/testParseFuzzyCtx.json", "po/file-POFilter-fuzzyCtx.po",
+                "org.omegat.filters.POFilterTest#testParseFuzzyCtx", new PoFilter(), poBlank, null, null);
+        Map<String, String> poPl = new TreeMap<>();
+        poPl.put(PoFilter.OPTION_ALLOW_BLANK, "false");
+        poPl.put(PoFilter.OPTION_AUTO_FILL_IN_PLURAL_STATEMENT, "true");
+        exportFilter("po", "po/testAutoFillInPluralStatement.json", "po/file-POFilter-fuzzyCtx.po",
+                "org.omegat.filters.POFilterTest#testAutoFillInPluralStatement", new PoFilter(), poPl, null, null);
+        exportFilter("po", "po/testMultiLines.json", "po/file-POFilter-multilines.po",
+                "org.omegat.filters.POFilterTest#testMultiLines", new PoFilter(), empty, null, null);
+
+        exportFilter("hhc", "hhc/testParse.json", "hhc/file-HHCFilter2.hhc",
+                "org.omegat.filters.HHCFilter2Test#testParse", new HHCFilter2(), empty, null, null);
+        Map<String, String> hhcNever = new TreeMap<>();
+        hhcNever.put(HTMLOptions.OPTION_REWRITE_ENCODING, "NEVER");
+        exportFilter("hhc", "hhc/testTranslate.json", "hhc/file-HHCFilter2.hhc",
+                "org.omegat.filters.HHCFilter2Test#testTranslate", new HHCFilter2(), hhcNever, null, null);
+        exportFilter("hhc", "hhc/testLoad.json", "hhc/file-HHCFilter2.hhc",
+                "org.omegat.filters.HHCFilter2Test#testLoad", new HHCFilter2(), empty, null, null);
+
+        exportFilter("html", "html/testParseRegression.json",
+                "html/file-HTMLFilter2-recurse-bugfix-SF205.html",
+                "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), empty, null, null);
+
+        System.out.println("wrote filters2 per-method goldens");
     }
 
     private void writeJson(Path path, Map<String, Object> data) throws Exception {

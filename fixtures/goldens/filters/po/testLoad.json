@@ -1,0 +1,54 @@
+{
+  "id": "po",
+  "fixture": "po/file-POFilter-multiple.po",
+  "java_test": "org.omegat.filters.POFilterTest#testLoad",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "skipHeader": "true"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "source1",
+    "source2",
+    "source3",
+    "source1",
+    "source1",
+    "source4",
+    "source4",
+    "source4",
+    "True fuzzy!",
+    "source5",
+    "True fuzzy 2!",
+    "source6"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "some context",
+    "",
+    "",
+    "",
+    "other context",
+    "one more context",
+    "one more context[1]",
+    "one more context[2]",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "msgid \"\"\nmsgstr \"Plural-Forms: nplurals=3; plural\"\n\n#Some invalid comment\n# A valid comment\n# Another valid comment\n#. Some extracted comments\n#. More extracted comments\n#: /my/source/file\n#: /my/source/file2\nmsgctxt \"some context\"\nmsgid \"source1\"\nmsgstr \"\"\n\nmsgid \"source2\"\nmsgstr \"\"\n\n#Some Invalid comment\nmsgid \"source3\"\nmsgstr \"\"\n\nmsgid \"source1\"\nmsgstr \"\"\n\nmsgctxt \"other context\"\nmsgid \"source1\"\nmsgstr \"\"\n\nmsgctxt \"one more context\"\nmsgid \"source4\"\nmsgid_plural \"source4\"\nmsgstr[0] \"\"\nmsgstr[1] \"\"\nmsgstr[2] \"\"\n\nmsgid \"source5\"\nmsgstr \"\"\n\nmsgid \"source6\"\nmsgstr \"\"\n"
+}

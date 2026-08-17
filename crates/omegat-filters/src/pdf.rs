@@ -23,7 +23,14 @@ impl Filter for PdfFilter {
         &["*.pdf"]
     }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
-        Ok(process(&std::fs::read(path)?, None).parsed)
+        let bytes = std::fs::read(path)?;
+        if is_encrypted_pdf(&bytes) {
+            return Err(crate::FilterError::Parse {
+                format: "pdf".into(),
+                message: "encrypted PDF".into(),
+            });
+        }
+        Ok(process(&bytes, None).parsed)
     }
     fn write(
         &self,
@@ -32,7 +39,14 @@ impl Filter for PdfFilter {
         translations: &HashMap<String, String>,
         _ctx: &FilterContext,
     ) -> Result<()> {
-        let out = process(&std::fs::read(source_path)?, Some(translations)).written;
+        let bytes = std::fs::read(source_path)?;
+        if is_encrypted_pdf(&bytes) {
+            return Err(crate::FilterError::Parse {
+                format: "pdf".into(),
+                message: "encrypted PDF".into(),
+            });
+        }
+        let out = process(&bytes, Some(translations)).written;
         let dest = if dest_path.extension().and_then(|e| e.to_str()) == Some("pdf") {
             dest_path.with_extension("pdf.txt")
         } else {
@@ -50,6 +64,10 @@ impl Filter for PdfFilter {
 struct Outcome {
     parsed: ParsedFile,
     written: String,
+}
+
+fn is_encrypted_pdf(bytes: &[u8]) -> bool {
+    find_subslice(bytes, b"/Encrypt").is_some()
 }
 
 fn process(bytes: &[u8], translations: Option<&HashMap<String, String>>) -> Outcome {

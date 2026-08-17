@@ -288,12 +288,53 @@ fn parse_arr(lines: &[&str], i: &mut usize, arr_indent: usize) -> Result<Node> {
         let rest = trimmed.strip_prefix("- ").unwrap_or("").trim();
         let val = if rest.is_empty() {
             parse_value(lines, i, arr_indent + 1)?
+        } else if rest.contains(':') {
+            parse_inline_map_item(rest, lines, i, arr_indent)?
         } else {
             scalar(rest)
         };
         items.push(val);
     }
     Ok(Node::Arr(items))
+}
+
+fn parse_inline_map_item(
+    first: &str,
+    lines: &[&str],
+    i: &mut usize,
+    arr_indent: usize,
+) -> Result<Node> {
+    let mut pairs = Vec::new();
+    if let Some((k, rest)) = first.split_once(':') {
+        pairs.push((k.trim().to_string(), scalar(rest.trim())));
+    }
+    while *i < lines.len() {
+        let line = lines[*i];
+        if line.trim().is_empty() {
+            *i += 1;
+            continue;
+        }
+        let ind = indent_of(line);
+        if ind <= arr_indent {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.starts_with("- ") {
+            break;
+        }
+        let Some((k, rest)) = trimmed.split_once(':') else {
+            break;
+        };
+        *i += 1;
+        let rest = rest.trim();
+        let val = if rest.is_empty() {
+            parse_value(lines, i, ind + 1)?
+        } else {
+            scalar(rest)
+        };
+        pairs.push((k.to_string(), val));
+    }
+    Ok(Node::Map(pairs))
 }
 
 fn scalar(s: &str) -> Node {
@@ -362,6 +403,42 @@ fn emit(node: &Node, indent: usize, out: &mut String, in_array: bool) {
             for item in items {
                 match item {
                     Node::Str(_) | Node::Other(_) => emit(item, indent, out, true),
+                    Node::Map(pairs) => {
+                        if pairs.is_empty() {
+                            out.push_str(&pad);
+                            out.push_str("-\n");
+                            continue;
+                        }
+                        let (k0, v0) = &pairs[0];
+                        out.push_str(&pad);
+                        out.push_str("- ");
+                        out.push_str(k0);
+                        match v0 {
+                            Node::Str(_) | Node::Other(_) => {
+                                out.push_str(": ");
+                                emit(v0, indent, out, false);
+                            }
+                            _ => {
+                                out.push_str(":\n");
+                                emit(v0, indent + 2, out, false);
+                            }
+                        }
+                        for (k, v) in pairs.iter().skip(1) {
+                            let inner = " ".repeat(indent + 2);
+                            out.push_str(&inner);
+                            out.push_str(k);
+                            match v {
+                                Node::Str(_) | Node::Other(_) => {
+                                    out.push_str(": ");
+                                    emit(v, indent, out, false);
+                                }
+                                _ => {
+                                    out.push_str(":\n");
+                                    emit(v, indent + 2, out, false);
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         out.push_str(&pad);
                         out.push_str("-\n");

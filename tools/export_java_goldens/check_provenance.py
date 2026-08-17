@@ -49,10 +49,15 @@ def main() -> int:
         if data.get("exported_by") != EXPORTER:
             errors.append(f"{path}: exported_by must be {EXPORTER}")
         if "filters" in path.parts:
-            for key in ("id", "fixture"):
-                if key not in data:
-                    errors.append(f"{path}: missing {key}")
-            if "sources" not in data and "decoded" not in data:
+            unit = any(
+                k in data
+                for k in ("decoded", "heading_levels", "exclude_keys", "supported", "expect_error")
+            )
+            if "id" not in data:
+                errors.append(f"{path}: missing id")
+            if not unit and "fixture" not in data:
+                errors.append(f"{path}: missing fixture")
+            if "sources" not in data and "decoded" not in data and not unit:
                 errors.append(f"{path}: missing sources")
             fixture = data.get("fixture")
             if fixture and fixture != "html/entity-decode":
@@ -60,6 +65,25 @@ def main() -> int:
                 java_src = ROOT / "reference" / "java" / "src" / "test" / "resources" / "data" / "filters" / fixture
                 if not src.is_file() and not java_src.is_file():
                     errors.append(f"{path}: fixture not found {src}")
+            if unit and data.get("supported"):
+                for row in data["supported"]:
+                    rel = row.get("fixture")
+                    if not rel:
+                        continue
+                    src = ROOT / "fixtures" / "filters" / rel
+                    java_src = (
+                        ROOT
+                        / "reference"
+                        / "java"
+                        / "src"
+                        / "test"
+                        / "resources"
+                        / "data"
+                        / "filters"
+                        / rel
+                    )
+                    if not src.is_file() and not java_src.is_file():
+                        errors.append(f"{path}: supported fixture not found {rel}")
         if "engine" in path.parts:
             inventory = any(k in data for k in ("cases", "dialects", "methods", "actions", "controllers", "tests", "keys"))
             if not inventory:

@@ -138,6 +138,7 @@ impl ProjectSession {
             source_lang: self.props.source_lang.clone(),
             target_lang: self.props.target_lang.clone(),
             remove_tags: self.props.remove_tags || self.prefs.remove_tags,
+            remove_spaces_nonseg: true,
             options,
         }
     }

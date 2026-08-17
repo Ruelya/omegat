@@ -18,6 +18,11 @@ impl Filter for DokuWikiFilter {
     fn default_masks(&self) -> &'static [&'static str] {
         &["*.txt"]
     }
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        read_to_string(path)
+            .map(|raw| raw.lines().any(|l| heading_level(l.trim()) > 0))
+            .unwrap_or(false)
+    }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
         Ok(process(&read_to_string(path)?, None).parsed)
     }

@@ -1,0 +1,31 @@
+{
+  "id": "po",
+  "fixture": "po/file-POFilter-multiple2.po",
+  "java_test": "org.omegat.filters.POFilterTest#testLoad3",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "allowEditingBlankSegment": "false",
+    "skipHeader": "true"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Changed %d key",
+    "\nChanged %d keys",
+    "\nChanged %d keys",
+    "\nChanged %d keys"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "[1]",
+    "[2]",
+    "[3]"
+  ],
+  "empty_write_text": "# Comment\n#: reference...\nmsgid \"\"\nmsgstr \"Project-Id-Version: test\\n\"\n\"Report-Msgid-Bugs-To: Bugs <bugs@email>\\n\"\n\"POT-Creation-Date: 2021-11-11 11:11+0100\\n\"\n\"PO-Revision-Date: 2021-11-11 11:11+0100\\n\"\n\"Last-Translator: Translator <translator@email>\\n\"\n\"Language-Team: Team <team@email>\\n\"\n\"Language: uk\\n\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\"Content-Transfer-Encoding: 8bit\\n\"\n\"Plural-Forms: nplurals=4; plural=n==1 ? 3 : n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\\n\"\n\n#, c-format\nmsgid \"Changed %d key\"\nmsgid_plural \"\"\n\"\\n\"\n\"Changed %d keys\"\nmsgstr[0] \"\"\nmsgstr[1] \"\"\nmsgstr[2] \"\"\nmsgstr[3] \"\"\n\n#: ../foo/boo.c, 123\nmsgid \"\"\n"
+}

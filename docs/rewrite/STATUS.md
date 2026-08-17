@@ -89,6 +89,16 @@ The P1 STATUS row stays `scaffold`: honesty gates are still red (identity
 stems, HTML regex, dialect tag sets, …) and this wave does not claim HTML
 compile parity.
 
+## P2 notes
+
+filters2 Java `*FilterTest` methods are exported and `assert_eq` green,
+including `HTMLFilter2Test` in full. HTML parse is `FilterVisitor` +
+`HTMLOptions` + `HTMLWriter` (the 154-line block-tag regex file is gone).
+Text write uses `LineLengthLimitWriter`. PO write is the Java line state
+machine (UTF-8 replacement matches `InputStreamReader`). The P2 STATUS row
+stays `scaffold`: filters3/4 test-method goldens, dialect tag sets, and the
+other honesty gates are still red.
+
 ## Intentional non-goals (must still have a full replacement)
 
 - Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib.
