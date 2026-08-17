@@ -209,7 +209,12 @@ impl App {
                 Ok(json!({"ok": true}))
             }
             "aligner.configure" => {
-                Ok(json!({"modes":["heapwise","parsewise","id"],"algos":["viterbi","forward-backward"],"counters":["char","word"]}))
+                Ok(json!({
+                    "modes":["heapwise","parsewise","id"],
+                    "algos":["viterbi","forward-backward"],
+                    "counters":["char","word"],
+                    "calculators":["normal","poisson"]
+                }))
             }
             "stats.get" => Ok(serde_json::to_value(self.session()?.stats()).unwrap()),
             "issues.list" => Ok(serde_json::to_value(self.session()?.issues()).unwrap()),
@@ -294,8 +299,55 @@ impl App {
             }
             "script.run" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("null");
-                let out = omegat_script::run_source(src, &json!({})).map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
-                Ok(json!({"result": out}))
+                let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let mut state = if let Ok(s) = self.session() {
+                    let e = s.entries.get(index);
+                    omegat_script::ScriptState {
+                        source: e.map(|e| e.source.clone()).unwrap_or_default(),
+                        translation: e.map(|e| e.translation.clone()).unwrap_or_default(),
+                        note: e.map(|e| e.note.clone()).unwrap_or_default(),
+                        index,
+                        revision: e.map(|e| e.revision).unwrap_or(1),
+                        source_lang: s.props.source_lang.clone(),
+                        target_lang: s.props.target_lang.clone(),
+                        ..omegat_script::ScriptState::default()
+                    }
+                } else {
+                    omegat_script::ScriptState::default()
+                };
+                let out = omegat_script::run_source_state(src, &mut state)
+                    .map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
+                if let Ok(s) = self.session_mut() {
+                    if let Some(e) = s.entries.get(index) {
+                        if state.translation != e.translation {
+                            let _ = s.set_entry(&SetEntryParams {
+                                index,
+                                translation: state.translation.clone(),
+                                note: Some(state.note.clone()),
+                                revision: e.revision,
+                                default_translation: true,
+                            });
+                        }
+                    }
+                    if state.saved {
+                        let _ = s.save();
+                    }
+                    if state.compiled {
+                        let _ = s.compile(None);
+                    }
+                    for [src, tgt, cmt] in &state.glossary_adds {
+                        let _ = omegat_core::glossary::append_entry(&s.props.glossary_file, src, tgt, cmt);
+                    }
+                    s.glossary = omegat_core::glossary::load_glossary(&s.props.glossary_file);
+                }
+                Ok(json!({
+                    "result": out,
+                    "translation": state.translation,
+                    "saved": state.saved,
+                    "compiled": state.compiled,
+                    "console": state.console,
+                    "jumped": state.jumped
+                }))
             }
             "align.run" => {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -304,6 +356,7 @@ impl App {
                 let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("parsewise");
                 let algo = params.get("algo").and_then(|v| v.as_str()).unwrap_or("viterbi");
                 let counter = params.get("counter").and_then(|v| v.as_str()).unwrap_or("word");
+                let calculator = params.get("calculator").and_then(|v| v.as_str()).unwrap_or("normal");
                 let cfg = omegat_core::align::AlignConfig {
                     mode: match mode {
                         "heapwise" => omegat_core::align::AlignMode::Heapwise,
@@ -320,23 +373,61 @@ impl App {
                     } else {
                         omegat_core::align::Counter::Word
                     },
+                    calculator: if calculator == "poisson" {
+                        omegat_core::align::CalculatorType::Poisson
+                    } else {
+                        omegat_core::align::CalculatorType::Normal
+                    },
+                    segment: params.get("segment").and_then(|v| v.as_bool()).unwrap_or(true),
                 };
+                let sl = params
+                    .get("source_lang")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| self.session().ok().map(|s| s.props.source_lang.clone()))
+                    .unwrap_or_else(|| "en".into());
+                let tl = params
+                    .get("target_lang")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| self.session().ok().map(|s| s.props.target_lang.clone()))
+                    .unwrap_or_else(|| "fr".into());
                 let tmx = omegat_core::align::align_files_cfg(
                     std::path::Path::new(source),
                     std::path::Path::new(target),
-                    &self.session()?.props.source_lang,
-                    &self.session()?.props.target_lang,
+                    &sl,
+                    &tl,
                     &cfg,
                 )
                 .map_err(core_err)?;
-                omegat_core::align::write_aligned_tmx(
-                    &tmx,
-                    std::path::Path::new(dest),
-                    &self.session()?.props.source_lang,
-                    &self.session()?.props.target_lang,
-                )
-                .map_err(core_err)?;
-                Ok(json!({"ok": true, "pairs": tmx.entries.len()}))
+                if !dest.is_empty() {
+                    omegat_core::align::write_aligned_tmx(&tmx, std::path::Path::new(dest), &sl, &tl)
+                        .map_err(core_err)?;
+                }
+                let pairs: Vec<_> = tmx
+                    .entries
+                    .iter()
+                    .map(|e| json!({"source": e.source, "target": e.translation}))
+                    .collect();
+                Ok(json!({"ok": true, "pairs": pairs, "count": pairs.len()}))
+            }
+            "align.edit" => {
+                let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("merge");
+                let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let raw = params.get("pairs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let pairs: Vec<(String, String)> = raw
+                    .iter()
+                    .map(|v| {
+                        (
+                            v.get("source").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                            v.get("target").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                        )
+                    })
+                    .collect();
+                let next = omegat_core::align::edit_pairs(&pairs, action, index);
+                Ok(json!({
+                    "pairs": next.iter().map(|(s,t)| json!({"source": s, "target": t})).collect::<Vec<_>>()
+                }))
             }
             other => Err((error_code::METHOD_NOT_FOUND, format!("unknown method {other}"))),
         }

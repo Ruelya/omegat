@@ -45,6 +45,7 @@ const METHODS: &[&str] = &[
     "team.resolve",
     "script.run",
     "align.run",
+    "align.edit",
     "aligner.configure",
     "wiki.import",
     "med.open",

@@ -10,17 +10,48 @@ use std::path::PathBuf;
 struct Cli {
     /// Project directory (default: current directory)
     project: Option<PathBuf>,
+    /// Java `--config-dir`
     #[arg(long)]
     config_dir: Option<PathBuf>,
+    /// Java `--config-file`
+    #[arg(long)]
+    config_file: Option<PathBuf>,
+    /// Java `--resource-bundle`
+    #[arg(long)]
+    resource_bundle: Option<PathBuf>,
+    /// Java `--no-team`
     #[arg(long)]
     no_team: bool,
+    /// Java `--disable-project-locking`
     #[arg(long)]
     disable_project_locking: bool,
-    /// Legacy console mode
+    /// Java `--disable-location-save`
+    #[arg(long)]
+    disable_location_save: bool,
+    /// Legacy console mode: console-translate | console-stats | console-createpseudotranslatetmx | console-align
     #[arg(long)]
     mode: Option<String>,
+    /// Java `--source-pattern`
     #[arg(long)]
     source_pattern: Option<String>,
+    /// Java `--pseudotranslatetmx`
+    #[arg(long)]
+    pseudotranslatetmx: Option<PathBuf>,
+    /// Java `--pseudotranslatetype` (`equal` or `empty`)
+    #[arg(long)]
+    pseudotranslatetype: Option<String>,
+    /// Java `--alignDir` (legacy `--mode console-align`)
+    #[arg(long = "alignDir")]
+    align_dir: Option<PathBuf>,
+    /// Java `--output-file`
+    #[arg(long = "output-file")]
+    output_file: Option<PathBuf>,
+    /// Java `--stats-type`
+    #[arg(long = "stats-type")]
+    stats_type: Option<String>,
+    /// Java `--script`
+    #[arg(long)]
+    script: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -74,6 +105,13 @@ enum Commands {
         algo: String,
         #[arg(long, default_value = "word")]
         counter: String,
+        #[arg(long, default_value = "normal")]
+        calculator: String,
+    },
+    Script {
+        source: PathBuf,
+        #[arg(long)]
+        project: Option<PathBuf>,
     },
     Wiki {
         source: PathBuf,
@@ -117,6 +155,18 @@ fn main() -> Result<()> {
     if let Some(dir) = &cli.config_dir {
         std::env::set_var("OMEGAT_CONFIG_DIR", dir);
     }
+    if let Some(f) = &cli.config_file {
+        std::env::set_var("OMEGAT_CONFIG_FILE", f);
+    }
+    if let Some(b) = &cli.resource_bundle {
+        std::env::set_var("OMEGAT_RESOURCE_BUNDLE", b);
+    }
+    if cli.disable_location_save {
+        std::env::set_var("OMEGAT_DISABLE_LOCATION_SAVE", "1");
+    }
+    if cli.disable_project_locking {
+        std::env::set_var("OMEGAT_DISABLE_PROJECT_LOCKING", "1");
+    }
     if let Some(mode) = &cli.mode {
         return legacy_mode(mode, &cli);
     }
@@ -147,9 +197,11 @@ fn main() -> Result<()> {
                 session.prefs.extra.insert("tag_validation".into(), mode.to_string());
             }
             let n = session.compile(source_pattern.as_deref().or(cli.source_pattern.as_deref()))?;
-            if let Some(script) = script {
+            let script_path = script.or(cli.script.clone());
+            if let Some(script) = script_path {
                 let src = std::fs::read_to_string(script)?;
-                let _ = omegat_script::run_source(&src, &serde_json::json!({"event":"COMPILE"}));
+                let mut state = script_state_from_session(&session, 0);
+                let _ = omegat_script::run_source_state(&src, &mut state)?;
             }
             if !quiet {
                 println!("Compiled {n} file(s).");
@@ -165,8 +217,13 @@ fn main() -> Result<()> {
             let prefs = Preferences::load_or_default(&default_config_dir());
             let session = ProjectSession::open(&root, prefs)?;
             let stats = session.stats();
-            let text = omegat_core::stats::render(&stats, &r#type);
-            if let Some(p) = output {
+            let kind = if r#type != "text" {
+                r#type
+            } else {
+                cli.stats_type.clone().unwrap_or(r#type)
+            };
+            let text = omegat_core::stats::render(&stats, &kind);
+            if let Some(p) = output.or(cli.output_file.clone()) {
                 std::fs::write(p, &text)?;
             } else {
                 print!("{text}");
@@ -183,7 +240,8 @@ fn main() -> Result<()> {
             let session = ProjectSession::open(&root, prefs)?;
             let mut tmx = omegat_core::tmx::ProjectTmx::new();
             for e in &session.entries {
-                let translation = if r#type == "empty" {
+                let kind = cli.pseudotranslatetype.as_deref().unwrap_or(&r#type);
+                let translation = if kind == "empty" {
                     String::new()
                 } else {
                     e.source.clone()
@@ -194,7 +252,9 @@ fn main() -> Result<()> {
                     ..Default::default()
                 });
             }
-            let dest = output_file.unwrap_or_else(|| root.join("pseudo.tmx"));
+            let dest = output_file
+                .or(cli.pseudotranslatetmx.clone())
+                .unwrap_or_else(|| root.join("pseudo.tmx"));
             tmx.write(&dest, &session.props.source_lang, &session.props.target_lang)?;
             println!("Wrote {}", dest.display());
             Ok(())
@@ -223,27 +283,30 @@ fn main() -> Result<()> {
             mode,
             algo,
             counter,
+            calculator,
         } => {
-            let cfg = omegat_core::align::AlignConfig {
-                mode: match mode.as_str() {
-                    "heapwise" => omegat_core::align::AlignMode::Heapwise,
-                    "id" => omegat_core::align::AlignMode::Id,
-                    _ => omegat_core::align::AlignMode::Parsewise,
-                },
-                algo: if algo == "forward-backward" {
-                    omegat_core::align::AlignAlgo::ForwardBackward
-                } else {
-                    omegat_core::align::AlignAlgo::Viterbi
-                },
-                counter: if counter == "char" {
-                    omegat_core::align::Counter::Char
-                } else {
-                    omegat_core::align::Counter::Word
-                },
-            };
+            let cfg = align_cfg(&mode, &algo, &counter, &calculator);
             let tmx = omegat_core::align::align_files_cfg(&source, &target, &source_lang, &target_lang, &cfg)?;
             omegat_core::align::write_aligned_tmx(&tmx, &output, &source_lang, &target_lang)?;
             println!("Aligned TMX written to {}", output.display());
+            Ok(())
+        }
+        Commands::Script { source, project } => {
+            let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
+            let src = std::fs::read_to_string(&source)?;
+            let mut state = if root.join("omegat.project").exists() {
+                let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
+                script_state_from_session(&session, 0)
+            } else {
+                omegat_script::ScriptState::default()
+            };
+            let out = omegat_script::run_source_state(&src, &mut state)?;
+            if !out.is_empty() {
+                println!("{out}");
+            }
+            for line in &state.console {
+                println!("{line}");
+            }
             Ok(())
         }
         Commands::Wiki { source, dest } => {
@@ -298,19 +361,136 @@ fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
         "console-createpseudotranslatetmx" => {
             let root = cli.project.clone().unwrap_or_else(|| PathBuf::from("."));
             let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
+            let empty = cli.pseudotranslatetype.as_deref() == Some("empty");
             let mut tmx = omegat_core::tmx::ProjectTmx::new();
             for e in &session.entries {
                 tmx.insert(omegat_core::tmx::TmxEntry {
                     source: e.source.clone(),
-                    translation: e.source.clone(),
+                    translation: if empty { String::new() } else { e.source.clone() },
                     ..Default::default()
                 });
             }
-            tmx.write(&root.join("pseudo.tmx"), &session.props.source_lang, &session.props.target_lang)?;
+            let dest = cli
+                .pseudotranslatetmx
+                .clone()
+                .unwrap_or_else(|| root.join("pseudo.tmx"));
+            tmx.write(&dest, &session.props.source_lang, &session.props.target_lang)?;
             Ok(())
         }
-        "console-align" => anyhow::bail!("use `omegat align --mode parsewise --algo viterbi`"),
+        "console-align" => legacy_align(cli),
         other => anyhow::bail!("unknown --mode {other}. Supported: console-translate, console-stats, console-createpseudotranslatetmx, console-align"),
+    }
+}
+
+fn legacy_align(cli: &Cli) -> Result<()> {
+    let root = cli.project.clone().unwrap_or_else(|| PathBuf::from("."));
+    let align_dir = cli
+        .align_dir
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("--alignDir is required for --mode console-align"))?;
+    let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
+    let cfg = align_cfg("heapwise", "viterbi", "word", "normal");
+    let mut n = 0;
+    for ent in walkdir::WalkDir::new(&session.props.source_dir).into_iter().flatten() {
+        if !ent.file_type().is_file() {
+            continue;
+        }
+        let rel = ent.path().strip_prefix(&session.props.source_dir).unwrap_or(ent.path());
+        let other = align_dir.join(rel);
+        if !other.exists() {
+            continue;
+        }
+        let dest = session.props.root.join(format!(
+            "align-{}.tmx",
+            rel.to_string_lossy().replace(['/', '\\'], "_")
+        ));
+        let tmx = omegat_core::align::align_files_cfg(
+            ent.path(),
+            &other,
+            &session.props.source_lang,
+            &session.props.target_lang,
+            &cfg,
+        )?;
+        omegat_core::align::write_aligned_tmx(
+            &tmx,
+            &dest,
+            &session.props.source_lang,
+            &session.props.target_lang,
+        )?;
+        n += 1;
+    }
+    println!("Aligned {n} file pair(s) from {}", align_dir.display());
+    Ok(())
+}
+
+fn align_cfg(mode: &str, algo: &str, counter: &str, calculator: &str) -> omegat_core::align::AlignConfig {
+    omegat_core::align::AlignConfig {
+        mode: match mode {
+            "heapwise" => omegat_core::align::AlignMode::Heapwise,
+            "id" => omegat_core::align::AlignMode::Id,
+            _ => omegat_core::align::AlignMode::Parsewise,
+        },
+        algo: if algo == "forward-backward" {
+            omegat_core::align::AlignAlgo::ForwardBackward
+        } else {
+            omegat_core::align::AlignAlgo::Viterbi
+        },
+        counter: if counter == "char" {
+            omegat_core::align::Counter::Char
+        } else {
+            omegat_core::align::Counter::Word
+        },
+        calculator: if calculator == "poisson" {
+            omegat_core::align::CalculatorType::Poisson
+        } else {
+            omegat_core::align::CalculatorType::Normal
+        },
+        segment: true,
+    }
+}
+
+fn script_state_from_session(session: &ProjectSession, index: usize) -> omegat_script::ScriptState {
+    let e = session.entries.get(index);
+    omegat_script::ScriptState {
+        source: e.map(|e| e.source.clone()).unwrap_or_default(),
+        translation: e.map(|e| e.translation.clone()).unwrap_or_default(),
+        note: e.map(|e| e.note.clone()).unwrap_or_default(),
+        index,
+        revision: e.map(|e| e.revision).unwrap_or(1),
+        source_lang: session.props.source_lang.clone(),
+        target_lang: session.props.target_lang.clone(),
+        ..omegat_script::ScriptState::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn help_lists_legacy_flags() {
+        let mut buf = Vec::new();
+        Cli::command().write_long_help(&mut buf).unwrap();
+        let help = String::from_utf8(buf).unwrap();
+        for flag in [
+            "--no-team",
+            "--mode",
+            "--config-dir",
+            "--config-file",
+            "--resource-bundle",
+            "--disable-project-locking",
+            "--disable-location-save",
+            "--source-pattern",
+            "--pseudotranslatetmx",
+            "--pseudotranslatetype",
+            "--alignDir",
+            "--output-file",
+            "--stats-type",
+            "--script",
+        ] {
+            assert!(help.contains(flag), "help missing {flag}\n{help}");
+        }
     }
 }
 

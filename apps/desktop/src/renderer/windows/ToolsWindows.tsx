@@ -11,8 +11,32 @@ export function AlignWindow() {
   const [mode, setMode] = useState("parsewise");
   const [algo, setAlgo] = useState("viterbi");
   const [counter, setCounter] = useState("word");
+  const [calculator, setCalculator] = useState("normal");
+  const [pairs, setPairs] = useState<{ source: string; target: string }[]>([]);
+  const [sel, setSel] = useState(0);
+  async function run() {
+    const r = (await window.omegat?.rpc("align.run", {
+      source: src,
+      target: tgt,
+      dest,
+      mode,
+      algo,
+      counter,
+      calculator,
+    })) as { pairs?: { source: string; target: string }[] };
+    setPairs(Array.isArray(r?.pairs) ? r.pairs : []);
+    setSel(0);
+  }
+  async function edit(action: string) {
+    const r = (await window.omegat?.rpc("align.edit", {
+      action,
+      index: sel,
+      pairs,
+    })) as { pairs?: { source: string; target: string }[] };
+    if (r?.pairs) setPairs(r.pairs);
+  }
   return (
-    <Modal id="align" title={t("aligner")}>
+    <Modal id="align" title={t("aligner")} wide>
       <div className="form">
         <input placeholder="source" value={src} onChange={(e) => setSrc(e.target.value)} />
         <input placeholder="target" value={tgt} onChange={(e) => setTgt(e.target.value)} />
@@ -30,16 +54,31 @@ export function AlignWindow() {
           <option value="word">WORD</option>
           <option value="char">CHAR</option>
         </select>
-        <button
-          type="button"
-          className="primary"
-          onClick={async () => {
-            await window.omegat?.rpc("align.run", { source: src, target: tgt, dest, mode, algo, counter });
-            useApp.getState().openWindow("align", false);
-          }}
-        >
-          {t("create")}
-        </button>
+        <select value={calculator} onChange={(e) => setCalculator(e.target.value)}>
+          <option value="normal">Normal</option>
+          <option value="poisson">Poisson</option>
+        </select>
+        <div className="btn-row">
+          <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
+          <button type="button" onClick={() => void edit("merge")}>合并</button>
+          <button type="button" onClick={() => void edit("split")}>拆分</button>
+          <button type="button" onClick={() => void edit("up")}>上移</button>
+          <button type="button" onClick={() => void edit("down")}>下移</button>
+        </div>
+        <table className="align-table">
+          <thead>
+            <tr><th>#</th><th>source</th><th>target</th></tr>
+          </thead>
+          <tbody>
+            {pairs.map((p, i) => (
+              <tr key={i} className={i === sel ? "sel" : undefined} onClick={() => setSel(i)}>
+                <td>{i + 1}</td>
+                <td>{p.source}</td>
+                <td>{p.target}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </Modal>
   );
