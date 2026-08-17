@@ -1,22 +1,31 @@
 use omegat_ipc::IssueDto;
 
+pub const UNCONFIGURED_MESSAGE: &str =
+    "LanguageTool is not configured. Set languagetool_url to an HTTP v2/check endpoint. The embedded LT JAR is not used.";
+
 /// LanguageTool HTTP `v2/check`. When `endpoint` is None the checker reports a
 /// degradation issue instead of pretending the text was clean.
 pub fn check(endpoint: Option<&str>, text: &str, lang: &str, index: usize, file: &str) -> Vec<IssueDto> {
+    let Some(url) = endpoint.filter(|s| !s.is_empty()) else {
+        return vec![IssueDto {
+            kind: "languagetool".into(),
+            index,
+            file: file.to_string(),
+            message: UNCONFIGURED_MESSAGE.into(),
+            severity: "info".into(),
+        }];
+    };
     if text.trim().is_empty() {
         return vec![];
     }
-    let Some(url) = endpoint.filter(|s| !s.is_empty()) else {
-        return vec![];
-    };
     match check_http(url, text, lang) {
         Ok(issues) => issues
             .into_iter()
-            .map(|message| IssueDto {
+            .map(|m| IssueDto {
                 kind: "languagetool".into(),
                 index,
                 file: file.to_string(),
-                message,
+                message: m,
                 severity: "warn".into(),
             })
             .collect(),
@@ -57,7 +66,13 @@ pub fn parse_lt_json(raw: &str) -> Result<Vec<String>, String> {
                 .get("message")
                 .and_then(|x| x.as_str())
                 .unwrap_or("LanguageTool match");
-            out.push(msg.to_string());
+            let rule = m
+                .pointer("/rule/id")
+                .and_then(|x| x.as_str())
+                .or_else(|| m.get("rule").and_then(|x| x.as_str()))
+                .unwrap_or("-");
+            let offset = m.get("offset").and_then(|x| x.as_i64()).unwrap_or(0);
+            out.push(format!("{msg} [{rule}] @{offset}"));
         }
     }
     Ok(out)
@@ -78,8 +93,6 @@ pub fn http_exchange(method: &str, url: &str, body: Option<(&str, &str)>) -> Res
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("unsupported URL".into());
     }
-    // HTTPS is delegated to `curl` so we do not pull a TLS stack into the workspace.
-    // HTTP can also use curl; tests use fixture: URLs.
     let mut cmd = std::process::Command::new("curl");
     cmd.args(["-sS", "-X", method, "--max-time", "15"]);
     if let Some((ct, b)) = body {
@@ -98,10 +111,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_lt_fixture() {
-        let raw = r#"{"matches":[{"message":"Possible typo"}]}"#;
+    fn parses_lt_fixture_fields() {
+        let raw = r#"{"matches":[{"message":"Possible typo","offset":0,"length":4,"rule":{"id":"MORFOLOGIK_RULE_EN_US"}}]}"#;
         let hits = parse_lt_json(raw).unwrap();
-        assert_eq!(hits[0], "Possible typo");
+        assert!(hits[0].contains("Possible typo"));
+        assert!(hits[0].contains("MORFOLOGIK_RULE_EN_US"));
+        assert!(hits[0].contains("@0"));
     }
 
     #[test]
@@ -112,6 +127,8 @@ mod tests {
         assert_eq!(hits[0].kind, "languagetool");
         assert!(hits[0].message.contains("typo"));
         let none = check(None, "teh cat", "en", 0, "a.txt");
-        assert!(none.is_empty());
+        assert_eq!(none.len(), 1);
+        assert_eq!(none[0].severity, "info");
+        assert!(none[0].message.contains("not configured"));
     }
 }

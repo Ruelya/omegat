@@ -244,6 +244,12 @@ impl App {
                 let prefix = params.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
                 Ok(serde_json::to_value(self.session()?.completer(index, prefix)).unwrap())
             }
+            "spell.install" => {
+                let lang = params.get("lang").and_then(|v| v.as_str()).unwrap_or("en");
+                let dest = self.prefs.config_dir.join("spell").join("hunspell");
+                let ok = omegat_core::spell::ensure_lang(lang, &dest);
+                Ok(json!({"ok": ok, "lang": lang, "dest": dest.display().to_string()}))
+            }
             "spell.learn" => {
                 let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
                 let s = self.session_mut()?;

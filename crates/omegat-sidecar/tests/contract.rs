@@ -35,6 +35,7 @@ const METHODS: &[&str] = &[
     "completer.query",
     "spell.learn",
     "spell.ignore",
+    "spell.install",
     "tmx.export",
     "languagetool.check",
     "finder.run",

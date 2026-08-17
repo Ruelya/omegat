@@ -26,6 +26,7 @@ log.workspace = true
 similar.workspace = true
 html-escape.workspace = true
 urlencoding.workspace = true
+flate2.workspace = true
 
 [dev-dependencies]
 tempfile = "=3.10.1"

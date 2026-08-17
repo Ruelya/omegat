@@ -417,6 +417,7 @@ name = "omegat-core"
 version = "6.2.0"
 dependencies = [
  "encoding_rs",
+ "flate2",
  "fs2",
  "globset",
  "hex",

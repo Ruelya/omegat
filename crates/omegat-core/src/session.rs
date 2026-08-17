@@ -463,15 +463,27 @@ impl ProjectSession {
 
     pub fn issues(&self) -> Vec<IssueDto> {
         let mut all = Vec::new();
+        let lt = self.prefs.extra.get("languagetool_url").map(|s| s.as_str());
+        if lt.filter(|s| !s.is_empty()).is_none() {
+            all.push(IssueDto {
+                kind: "languagetool".into(),
+                index: 0,
+                file: String::new(),
+                message: crate::languagetool::UNCONFIGURED_MESSAGE.into(),
+                severity: "info".into(),
+            });
+        }
         for (i, e) in self.entries.iter().enumerate() {
             all.extend(tags::issues_for(i, &e.file, &e.source, &e.translation));
-            all.extend(crate::languagetool::check(
-                self.prefs.extra.get("languagetool_url").map(|s| s.as_str()),
-                &e.translation,
-                &self.props.target_lang,
-                i,
-                &e.file,
-            ));
+            if lt.filter(|s| !s.is_empty()).is_some() {
+                all.extend(crate::languagetool::check(
+                    lt,
+                    &e.translation,
+                    &self.props.target_lang,
+                    i,
+                    &e.file,
+                ));
+            }
             for w in self.spell.unknown_in(&e.translation) {
                 all.push(IssueDto {
                     kind: "spell".into(),
