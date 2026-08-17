@@ -42,7 +42,23 @@ pub fn standard_surfaces(text: &str) -> Vec<Surface<'_>> {
 }
 
 fn is_token_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}' || ch == '_'
+    if ch.is_alphanumeric() || ch == '\'' || ch == '\u{2019}' || ch == '_' {
+        return true;
+    }
+    // UAX#29 Extend: virama, nuktas, Thai/Arabic combining marks stay in the word
+    // (Lucene StandardTokenizer / WordBreak).
+    let u = ch as u32;
+    (0x0300..=0x036F).contains(&u)
+        || (0x064B..=0x065F).contains(&u)
+        || (0x0670..=0x0670).contains(&u)
+        || (0x06D6..=0x06ED).contains(&u)
+        || (0x0900..=0x0903).contains(&u)
+        || (0x093A..=0x094F).contains(&u)
+        || (0x0951..=0x0957).contains(&u)
+        || (0x0962..=0x0963).contains(&u)
+        || (0x0E31..=0x0E31).contains(&u)
+        || (0x0E34..=0x0E3A).contains(&u)
+        || (0x0E47..=0x0E4E).contains(&u)
 }
 
 pub fn has_digit(s: &str) -> bool {
@@ -72,6 +88,7 @@ pub fn lucene_words_to_strings(
 }
 
 /// Java `BaseTokenizer.tokenizeWords`: analyzer terms only (no surface pair).
+#[allow(dead_code)]
 pub fn lucene_word_tokens(
     text: &str,
     mode: StemmingMode,
@@ -152,7 +169,9 @@ pub fn lucene_tokens(
 }
 
 fn is_stop(word: &str, stopwords: &[&str]) -> bool {
-    stopwords.iter().any(|s| s.eq_ignore_ascii_case(word))
+    stopwords.iter().any(|s| {
+        s.eq_ignore_ascii_case(word) || *s == word || fold_lower(s) == fold_lower(word)
+    })
 }
 
 pub fn fold_lower(s: &str) -> String {

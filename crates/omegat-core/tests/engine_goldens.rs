@@ -54,58 +54,38 @@ fn srx_sentences_match_java_list() {
     }
 }
 
-fn p1_tokenizer(class: &str) -> bool {
-    class.contains("DefaultTokenizer")
-        || class.contains("LuceneEnglishTokenizer")
-        || class.contains("LuceneGermanTokenizer")
-        || class.contains("LuceneItalianTokenizer")
-        || class.contains("LuceneCJKTokenizer")
-}
-
 #[test]
 fn tokens_match_java_lists() {
     let spec = load_exported("tokens.json");
+    let mut fails = Vec::new();
     for case in spec["cases"].as_array().unwrap() {
         let class = case["tokenizer"].as_str().unwrap();
-        let java_test = case["java_test"].as_str().unwrap_or("");
-        // P5 owns Analyzer pipelines. P1 only asserts tokenizers already
-        // covered by TokenizerTest en/de/it/default and CJK G1 cases.
-        if !p1_tokenizer(class) {
-            continue;
-        }
-        if java_test.contains("testTurkish")
-            || java_test.contains("testJapanese")
-            || java_test.contains("testChinese")
-        {
-            continue;
-        }
         let mode = omegat_core::tokenize::StemmingMode::parse(case["stemming"].as_str().unwrap_or("NONE"));
-        // P5 owns German Analyzer glossary/matching stems.
-        if (class.contains("LuceneGermanTokenizer") || class.contains("LuceneItalianTokenizer"))
-            && mode != omegat_core::tokenize::StemmingMode::None
-        {
-            continue;
-        }
         let lang = case["lang"].as_str().unwrap();
         let input = case["input"].as_str().unwrap();
-        let expected: Vec<String> = case["tokens"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
         if let Some(words) = case["words"].as_array() {
             let expected_words: Vec<String> = words.iter().map(|v| v.as_str().unwrap().to_string()).collect();
             let got = omegat_core::tokenize::tokenize_words(input, class, mode);
-            assert_eq!(got, expected_words, "words {lang} {input:?} {class} {mode:?}");
+            if got != expected_words {
+                fails.push(format!("{class} {mode:?} {lang}\n  got  {got:?}\n  want {expected_words:?}"));
+            }
         } else {
+            let expected: Vec<String> = case["tokens"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect();
             let got: Vec<String> = omegat_core::tokenize::tokenize(input, lang)
                 .into_iter()
                 .map(|t| t.text)
                 .collect();
-            assert_eq!(got, expected, "tokens {lang} {input:?} tokenizer={class}");
+            if got != expected {
+                fails.push(format!("{class} {mode:?} {lang} (tokens)\n  got  {got:?}\n  want {expected:?}"));
+            }
         }
     }
+    assert!(fails.is_empty(), "{} tokenizer golden failures:\n{}", fails.len(), fails.join("\n\n"));
 }
 
 #[test]

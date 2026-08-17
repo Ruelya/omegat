@@ -135,6 +135,17 @@ has a golden (`engine/for_path_office.json` + parse vs
 SdlXliff / SdlProject have no `*Test`; they keep `processFile` fixture
 goldens. The P4 STATUS row stays `scaffold`.
 
+## P5 notes
+
+Each `Lucene*Tokenizer` now calls that class’s Analyzer pipeline (Snowball via
+`rust-stemmers`, Lucene Light / 3.0 / Arabic / Hindi / Brazilian / Stempel-light
+ports, Japanese lexicon+baseform+CJKWidth, Thai dictionary break, SmartChinese
+longest-match). `stems::identity` / shared `slavic`/`romance`/`nordic` are gone.
+`engine_goldens::tokens_match_java_lists` `assert_eq`s every exported case,
+including the Japanese Wikipedia sentence (NONE/GLOSSARY/MATCHING), Thai
+`ภาษาไทย…`, and Arabic `اللغة العربية…`. The P5 STATUS row stays `scaffold`:
+editor / menu / locale / git2 gates remain red.
+
 ## Intentional non-goals (must still have a full replacement)
 
 - Java JAR plugins are not loaded. Replacement: `omegat-plugin.toml` + cdylib.

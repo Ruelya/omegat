@@ -14,9 +14,9 @@ impl Tokenizer for LuceneHindiTokenizer {
         &["hi"]
     }
     fn tokenize_words(&self, text: &str, mode: StemmingMode) -> Vec<String> {
-        engine::lucene_words_to_strings(text, mode, |w, _full| stems::identity(w), stopwords::GENERIC)
+        engine::lucene_words_to_strings(text, mode, |w, _full| stems::hindi(w), stopwords::HI)
     }
     fn tokenize_tokens(&self, text: &str, mode: StemmingMode) -> Vec<Token> {
-        engine::lucene_tokens(text, mode, |w, _full| stems::identity(w), stopwords::GENERIC)
+        engine::lucene_tokens(text, mode, |w, _full| stems::hindi(w), stopwords::HI)
     }
 }

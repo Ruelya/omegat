@@ -14,9 +14,9 @@ impl Tokenizer for LuceneTurkishTokenizer {
         &["tr"]
     }
     fn tokenize_words(&self, text: &str, mode: StemmingMode) -> Vec<String> {
-        engine::lucene_words_to_strings(text, mode, |w, _| stems::turkish(w), stopwords::TR)
+        engine::lucene_words_to_strings(text, mode, |w, _full| stems::turkish(w), stopwords::TR)
     }
     fn tokenize_tokens(&self, text: &str, mode: StemmingMode) -> Vec<Token> {
-        engine::lucene_tokens(text, mode, |w, _| stems::turkish(w), stopwords::TR)
+        engine::lucene_tokens(text, mode, |w, _full| stems::turkish(w), stopwords::TR)
     }
 }
