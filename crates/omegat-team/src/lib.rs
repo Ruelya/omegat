@@ -46,6 +46,49 @@ pub fn init(dir: &Path, source_lang: &str, target_lang: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<SyncReport> {
+    let (label, dir) = match which {
+        "source" => ("source", &props.source_dir),
+        "target" => ("target", &props.target_dir),
+        _ => {
+            return Err(TeamError::Command(format!(
+                "commit which must be source or target, got {which}"
+            )))
+        }
+    };
+    if !dir.exists() {
+        return Err(TeamError::Command(format!("{label} directory missing")));
+    }
+    let root = &props.root;
+    if root.join(".git").exists() {
+        let _ = Command::new("git")
+            .args(["add", "-A", &dir.to_string_lossy()])
+            .current_dir(root)
+            .status();
+        let msg = format!("OmegaT commit {label} files");
+        let _ = Command::new("git")
+            .args(["commit", "-m", &msg])
+            .current_dir(root)
+            .status();
+        return Ok(SyncReport {
+            action: format!("commit-{label}"),
+            message: format!("committed {label} under {}", dir.display()),
+        });
+    }
+    let repo_dir = root.join(".repositories").join("git");
+    if repo_dir.join(".git").exists() {
+        git_commit(props)?;
+        return Ok(SyncReport {
+            action: format!("commit-{label}"),
+            message: format!("committed mapping copy for {label}"),
+        });
+    }
+    Ok(SyncReport {
+        action: format!("commit-{label}"),
+        message: "no git repository; files left on disk".into(),
+    })
+}
+
 pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
     if !team_enabled() {
         return Ok(SyncReport {

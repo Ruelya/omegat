@@ -76,8 +76,20 @@ impl App {
                 Ok(json!({"ok": true}))
             }
             "project.compile" => {
-                let n = self.session_mut()?.compile(None).map_err(core_err)?;
+                let file = params.get("file").and_then(|v| v.as_str());
+                let n = self.session_mut()?.compile(file).map_err(core_err)?;
                 Ok(json!({"files": n}))
+            }
+            "project.reload" => {
+                self.session_mut()?.reload().map_err(core_err)?;
+                let list: Vec<EntryDto> = self
+                    .session()?
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| e.to_dto(i))
+                    .collect();
+                Ok(json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}))
             }
             "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
             "entry.list" => {
@@ -241,6 +253,12 @@ impl App {
             "team.sync" => {
                 let s = self.session()?;
                 let r = omegat_team::sync(&s.props).map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
+                Ok(json!({"action": r.action, "message": r.message}))
+            }
+            "team.commit" => {
+                let which = params.get("which").and_then(|v| v.as_str()).unwrap_or("target");
+                let r = omegat_team::commit_project_files(&self.session()?.props, which)
+                    .map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
                 Ok(json!({"action": r.action, "message": r.message}))
             }
             "script.run" => {

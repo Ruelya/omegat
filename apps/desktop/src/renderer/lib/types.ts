@@ -21,6 +21,7 @@ export type MatchDto = {
   adjusted_score?: number;
   comes_from: string;
   project?: string | null;
+  similarity?: number[];
 };
 export type GlossaryHitDto = { source: string; target: string; comment: string };
 export type StatCountDto = {
@@ -81,11 +82,43 @@ export type ProjectPropsDto = {
   has_repositories: boolean;
 };
 export type IssueDto = { kind: string; index: number; file: string; message: string; severity: string };
-export type SearchHitDto = { index: number; file: string; field: string; text: string };
+export type SearchHitDto = {
+  index: number;
+  file: string;
+  field: string;
+  text: string;
+  preview?: string | null;
+};
+export type SearchParams = {
+  query: string;
+  regex?: boolean;
+  source?: boolean;
+  translation?: boolean;
+  notes?: boolean;
+  comments?: boolean;
+  glossary?: boolean;
+  tmx?: boolean;
+  case_sensitive?: boolean;
+  whole_word?: boolean;
+  untranslated?: boolean;
+  search_type?: "exact" | "keyword" | "regex";
+  author?: string;
+  date_from?: string;
+  date_to?: string;
+  replace?: string;
+  preview?: boolean;
+};
 export type CompleterItemDto = { kind: string; text: string; detail: string };
 export type MtSuggestionDto = { engine: string; text: string };
 export type DictHitDto = { word: string; definition: string; source: string };
 export type FilterInfoDto = { id: string; name: string; masks: string[]; phase: number };
+export type FilterOptionsDto = {
+  id: string;
+  name: string;
+  masks: string[];
+  phase: number;
+  options: Record<string, string>;
+};
 export type Preferences = {
   theme: string;
   locale: string;
@@ -96,7 +129,33 @@ export type Preferences = {
   font_editor: string;
   mt_enabled: string[];
   extra: Record<string, string>;
+  config_dir?: string;
 };
+export type TeamConflict = { source?: string; ours?: string; theirs?: string; message?: string };
+export type WindowId =
+  | "search"
+  | "replace"
+  | "prefs"
+  | "about"
+  | "license"
+  | "log"
+  | "align"
+  | "team"
+  | "files"
+  | "issues"
+  | "wizard"
+  | "tip"
+  | "stats-standard"
+  | "stats-matches"
+  | "stats-files"
+  | "filters"
+  | "segmentation"
+  | "shortcuts"
+  | "glossary-add"
+  | "wiki"
+  | "med"
+  | "convert"
+  | "scripts";
 
 declare global {
   interface Window {
@@ -104,6 +163,8 @@ declare global {
       rpc: (method: string, params?: unknown) => Promise<unknown>;
       pickDir: () => Promise<string | null>;
       pickFile: () => Promise<string | null>;
+      openPath: (path: string) => Promise<void>;
+      openExternal: (url: string) => Promise<void>;
       onMenu: (channel: string, fn: (...args: unknown[]) => void) => () => void;
     };
   }

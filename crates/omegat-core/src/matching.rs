@@ -24,6 +24,7 @@ impl NearString {
             adjusted_score: self.adjusted_score,
             comes_from: self.comes_from.clone(),
             project: self.project.clone(),
+            similarity: Vec::new(),
         }
     }
 }

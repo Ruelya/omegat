@@ -228,6 +228,7 @@ impl ProjectSession {
                 e.note = hit.note.clone().unwrap_or_default();
                 e.from_tm_exact = true;
                 e.properties.push(("tm".into(), ENFORCE_TM.into()));
+                apply_tm_meta(e, hit);
                 continue;
             }
             if e.translation.is_empty() {
@@ -235,10 +236,12 @@ impl ProjectSession {
                     e.translation = hit.translation.clone();
                     e.note = hit.note.clone().unwrap_or_default();
                     e.from_tm_exact = true;
+                    apply_tm_meta(e, hit);
                 } else if let Some(hit) = auto.get(&e.source) {
                     e.translation = hit.translation.clone();
                     e.from_tm_exact = true;
                     e.properties.push(("tm".into(), AUTO_TM.into()));
+                    apply_tm_meta(e, hit);
                 }
             }
         }
@@ -322,6 +325,8 @@ impl ProjectSession {
         e.default_translation = params.default_translation;
         e.revision += 1;
         e.from_tm_exact = false;
+        upsert_prop(e, "changeid", "omegat-rewrite");
+        upsert_prop(e, "changedate", &now_iso());
         self.dirty = true;
         self.last_index = params.index;
         Ok(e.to_dto(params.index))
@@ -340,7 +345,11 @@ impl ProjectSession {
             crate::consts::MAX_NEAR_STRINGS,
         )
         .into_iter()
-        .map(|m| m.to_dto())
+        .map(|m| {
+            let mut dto = m.to_dto();
+            dto.similarity = matching::similarity_data(&e.source, &m.source, &self.props.source_lang);
+            dto
+        })
         .collect()
     }
 
@@ -618,6 +627,23 @@ fn now_iso() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("{secs}")
+}
+
+fn apply_tm_meta(e: &mut Entry, hit: &TmxEntry) {
+    if let Some(c) = &hit.changer {
+        upsert_prop(e, "changeid", c);
+    }
+    if let Some(d) = &hit.changed {
+        upsert_prop(e, "changedate", d);
+    }
+}
+
+fn upsert_prop(e: &mut Entry, key: &str, value: &str) {
+    if let Some((_, v)) = e.properties.iter_mut().find(|(k, _)| k == key) {
+        *v = value.to_string();
+    } else {
+        e.properties.push((key.to_string(), value.to_string()));
+    }
 }
 
 fn build_excludes(masks: &[String]) -> globset::GlobSet {

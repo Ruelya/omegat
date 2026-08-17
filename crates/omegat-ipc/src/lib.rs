@@ -217,6 +217,9 @@ pub struct MatchDto {
     pub adjusted_score: i32,
     pub comes_from: String,
     pub project: Option<String>,
+    /// Java `NearString.attr` / `buildSimilarityData` token alignment (0=equal, 1=insert, 2=delete).
+    #[serde(default)]
+    pub similarity: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,8 +292,11 @@ pub struct SearchHitDto {
     pub file: String,
     pub field: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
+/// Java `SearchExpression` fields used by `SearchWindowController`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchParams {
     pub query: String,
@@ -301,11 +307,56 @@ pub struct SearchParams {
     #[serde(default = "default_true")]
     pub translation: bool,
     #[serde(default)]
+    pub notes: bool,
+    #[serde(default)]
+    pub comments: bool,
+    #[serde(default)]
     pub glossary: bool,
     #[serde(default)]
     pub tmx: bool,
     #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub untranslated: bool,
+    /// `exact` | `keyword` | `regex` (regex also accepted via `regex: true`).
+    #[serde(default)]
+    pub search_type: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub date_from: Option<String>,
+    #[serde(default)]
+    pub date_to: Option<String>,
+    #[serde(default)]
     pub replace: Option<String>,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+impl Default for SearchParams {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            regex: false,
+            source: true,
+            translation: true,
+            notes: false,
+            comments: false,
+            glossary: false,
+            tmx: false,
+            case_sensitive: false,
+            whole_word: false,
+            untranslated: false,
+            search_type: None,
+            author: None,
+            date_from: None,
+            date_to: None,
+            replace: None,
+            preview: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

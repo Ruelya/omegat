@@ -2,14 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { buildApplicationMenu } from "./menu";
 
 type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
 };
 
-let sidecar: ChildProcessWithoutNullStreams | None = null;
-type None = null;
+let sidecar: ChildProcessWithoutNullStreams | null = null;
 const pending = new Map<number, Pending>();
 let nextId = 1;
 let buf = "";
@@ -93,99 +93,10 @@ function createWindow() {
   } else {
     win.loadFile(join(__dirname, "../renderer/index.html"));
   }
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      {
-        label: "Project",
-        submenu: [
-          {
-            label: "Open…",
-            accelerator: "CmdOrCtrl+O",
-            click: async () => {
-              const r = await dialog.showOpenDialog(win, { properties: ["openDirectory"] });
-              if (!r.canceled && r.filePaths[0]) {
-                win.webContents.send("menu:open", r.filePaths[0]);
-              }
-            },
-          },
-          {
-            label: "Save",
-            accelerator: "CmdOrCtrl+S",
-            click: () => win.webContents.send("menu:save"),
-          },
-          {
-            label: "Compile",
-            accelerator: "CmdOrCtrl+D",
-            click: () => win.webContents.send("menu:compile"),
-          },
-          { type: "separator" },
-          { role: "quit" },
-        ],
-      },
-      {
-        label: "Edit",
-        submenu: [
-          { role: "undo" },
-          { role: "redo" },
-          { type: "separator" },
-          { role: "cut" },
-          { role: "copy" },
-          { role: "paste" },
-          {
-            label: "Insert best match",
-            accelerator: "CmdOrCtrl+I",
-            click: () => win.webContents.send("menu:insert-match"),
-          },
-        ],
-      },
-      {
-        label: "Go",
-        submenu: [
-          {
-            label: "Next segment",
-            accelerator: "CmdOrCtrl+N",
-            click: () => win.webContents.send("menu:next"),
-          },
-          {
-            label: "Previous segment",
-            accelerator: "CmdOrCtrl+P",
-            click: () => win.webContents.send("menu:prev"),
-          },
-        ],
-      },
-      {
-        label: "Tools",
-        submenu: [
-          { label: "Check Issues", accelerator: "CmdOrCtrl+Shift+I", click: () => win.webContents.send("menu:issues") },
-          { label: "Align Files…", click: () => win.webContents.send("menu:align") },
-          { label: "Search / Replace", accelerator: "CmdOrCtrl+F", click: () => win.webContents.send("menu:search") },
-          { type: "separator" },
-          { label: "Script slot 1", accelerator: "CmdOrCtrl+Alt+1", click: () => win.webContents.send("menu:script", 1) },
-          { label: "Script slot 2", accelerator: "CmdOrCtrl+Alt+2", click: () => win.webContents.send("menu:script", 2) },
-        ],
-      },
-      {
-        label: "Options",
-        submenu: [
-          { label: "Preferences…", accelerator: "CmdOrCtrl+,", click: () => win.webContents.send("menu:prefs") },
-        ],
-      },
-      {
-        label: "Help",
-        submenu: [
-          {
-            label: "Manual",
-            click: () => {
-              const local = manualPath();
-              if (existsSync(local)) void shell.openPath(local);
-              else void shell.openExternal("https://omegat.org");
-            },
-          },
-          { label: "About OmegaT", click: () => win.webContents.send("menu:about") },
-        ],
-      },
-    ]),
-  );
+  Menu.setApplicationMenu(buildApplicationMenu(win));
+  win.webContents.on("did-finish-load", () => {
+    win.webContents.send("menu:ready");
+  });
 }
 
 app.whenReady().then(() => {
@@ -198,6 +109,17 @@ app.whenReady().then(() => {
   ipcMain.handle("pick-file", async () => {
     const r = await dialog.showOpenDialog({ properties: ["openFile"] });
     return r.canceled ? null : r.filePaths[0];
+  });
+  ipcMain.handle("open-path", async (_e, path: string) => {
+    if (path) await shell.openPath(path);
+  });
+  ipcMain.handle("open-external", async (_e, url: string) => {
+    if (url) await shell.openExternal(url);
+  });
+  ipcMain.handle("open-manual", async () => {
+    const local = manualPath();
+    if (existsSync(local)) await shell.openPath(local);
+    else await shell.openExternal("https://omegat.org/manual");
   });
   createWindow();
 });

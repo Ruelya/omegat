@@ -271,11 +271,7 @@ fn main() -> Result<()> {
             let hits = session.search(&SearchParams {
                 query,
                 regex,
-                source: true,
-                translation: true,
-                glossary: false,
-                tmx: false,
-                replace: None,
+                ..Default::default()
             });
             for h in hits {
                 println!("#{} {} [{}] {}", h.index, h.file, h.field, h.text);
