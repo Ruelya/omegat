@@ -1,3 +1,14 @@
+//! Seven Java MT connectors, one module each. Offline without a recorded
+//! fixture is an error and must not block editing.
+
+pub mod apertium;
+pub mod belazar;
+pub mod google;
+pub mod ibmwatson;
+pub mod mymemory;
+pub mod mymemory_human;
+pub mod yandex;
+
 use crate::languagetool::http_exchange;
 use omegat_ipc::MtSuggestionDto;
 use std::collections::HashMap;
@@ -12,13 +23,13 @@ pub struct MtEngine {
 
 pub fn engines() -> Vec<MtEngine> {
     vec![
-        MtEngine { id: "google".into(), name: "Google Translate".into(), endpoint: "https://translation.googleapis.com/language/translate/v2".into() },
-        MtEngine { id: "ibmwatson".into(), name: "IBM Watson".into(), endpoint: "https://api.us-south.language-translator.watson.cloud.ibm.com/v3/translate".into() },
-        MtEngine { id: "mymemory".into(), name: "MyMemory Machine".into(), endpoint: "https://api.mymemory.translated.net/get".into() },
-        MtEngine { id: "mymemory-human".into(), name: "MyMemory Human".into(), endpoint: "https://api.mymemory.translated.net/get".into() },
-        MtEngine { id: "apertium".into(), name: "Apertium".into(), endpoint: "https://www.apertium.org/apy/translate".into() },
-        MtEngine { id: "yandex".into(), name: "Yandex Cloud".into(), endpoint: "https://translate.api.cloud.yandex.net/translate/v2/translate".into() },
-        MtEngine { id: "belazar".into(), name: "Belazar".into(), endpoint: "http://www.belazar.by/translate".into() },
+        MtEngine { id: google::ID.into(), name: "Google Translate".into(), endpoint: google::ENDPOINT.into() },
+        MtEngine { id: ibmwatson::ID.into(), name: "IBM Watson".into(), endpoint: ibmwatson::ENDPOINT.into() },
+        MtEngine { id: mymemory::ID.into(), name: "MyMemory Machine".into(), endpoint: mymemory::ENDPOINT.into() },
+        MtEngine { id: mymemory_human::ID.into(), name: "MyMemory Human".into(), endpoint: mymemory_human::ENDPOINT.into() },
+        MtEngine { id: apertium::ID.into(), name: "Apertium".into(), endpoint: apertium::ENDPOINT.into() },
+        MtEngine { id: yandex::ID.into(), name: "Yandex Cloud".into(), endpoint: yandex::ENDPOINT.into() },
+        MtEngine { id: belazar::ID.into(), name: "Belazar".into(), endpoint: belazar::ENDPOINT.into() },
     ]
 }
 
@@ -60,41 +71,21 @@ impl MtCreds {
     }
 }
 
-/// Java connector auth headers (no secrets in the values used by tests).
 pub fn auth_headers(engine: &str, creds: &MtCreds) -> Result<Vec<(String, String)>, String> {
     match engine {
-        "google" => {
-            if creds.google_key.as_deref().unwrap_or("").is_empty() && std::env::var("OMEGAT_MT_FIXTURE_DIR").is_err() {
-                return Err("google.api.key missing".into());
-            }
-            Ok(vec![("X-HTTP-Method-Override".into(), "GET".into())])
-        }
+        "google" => google::auth_headers(!creds.google_key.as_deref().unwrap_or("").is_empty()),
         "ibmwatson" => {
             let login = creds.ibm_login.clone().unwrap_or_else(|| "apikey".into());
             let pass = creds.ibm_password.clone().or_else(|| creds.ibm_login.clone()).unwrap_or_default();
-            if pass.is_empty() && std::env::var("OMEGAT_MT_FIXTURE_DIR").is_err() {
-                return Err("IBM Watson API key missing".into());
-            }
-            let token = base64_basic(&format!("{login}:{pass}"));
-            Ok(vec![
-                ("Authorization".into(), format!("Basic {token}")),
-                ("X-Watson-Learning-Opt-Out".into(), "true".into()),
-                ("Accept".into(), "application/json".into()),
-            ])
+            ibmwatson::auth_headers(&login, &pass)
         }
-        "yandex" => {
-            let iam = creds.yandex_iam.clone().unwrap_or_default();
-            if iam.is_empty() && std::env::var("OMEGAT_MT_FIXTURE_DIR").is_err() {
-                return Err("Yandex IAM token missing".into());
-            }
-            Ok(vec![("Authorization".into(), format!("Bearer {iam}"))])
-        }
+        "yandex" => yandex::auth_headers(creds.yandex_iam.as_deref().unwrap_or("")),
         "mymemory" | "mymemory-human" | "apertium" | "belazar" => Ok(vec![]),
         other => Err(format!("unknown engine {other}")),
     }
 }
 
-fn base64_basic(s: &str) -> String {
+pub(crate) fn base64_basic(s: &str) -> String {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let b = s.as_bytes();
     let mut out = String::new();
@@ -165,7 +156,8 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
     let raw = match engine {
         "mymemory" | "mymemory-human" => {
             let url = format!(
-                "https://api.mymemory.translated.net/get?q={}&langpair={}|{}",
+                "{}?q={}&langpair={}|{}",
+                mymemory::ENDPOINT,
                 urlencoding::encode(source),
                 urlencoding::encode(sl),
                 urlencoding::encode(tl)
@@ -174,7 +166,8 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
         }
         "apertium" => {
             let url = format!(
-                "https://www.apertium.org/apy/translate?q={}&langpair={}|{}",
+                "{}?q={}&langpair={}|{}",
+                apertium::ENDPOINT,
                 urlencoding::encode(source),
                 urlencoding::encode(sl),
                 urlencoding::encode(tl)
@@ -187,10 +180,7 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 .clone()
                 .or_else(|| std::env::var("OMEGAT_GOOGLE_KEY").ok())
                 .ok_or("OMEGAT_GOOGLE_KEY")?;
-            let url = format!(
-                "https://translation.googleapis.com/language/translate/v2?key={}",
-                urlencoding::encode(&key)
-            );
+            let url = format!("{}?key={}", google::ENDPOINT, urlencoding::encode(&key));
             let body = format!(
                 "{{\"q\":\"{}\",\"source\":\"{}\",\"target\":\"{}\"}}",
                 escape_json(source), sl, tl
@@ -198,7 +188,7 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
             http_exchange("POST", &url, Some(("application/json", &body)))?
         }
         "ibmwatson" => {
-            let url = std::env::var("OMEGAT_IBM_URL").unwrap_or_else(|_| engines()[1].endpoint.clone());
+            let url = std::env::var("OMEGAT_IBM_URL").unwrap_or_else(|_| ibmwatson::ENDPOINT.to_string());
             let body = format!(
                 "{{\"text\":[\"{}\"],\"source\":\"{}\",\"target\":\"{}\"}}",
                 escape_json(source), sl, tl
@@ -206,7 +196,7 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
             http_exchange("POST", &url, Some(("application/json", &body)))?
         }
         "yandex" => {
-            let url = std::env::var("OMEGAT_YANDEX_URL").unwrap_or_else(|_| engines()[5].endpoint.clone());
+            let url = std::env::var("OMEGAT_YANDEX_URL").unwrap_or_else(|_| yandex::ENDPOINT.to_string());
             let body = format!(
                 "{{\"texts\":[\"{}\"],\"sourceLanguageCode\":\"{}\",\"targetLanguageCode\":\"{}\"}}",
                 escape_json(source), sl, tl
@@ -215,7 +205,8 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
         }
         "belazar" => {
             let url = format!(
-                "http://www.belazar.by/translate?text={}&sl={}&tl={}",
+                "{}?text={}&sl={}&tl={}",
+                belazar::ENDPOINT,
                 urlencoding::encode(source), sl, tl
             );
             http_exchange("GET", &url, None)?
@@ -255,15 +246,16 @@ pub fn parse_error_body(engine: &str, v: &serde_json::Value) -> Option<String> {
 pub fn parse_engine(engine: &str, raw: &str) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_str(raw).unwrap_or(serde_json::Value::String(raw.to_string()));
     let text = match engine {
-        "google" => v.pointer("/data/translations/0/translatedText").and_then(|x| x.as_str()),
-        "ibmwatson" => v.pointer("/translations/0/translation").and_then(|x| x.as_str()),
-        "mymemory" | "mymemory-human" => v.pointer("/responseData/translatedText").and_then(|x| x.as_str()),
-        "apertium" => v.pointer("/responseData/translatedText").or_else(|| v.pointer("/translatedText")).and_then(|x| x.as_str()),
-        "yandex" => v.pointer("/translations/0/text").and_then(|x| x.as_str()),
-        "belazar" => v.get("text").and_then(|x| x.as_str()).or_else(|| v.as_str()),
-        _ => v.get("text").and_then(|x| x.as_str()),
+        "google" => google::parse(&v),
+        "ibmwatson" => ibmwatson::parse(&v),
+        "mymemory" => mymemory::parse(&v),
+        "mymemory-human" => mymemory_human::parse(&v),
+        "apertium" => apertium::parse(&v),
+        "yandex" => yandex::parse(&v),
+        "belazar" => belazar::parse(&v),
+        _ => v.get("text").and_then(|x| x.as_str()).map(str::to_string),
     };
-    text.map(|s| html_escape::decode_html_entities(s).into_owned())
+    text.map(|s| html_escape::decode_html_entities(&s).into_owned())
         .ok_or_else(|| format!("{engine} response missing translation"))
 }
 
@@ -274,6 +266,14 @@ fn escape_json(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seven_connector_modules() {
+        assert_eq!(engines().len(), 7);
+        for id in ["google", "ibmwatson", "mymemory", "mymemory-human", "apertium", "yandex", "belazar"] {
+            assert!(engines().iter().any(|e| e.id == id), "{id}");
+        }
+    }
 
     #[test]
     fn parses_each_engine_fixture() {

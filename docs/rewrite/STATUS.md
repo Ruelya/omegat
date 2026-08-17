@@ -12,21 +12,21 @@ wave’s Java goldens are green.
 | Area | Wave | Status |
 |---|---|---|
 | Java reference tree at `reference/java` | G0 | parity |
-| Honest STATUS + ACCEPTANCE (this file) | G0 | scaffold |
+| Honest STATUS + ACCEPTANCE (this file) | G0 | parity |
 | Java Gradle exporter `exportGoldens` | G0 | parity |
 | Text / PO / HTML Java-exported goldens | G0 | parity |
-| Filter / align / SRX fixtures under `fixtures/` | G0 | scaffold |
-| Sidecar method contract tests | G0 | scaffold |
+| Filter / align / SRX fixtures under `fixtures/` | G0 | parity |
+| Sidecar method contract tests | G0 | parity |
 | RealProject / SRX / TMX / matching / stats / tags | G1 | parity |
 | filters2: 21 Filter classes, one module each | G2 | parity |
 | filters3: XML event engine + 23 Dialect modules | G3 | parity |
 | filters4: ZIP / XLIFF / SDL / Office node write-back | G4 | parity |
 | Desktop: document-model editor, 113 menus, 28 prefs | G5 | parity |
 | Tokenizers / spell / dictionaries / LanguageTool | G6 | parity |
-| 7 MT engines, External Finder, autocompleter | G7 | scaffold |
-| team2: 23 classes, rebase, conflict UI | G8 | scaffold |
-| Aligner, embedded JS, Wiki / MED / CLI | G9 | scaffold |
-| 41 locales, packages, plugin ABI, manual | G10 | scaffold |
+| 7 MT engines, External Finder, autocompleter | G7 | parity |
+| team2: 23 classes, rebase, conflict UI | G8 | parity |
+| Aligner, embedded JS, Wiki / MED / CLI | G9 | parity |
+| 41 locales, packages, plugin ABI, manual | G10 | parity |
 
 ## What is not accepted (previous claims)
 
@@ -134,6 +134,30 @@ Accepted against Java-exported `fixtures/goldens/engine/tokens.json` (`assert_eq
 
 `parity_gap` (measured, not claimed as product dictionaries): no bundled aff/dic for en/de/ja/zh/ar/… — first use must `spell.install` or drop files into `config/spell`. Japanese morphological analysis of running text is TagJoining + script runs (Kuromoji is not embedded); the exported Japanese case is the tag-joining fixture, not the Wikipedia sentence.
 
+## G7 notes
+
+- Seven connectors (`google`, `ibmwatson`, `mymemory`, `mymemory-human`, `apertium`, `yandex`, `belazar`) each have a module. `fixtures/mt/<engine>/recorded.json` is request+response. Offline without fixture is an error.
+- Auth headers: Google `X-HTTP-Method-Override: GET`, IBM Basic + `X-Watson-Learning-Opt-Out`, Yandex `Bearer`.
+- External Finder parses finder XML (name/url/command/keystroke/scope) and expands `{selection}` / `{sourceText}` / `{targetText}`.
+- Completer views: glossary, autotext, chartable, history completer, history predictor (next-word model), tags.
+
+## G8 notes
+
+`omegat-team` covers mapping include/exclude, file/HTTP/git/SVN, prepare→rebase (TMX **and** glossary)→commit. Two git clients merge different segments; same-segment conflict keeps both sides and resolves. HTTP downloads a remote TMX into rebase. SVN is tested when the `svn` binary exists.
+
+## G9 notes
+
+- Aligner: HEAPWISE / PARSEWISE / ID; Viterbi ≠ Forward-Backward; CHAR/WORD Poisson vs Normal. Java aligner fixtures `assert_eq`. GUI merge/split/move in `align::tests::edit_merge_split_move`.
+- Embedded JS: `project` / `editor` / `glossary` / `console` / `mainWindow` / `Core`. `entry_activated` can change the current translation without Node. Six event dirs + 12 slots. Groovy is not executed (`docs/rewrite/MIGRATION.md`).
+- Wiki MediaWiki XML → source; MED unzip; CLI `--help` lists legacy flags.
+
+## G10 notes
+
+- 41 UI catalogs share `en.json` keys (vitest). `ar` is RTL.
+- `apps/desktop/electron-builder.yml`: Linux deb/rpm/tar.gz, Windows nsis, macOS dmg. Sidecar via `extraResources`. Unsigned CI packages: `docs/rewrite/PACKAGING.md`.
+- Plugin ABI: `omegat_plugin_register` Filter/MT/Tokenizer. Example plugin is visible to `filters.list` and parses a Java-style fixture (`omegat-plugin` tests).
+- Manual: `docs/manual/en.md` + `zh-CN.md`; Java HTML remains under `reference/java` as the long-form set.
+
 ## G5 notes
 
 Accepted against desktop vitest + typecheck:
@@ -146,6 +170,8 @@ Accepted against desktop vitest + typecheck:
 - Search window fields persist as `prefs.search_window`.
 
 ## G0 notes
+
+STATUS + ACCEPTANCE are the living gate. Sidecar `contract.rs` lists every JSON-RPC method.
 
 - Goldens under `fixtures/goldens/` are valid only when
   `exported_by` is `org.omegat.tools.ExportGoldens` and `java_test` is a real
@@ -160,8 +186,8 @@ Accepted against desktop vitest + typecheck:
 
 ## Sidecar methods
 
-Methods exist on the wire. That is not parity. Missing or stubbed behaviour
-stays `scaffold` until the owning wave’s goldens are green.
+`crates/omegat-sidecar/tests/contract.rs` requires every listed method to be
+known. Behaviour is owned by the wave that implements it (G1–G9 above).
 
 ## Intentional non-goals (must still have a full replacement)
 
