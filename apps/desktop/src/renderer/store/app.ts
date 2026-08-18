@@ -384,7 +384,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
   savePrefs: async (p) => {
     const prefs = await rpc<Preferences>("prefs.set", p);
-    get().applyPrefs(prefs);
+    get().applyPrefs(prefs && typeof prefs === "object" && "marks" in prefs ? prefs : p);
     get().logLine("saved preferences");
   },
   patchPrefs: async (patch) => {

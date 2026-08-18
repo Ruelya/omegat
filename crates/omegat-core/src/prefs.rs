@@ -750,5 +750,4 @@ mod tests {
         };
         assert_eq!(fallback, "eo");
     }
-    }
 }

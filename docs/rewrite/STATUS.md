@@ -55,9 +55,11 @@ exported and `assert_eq` green, plus the matching honesty item.
 - **P10 team**: GIT product path is `git2`. SVN checkout/update/commit is
   `#[ignore]` (needs `svn` + `svnadmin`). HTTP two-client rebase uses
   `assert_eq` on conflict `ours`/`theirs`.
-- **P11 align**: HEAPWISE / PARSEWISE / ID goldens are the Java pair
-  lists. HMM must `assert_eq` those pairs; until that test is green this
-  row stays `parity_gap`.
+- **P11 align**: HEAPWISE / PARSEWISE / ID goldens `assert_eq` the Java
+  pair lists (heap pair 3 merges the long EN sentence with “Where shall
+  it end?”). Viterbi ≠ Forward-Backward; Poisson ≠ Normal. Remaining:
+  Java `BundleTest` encodings are not a Rust resource bundle; aligner
+  GUI is the Electron window, not Swing.
 - **P12 ship**: Bundle locales leftover_eq_en = **0** (brand `OmegaT`
   only). Packaged manuals are `en` + `zh-CN` + Java HTML pointer, not 41
   languages. Packages are unsigned.
@@ -225,8 +227,9 @@ Aligner: HEAPWISE / PARSEWISE / ID; Viterbi ≠ Forward-Backward; CHAR/WORD
 and Poisson vs Normal. Goldens are the Java pair lists (heap pair 3 is
 the long EN sentence merged with “Where shall it end?”). Boa `editor`
 bindings cover the IEditor method set. Wiki MediaWiki XML → source; MED
-unzip; CLI leftover flags remain in `--help`. No `fallback_eval`. The P11
-row stays `parity_gap` until heap/parse/id `assert_eq` is green.
+unzip; CLI leftover flags remain in `--help`. No `fallback_eval`. HEAPWISE /
+PARSEWISE / ID `assert_eq` the Java pair lists. The P11 row stays
+`parity_gap` (Java `BundleTest` encodings; Swing aligner UI).
 
 ## P12 notes
 

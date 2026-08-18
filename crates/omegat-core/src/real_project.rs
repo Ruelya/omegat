@@ -377,7 +377,11 @@ impl ProjectSession {
             for (i, p) in parsed.segments.iter().enumerate() {
                 let trans = segs
                     .iter()
-                    .filter(|e| e.source == p.source || e.id == p.id || e.id.starts_with(&format!("{}:", p.id)))
+                    .filter(|e| {
+                        e.source == p.source
+                            || (!p.id.is_empty()
+                                && (e.id == p.id || e.id.starts_with(&format!("{}:", p.id))))
+                    })
                     .map(|e| e.translation.as_str())
                     .filter(|t| !t.is_empty())
                     .collect::<Vec<_>>()
