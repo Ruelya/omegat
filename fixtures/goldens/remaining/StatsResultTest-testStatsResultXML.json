@@ -1,0 +1,6 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.statistics.StatsResultTest#testStatsResultXML",
+  "method": "org.omegat.core.statistics.StatsResultTest#testStatsResultXML",
+  "xml": true
+}

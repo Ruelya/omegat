@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn",
+  "method": "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn",
+  "keys": [
+    "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn"
+  ],
+  "type": "svn"
+}

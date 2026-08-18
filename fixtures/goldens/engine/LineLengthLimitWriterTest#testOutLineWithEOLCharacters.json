@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLineWithEOLCharacters",
+  "input": "Line with EOL\n",
+  "output": "Line with EOL",
+  "keys": [
+    "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLineWithEOLCharacters"
+  ]
+}

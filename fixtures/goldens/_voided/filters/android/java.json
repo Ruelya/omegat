@@ -1,0 +1,19 @@
+{
+  "id": "android",
+  "fixture": "Android/file-AndroidFilter.xml",
+  "java_test": "org.omegat.filters dialect/table for android",
+  "options": {},
+  "sources": [
+    "MyApp",
+    "<f0>Welcome !</f0>\n\\nAdditional comment",
+    "T'est",
+    "1 minute",
+    "<x0>%d</x0> minutes"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "MyApp",
+    "translation": "MonApp",
+    "must_contain": "MonApp"
+  }
+}
