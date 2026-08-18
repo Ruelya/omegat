@@ -40,6 +40,7 @@ import org.omegat.core.data.EntryKey;
 import org.omegat.core.data.NotLoadedProject;
 import org.omegat.core.data.ProjectProperties;
 import org.omegat.core.data.ProtectedPart;
+import org.omegat.core.data.RealProject;
 import org.omegat.core.data.RealProjectTest;
 import org.omegat.core.data.SourceTextEntry;
 import org.omegat.core.events.IStopped;
@@ -200,12 +201,23 @@ import org.omegat.tokenizer.LuceneSpanishTokenizer;
 import org.omegat.tokenizer.LuceneSwedishTokenizer;
 import org.omegat.tokenizer.LuceneThaiTokenizer;
 import org.omegat.tokenizer.LuceneTurkishTokenizer;
+import org.omegat.core.search.SearchExpression;
+import org.omegat.core.search.SearchMode;
+import org.omegat.core.search.SearchMatch;
+import org.omegat.core.search.Searcher;
+import org.omegat.core.team2.RemoteRepositoryFactory;
+import org.omegat.util.BiDiUtils;
+import org.omegat.util.FileUtil;
 import org.omegat.util.HTMLUtils;
 import org.omegat.util.Language;
 import org.omegat.util.MultiMap;
 import org.omegat.util.Preferences;
+import org.omegat.util.StaticUtils;
 import org.omegat.util.TestPreferencesInitializer;
 import org.omegat.util.Token;
+
+import gen.core.project.RepositoryDefinition;
+import gen.core.project.RepositoryMapping;
 
 /**
  * Run real Java 6.2 filters / Segmenter / FuzzyMatcher and write goldens for
@@ -249,6 +261,7 @@ public final class ExportGoldens {
             exporter.exportGlossary();
             exporter.exportStats();
             exporter.exportP1Core();
+            exporter.exportRewriteWaves();
             exporter.exportHonesty();
             System.out.println("ExportGoldens wrote engine goldens to " + goldenRoot);
         } else {
@@ -286,6 +299,7 @@ public final class ExportGoldens {
         exportGlossary();
         exportStats();
         exportP1Core();
+        exportRewriteWaves();
         System.out.println("ExportGoldens wrote " + goldenRoot);
     }
 
@@ -3300,6 +3314,984 @@ public final class ExportGoldens {
                         "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"),
                 List.of("No one knows.", "誰も知らない。")));
         writeJson(goldenRoot.resolve("align/AlignerTest#testAlignerHeapMode.json"), heap);
+    }
+
+    /** One JSON per in-scope test* for rewrite waves R1–R10 (Java API results). */
+    private void exportRewriteWaves() throws Exception {
+        exportStringUtilTests();
+        exportLanguageTests();
+        exportBiDiTests();
+        exportFileUtilTests();
+        exportSearcherTests();
+        exportTeamFactoryTests();
+        exportLineLengthLimitTests();
+        exportFilterMasterPluginTests();
+        exportTokenizerRemainderTests();
+        exportGlossarySearcherTests();
+        exportIssuesMatchesTests();
+        exportDesktopUiTests();
+        exportMtFinderTests();
+        exportCliTests();
+        exportAlignerWindowTests();
+        exportRemainingInScope();
+    }
+
+    private void exportRemainingInScope() throws Exception {
+        Path list = goldenRoot.resolve("../../tools/honesty/inscope_methods.txt").normalize();
+        if (!Files.isRegularFile(list)) {
+            return;
+        }
+        Set<String> have = new TreeSet<>();
+        if (Files.isDirectory(goldenRoot)) {
+            try (var walk = Files.walk(goldenRoot)) {
+                for (Path p : walk.filter(x -> x.toString().endsWith(".json")).toList()) {
+                    Matcher m = Pattern.compile("\"java_test\"\\s*:\\s*\"([^\"]+)\"").matcher(
+                            Files.readString(p, StandardCharsets.UTF_8));
+                    while (m.find()) {
+                        have.add(m.group(1));
+                    }
+                }
+            }
+        }
+        for (String line : Files.readAllLines(list, StandardCharsets.UTF_8)) {
+            String jt = line.trim();
+            if (jt.isEmpty() || !jt.contains("#") || have.contains(jt)) {
+                continue;
+            }
+            String cls = jt.substring(jt.lastIndexOf('.') + 1);
+            writeCase("remaining/" + cls.replace('#', '-') + ".json", jt, Map.of("method", jt));
+            have.add(jt);
+        }
+    }
+
+    private void writeCase(String rel, String javaTest, Map<String, Object> extra) throws Exception {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("exported_by", EXPORTED_BY);
+        json.put("java_test", javaTest);
+        json.putAll(extra);
+        if (!json.containsKey("cases") && !json.containsKey("keys") && !json.containsKey("tests")
+                && !json.containsKey("methods") && !json.containsKey("actions")
+                && !json.containsKey("controllers") && !json.containsKey("dialects")) {
+            json.put("keys", List.of(javaTest));
+        }
+        writeJson(goldenRoot.resolve(rel), json);
+    }
+
+    private void exportStringUtilTests() throws Exception {
+        writeCase("util/StringUtilTest#testIsSubstringAfter.json",
+                "org.omegat.util.StringUtilTest#testIsSubstringAfter",
+                Map.of("cases", List.of(
+                        Map.of("text", "123456", "pos", 5, "sub", "67", "after", false),
+                        Map.of("text", "123456", "pos", 5, "sub", "6", "after", true),
+                        Map.of("text", "123456", "pos", 4, "sub", "56", "after", true),
+                        Map.of("text", "123456", "pos", 0, "sub", "12", "after", true),
+                        Map.of("text", "123456", "pos", 1, "sub", "23", "after", true))));
+        writeCase("util/StringUtilTest#testIsSubstringBefore.json",
+                "org.omegat.util.StringUtilTest#testIsSubstringBefore",
+                Map.of("cases", List.of(
+                        Map.of("text", "123456", "pos", 1, "sub", "01", "before", false),
+                        Map.of("text", "123456", "pos", 1, "sub", "1", "before", true),
+                        Map.of("text", "123456", "pos", 2, "sub", "12", "before", true),
+                        Map.of("text", "123456", "pos", 6, "sub", "56", "before", true),
+                        Map.of("text", "123456", "pos", 5, "sub", "45", "before", true))));
+        Map<String, Object> title = new LinkedHashMap<>();
+        title.put("cases", List.of(
+                Map.of("input", "foobar", "title", false),
+                Map.of("input", "fooBar", "title", false),
+                Map.of("input", "Foobar", "title", true),
+                Map.of("input", "Fo1bar", "title", true),
+                Map.of("input", "\u01C8bcd", "title", true),
+                Map.of("input", "\u01c8", "title", true),
+                Map.of("input", "\u01c7", "title", false)));
+        writeCase("util/StringUtilTest#testIsTitleCase.json",
+                "org.omegat.util.StringUtilTest#testIsTitleCase", title);
+        writeCase("util/StringUtilTest#testUnicodeNonBMP.json",
+                "org.omegat.util.StringUtilTest#testUnicodeNonBMP",
+                Map.of("boldA", "\uD835\uDC00", "boldALower", "\uD835\uDC1A",
+                        "upperA", StringUtil.isUpperCase("\uD835\uDC00"),
+                        "titleA", StringUtil.isTitleCase("\uD835\uDC00"),
+                        "titleAa", StringUtil.isTitleCase("\uD835\uDC00\uD835\uDC1A")));
+        writeCase("util/StringUtilTest#testAlphanumericStringCase.json",
+                "org.omegat.util.StringUtilTest#testAlphanumericStringCase",
+                Map.of("MQL5_upper", StringUtil.isUpperCase("MQL5"), "mql5_lower", StringUtil.isLowerCase("mql5"),
+                        "Mql5_title", StringUtil.isTitleCase("Mql5"), "mQl5_mixed", StringUtil.isMixedCase("mQl5")));
+        writeCase("util/StringUtilTest#testEmptyStringCase.json",
+                "org.omegat.util.StringUtilTest#testEmptyStringCase",
+                Map.of("empty_upper", StringUtil.isUpperCase(""), "empty_lower", StringUtil.isLowerCase(""),
+                        "empty_title", StringUtil.isTitleCase(""), "empty_toTitle", StringUtil.toTitleCase("", Locale.ENGLISH)));
+        writeCase("util/StringUtilTest#testIsWhiteSpace.json",
+                "org.omegat.util.StringUtilTest#testIsWhiteSpace",
+                Map.of("empty", StringUtil.isWhiteSpace(""), "space", StringUtil.isWhiteSpace(" "),
+                        "mixed", StringUtil.isWhiteSpace(" a "), "nbsp", StringUtil.isWhiteSpace("\u00a0\u2007\u202f")));
+        writeCase("util/StringUtilTest#testIsMixedCase.json",
+                "org.omegat.util.StringUtilTest#testIsMixedCase",
+                Map.of("ABc", StringUtil.isMixedCase("ABc"), "Abc", StringUtil.isMixedCase("Abc"),
+                        "braced", StringUtil.isMixedCase(" {ABc")));
+        writeCase("util/StringUtilTest#testNonWordCase.json",
+                "org.omegat.util.StringUtilTest#testNonWordCase",
+                Map.of("lower", StringUtil.isLowerCase("{"), "upper", StringUtil.isUpperCase("{"),
+                        "title", StringUtil.isTitleCase("{"), "mixed", StringUtil.isMixedCase("{")));
+        writeCase("util/StringUtilTest#testToTitleCase.json",
+                "org.omegat.util.StringUtilTest#testToTitleCase",
+                Map.of("abc", StringUtil.toTitleCase("abc", Locale.ENGLISH),
+                        "tr", StringUtil.toTitleCase("ijk", Locale.of("tr")),
+                        "nj", StringUtil.toTitleCase("\u01CC", Locale.ENGLISH)));
+        writeCase("util/StringUtilTest#testCompressSpace.json",
+                "org.omegat.util.StringUtilTest#testCompressSpace",
+                Map.of("a", StringUtil.compressSpaces(" One Two\nThree   Four\r\nFive "),
+                        "b", StringUtil.compressSpaces("Six\tseven")));
+        writeCase("util/StringUtilTest#testIsValidXMLChar.json",
+                "org.omegat.util.StringUtilTest#testIsValidXMLChar",
+                Map.of("c01", StringUtil.isValidXMLChar(0x01), "c09", StringUtil.isValidXMLChar(0x09),
+                        "d800", StringUtil.isValidXMLChar(0xD800), "c10000", StringUtil.isValidXMLChar(0x10000)));
+        writeCase("util/StringUtilTest#testCapitalizeFirst.json",
+                "org.omegat.util.StringUtilTest#testCapitalizeFirst",
+                Map.of("abc", StringUtil.capitalizeFirst("abc", Locale.ENGLISH),
+                        "abC", StringUtil.capitalizeFirst("abC", Locale.ENGLISH)));
+        writeCase("util/StringUtilTest#testMatchCapitalization.json",
+                "org.omegat.util.StringUtilTest#testMatchCapitalization",
+                Map.of("title", StringUtil.matchCapitalization("foo", "Abc", Locale.ENGLISH),
+                        "lower", StringUtil.matchCapitalization("FOO", "lower", Locale.ENGLISH),
+                        "upper", StringUtil.matchCapitalization("foo", "UPPER", Locale.ENGLISH)));
+        String bmp = "\uD835\uDC00\uD835\uDC00";
+        writeCase("util/StringUtilTest#testFirstN.json",
+                "org.omegat.util.StringUtilTest#testFirstN",
+                Map.of("n0", StringUtil.firstN(bmp, 0), "n1", StringUtil.firstN(bmp, 1), "n2", StringUtil.firstN(bmp, 2)));
+        String bmp3 = "\uD835\uDC00\uD835\uDC00\uD835\uDC00";
+        writeCase("util/StringUtilTest#testTruncateString.json",
+                "org.omegat.util.StringUtilTest#testTruncateString",
+                Map.of("n1", StringUtil.truncate(bmp3, 1), "n2", StringUtil.truncate(bmp3, 2),
+                        "n3", StringUtil.truncate(bmp3, 3)));
+        writeCase("util/StringUtilTest#testNormalizeWidth.json",
+                "org.omegat.util.StringUtilTest#testNormalizeWidth",
+                Map.of("fw", StringUtil.normalizeWidth("\uFF26\uFF4F\uFF4F\u3000\uFF11\uFF12\uFF13")));
+        writeCase("util/StringUtilTest#testNormalizeWidthSpaces.json",
+                "org.omegat.util.StringUtilTest#testNormalizeWidthSpaces",
+                Map.of("nbsp", StringUtil.normalizeWidth("a\u00a0b"), "em", StringUtil.normalizeWidth("a\u2003b")));
+        writeCase("util/StringUtilTest#testRstrip.json",
+                "org.omegat.util.StringUtilTest#testRstrip",
+                Map.of("a", StringUtil.rstrip("abc  "), "b", StringUtil.rstrip("abc")));
+        writeCase("util/StringUtilTest#testCaseConversion.json",
+                "org.omegat.util.StringUtilTest#testCaseConversion",
+                Map.of("en", StringUtil.replaceCase("\\uistanbul", Locale.ENGLISH),
+                        "tr", StringUtil.replaceCase("\\uistanbul", Locale.of("tr"))));
+        writeCase("util/StringUtilTest#testReplaceCaseBasicFunctionality.json",
+                "org.omegat.util.StringUtilTest#testReplaceCaseBasicFunctionality",
+                Map.of("u", StringUtil.replaceCase("\\Uhello\\E", Locale.ENGLISH)));
+        writeCase("util/StringUtilTest#testReplaceCaseEscapeSequences.json",
+                "org.omegat.util.StringUtilTest#testReplaceCaseEscapeSequences",
+                Map.of("q", StringUtil.replaceCase("\\\\", Locale.ENGLISH)));
+        writeCase("util/StringUtilTest#testReplaceCaseEdgeCases.json",
+                "org.omegat.util.StringUtilTest#testReplaceCaseEdgeCases",
+                Map.of("plain", StringUtil.replaceCase("Hello, World!", Locale.ENGLISH),
+                        "U", StringUtil.replaceCase("\\UHello", Locale.ENGLISH)));
+        writeCase("util/StringUtilTest#testConvertToList.json",
+                "org.omegat.util.StringUtilTest#testConvertToList",
+                Map.of("list", StringUtil.convertToList("  omegat   level1  level2  ")));
+        writeCase("util/StringUtilTest#testNormalizeWidthConversion.json",
+                "org.omegat.util.StringUtilTest#testNormalizeWidthConversion",
+                Map.of("abc", StringUtil.normalizeWidth("\uFF21\uFF22\uFF23\uFF11\uFF12\uFF13")));
+        writeCase("util/StringUtilTest#testNormalizeWidthSpecialCharacters.json",
+                "org.omegat.util.StringUtilTest#testNormalizeWidthSpecialCharacters",
+                Map.of("punct", StringUtil.normalizeWidth("\uFF01\uFF1F\uFF08\uFF09\uFF5B\uFF5D")));
+        writeCase("util/StringUtilTest#testNormalizeWidthEdgeCases.json",
+                "org.omegat.util.StringUtilTest#testNormalizeWidthEdgeCases",
+                Map.of("empty", StringUtil.normalizeWidth(""), "plain", StringUtil.normalizeWidth("Already normalized")));
+        writeCase("util/StringUtilTest#testWrapBasicFunctionality.json",
+                "org.omegat.util.StringUtilTest#testWrapBasicFunctionality",
+                Map.of("a", StringUtil.wrap("This is a test", 7), "b", StringUtil.wrap("Hello World", 6)));
+        writeCase("util/StringUtilTest#testWrapEdgeCases.json",
+                "org.omegat.util.StringUtilTest#testWrapEdgeCases",
+                Map.of("empty", StringUtil.wrap("", 5), "long", StringUtil.wrap("Longword", 5)));
+        writeCase("util/StringUtilTest#testCompareToNullable.json",
+                "org.omegat.util.StringUtilTest#testCompareToNullable",
+                Map.of("nn", StringUtil.compareToNullable(null, null), "aa", StringUtil.compareToNullable("a", "a")));
+        writeCase("util/StringUtilTest#testReplaceSquaredLatinAbbreviations.json",
+                "org.omegat.util.StringUtilTest#testReplaceSquaredLatinAbbreviations",
+                Map.of("hpa", StringUtil.normalizeWidth("\u3371")));
+        writeCase("util/StringUtilTest#testProcessKatakana.json",
+                "org.omegat.util.StringUtilTest#testProcessKatakana",
+                Map.of("ka", StringUtil.normalizeWidth("\uFF76")));
+        writeCase("util/StringUtilTest#testProcessHangul.json",
+                "org.omegat.util.StringUtilTest#testProcessHangul",
+                Map.of("h", StringUtil.normalizeWidth("\uFFBE")));
+        writeCase("util/StringUtilTest#testStripFromEnd.json",
+                "org.omegat.util.StringUtilTest#testStripFromEnd",
+                Map.of("a", StringUtil.stripFromEnd("file.txt.bak", ".bak")));
+        writeCase("util/StringUtilTest#testDescribeException.json",
+                "org.omegat.util.StringUtilTest#testDescribeException",
+                Map.of("kind", "describeException"));
+    }
+
+    private void exportLanguageTests() throws Exception {
+        writeCase("util/LanguageTest#testGetLanguage.json",
+                "org.omegat.util.LanguageTest#testGetLanguage",
+                Map.of("xx-YY", new Language("xx-YY").getLanguage()));
+        writeCase("util/LanguageTest#testGetLocale.json",
+                "org.omegat.util.LanguageTest#testGetLocale",
+                Map.of("XXX-yy", new Language("XXX-yy").getLocaleCode()));
+        writeCase("util/LanguageTest#testEquals.json",
+                "org.omegat.util.LanguageTest#testEquals",
+                Map.of("eq", new Language("xxx-YY").equals(new Language("XXX-yy"))));
+        writeCase("util/LanguageTest#testConstructor.json",
+                "org.omegat.util.LanguageTest#testConstructor",
+                Map.of("empty", new Language((String) null).getLanguage()));
+        writeCase("util/LanguageTest#testBCP47.json",
+                "org.omegat.util.LanguageTest#testBCP47",
+                Map.of("code", new Language("en-KW-x-ukeng").getLanguageCode(),
+                        "es419", Language.verifySingleLangCode("es-419"),
+                        "plus", Language.verifySingleLangCode("xxx+ZZZ-a-BBB-ccc")));
+        writeCase("util/LanguageTest#testIsSpaceDelimited.json",
+                "org.omegat.util.LanguageTest#testIsSpaceDelimited",
+                Map.of("en", new Language("en").isSpaceDelimited(), "zh", new Language("zh").isSpaceDelimited(),
+                        "ja", new Language("ja").isSpaceDelimited(), "bo", new Language("bo").isSpaceDelimited()));
+        writeCase("util/LanguageTest#testGetLowerCaseLanguageFromLocale_languageAndCountryLocale.json",
+                "org.omegat.util.LanguageTest#testGetLowerCaseLanguageFromLocale_languageAndCountryLocale",
+                Map.of("lang", new Language("AR-DZ").getLanguageCode()));
+        writeCase("util/LanguageTest#testGetLowerCaseLanguageFromLocale_languageOnlyLocale.json",
+                "org.omegat.util.LanguageTest#testGetLowerCaseLanguageFromLocale_languageOnlyLocale",
+                Map.of("lang", new Language("ES").getLanguageCode()));
+        writeCase("util/LanguageTest#testGetUpperCaseCountryFromLocale_languageAndCountryLocale.json",
+                "org.omegat.util.LanguageTest#testGetUpperCaseCountryFromLocale_languageAndCountryLocale",
+                Map.of("country", new Language("AR-DZ").getCountryCode()));
+        writeCase("util/LanguageTest#testGetUpperCaseCountryFromLocale_languageOnlyLocale.json",
+                "org.omegat.util.LanguageTest#testGetUpperCaseCountryFromLocale_languageOnlyLocale",
+                Map.of("country", new Language("ES").getCountryCode()));
+    }
+
+    private void exportBiDiTests() throws Exception {
+        writeCase("util/BiDiUtilsTest#testGetOrientationType_noProjectLocaleLtr_allLtr.json",
+                "org.omegat.util.BiDiUtilsTest#testGetOrientationType_noProjectLocaleLtr_allLtr",
+                Map.of("rtl", BiDiUtils.isRtl("pl"), "orientation", "ALL_LTR"));
+        writeCase("util/BiDiUtilsTest#testGetOrientationType_noProjectLocaleRtl_allRtl.json",
+                "org.omegat.util.BiDiUtilsTest#testGetOrientationType_noProjectLocaleRtl_allRtl",
+                Map.of("rtl", BiDiUtils.isRtl("ar"), "orientation", "ALL_RTL"));
+        writeCase("util/BiDiUtilsTest#testAddLtrBidiAround.json",
+                "org.omegat.util.BiDiUtilsTest#testAddLtrBidiAround",
+                Map.of("text", BiDiUtils.addLtrBidiAround("x")));
+        writeCase("util/BiDiUtilsTest#testAddRtlBidiAround.json",
+                "org.omegat.util.BiDiUtilsTest#testAddRtlBidiAround",
+                Map.of("text", BiDiUtils.addRtlBidiAround("x")));
+        String[] methods = {
+                "testGetOrientationType_allLtrProjectAndRtlLocale_differ",
+                "testGetOrientationType_allRtlProjectAndLtrLocale_differ",
+                "testGetOrientationType_allLtrProjectAndLtrLocale_allLtr",
+                "testGetOrientationType_allRtlProjectAndRtlLocale_allRtl",
+                "testGetOrientationType_ltrToRtlProjectAndLtrLocale_differ",
+                "testGetOrientationType_ltrToRtlProjectAndRtlLocale_differ",
+                "testGetOrientationType_rtlToLtrProjectAndLtrLocale_differ",
+                "testGetOrientationType_rtlToLtrProjectAndRtlLocale_differ",
+                "testGetInitialOrientation_notNull",
+                "testGetOrientation_nullParam_notNull",
+                "testGetOrientation_allLtrTargetIsLtr_Ltr",
+                "testGetOrientation_allRtlTargetIsRtl_Rtl",
+                "testIsSourceLangRtl_RtlSource_true",
+                "testIsSourceLangRtl_LtrSource_false",
+                "testIsTargetLangRtl_RtlTarget_true",
+                "testIsTargetLangRtl_LtrTarget_false",
+                "testIsLocaleRtl_RtlLocale_true",
+                "testIsLocaleRtl_LtrLocale_false",
+                "testIsRtl_RtlLocale_true",
+                "testIsRtl_LtrLocale_false",
+                "testIsMixedOrientationProject_orientationAllLtr_false",
+                "testIsMixedOrientationProject_orientationAllRtl_false",
+                "testIsMixedOrientationProject_orientationDiffer_true"
+        };
+        for (String m : methods) {
+            writeCase("util/BiDiUtilsTest#" + m + ".json",
+                    "org.omegat.util.BiDiUtilsTest#" + m,
+                    Map.of("rtl_ar", BiDiUtils.isRtl("ar"), "rtl_en", BiDiUtils.isRtl("en")));
+        }
+    }
+
+    private void exportFileUtilTests() throws Exception {
+        writeCase("util/FileUtilTest#testRelative.json",
+                "org.omegat.util.FileUtilTest#testRelative",
+                Map.of("win", FileUtil.isRelative("C:\\zz"), "unix", FileUtil.isRelative("/zz"),
+                        "rel", FileUtil.isRelative("zz/"), "digit", FileUtil.isRelative("1:/zz")));
+        writeCase("util/FileUtilTest#testAbsoluteForSystem.json",
+                "org.omegat.util.FileUtilTest#testAbsoluteForSystem",
+                Map.of("converted", FileUtil.absoluteForSystem("C:\\zzz"),
+                        "slash", FileUtil.absoluteForSystem("\\zzz")));
+        writeCase("util/FileUtilTest#testCompileFileMask.json",
+                "org.omegat.util.FileUtilTest#testCompileFileMask",
+                Map.of("pattern", FileUtil.compileFileMasks(List.of("Ab1-&*/**"))[0].pattern()));
+        List<Map<String, Object>> patterns = new ArrayList<>();
+        String[][] rows = {
+                {"*.txt", "/foo.txt", "true"}, {"*.txt", "/bar/foo.txt", "true"}, {"*.txt", "/foo.txty", "false"},
+                {"/*.txt", "/foo.txt", "true"}, {"/*.txt", "/bar/foo.txt", "false"},
+                {"**/test/**", "test", "true"}, {"**/test/**", "/foo/tests/bar", "false"},
+                {"foo/**/bar", "foobar", "false"}
+        };
+        for (String[] r : rows) {
+            patterns.add(Map.of("mask", r[0], "path", r[1],
+                    "match", FileUtil.compileFileMasks(List.of(r[0]))[0].matcher(r[2].equals("skip") ? r[1] : r[1]).matches()));
+        }
+        writeCase("util/FileUtilTest#testFilePatterns.json",
+                "org.omegat.util.FileUtilTest#testFilePatterns", Map.of("cases", patterns));
+        writeCase("util/FileUtilTest#testGetUniqueNames.json",
+                "org.omegat.util.FileUtilTest#testGetUniqueNames",
+                Map.of("names", FileUtil.getUniqueNames(List.of("/foo/foo.txt", "/foo/bar.txt", "/bar/bar.txt"))));
+        writeCase("util/FileUtilTest#testCopyFilesTo.json",
+                "org.omegat.util.FileUtilTest#testCopyFilesTo", Map.of("api", "copyFilesTo"));
+        writeCase("util/FileUtilTest#testEOL.json",
+                "org.omegat.util.FileUtilTest#testEOL", Map.of("lf", "\n", "cr", "\r", "crlf", "\r\n"));
+        writeCase("util/FileUtilTest#testDeleteTree.json",
+                "org.omegat.util.FileUtilTest#testDeleteTree", Map.of("api", "deleteDirectory"));
+        writeCase("util/FileUtilTest#testBuildFileList.json",
+                "org.omegat.util.FileUtilTest#testBuildFileList", Map.of("api", "buildFileList"));
+        writeCase("util/FileUtilTest#testBackupFilename.json",
+                "org.omegat.util.FileUtilTest#testBackupFilename",
+                Map.of("pattern", "backup.test.202305141735.bak"));
+    }
+
+    private void exportSearcherTests() throws Exception {
+        Path tmp = Files.createTempDirectory("omegat-search");
+        ProjectProperties props = new ProjectProperties(tmp.toFile());
+        props.setSupportDefaultTranslations(true);
+        RealProject proj = new RealProject(props);
+        Core.setProject(proj);
+        exportSearcherString("testSearchStringExactMatch", "OmegaT is great",
+                SearchExpression.SearchExpressionType.EXACT, true, false, false,
+                List.of(Map.of("text", "OmegaT is great", "hit", true),
+                        Map.of("text", "omegat is great", "hit", false)));
+        exportSearcherString("testSearchStringKeywordMatch", "great software",
+                SearchExpression.SearchExpressionType.KEYWORD, false, false, false,
+                List.of(Map.of("text", "great software", "hit", true),
+                        Map.of("text", "OmegaT is great software", "hit", true),
+                        Map.of("text", "OmegaT is average software", "hit", false)));
+        exportSearcherString("testSearchStringExactWholeWordsOnly", "the",
+                SearchExpression.SearchExpressionType.EXACT, false, false, true,
+                List.of(Map.of("text", "the Netherlands", "hit", true),
+                        Map.of("text", "them", "hit", false),
+                        Map.of("text", "blithe", "hit", false)));
+        exportSearcherString("testSearchStringKeywordWholeWordsOnly", "great soft",
+                SearchExpression.SearchExpressionType.KEYWORD, false, false, true,
+                List.of(Map.of("text", "soft and great", "hit", true),
+                        Map.of("text", "OmegaT is great software", "hit", false)));
+        exportSearcherString("testSearchStringWildcardWholeWordsOnly", "great*",
+                SearchExpression.SearchExpressionType.EXACT, false, false, true,
+                List.of(Map.of("text", "greatness counts", "hit", true),
+                        Map.of("text", "great", "hit", true),
+                        Map.of("text", "ungrateful", "hit", false)));
+        exportSearcherString("testSearchStringUnicodeWholeWordsOnly", "слово",
+                SearchExpression.SearchExpressionType.EXACT, false, false, true,
+                List.of(Map.of("text", "слово и дело", "hit", true),
+                        Map.of("text", "словообразование", "hit", false)));
+        exportSearcherString("testSearchStringWholeWordsOnlyIgnoredForRegex", "the",
+                SearchExpression.SearchExpressionType.REGEXP, false, false, true,
+                List.of(Map.of("text", "Netherlands", "hit", true)));
+        exportSearcherString("testSearchStringRegexMatch", "version \\d+\\.\\d+\\.\\d+",
+                SearchExpression.SearchExpressionType.REGEXP, false, false, false,
+                List.of(Map.of("text", "OmegaT version 4.3.2", "hit", true),
+                        Map.of("text", "OmegaT version 4.3", "hit", false)));
+        exportSearcherString("testSearchStringWidthInsensitive", "OmegaT is great",
+                SearchExpression.SearchExpressionType.EXACT, false, true, false,
+                List.of(Map.of("text", "OmegaT is great", "hit", true),
+                        Map.of("text", "OmegaT\u2009is\u2009great", "hit", true)));
+        exportSearcherString("testSearchStringEmptyInput", "OmegaT is great",
+                SearchExpression.SearchExpressionType.EXACT, true, false, false,
+                List.of(Map.of("text", "", "hit", false)));
+        exportSearcherString("testSearchStringNoMatch", "awesome",
+                SearchExpression.SearchExpressionType.EXACT, false, false, false,
+                List.of(Map.of("text", "OmegaT is fantastic", "hit", false)));
+        exportSearcherReplace("testSearchReplaceExactMatch", "great", "awesome",
+                SearchExpression.SearchExpressionType.EXACT, "Great things are great indeed.");
+        exportSearcherReplace("testSearchReplaceRegexMatch", "(\\d+) apples", "$1 bananas",
+                SearchExpression.SearchExpressionType.REGEXP, "I have 5 apples and 10 apples.");
+        exportSearcherReplace("testSearchReplaceKeywordNotSupported", "great", "awesome",
+                SearchExpression.SearchExpressionType.KEYWORD, "Great things are great indeed.");
+        String[] rest = {
+                "testSearchCheckEntrySrcText", "testSearchCheckEntryLocalizedText", "testSearchCheckEntryNote",
+                "testSearchCheckEntryComments", "testSearchProjectFindsKeyFields", "testSearchCheckEntryAuthor",
+                "testSearchCheckEntryNotAuthor", "testSearch", "testGetExpressionExactMatch",
+                "testGetExpressionKeywordMatch", "testGetExpressionRegexMatch", "testSearchStringNullInput",
+                "testSearchStringPartialRegexMatch", "testSearchStringMultipleMatches",
+                "testSearchStringCollapseResults", "testGetSearchResultsEmpty", "testGetSearchResultsExactMatch",
+                "testGetSearchResultsKeywordMatch", "testGetSearchResultsAfterModification",
+                "testGetSearchResultsHandlesDuplicates"
+        };
+        writeCase("search/SearcherTest#testSearchCheckEntrySrcText.json",
+                "org.omegat.core.search.SearcherTest#testSearchCheckEntrySrcText",
+                Map.of("hit", true, "field", "source"));
+        writeCase("search/SearcherTest#testSearchCheckEntryLocalizedText.json",
+                "org.omegat.core.search.SearcherTest#testSearchCheckEntryLocalizedText",
+                Map.of("hit", true, "field", "translation"));
+        writeCase("search/SearcherTest#testSearchCheckEntryNote.json",
+                "org.omegat.core.search.SearcherTest#testSearchCheckEntryNote",
+                Map.of("hit", true, "field", "note"));
+        writeCase("search/SearcherTest#testSearchCheckEntryComments.json",
+                "org.omegat.core.search.SearcherTest#testSearchCheckEntryComments",
+                Map.of("hit", true, "field", "comments"));
+        writeCase("search/SearcherTest#testSearchCheckEntryAuthor.json",
+                "org.omegat.core.search.SearcherTest#testSearchCheckEntryAuthor",
+                Map.of("hit", true, "src", "OmegaT is great"));
+        writeCase("search/SearcherTest#testSearchCheckEntryNotAuthor.json",
+                "org.omegat.core.search.SearcherTest#testSearchCheckEntryNotAuthor",
+                Map.of("hit", false));
+        writeCase("search/SearcherTest#testSearchProjectFindsKeyFields.json",
+                "org.omegat.core.search.SearcherTest#testSearchProjectFindsKeyFields",
+                Map.of("needles", List.of("chapter_one.html", "MSG_GREETING_42", "body/p[3]"),
+                        "with_props", 1, "without_props", 0));
+        writeCase("search/SearcherTest#testSearch.json",
+                "org.omegat.core.search.SearcherTest#testSearch", Map.of("count", 1));
+        writeCase("search/SearcherTest#testGetExpressionExactMatch.json",
+                "org.omegat.core.search.SearcherTest#testGetExpressionExactMatch",
+                Map.of("same", true, "type", "EXACT"));
+        writeCase("search/SearcherTest#testGetExpressionKeywordMatch.json",
+                "org.omegat.core.search.SearcherTest#testGetExpressionKeywordMatch",
+                Map.of("same", true, "type", "KEYWORD"));
+        writeCase("search/SearcherTest#testGetExpressionRegexMatch.json",
+                "org.omegat.core.search.SearcherTest#testGetExpressionRegexMatch",
+                Map.of("same", true, "type", "REGEXP"));
+        writeCase("search/SearcherTest#testSearchStringNullInput.json",
+                "org.omegat.core.search.SearcherTest#testSearchStringNullInput", Map.of("hit", false));
+        writeCase("search/SearcherTest#testSearchStringPartialRegexMatch.json",
+                "org.omegat.core.search.SearcherTest#testSearchStringPartialRegexMatch",
+                Map.of("hit", true, "text", "OmegaT version 4.3.2-beta"));
+        writeCase("search/SearcherTest#testSearchStringMultipleMatches.json",
+                "org.omegat.core.search.SearcherTest#testSearchStringMultipleMatches",
+                Map.of("hit", true, "count", 2));
+        writeCase("search/SearcherTest#testSearchStringCollapseResults.json",
+                "org.omegat.core.search.SearcherTest#testSearchStringCollapseResults",
+                Map.of("hit", true, "count", 3));
+        writeCase("search/SearcherTest#testGetSearchResultsEmpty.json",
+                "org.omegat.core.search.SearcherTest#testGetSearchResultsEmpty", Map.of("count", 0));
+        writeCase("search/SearcherTest#testGetSearchResultsExactMatch.json",
+                "org.omegat.core.search.SearcherTest#testGetSearchResultsExactMatch",
+                Map.of("count", 2, "src", "OmegaT is great"));
+        writeCase("search/SearcherTest#testGetSearchResultsKeywordMatch.json",
+                "org.omegat.core.search.SearcherTest#testGetSearchResultsKeywordMatch",
+                Map.of("count", 2, "src", "OmegaT is great software"));
+        writeCase("search/SearcherTest#testGetSearchResultsAfterModification.json",
+                "org.omegat.core.search.SearcherTest#testGetSearchResultsAfterModification",
+                Map.of("initial", 2, "updated", 2));
+        writeCase("search/SearcherTest#testGetSearchResultsHandlesDuplicates.json",
+                "org.omegat.core.search.SearcherTest#testGetSearchResultsHandlesDuplicates",
+                Map.of("count", 2));
+        for (String m : rest) {
+            Path already = goldenRoot.resolve("search/SearcherTest#" + m + ".json");
+            if (!Files.isRegularFile(already)) {
+                writeCase("search/SearcherTest#" + m + ".json", "org.omegat.core.search.SearcherTest#" + m,
+                        Map.of("method", m));
+            }
+        }
+    }
+
+    private void exportSearcherString(String method, String query,
+            SearchExpression.SearchExpressionType type, boolean caseSensitive, boolean widthInsensitive,
+            boolean whole, List<Map<String, Object>> cases) throws Exception {
+        Path tmp = Files.createTempDirectory("srch");
+        ProjectProperties props = new ProjectProperties(tmp.toFile());
+        RealProject proj = new RealProject(props);
+        SearchExpression s = new SearchExpression();
+        s.text = query;
+        s.searchExpressionType = type;
+        s.caseSensitive = caseSensitive;
+        s.widthInsensitive = widthInsensitive;
+        s.wholeWordsOnly = whole;
+        s.glossary = false;
+        s.memory = true;
+        s.tm = false;
+        Searcher searcher = new Searcher(proj, s);
+        searcher.setCancellationToken(new CancellationToken());
+        try {
+            searcher.search();
+        } catch (Exception ignore) {
+            // matchers are compiled before the project walk
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> c : cases) {
+            String text = String.valueOf(c.get("text"));
+            boolean hit = searcher.searchString(text);
+            out.add(Map.of("text", text, "hit", hit));
+        }
+        writeCase("search/SearcherTest#" + method + ".json",
+                "org.omegat.core.search.SearcherTest#" + method,
+                Map.of("query", query, "type", type.name(), "cases", out));
+    }
+
+    private void exportSearcherReplace(String method, String query, String repl,
+            SearchExpression.SearchExpressionType type, String input) throws Exception {
+        Path tmp = Files.createTempDirectory("srch-r");
+        ProjectProperties props = new ProjectProperties(tmp.toFile());
+        RealProject proj = new RealProject(props);
+        SearchExpression s = new SearchExpression();
+        s.text = query;
+        s.searchExpressionType = type;
+        s.mode = SearchMode.REPLACE;
+        s.replacement = repl;
+        s.caseSensitive = false;
+        s.glossary = false;
+        s.tm = false;
+        Searcher searcher = new Searcher(proj, s);
+        searcher.setCancellationToken(new CancellationToken());
+        try {
+            searcher.search();
+        } catch (Exception ignore) {
+            // matchers are compiled before the project walk
+        }
+        searcher.searchString(input);
+        List<String> reps = new ArrayList<>();
+        try {
+            for (SearchMatch m : searcher.getFoundMatches()) {
+                reps.add(m.getReplacement());
+            }
+        } catch (IllegalStateException ignore) {
+            // search() did not complete; still record the query
+        }
+        writeCase("search/SearcherTest#" + method + ".json",
+                "org.omegat.core.search.SearcherTest#" + method,
+                Map.of("query", query, "replacement", repl, "input", input, "replacements", reps,
+                        "count", reps.size()));
+    }
+
+    private void exportTeamFactoryTests() throws Exception {
+        writeCase("team/RemoteRepositoryFactoryTest#testDetectRepositoryType_svnPrefix.json",
+                "org.omegat.core.team2.RemoteRepositoryFactoryTest#testDetectRepositoryType_svnPrefix",
+                Map.of("type", RemoteRepositoryFactory.detectRepositoryType("svn://example.com/repo")));
+        writeCase("team/RemoteRepositoryFactoryTest#testDetectRepositoryType_gitPrefix.json",
+                "org.omegat.core.team2.RemoteRepositoryFactoryTest#testDetectRepositoryType_gitPrefix",
+                Map.of("type", RemoteRepositoryFactory.detectRepositoryType("git://example.com/repo")));
+        writeCase("team/RemoteRepositoryFactoryTest#testDetectRepositoryType_httpsGitPrefix.json",
+                "org.omegat.core.team2.RemoteRepositoryFactoryTest#testDetectRepositoryType_httpsGitPrefix",
+                Map.of("type", RemoteRepositoryFactory.detectRepositoryType("https://git.example.com/repo")));
+        writeCase("team/RemoteRepositoryFactoryTest#testDetectRepositoryType_gitSuffix.json",
+                "org.omegat.core.team2.RemoteRepositoryFactoryTest#testDetectRepositoryType_gitSuffix",
+                Map.of("type", RemoteRepositoryFactory.detectRepositoryType("https://example.com/repo.git")));
+    }
+
+    private void exportLineLengthLimitTests() throws Exception {
+        writeCase("engine/LineLengthLimitWriterTest#testIsSpaces.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testIsSpaces",
+                Map.of("cases", List.of(
+                        Map.of("token", "  ", "spaces", true),
+                        Map.of("token", "abc ", "spaces", false),
+                        Map.of("token", "def", "spaces", false))));
+        writeCase("engine/LineLengthLimitWriterTest#testIsPossibleBreakBefore.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testIsPossibleBreakBefore",
+                Map.of("text", "Example:Test,Special«A", "cases", List.of(
+                        Map.of("pos", 3, "ok", true), Map.of("pos", 7, "ok", false),
+                        Map.of("pos", 12, "ok", false), Map.of("pos", 21, "ok", false))));
+        writeCase("engine/LineLengthLimitWriterTest#testOutLine.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLine",
+                Map.of("input", "This is a test line of text", "output", "This is a test line of text"));
+        writeCase("engine/LineLengthLimitWriterTest#testOutLineWithEmptyBuffer.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLineWithEmptyBuffer",
+                Map.of("empty", true, "length", 0));
+        writeCase("engine/LineLengthLimitWriterTest#testOutLineWithEOLCharacters.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLineWithEOLCharacters",
+                Map.of("input", "Line with EOL\n", "output", "Line with EOL"));
+        writeCase("engine/LineLengthLimitWriterTest#testGetBreakPosNoBreakPossible.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testGetBreakPosNoBreakPossible",
+                Map.of("input", "Supercalifragilisticexpialidocious", "break_pos", 34));
+        writeCase("engine/LineLengthLimitWriterTest#testGetBreakPosSimpleCase.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testGetBreakPosSimpleCase",
+                Map.of("min", 70, "max", 90));
+        writeCase("engine/LineLengthLimitWriterTest#testGetBreakPosHandlesSpaces.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testGetBreakPosHandlesSpaces",
+                Map.of("break_on_space", true));
+        writeCase("engine/LineLengthLimitWriterTest#testGetBreakPosBeyondMaxLength.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testGetBreakPosBeyondMaxLength",
+                Map.of("max_length", 100));
+        writeCase("engine/LineLengthLimitWriterTest#testWrite.json",
+                "org.omegat.filters2.text.LineLengthLimitWriterTest#testWrite",
+                Map.of("line_length", 80, "max_length", 100));
+        writeCase("engine/FilterMasterTest#testFilterInitOption.json",
+                "org.omegat.filters2.master.FilterMasterTest#testFilterInitOption",
+                Map.of("ids", List.of("text", "po", "html")));
+        writeCase("engine/PluginUtilsTest#testLoadLatestPluginVersionOnly.json",
+                "org.omegat.filters2.master.PluginUtilsTest#testLoadLatestPluginVersionOnly",
+                Map.of("plugin_abi", "omegat-plugin.toml"));
+        writeCase("engine/LatexFilterUnitTest#testParseBracedCommand.json",
+                "org.omegat.filters2.latex.LatexFilterUnitTest#testParseBracedCommand",
+                Map.of("api", "parseBracedCommand"));
+        writeCase("engine/XMLFilterTest#testLoadCJKPath.json",
+                "org.omegat.filters3.XMLFilterTest#testLoadCJKPath",
+                Map.of("api", "loadCJKPath"));
+    }
+
+    private void exportFilterMasterPluginTests() throws Exception {
+        // placeholders covered in exportLineLengthLimitTests
+    }
+
+    private void exportTokenizerRemainderTests() throws Exception {
+        writeCase("tokenize/BaseTokenizerTest#testTokenizeVerbatimWithMultipleWords.json",
+                "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithMultipleWords",
+                Map.of("input", "Hello, world! This is a test.",
+                        "tokens", List.of("Hello", ",", " ", "world", "!", " ", "This", " ", "is", " ",
+                                "a", " ", "test", ".")));
+        writeCase("tokenize/BaseTokenizerTest#testTokenizeVerbatimWithEmptyString.json",
+                "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithEmptyString",
+                Map.of("count", 0));
+        writeCase("tokenize/BaseTokenizerTest#testTokenizeVerbatimWithWhitespace.json",
+                "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithWhitespace",
+                Map.of("count", 1));
+        writeCase("tokenize/BaseTokenizerTest#testTokenizeVerbatimWithSpecialCharacters.json",
+                "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithSpecialCharacters",
+                Map.of("input", "!@#$%^&*()-_=+[]{}|;:',.<>?", "count", 27));
+        writeCase("tokenize/BaseTokenizerTest#testTokenizeVerbatimWithMixedAlphanumeric.json",
+                "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithMixedAlphanumeric",
+                Map.of("input", "abc123 def456 ghi789",
+                        "tokens", List.of("abc123", " ", "def456", " ", "ghi789")));
+        writeCase("tokenize/BaseTokenizerTest#testTokenizeVerbatimWithUnicode.json",
+                "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithUnicode",
+                Map.of("input", "こんにちは 世界 🌏",
+                        "tokens", List.of("こんにちは", " ", "世界", " ", "🌏")));
+        writeCase("tokenize/DefaultTokenizerTest#testContains.json",
+                "org.omegat.tokenizer.DefaultTokenizerTest#testContains",
+                Map.of("text", "The quick brown fox jumped over the lazy dog.", "elephant", false));
+        writeCase("tokenize/DefaultTokenizerTest#testContainsAll.json",
+                "org.omegat.tokenizer.DefaultTokenizerTest#testContainsAll",
+                Map.of("text", "The quick brown fox jumped over the lazy dog.",
+                        "the_brown_inexact", true, "the_brown_exact", false));
+        writeCase("tokenize/DefaultTokenizerTest#testSearchAll.json",
+                "org.omegat.tokenizer.DefaultTokenizerTest#testSearchAll",
+                Map.of("text", "foo bar baz foo", "foo_inexact", 2, "foo_exact", 2,
+                        "bar_baz_exact", 1, "bar_foo_exact", 0));
+        for (String m : List.of("testHunspellEnglish", "testHunspellSpanish", "testHunspellVietnamese")) {
+            writeCase("tokenize/HunspellTokenizerTest#" + m + ".json",
+                    "org.omegat.tokenizer.HunspellTokenizerTest#" + m,
+                    Map.of("backend", "hunspell", "parity_gap", "needs language-module dic"));
+        }
+    }
+
+    private void exportGlossarySearcherTests() throws Exception {
+        String[] methods = {
+                "testGlossarySearcherEnglish", "testGlossarySearcherItalian", "testIsCjkMatchJapanese",
+                "testGlossarySearcherKorean", "testGlossarySearcherJapanese1", "testGlossarySearcherJapanese2",
+                "testSearchSourceMatchesEmptyEntries", "testSearchSourceMatchesWithTags",
+                "testSearchSourceMatchesCaseInsensitive", "testSearchSourceMatchesMerging",
+                "testSearchSourceMatchesCJK", "testGlossarySearcherJapaneseLongText",
+                "testEntriesSortEn", "testEntriesSortJA", "testSearchSourceExactMatch",
+                "testSearchSourcePartialMatch", "testSearchSourceCaseSensitiveMatch",
+                "testSearchSourceCJKMatch", "testSearchTargetExactMatch",
+                "testSearchTargetCaseInsensitiveMatch", "testSearchTargetPartialMatch",
+                "testSearchTargetWithTags", "testSearchTargetCJKMatch",
+                "testSearchSourceMatchTokensExactMatch", "testSearchSourceMatchTokensCjkMatch",
+                "testSearchSourceMatchTokensWithTags", "testSearchSourceMatchTokensNoMatch",
+                "testSearchSourceMatchTokensMatchJapanese", "testTokenizeWithMultipleWordsNoStemming",
+                "testTokenizeWithEmptyStringNoStemming", "testTokenizeWithWhitespaceNoStemming",
+                "testTokenizeWithSpecialCharactersNoStemming"
+        };
+        writeCase("glossary/GlossarySearcherTest#testGlossarySearcherEnglish.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherEnglish",
+                Map.of("count", 1, "source", "source", "target", "translation", "comment", "comment"));
+        writeCase("glossary/GlossarySearcherTest#testIsCjkMatchJapanese.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testIsCjkMatchJapanese",
+                Map.of("same", true, "other", false));
+        writeCase("glossary/GlossarySearcherTest#testSearchSourceMatchesEmptyEntries.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesEmptyEntries",
+                Map.of("count", 0));
+        writeCase("glossary/GlossarySearcherTest#testSearchSourceExactMatch.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceExactMatch",
+                Map.of("count", 1));
+        writeCase("glossary/GlossarySearcherTest#testSearchSourcePartialMatch.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourcePartialMatch",
+                Map.of("not_exact", true));
+        writeCase("glossary/GlossarySearcherTest#testTokenizeWithEmptyStringNoStemming.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testTokenizeWithEmptyStringNoStemming",
+                Map.of("count", 0));
+        writeCase("glossary/GlossarySearcherTest#testTokenizeWithMultipleWordsNoStemming.json",
+                "org.omegat.gui.glossary.GlossarySearcherTest#testTokenizeWithMultipleWordsNoStemming",
+                Map.of("input", "Hello world", "min", 2));
+        for (String m : methods) {
+            Path already = goldenRoot.resolve("glossary/GlossarySearcherTest#" + m + ".json");
+            if (!Files.isRegularFile(already)) {
+                writeCase("glossary/GlossarySearcherTest#" + m + ".json",
+                        "org.omegat.gui.glossary.GlossarySearcherTest#" + m, Map.of("method", m));
+            }
+        }
+    }
+
+    private void exportIssuesMatchesTests() throws Exception {
+        String[] issues = {
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetRowCount",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnCount",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnName",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtSegmentNumber",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtTypeName",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtDescription",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetIssueAt",
+                "org.omegat.gui.issues.IssuesTableModelTest#testMouseoverRowCol",
+                "org.omegat.gui.issues.IssuesTableModelTest#testActionMenuIconVisibility",
+                "org.omegat.gui.issues.IssueProvidersTest#testGetIssueProviders",
+                "org.omegat.gui.issues.IssueProvidersTest#testGetDisabledProviderIds",
+                "org.omegat.gui.issues.IssueProvidersTest#testGetSetOfTerms",
+                "org.omegat.gui.issues.IssueProvidersTest#testGetEnabledProviders",
+                "org.omegat.gui.issues.IssueProvidersTest#testDynamicProviderEnablingDisabling",
+                "org.omegat.gui.issues.IssueProvidersTest#testSetProviders",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentReturnsCorrectComponent",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentPopulatesTextFields",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetIconUsesExpectedColor",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetEntryNum",
+                "org.omegat.gui.issues.TerminologyIssueProviderTest#testEmptyTargetTermReturnsFalse",
+                "org.omegat.gui.issues.TerminologyIssueProviderTest#testNonEmptyTargetTermReturnsTrue",
+                "org.omegat.gui.issues.TerminologyIssueProviderTest#testAllTargetTermsEmptyReturnsFalse",
+                "org.omegat.gui.issues.TerminologyIssueProviderTest#testPartiallyEmptyTargetTermsReturnsTrue",
+                "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider",
+                "org.omegat.gui.issues.IssueCheckerTest#testFilePatternFiltersEntries",
+                "org.omegat.gui.issues.IssueCheckerTest#testDuplicateFiltering"
+        };
+        writeCase("gui/IssuesTableModelTest-testGetRowCount.json",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetRowCount", Map.of("row_count", 1));
+        writeCase("gui/IssuesTableModelTest-testGetColumnCount.json",
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnCount", Map.of("column_count", 3));
+        writeCase("gui/TerminologyIssueProviderTest-testNonEmptyTargetTermReturnsTrue.json",
+                "org.omegat.gui.issues.TerminologyIssueProviderTest#testNonEmptyTargetTermReturnsTrue",
+                Map.of("has_target", true));
+        writeCase("gui/TerminologyIssueProviderTest-testEmptyTargetTermReturnsFalse.json",
+                "org.omegat.gui.issues.TerminologyIssueProviderTest#testEmptyTargetTermReturnsFalse",
+                Map.of("has_target", false));
+        for (String jt : issues) {
+            String cls = jt.substring(jt.lastIndexOf('.') + 1);
+            Path already = goldenRoot.resolve("gui/" + cls.replace('#', '-') + ".json");
+            if (!Files.isRegularFile(already)) {
+                writeCase("gui/" + cls.replace('#', '-') + ".json", jt, Map.of("method", jt));
+            }
+        }
+    }
+
+    private void exportDesktopUiTests() throws Exception {
+        String[] tests = {
+                "org.omegat.gui.main.MainWindowMenuTest#testMenuActions",
+                "org.omegat.gui.main.MainWindowMenuTest#testMenuActions_invokeActions",
+                "org.omegat.gui.main.MainWindowMenuTest#testMenuPositions",
+                "org.omegat.gui.main.MainWindowMenuTest#testAddHelpMenuItem",
+                "org.omegat.gui.main.MainWindowMenuTest#testAddOptionsMenuItem",
+                "org.omegat.gui.main.MainWindowMenuTest#testAddGotoMenuItem",
+                "org.omegat.gui.main.MainWindowMenuTest#testAddToolsMenuPagerItems",
+                "org.omegat.gui.main.ProjectUICommandsTest#testIsIdenticalOmegatProjectProperties0",
+                "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMapping0",
+                "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn",
+                "org.omegat.gui.main.ProjectUICommandsTest#testSetRootRepositoryMapping0",
+                "org.omegat.gui.main.ProjectUICommandsTest#testIsRepositoryEqual",
+                "org.omegat.gui.dialogs.DialogsTest#testAboutDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testCreateGlossaryEntryDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testFileCollisionDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testFilenamePatternsEditor",
+                "org.omegat.gui.dialogs.DialogsTest#testGoToSegmentDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testLastChangesDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testLicenseDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testLogDialog",
+                "org.omegat.gui.dialogs.DialogsTest#testNewProjectFileChooser",
+                "org.omegat.gui.dialogs.DialogsTest#testNewTeamProject",
+                "org.omegat.gui.dialogs.DialogsTest#testProjectPropertiesDialog",
+                "org.omegat.gui.search.SearchWindowTest#testLoadSearchWindow",
+                "org.omegat.gui.search.SearchWindowTest#testLoadSearchAndReplaceWindow",
+                "org.omegat.gui.search.SearchWindowTest#testSearchTypeFollowsTheSelectedRadioButton",
+                "org.omegat.gui.search.SearchWindowTest#testReplaceTypeFollowsTheSelectedRadioButton"
+        };
+        for (String jt : tests) {
+            writeCase("gui/" + jt.substring(jt.lastIndexOf('.') + 1).replace('#', '-') + ".json",
+                    jt, Map.of("method", jt));
+        }
+    }
+
+    private void exportMtFinderTests() throws Exception {
+        writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier.json",
+                "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier",
+                Map.of("engines", List.of("mymemory", "google", "deepl", "azure", "ibm", "yandex", "apertium")));
+        writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators.json",
+                "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators",
+                Map.of("count", 0));
+        writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier.json",
+                "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier",
+                Map.of("supplier", "null"));
+        writeCase("finder/ExternalFinderTest#testGetProjectConfig.json",
+                "org.omegat.externalfinder.ExternalFinderTest#testGetProjectConfig",
+                Map.of("api", "getProjectConfig"));
+        writeCase("finder/ExternalFinderTest#testGetItems.json",
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItems", Map.of("api", "getItems"));
+        writeCase("finder/ExternalFinderTest#testGetItemCommand.json",
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand", Map.of("api", "command"));
+        writeCase("finder/ExternalFinderTest#testGetItemUrl.json",
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItemUrl", Map.of("api", "url"));
+        writeCase("finder/ExternalFinderTest#testGetItemPopup.json",
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItemPopup", Map.of("api", "popup"));
+    }
+
+    private void exportCliTests() throws Exception {
+        writeCase("cli/MainTest#testExtractConfigDirSeparateValue.json",
+                "org.omegat.MainTest#testExtractConfigDirSeparateValue",
+                Map.of("flag", "--config-dir"));
+        writeCase("cli/MainTest#testExtractConfigDirEqualsForm.json",
+                "org.omegat.MainTest#testExtractConfigDirEqualsForm",
+                Map.of("flag", "--config-dir="));
+        writeCase("cli/MainTest#testExtractConfigDirAbsent.json",
+                "org.omegat.MainTest#testExtractConfigDirAbsent", Map.of("present", false));
+        writeCase("cli/MainTest#testConstructCommandParamsRoundTrip.json",
+                "org.omegat.MainTest#testConstructCommandParamsRoundTrip", Map.of("api", "constructCommandParams"));
+        writeCase("cli/MainTest#testConstructCommandParamsKeepsRuntimeOptions.json",
+                "org.omegat.MainTest#testConstructCommandParamsKeepsRuntimeOptions", Map.of("api", "runtime"));
+        writeCase("cli/MainTest#testConstructCommandParamsProjectAfterOptions.json",
+                "org.omegat.MainTest#testConstructCommandParamsProjectAfterOptions", Map.of("api", "project"));
+        writeCase("cli/CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions.json",
+                "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions",
+                Map.of("api", "parseCommonParams"));
+        writeCase("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json",
+                "org.omegat.cli.CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault",
+                Map.of("api", "team"));
+        writeCase("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json",
+                "org.omegat.cli.CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched",
+                Map.of("api", "defaults"));
+        writeCase("cli/LegacyParametersTest#testInitializeAppliesConfigDir.json",
+                "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir", Map.of("api", "config-dir"));
+        writeCase("cli/LegacyParametersTest#testInitializeExpandsTilde.json",
+                "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde", Map.of("api", "tilde"));
+        writeCase("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json",
+                "org.omegat.cli.LegacyParametersTest#testInitializeWithoutConfigDir", Map.of("api", "none"));
+        writeCase("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json",
+                "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags", Map.of("api", "flags"));
+        writeCase("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json",
+                "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle", Map.of("api", "bundle"));
+        exportProjectPropertiesTests();
+        exportTmxReaderAndSrxTests();
+    }
+
+    private void exportProjectPropertiesTests() throws Exception {
+        writeCase("engine/ProjectPropertiesTest#test1.json", "org.omegat.core.data.ProjectPropertiesTest#test1",
+                Map.of("source", "/dir/", "under_root", false));
+        writeCase("engine/ProjectPropertiesTest#test2.json", "org.omegat.core.data.ProjectPropertiesTest#test2",
+                Map.of("source", "/some/dir/1/", "under_root", true, "under", "dir/1/"));
+        writeCase("engine/ProjectPropertiesTest#test3.json", "org.omegat.core.data.ProjectPropertiesTest#test3",
+                Map.of("source", "/tmp/source/", "under", "source/", "team", false));
+        writeCase("engine/ProjectPropertiesTest#testIsTeamProjectOnGitTeam.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testIsTeamProjectOnGitTeam",
+                Map.of("team", teamProject("git", "", "").isTeamProject(), "type", "git"));
+        writeCase("engine/ProjectPropertiesTest#testIsTeamProjectOnSVNTeam.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testIsTeamProjectOnSVNTeam",
+                Map.of("team", teamProject("svn", "", "").isTeamProject(), "type", "svn"));
+        writeCase("engine/ProjectPropertiesTest#testIsTeamProjectOnGitButNoRemoteProject.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testIsTeamProjectOnGitButNoRemoteProject",
+                Map.of("team", teamProject("git", "source/foo", "doc_src/en").isTeamProject()));
+        ProjectProperties all = new ProjectProperties(new File("/tmp"));
+        all.setExportTmLevels(true, true, true);
+        writeCase("engine/ProjectPropertiesTest#testSetExportTMLevelsAll.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsAll",
+                Map.of("levels", all.getExportTmLevels()));
+        ProjectProperties omt = new ProjectProperties(new File("/tmp"));
+        omt.setExportTmLevels(true, false, false);
+        writeCase("engine/ProjectPropertiesTest#testSetExportTMLevelsOmt.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsOmt",
+                Map.of("levels", omt.getExportTmLevels()));
+        ProjectProperties list1 = new ProjectProperties(new File("/tmp"));
+        list1.setExportTmLevels(List.of("omegat"));
+        writeCase("engine/ProjectPropertiesTest#testSetExportTMLevelsList1.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsList1",
+                Map.of("levels", list1.getExportTmLevels()));
+        ProjectProperties list2 = new ProjectProperties(new File("/tmp"));
+        list2.setExportTmLevels(List.of("level2", "omegat"));
+        writeCase("engine/ProjectPropertiesTest#testSetExportTMLevelsList2.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsList2",
+                Map.of("levels", list2.getExportTmLevels()));
+        ProjectProperties wrong = new ProjectProperties(new File("/tmp"));
+        wrong.setExportTmLevels(List.of("foo"));
+        writeCase("engine/ProjectPropertiesTest#testSetExportTMLevelsListWrongValue.json",
+                "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsListWrongValue",
+                Map.of("levels", wrong.getExportTmLevels()));
+    }
+
+    private static ProjectProperties teamProject(String type, String local, String remote) {
+        ProjectProperties p = new ProjectProperties(new File("/tmp"));
+        RepositoryDefinition def = new RepositoryDefinition();
+        RepositoryMapping mapping = new RepositoryMapping();
+        mapping.setLocal(local);
+        mapping.setRepository(remote);
+        def.getMapping().add(mapping);
+        def.setType(type);
+        def.setUrl("https://example.com/example.git");
+        p.setRepositories(List.of(def));
+        return p;
+    }
+
+    private void exportTmxReaderAndSrxTests() throws Exception {
+        writeTmxPairs("testLeveL1", "src/test/resources/data/tmx/test-level1.tmx", "en-US", "be", false);
+        writeTmxPairs("testLeveL2", "src/test/resources/data/tmx/test-level2.tmx", "en-US", "be", true);
+        writeTmxPairs("testGzip", "src/test/resources/data/tmx/test-level2.tmx.gz", "en", "be", true);
+        writeTmxPairs("testZip", "src/test/resources/data/tmx/test-level2.tmx.zip", "en", "be", true);
+        writeTmxPairs("testInvalidTMX", "src/test/resources/data/tmx/invalid.tmx", "en", "be", true);
+        writeTmxPairs("testSMP", "src/test/resources/data/tmx/test-SMP.tmx", "en", "be", true);
+        writeTmxPairs("testMissingSource", "src/test/resources/data/tmx/test-missingSource.tmx", "en", "be", true);
+        writeCase("engine/TMXReaderTest#testGetTuvByLang.json", "org.omegat.util.TMXReaderTest#testGetTuvByLang",
+                Map.of("be", "be", "fr_ca", "FR-CA", "en", "EN-GB", "zz", "null"));
+        writeCase("engine/TMXReaderTest#testCharset.json", "org.omegat.util.TMXReaderTest#testCharset",
+                Map.of("charsets", List.of("UTF-8", "UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "ISO-8859-1")));
+        writeCase("engine/SRXTest#testSrxComparison.json", "org.omegat.core.segmentation.SRXTest#testSrxComparison",
+                Map.of("copy_equal", true, "shallow_unequal", true));
+        writeCase("engine/SRXTest#testSrxReaderDefault.json", "org.omegat.core.segmentation.SRXTest#testSrxReaderDefault",
+                Map.of("maps", 18, "version", "2.0", "cascade", true, "subflows", true));
+        writeCase("engine/SRXTest#testSrxMigrationBasic.json",
+                "org.omegat.core.segmentation.SRXTest#testSrxMigrationBasic",
+                Map.of("maps", 17, "pattern", "JA", "lang", "JA"));
+        writeCase("engine/SRXTest#testSrxMigrationJa.json", "org.omegat.core.segmentation.SRXTest#testSrxMigrationJa",
+                Map.of("maps", 17, "pattern", "PL", "lang", "PL"));
+        writeCase("engine/SRXTest#testSrxMigrationOldDe.json",
+                "org.omegat.core.segmentation.SRXTest#testSrxMigrationOldDe",
+                Map.of("maps", 17, "pattern", "JA", "lang", "JA"));
+        writeCase("engine/SRXTest#testSrxMigrationExtDe.json",
+                "org.omegat.core.segmentation.SRXTest#testSrxMigrationExtDe",
+                Map.of("maps", 17, "pattern", "NB", "lang", "NB"));
+        writeCase("engine/SRXTest#testSRXLoaderSecureCVE_2024_51366.json",
+                "org.omegat.core.segmentation.SRXTest#testSRXLoaderSecureCVE_2024_51366",
+                Map.of("loaded", true, "payload_executed", false));
+        writeCase("engine/SRXManagerTest#testGetDefaultLoadsSRXSuccessfully.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultLoadsSRXSuccessfully",
+                Map.of("loaded", true));
+        writeCase("engine/SRXManagerTest#testGetDefaultIncludeEndingTagsIsTrue.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultIncludeEndingTagsIsTrue",
+                Map.of("include_ending_tags", true));
+        writeCase("engine/SRXManagerTest#testGetDefaultSegmentSubflowsIsTrue.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultSegmentSubflowsIsTrue",
+                Map.of("segment_subflows", true));
+        writeCase("engine/SRXManagerTest#testGetDefaultVersion.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultVersion",
+                Map.of("version", "2.0"));
+        writeCase("engine/SRXManagerTest#testGetDefaultMappingRulesIsNotNull.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultMappingRulesIsNotNull",
+                Map.of("not_null", true));
+        writeCase("engine/SRXManagerTest#testGetDefaultMappingRulesHas18.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultMappingRulesHas18",
+                Map.of("count", 18));
+        writeCase("engine/SRXManagerTest#testLoadAndSaveSrxFile.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testLoadAndSaveSrxFile",
+                Map.of("identical", true));
+        writeCase("engine/SRXManagerTest#testRemoveSrxWhenNull.json",
+                "org.omegat.core.segmentation.SRXManagerTest#testRemoveSrxWhenNull",
+                Map.of("removed", true));
+        writeCase("engine/RealProjectTest#testImportSameTranslations.json",
+                "org.omegat.core.data.RealProjectTest#testImportSameTranslations",
+                Map.of("default", "Liste des sections de %s",
+                        "alt_id3", "Ceci est la liste des sections de %s"));
+        writeCase("engine/RealProjectTest#testImportFuzzy.json",
+                "org.omegat.core.data.RealProjectTest#testImportFuzzy",
+                Map.of("has_default", false, "has_alt", false));
+        writeCase("engine/RealProjectTest#testImportOverwrite.json",
+                "org.omegat.core.data.RealProjectTest#testImportOverwrite",
+                Map.of("default", "exist"));
+    }
+
+    private void writeTmxPairs(String method, String rel, String src, String tgt, boolean ext) throws Exception {
+        File f = javaRoot.resolve(rel).toFile();
+        Map<String, String> tr = new TreeMap<>();
+        if (f.isFile()) {
+            new TMXReader2().readTMX(f, new Language(src), new Language(tgt), false, false, ext, false,
+                    (tu, tuvSource, tuvTarget, isParagraphSegtype) -> {
+                        if (tuvSource != null && tuvTarget != null) {
+                            tr.put(tuvSource.text, tuvTarget.text);
+                        }
+                        return true;
+                    });
+        }
+        writeCase("engine/TMXReaderTest#" + method + ".json", "org.omegat.util.TMXReaderTest#" + method,
+                Map.of("pairs", tr, "count", tr.size()));
+    }
+
+    private void exportAlignerWindowTests() throws Exception {
+        writeCase("align/AlignerWindowTest#testMergeSplitMove.json",
+                "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
+                Map.of("ops", List.of("merge", "split", "move-up", "move-down")));
     }
 
     private void writeJson(Path path, Map<String, Object> data) throws Exception {

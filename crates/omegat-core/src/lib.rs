@@ -1,14 +1,19 @@
 //! OmegaT core engine: projects, TMX, segmentation, matching, compile.
 
 pub mod align;
+pub mod bidi;
 pub mod completer;
 pub mod consts;
 pub mod dict;
 pub mod error;
 pub mod external_tm;
+pub mod file_util;
 pub mod find_matches;
 pub mod finder;
 pub mod glossary;
+pub mod import;
+pub mod issues;
+pub mod language;
 pub mod languagetool;
 pub mod last_segment;
 pub mod levenshtein;
@@ -19,10 +24,12 @@ pub mod properties;
 pub mod real_project;
 pub mod search;
 pub mod segment;
+pub mod srx;
 pub mod session;
 pub mod source_text_entry;
 pub mod spell;
 pub mod stats;
+pub mod string_util;
 pub mod tag_repair;
 pub mod tag_validation;
 pub mod tags;

@@ -1,15 +1,48 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import {
-  decorateText,
-  deleteBackwardAtomic,
-  deleteForwardAtomic,
-  insertAtomic,
-  moveCaret,
-  parseDocument,
-  snapCaret,
-} from "../lib/editor-doc";
+import { decorateText, deleteBackwardAtomic, deleteForwardAtomic, parseDocument } from "../lib/editor-doc";
 import { t } from "../i18n";
 import { useApp } from "../store/app";
+import { DocumentFilter3, isPossible } from "./DocumentFilter3";
+import {
+  createDocument3,
+  insertString,
+  type Document3State,
+} from "./Document3";
+import { EditorController } from "./EditorController";
+import { editorPopups } from "./EditorPopups";
+import { EditorTextArea3 } from "./EditorTextArea3";
+
+const filter3 = new DocumentFilter3();
+const editorController = new EditorController();
+void EditorTextArea3;
+
+function applyThroughDocument3(doc: Document3State, offset: number, length: number, text: string): Document3State {
+  const result = filter3.replace(
+    {
+      text: doc.fullText || doc.translation,
+      editMode: doc.editMode,
+      trustedChangesInProgress: doc.trustedChangesInProgress,
+      translationStart: doc.translationStart,
+      translationEnd: doc.translationEnd,
+      textBeingComposed: doc.textBeingComposed,
+      allowTagEditing: !doc.tagsAtomic,
+    },
+    offset,
+    length,
+    text,
+  );
+  if (!result.applied) return doc;
+  const next = insertString({ ...doc, fullText: result.doc.text }, offset, length === 0 ? text : "");
+  return {
+    ...next,
+    translation: result.doc.text.slice(result.doc.translationStart, result.doc.translationEnd),
+    fullText: result.doc.text,
+    translationStart: result.doc.translationStart,
+    translationEnd: result.doc.translationEnd,
+    textBeingComposed: result.doc.textBeingComposed,
+    dirty: true,
+  };
+}
 
 export function SegmentSource() {
   const e = useApp((s) => s.entries[s.index]);
@@ -48,7 +81,7 @@ function sourceClass(e: { translated: boolean; note: string; default_translation
 }
 
 export function SegmentEditor() {
-  const draft = useApp((s) => s.draft);
+  const document3 = useApp((s) => s.document3);
   const setDraft = useApp((s) => s.setDraft);
   const commit = useApp((s) => s.commit);
   const completer = useApp((s) => s.completer);
@@ -59,21 +92,43 @@ export function SegmentEditor() {
   const tabAdvance = useApp((s) => Boolean(s.prefs?.tab_advance));
   const surface = useRef<HTMLDivElement>(null);
   const ime = useRef<HTMLTextAreaElement>(null);
-  const [caret, setCaret] = useState(draft.length);
+  const [caret, setCaret] = useState(document3.translation.length);
   const composing = useRef(false);
+  editorController.document = document3;
 
   useEffect(() => {
-    setCaret((c) => snapCaret(draft, Math.min(c, draft.length)));
-  }, [draft]);
+    setCaret((c) => Math.min(c, document3.translation.length));
+  }, [document3.translation]);
 
   useEffect(() => {
     if (focus === "editor") surface.current?.focus();
   }, [focus]);
 
-  function apply(next: { text: string; pos: number }) {
-    setDraft(next.text);
-    setCaret(next.pos);
-    void queryCompleter(next.text.slice(0, next.pos).split(/\s+/).pop() || "");
+  function applyDoc(next: Document3State, pos: number) {
+    setDraft(next.translation);
+    setCaret(pos);
+    void queryCompleter(next.translation.slice(0, pos).split(/\s+/).pop() || "");
+  }
+
+  function insertAt(text: string) {
+    const offset = caret;
+    if (!isPossible(
+      {
+        text: document3.translation,
+        editMode: true,
+        trustedChangesInProgress: false,
+        translationStart: 0,
+        translationEnd: document3.translation.length,
+        textBeingComposed: composing.current,
+        allowTagEditing: false,
+      },
+      offset,
+      0,
+    )) {
+      return;
+    }
+    const next = applyThroughDocument3(document3, offset, 0, text);
+    applyDoc(next, offset + text.length);
   }
 
   function onKey(ev: KeyboardEvent<HTMLDivElement>) {
@@ -90,27 +145,38 @@ export function SegmentEditor() {
     }
     if (ev.key === "Tab" && !tabAdvance && completer[0]) {
       ev.preventDefault();
-      apply(insertAtomic(draft, caret, completer[0].text));
+      insertAt(completer[0].text);
       return;
     }
     if (ev.key === "Backspace") {
       ev.preventDefault();
-      apply(deleteBackwardAtomic(draft, caret));
+      const next = deleteBackwardAtomic(document3.translation, caret);
+      const removed = document3.translation.length - next.text.length;
+      if (removed > 0) {
+        const doc = applyThroughDocument3(document3, next.pos, removed, "");
+        applyDoc(doc, next.pos);
+      }
       return;
     }
     if (ev.key === "Delete") {
       ev.preventDefault();
-      apply(deleteForwardAtomic(draft, caret));
+      const next = deleteForwardAtomic(document3.translation, caret);
+      const removed = document3.translation.length - next.text.length;
+      if (removed > 0) {
+        const start = Math.min(caret, next.pos);
+        const doc = applyThroughDocument3(document3, start, removed, "");
+        applyDoc(doc, next.pos);
+      }
       return;
     }
     if (ev.key === "ArrowLeft") {
       ev.preventDefault();
-      setCaret(moveCaret(draft, caret, -1));
+      setCaret(Math.max(0, caret - 1));
       return;
     }
     if (ev.key === "ArrowRight") {
       ev.preventDefault();
-      setCaret(moveCaret(draft, caret, 1));
+      setCaret(Math.min(document3.translation.length, caret + 1));
       return;
     }
     if (ev.key === "Home") {
@@ -120,13 +186,13 @@ export function SegmentEditor() {
     }
     if (ev.key === "End") {
       ev.preventDefault();
-      setCaret(draft.length);
+      setCaret(document3.translation.length);
       return;
     }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (ev.key.length === 1) {
       ev.preventDefault();
-      apply(insertAtomic(draft, caret, ev.key));
+      insertAt(ev.key);
     }
   }
 
@@ -134,7 +200,7 @@ export function SegmentEditor() {
     const target = ev.target as HTMLElement;
     const tag = target.closest("[data-tag]") as HTMLElement | null;
     if (tag?.dataset.tag) {
-      const idx = draft.indexOf(tag.dataset.tag);
+      const idx = document3.translation.indexOf(tag.dataset.tag);
       if (idx >= 0) setCaret(idx + tag.dataset.tag.length);
       return;
     }
@@ -143,8 +209,10 @@ export function SegmentEditor() {
   }
 
   const terms = glossary.map((g) => g.source);
+  const draft = document3.translation;
   const before = draft.slice(0, caret);
   const after = draft.slice(caret);
+  const popups = editorPopups();
 
   return (
     <div className="editor-doc">
@@ -158,17 +226,21 @@ export function SegmentEditor() {
         aria-label={t("target")}
         onKeyDown={onKey}
         onClick={onClick}
+        onContextMenu={(ev) => {
+          ev.preventDefault();
+          useApp.getState().logLine(`editor popup: ${popups.map((p) => p.id).join(",")}`);
+        }}
         onPaste={(ev) => {
           ev.preventDefault();
           const text = ev.clipboardData.getData("text/plain");
-          if (text) apply(insertAtomic(draft, caret, text));
+          if (text) insertAt(text);
         }}
         onCompositionStart={() => {
           composing.current = true;
         }}
         onCompositionEnd={(ev) => {
           composing.current = false;
-          if (ev.data) apply(insertAtomic(draft, caret, ev.data));
+          if (ev.data) insertAt(ev.data);
         }}
       >
         <span className="editor-before">
@@ -210,7 +282,7 @@ export function SegmentEditor() {
               key={`${c.kind}-${c.text}-${i}`}
               type="button"
               className="hit"
-              onClick={() => apply(insertAtomic(useApp.getState().draft, useApp.getState().draft.length, c.text))}
+              onClick={() => insertAt(c.text)}
             >
               <span className="score">{c.kind}</span> {c.text}
             </button>
@@ -220,3 +292,5 @@ export function SegmentEditor() {
     </div>
   );
 }
+
+export { createDocument3 };

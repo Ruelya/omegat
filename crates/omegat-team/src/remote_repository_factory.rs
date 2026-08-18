@@ -8,6 +8,21 @@ use crate::i_remote_repository2::IRemoteRepository2;
 use crate::svn_remote_repository2::SVNRemoteRepository2;
 use omegat_core::properties::{ProjectProperties, RepositoryDef};
 
+/// Java `RemoteRepositoryFactory.detectRepositoryType`.
+pub fn detect_repository_type(url: &str) -> Option<&'static str> {
+    if url.starts_with("svn") {
+        Some("svn")
+    } else if url.starts_with("git") {
+        Some("git")
+    } else if url.starts_with("https://git") {
+        Some("git")
+    } else if url.ends_with(".git") {
+        Some("git")
+    } else {
+        None
+    }
+}
+
 pub fn create(repo_type: &str) -> Result<Box<dyn IRemoteRepository2>> {
     let repo: Box<dyn IRemoteRepository2> = match repo_type {
         "git" => Box::new(GITRemoteRepository2),

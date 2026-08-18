@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle",
+  "api": "bundle",
+  "keys": [
+    "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle"
+  ]
+}

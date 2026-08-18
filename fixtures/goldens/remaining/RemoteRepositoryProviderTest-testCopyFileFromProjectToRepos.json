@@ -1,0 +1,5 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyFileFromProjectToRepos",
+  "method": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyFileFromProjectToRepos"
+}

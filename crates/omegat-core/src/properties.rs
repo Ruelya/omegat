@@ -97,6 +97,43 @@ impl ProjectProperties {
         self.root.join(DEFAULT_INTERNAL).join(STATUS_TMX)
     }
 
+    /// Java `ProjectProperties.isTeamProject`: a repo mapping of `""` or `"/"` is the project root.
+    pub fn is_team_project(&self) -> bool {
+        self.repositories.iter().any(|r| {
+            r.mappings
+                .iter()
+                .any(|m| m.local.is_empty() || m.local == "/")
+        })
+    }
+
+    pub fn set_export_tm_levels(&mut self, omegat: bool, level1: bool, level2: bool) {
+        let mut levels = Vec::new();
+        if omegat {
+            levels.push("omegat");
+        }
+        if level1 {
+            levels.push("level1");
+        }
+        if level2 {
+            levels.push("level2");
+        }
+        self.export_tm_levels = levels.join(" ");
+    }
+
+    pub fn set_export_tm_levels_list(&mut self, levels: &[&str]) {
+        let omegat = levels.iter().any(|l| l.eq_ignore_ascii_case("omegat"));
+        let level1 = levels.iter().any(|l| l.eq_ignore_ascii_case("level1"));
+        let level2 = levels.iter().any(|l| l.eq_ignore_ascii_case("level2"));
+        self.set_export_tm_levels(omegat, level1, level2);
+    }
+
+    pub fn export_tm_level_list(&self) -> Vec<String> {
+        self.export_tm_levels
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
     pub fn project_file(&self) -> PathBuf {
         self.root.join(FILE_PROJECT)
     }
@@ -462,6 +499,25 @@ mod tests {
         assert_eq!(props.repositories[0].mappings[0].includes, vec!["**/*.tmx"]);
         assert_eq!(props.repositories[0].mappings[0].excludes, vec!["**/*.bak"]);
         assert_eq!(props.repositories[0].mappings[1].repository, "src/");
+        assert!(props.is_team_project());
+        let mut levels = ProjectProperties::create(PathBuf::from("/tmp/l"), "en".into(), "fr".into(), false);
+        levels.set_export_tm_levels_list(&["level2", "omegat"]);
+        assert_eq!(levels.export_tm_level_list(), vec!["omegat", "level2"]);
+        levels.set_export_tm_levels_list(&["foo"]);
+        assert!(levels.export_tm_level_list().is_empty());
+        let mut not_team = ProjectProperties::create(PathBuf::from("/tmp/n"), "en".into(), "fr".into(), false);
+        not_team.repositories.push(RepositoryDef {
+            repo_type: "git".into(),
+            url: "https://example.com/p.git".into(),
+            branch: Some("master".into()),
+            mappings: vec![RepositoryMapping {
+                local: "source/foo".into(),
+                repository: "doc_src/en".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        });
+        assert!(!not_team.is_team_project());
     }
 
     #[test]

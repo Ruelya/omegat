@@ -103,7 +103,7 @@
   "markNoted": "Позначати сегменти з примітками",
   "markTranslated": "Позначати перекладені сегменти",
   "markUntranslated": "Позначати неперекладені сегменти",
-  "sourceFilesView": "Source Files",
+  "sourceFilesView": "Теку з файлами для перекладу",
   "showProgress": "Show Source Files progress",
   "showOnLoad": "Відкрити файли для перекладу (вибрано)",
   "tagProcessing": "Обробка тегів",

@@ -27,7 +27,7 @@ mod sbv;
 mod skeleton_write;
 mod srt;
 mod subtitle;
-mod text;
+pub mod text;
 mod webvtt;
 mod xml_dialect;
 mod xml_engine;

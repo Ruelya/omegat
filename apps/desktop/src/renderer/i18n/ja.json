@@ -103,7 +103,7 @@
   "markNoted": "メモ付き分節を色付け",
   "markTranslated": "翻訳済み分節を色づけ",
   "markUntranslated": "未翻訳分節を色づけ",
-  "sourceFilesView": "Source Files",
+  "sourceFilesView": "原文ファイル(G)",
   "showProgress": "Show Source Files progress",
   "showOnLoad": "個の原文ファイルを開く",
   "tagProcessing": "タグ処理",

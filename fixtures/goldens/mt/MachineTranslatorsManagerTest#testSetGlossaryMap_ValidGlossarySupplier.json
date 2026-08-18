@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier",
+  "engines": [
+    "mymemory",
+    "google",
+    "deepl",
+    "azure",
+    "ibm",
+    "yandex",
+    "apertium"
+  ],
+  "keys": [
+    "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier"
+  ]
+}

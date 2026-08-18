@@ -158,7 +158,11 @@ describe("P8 keyboard walkthrough", () => {
     useApp.getState().setDraft("Troisieme");
     await useApp.getState().commit();
     await dispatchMenuAction("project.save");
+    expect(useApp.getState().log.some((l) => l.includes("project_save.tmx"))).toBe(true);
+    expect(useApp.getState().document3.dirty).toBe(false);
+    expect(useApp.getState().document3.translationStart).toBeGreaterThanOrEqual(0);
     await dispatchMenuAction("project.compile");
+    expect(useApp.getState().log.some((l) => l.includes("compiled target"))).toBe(true);
     useApp.getState().setSearchForm({ query: "Un", replace: "Une", translation: true });
     await useApp.getState().replaceAll();
     const translatedBefore = useApp.getState().marks.translated;

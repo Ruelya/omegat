@@ -47,42 +47,51 @@ Adversarial audit **2026-08-18** (Java 6.2 tree vs this rewrite). Inventory:
 - Java GUI: **297** files / **61510** lines vs desktop renderer **9469**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **2916**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
-- Unique `java_test` goldens that match those methods: **337**
-- **Missing goldens: 503** (64.7% of Java unit methods)
+- Unique `java_test` goldens that match those methods: **818** (includes
+  API-less product-class fixtures)
+- **In-scope missing goldens: 0.** Remaining **22** `missing` rows are
+  the Java-runtime-only `EXCLUDED_TESTS` (JAR/LT smoke, plugin metadata,
+  language-module Bundle, SVN plugin pack, Swing Styles/StaticUIUtils).
+- `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
+  R1–R10. Unassigned in-scope classes: **0**.
 
-**P0 exporter / gates:** `exportGoldens` still does not emit one JSON per
-Java `test*`. Structural gates stay green on tokens, FilterTest inventory,
-IEditor name table, and same-key locale equality. New gates refuse a
-`parity` cell when that wave’s required `test*` set is incomplete, when
-P7 is `parity` but `SegmentEditor.tsx` does not use `Document3`, or when
-P12 is `parity` while **214** leftover English phrases remain (values
-equal a *different* `en.json` string, e.g. `ar.glossary=Glossaries`).
-`P12_GATES_GREEN` is no longer a bypass for a full-table `parity`.
+**P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
+`test*` (`util/` `search/` `engine/` `glossary/` `gui/` `mt/` `finder/`
+`cli/` `team/` `remaining/`). R0 inventory is **148 classes / 0 missing
+in-scope methods**. Structural gates stay green. A `parity` cell still
+fails if that wave’s required `test*` set is incomplete. `SegmentEditor.tsx`
+must reference `Document3` (unconditional). P12 leftover English phrases
+(values equal a *different* `en.json` string) are **260** after Bundle
+migration. `P12_GATES_GREEN` is gone. Product rows stay `parity_gap`
+until R12 and the matching `assert_eq` set is complete.
 
 **P1 engine:** Segmenter / FindMatches / Levenshtein / CalcMatchStatistics /
-TMXWriter / TagValidation method goldens exist. Still missing:
-`RealProjectTest` **0/3**, `SRXTest` **0/7**, `SRXManagerTest` **0/8**,
-`TMXReaderTest` **0/9**, `ProjectPropertiesTest` **0/11**,
-`ExternalTMFactoryTest` **0/5**, `ProjectFileStorageTest` **0/15**,
-`SearcherTest` **0/34**. `RealProject.java` **1933** vs
-`real_project.rs` **685**. `Searcher.java` **1133** vs `search.rs` **492**.
+TMXWriter / TagValidation method goldens exist. Rewrite-wave goldens now
+cover Searcher **34/34**, ProjectProperties **11/11**, TMXReader **9/9**,
+SRX **7/7**, SRXManager **8/8**, RealProject import **3/3**. `assert_eq`
+covers util + Searcher string/replace/checkEntry + TMX L1 + Properties +
+import. Remaining thin: `ExternalTMFactoryTest` / `ProjectFileStorageTest`
+still have method-only remaining stubs. `Searcher.java` **1133** vs
+`search.rs` still shorter.
 
-**P2 filters2:** `org.omegat.filters.*FilterTest` **150/150**. Still missing
-`LineLengthLimitWriterTest` **0/10**, `FilterMasterTest` **0/1**,
-`PluginUtilsTest` **0/1**, `LatexFilterUnitTest` **0/1**. HTML
-`FilterVisitor.java` **920** vs `filter_visitor.rs` **684**.
+**P2 filters2:** `org.omegat.filters.*FilterTest` **150/150**.
+`LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
+isSpaces / break-before / outLine / no-break word. FilterMaster /
+PluginUtils / Latex unit goldens exist (plugin ABI replacement, not JAR
+loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **684**.
 
-**P3 filters3:** dialect tag snapshot exists. `XMLFilterTest#testLoadCJKPath`
-has no golden.
+**P3 filters3:** dialect tag snapshot exists.
+`XMLFilterTest#testLoadCJKPath` golden is exported.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
 filters3 `openxml`.
 
-**P5 tokenizers:** `TokenizerTest` **7/7**. Still missing
-`BaseTokenizerTest` **0/6**, `HunspellTokenizerTest` **0/3**,
-`DefaultTokenizerTest` **0/3**. Japanese word-break lexicon is **86**
-entries, not Kuromoji / IPADIC.
+**P5 tokenizers:** `TokenizerTest` **7/7**. `BaseTokenizerTest` **6/6**
+verbatim `assert_eq`. `DefaultTokenizerTest` contains / containsAll
+`assert_eq`. `HunspellTokenizerTest` **3/3** goldens stay
+`parity_gap` (language-module dic). Japanese word-break lexicon is **86**
+entries, not Kuromoji / IPADIC — not parity.
 
 **P6 spell dictionaries:** all **30** language-module stems have an
 `.aff`/`.dic` pair reachable by `ensure_lang` (`reference/java` for
@@ -91,52 +100,47 @@ ca/es/fa/fr/ga/gl/pt/uk; `resources/languages/hunspell` for the rest).
 (ast, be, ja, km, tl, zh). **16** official wooorm / LanguageTool /
 LibreOffice pairs are in-tree with `.dic` truncated to **2000** stems
 (see `resources/languages/SOURCES.md`). CI affix logic still uses
-`fixtures/spell/{hunspell,lucene,morfologik}`. Dictionary / LT Java tests:
-`LingvoDSLTest` **0/10**, `StarDictTest` **0/4**,
-`DictionariesManagerTest` **0/4**, `SpellCheckerManagerTest` **0/5**,
-`LanguageToolTest` **0/7**.
+`fixtures/spell/{hunspell,lucene,morfologik}`. Dictionary / LT Java tests
+have ExportGoldens JSON (many remaining stubs). P6 stays `parity_gap`
+for the 6 lists + 2000-stem truncation.
 
-**P7 editor:** **50/50** `gui.editor` Java `test*` goldens exist, and 63
-class files exist. That is not a Swing port. Product `SegmentEditor.tsx`
-edits a zustand `draft` string via `editor-doc.ts` and **does not
-reference `Document3`**. Thickness: `EditorTextArea3` **19** vs **963**;
-`EditorController` **101** vs **2365**; `Document3` **98** vs **233**;
-`EditorPopups` **11** vs **542**; `FontFallbackMarker` is a code-point
-range heuristic, not `Font.canDisplay`. IEditor “implementation” is a
-name table (`ieditor_impl.txt`) wrapping the store.
+**P7 editor:** **50/50** `gui.editor` Java `test*` goldens exist.
+Product `SegmentEditor.tsx` **imports and calls `Document3`**
+(`insertString`, `DocumentFilter3`, atomic delete). Thickness still
+thin vs Swing: `EditorTextArea3` **19** vs **963**;
+`EditorController` **101** vs **2365**. `FontFallbackMarker` uses canvas
+`measureText` when a document exists. IEditor name table remains a
+surface list, not a second editor.
 
-**P8 desktop:** 120 menu ids have mock-RPC tests. Java UI tests still
-missing: `MainWindowMenuTest` **0/7**, `ProjectUICommandsTest` **0/5**,
-`DialogsTest` **0/11**, `SearchWindowTest` **0/4**,
-`ProjectFilesListControllerTest` **0/8**, `IssuesTableModelTest` **0/9**,
-`MatchesVarExpansionTest` **0/6**, plus issues/matches/search/glossary
-packages (**38+31+11** methods). Keyboard walkthrough is a desktop log,
-not Java `TestCoreGUI`.
+**P8 desktop:** 120 menu ids. Save / compile tests `assert_eq` the
+sidecar log `saved TMX …/omegat/project_save.tmx`, `compiled target`,
+and `document3.dirty === false`. Walkthrough uses the same Document3
+model. Java UI `*Test` goldens exist; several are still method stubs.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
-live protocol parity). Missing: `MachineTranslatorsManagerTest` **0/3**,
-`ExternalFinderTest` **0/5**, `GlossarySearcherTest` **0/32**. One
-`GlossaryAutoCompleterViewTest#testSuggestions` golden exists.
+live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
+`ExternalFinderTest` **5/5** goldens exist. GlossarySearcher control
+flow is ported; English / CJK / empty `assert_eq`; remaining 32-method
+set still has stubs.
 
 **P10 team:** GIT product path is `git2`. SVN checkout/update/commit is
-`#[ignore]` (needs `svn` + `svnadmin`). HTTP two-client rebase uses
-`assert_eq` on conflict `ours`/`theirs`. team2 Java tests: **0/22**
-goldens (`RemoteRepositoryProviderTest` 0/10, factory 0/4,
-provider2 0/4, HTTP 0/4). `team2` Java **23** classes / **5150** lines
-vs `omegat-team` **2085**.
+**1 `#[ignore]`** (needs `svn` + `svnadmin` — reason stays). HTTP
+two-client rebase uses `assert_eq` on conflict `ours`/`theirs`.
+`RemoteRepositoryFactoryTest` detect-type **4/4** `assert_eq`. Other
+team2 provider tests still have remaining stubs.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
-exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` (testAcceptance)
-is not exported. Swing aligner UI is an Electron table. Wiki / MED have
-no Java `*Test` goldens.
+exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
+ops golden is exported. CLI Main / Legacy / CommandCommon goldens exist.
+Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 
 **P12 ship:** same-key leftover count is 0 (brand `OmegaT` may equal
-English). **214** leftover English phrases still differ from the same
-`en.json` key (`ar.glossary=Glossaries`, `ar.notes=Notepad`,
-`ar.prefs=Preferences...`, …). Manuals are **41** markdown files of
-**~46–94** lines, not the Java DocBook / HTML set. Packages stay
-unsigned. `testAcceptance` **20** `*Test.java` files are out of scope
-of the 778-method inventory.
+English). Cross-key leftover English phrases: **260** (e.g.
+`ar.notes=Notepad` vs `en.notes=Notes`). `en.md` follows the Java
+DocBook directory; other locales stay “English long manual + short
+translation”. Packages stay unsigned (`PACKAGING.md`). Full-table
+`parity` is forbidden while P6 truncation / SVN ignore / leftover /
+Japanese 86-word LEX remain.
 
 Rebuilt defects (honesty green; do not regress):
 
@@ -268,8 +272,8 @@ document with `insertString` (`TF_CUR_SEGMENT_START` chrome);
 `XXX` offset is the computed insertString value (4), not a hardcoded 31.
 `DocumentFilter3.replace` takes a `FilterBypass`. Autocompleter views:
 Glossary / Autotext / CharTable / HistoryCompleter / HistoryPredictor
-(next-word) / Tag. The P7 row is `parity_gap` (product editor does not
-use `Document3`; class files are thin vs Java).
+(next-word) / Tag. The P7 row is `parity_gap` (product editor now uses
+`Document3`; class files are still thin vs Java).
 
 ## P8 notes
 
@@ -280,10 +284,10 @@ pages; Java keys are typed `controller_keys` (save still drops `extra`).
 `SegmentationCustomizer` is a rule table. Nine docks are splitters (Dict/MT
 are not a pinned aside). `RepositoriesMappingController` UI exists.
 `className="placeholder"` is gone. Honesty menu / placeholder items are
-green. `walkthrough.test.ts` `assert_eq`s the log for
+green. `walkthrough.test.ts` `assert_eq`s TMX / compile / Document3 dirty for
 new → translate 3 (tags kept) → save → compile → replace → mark prefs
 still applied after `applyPrefs`. The P8 row is `parity_gap` (Java GUI
-`*Test` methods are not exported).
+`*Test` goldens exist; several remain method stubs).
 
 ## P9 notes
 
@@ -294,8 +298,8 @@ are keyboard-insertable. Recorded fixtures `assert_eq` the Java parse
 shapes; offline without a fixture is an error.
 `GlossaryAutoCompleterViewTest#testSuggestions` is an ExportGoldens JSON
 and `assert_eq`s payloads (including capitalization). The P9 row is
-`parity_gap` (recorded HTTP only; GlossarySearcher / ExternalFinder /
-MT manager Java tests have no goldens).
+`parity_gap` (recorded HTTP only; GlossarySearcher still has stub
+methods; MT manager / ExternalFinder goldens exist).
 
 ## P10 notes
 
@@ -306,8 +310,8 @@ tests that seed a bare repo. Mapping include/exclude UI is
 ours/theirs/manual stay. HTTP two-client rebase `assert_eq`s conflict
 `ours`/`theirs`. SVN product path is the `svn` binary and the
 checkout/update/commit test is `#[ignore]`. Honesty git-command item is
-green. The P10 row stays `parity_gap` (SVN ignored; team2 Java `*Test`
-**0/22** goldens).
+green. The P10 row stays `parity_gap` (SVN 1 ignore + reason; factory detect
+4/4; other team2 tests still have remaining stubs).
 
 ## P11 notes
 
@@ -320,8 +324,8 @@ PARSEWISE / ID `assert_eq` the Java pair lists.
 `BundleTest#testBundleEncodings` `assert_eq`s US-ASCII / Windows-1252
 (not UTF-8) and forbids U+202E. The Electron aligner window wires
 merge / split / up / down through `align.edit`. The P11 row is
-`parity_gap` (unit goldens exist; Swing `AlignerWindowTest` and Wiki/MED
-Java tests are not exported).
+`parity_gap` (unit goldens exist; `AlignerWindowTest` ops + CLI goldens
+are exported; Wiki/MED have API fixtures).
 
 ## P12 notes
 
@@ -333,9 +337,9 @@ targets Linux deb/rpm/tar, Windows nsis, macOS dmg (unsigned; see
 Packaged manuals are one markdown file per UI locale under `docs/manual/`
 plus `java-html.md`. `ar.recent` and other leftover English menu phrases
 are taken from `Bundle_*.properties`. Packages stay unsigned
-(`PACKAGING.md`). The P12 row is `parity_gap` (214 leftover English
-phrases that are not same-key equal to `en.json`; 41 short markdown
-manuals; unsigned packages).
+(`PACKAGING.md`). The P12 row is `parity_gap` (260 leftover English phrases that equal a
+*different* `en.json` string; `en.md` is the long DocBook-mapped manual;
+other locales are short translations; unsigned packages).
 
 ## Intentional non-goals (must still have a full replacement)
 

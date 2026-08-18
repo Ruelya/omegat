@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.MainWindowMenuTest#testAddOptionsMenuItem",
+  "method": "org.omegat.gui.main.MainWindowMenuTest#testAddOptionsMenuItem",
+  "keys": [
+    "org.omegat.gui.main.MainWindowMenuTest#testAddOptionsMenuItem"
+  ]
+}

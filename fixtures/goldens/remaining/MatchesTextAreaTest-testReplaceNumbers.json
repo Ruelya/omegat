@@ -1,0 +1,5 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbers",
+  "method": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbers"
+}

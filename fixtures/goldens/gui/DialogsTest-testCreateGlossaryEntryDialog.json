@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testCreateGlossaryEntryDialog",
+  "method": "org.omegat.gui.dialogs.DialogsTest#testCreateGlossaryEntryDialog",
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testCreateGlossaryEntryDialog"
+  ]
+}

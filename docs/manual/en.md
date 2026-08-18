@@ -92,3 +92,32 @@ Java JAR plugins are not loaded. A plugin is `omegat-plugin.toml` + a `cdylib` t
 ## Help and license
 
 OmegaT is GNU GPL v3+. Third-party notices: `THIRD_PARTY.md`. This Markdown manual is shipped in the package (`docs/manual`). The Java HTML set under `reference/java` remains the long-form reference until it is fully ported.
+
+## Manual languages (honest gap)
+
+`en.md` is the long product manual. The other 40 locale files under `docs/manual/` are short translations of the table of contents and install notes, not a full DocBook port of `reference/java/src/docs/manual/<loc>`. Help → Manual opens the matching locale file when present and falls back to English.
+
+## Java DocBook chapter map
+
+The Java user guide (`reference/java/src/docs/manual/en`) is organized as:
+
+1. About OmegaT — what a CAT tool is, how a project is a folder, GPL
+2. Install — Linux / Windows / macOS, Java runtime, first launch
+3. Project — new / open / team download, `omegat.project`, source/target/tm/glossary/dictionary
+4. Editor — current segment, tags as atoms, Enter to commit, fuzzy insert, notes
+5. Translation memories — project_save.tmx, `tm/auto`, `tm/enforce`, `tm/mt`, `tm/penalty-*`, export levels
+6. Glossaries — TSV / CSV / TBX, TransTips, writable glossary
+7. Dictionaries — StarDict / DSL
+8. Machine translation — seven engines, credentials, offline fixtures
+9. Search and replace — exact / keyword / regex, whole words, width, author/date
+10. Segmentation — SRX 2.0, language maps, exception rules
+11. Filters — filters2 / filters3 dialects / filters4 XLIFF and Office
+12. Spellchecker and LanguageTool
+13. Team projects — git / svn / http / file, rebase, ours/theirs
+14. Aligner — HEAPWISE / PARSEWISE / ID
+15. Scripts — Boa bindings (not Groovy)
+16. CLI — `omegat --mode`, `--config-dir`, translate / stats / align
+17. Preferences — 25 controllers, typed keys
+18. Shortcuts and menus — 120 MainWindowMenuHandler actions
+
+This rewrite’s `en.md` covers those chapters at product-behavior depth. Locale manuals that are shorter than this file are labeled short translations.

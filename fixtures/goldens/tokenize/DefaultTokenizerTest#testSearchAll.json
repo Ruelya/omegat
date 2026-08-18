@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.DefaultTokenizerTest#testSearchAll",
+  "text": "foo bar baz foo",
+  "foo_inexact": 2,
+  "foo_exact": 2,
+  "bar_baz_exact": 1,
+  "bar_foo_exact": 0,
+  "keys": [
+    "org.omegat.tokenizer.DefaultTokenizerTest#testSearchAll"
+  ]
+}

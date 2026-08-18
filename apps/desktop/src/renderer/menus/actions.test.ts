@@ -179,12 +179,19 @@ describe("menu actions", () => {
           break;
         case "project.reload":
         case "project.close":
-        case "project.save":
-        case "project.compile":
         case "project.commit-target":
         case "project.commit-source":
         case "project.compile-single":
           expect(rpc.mock.calls.length, action).toBeGreaterThan(0);
+          break;
+        case "project.save":
+          expect(st.log.some((l) => l.includes("project_save.tmx")), action).toBe(true);
+          expect(st.document3.dirty, action).toBe(false);
+          expect(st.log.some((l) => l.includes("Document3 range")), action).toBe(true);
+          break;
+        case "project.compile":
+          expect(st.log.some((l) => l.includes("compiled target")), action).toBe(true);
+          expect(st.log.some((l) => l.includes("Document3 range")), action).toBe(true);
           break;
         case "project.access-root":
           expect(openPath).toHaveBeenCalledWith("/proj");

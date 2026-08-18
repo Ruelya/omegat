@@ -1,0 +1,5 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.matches.MatchesVarExpansionTest#testApply_allLtr",
+  "method": "org.omegat.gui.matches.MatchesVarExpansionTest#testApply_allLtr"
+}

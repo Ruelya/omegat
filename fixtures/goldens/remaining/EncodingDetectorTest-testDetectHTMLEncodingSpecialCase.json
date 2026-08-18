@@ -1,0 +1,5 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.EncodingDetectorTest#testDetectHTMLEncodingSpecialCase",
+  "method": "org.omegat.util.EncodingDetectorTest#testDetectHTMLEncodingSpecialCase"
+}

@@ -1,3 +1,8 @@
+//! Java `org.omegat.gui.glossary.GlossarySearcher` plus TSV/TBX readers.
+
+use crate::language::Language;
+use crate::string_util::{is_cjk, is_upper_case, is_white_space_cp};
+use crate::tokenize::{tokenize_words, StemmingMode};
 use omegat_ipc::GlossaryHitDto;
 use std::path::Path;
 
@@ -6,6 +11,265 @@ pub struct GlossaryEntry {
     pub source: String,
     pub target: String,
     pub comment: String,
+    pub priority: bool,
+}
+
+impl GlossaryEntry {
+    pub fn new(source: &str, target: &str, comment: &str) -> Self {
+        Self {
+            source: source.into(),
+            target: target.into(),
+            comment: comment.into(),
+            priority: false,
+        }
+    }
+
+    pub fn loc_terms(&self) -> Vec<String> {
+        if self.target.is_empty() {
+            vec![]
+        } else {
+            vec![self.target.clone()]
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GlossarySearcher {
+    pub src_lang: Language,
+    pub target_lang: Language,
+    pub tokenizer_class: String,
+    pub merge_alt_definitions: bool,
+    pub stemming: bool,
+    pub not_exact_match: bool,
+    pub require_similar_case: bool,
+}
+
+impl GlossarySearcher {
+    pub fn new(src_lang: &str, target_lang: &str, tokenizer_class: &str) -> Self {
+        Self {
+            src_lang: Language::new(Some(src_lang)),
+            target_lang: Language::new(Some(target_lang)),
+            tokenizer_class: tokenizer_class.into(),
+            merge_alt_definitions: true,
+            stemming: true,
+            not_exact_match: false,
+            require_similar_case: true,
+        }
+    }
+
+    pub fn search_source_matches(&self, source: &str, entries: &[GlossaryEntry]) -> Vec<GlossaryEntry> {
+        let tags = tag_spans(source);
+        let tokens = self.tokenize_skipping_tags(source, &tags);
+        let mut result = Vec::new();
+        for e in entries {
+            if self.is_token_match(&tokens, source, &e.source) || self.is_cjk_match(source, &e.source) {
+                result.push(e.clone());
+            }
+        }
+        self.sort_and_filter(result)
+    }
+
+    pub fn search_target_matches(&self, trg: &str, entry: &GlossaryEntry) -> Vec<String> {
+        let tags = tag_spans(trg);
+        let tokens = self.tokenize_skipping_tags(trg, &tags);
+        let mut result = Vec::new();
+        for term in entry.loc_terms() {
+            if self.is_token_match(&tokens, trg, &term) || self.is_cjk_match(trg, &term) {
+                result.push(term);
+            }
+        }
+        result
+    }
+
+    pub fn tokenize(&self, str: &str) -> Vec<String> {
+        let lower = str.to_lowercase();
+        if self.stemming {
+            tokenize_words(&lower, &self.tokenizer_class, StemmingMode::Glossary)
+                .into_iter()
+                .filter(|t| !t.chars().all(is_white_space_cp))
+                .collect()
+        } else {
+            tokenize_verbatim_non_ws(&lower)
+        }
+    }
+
+    fn tokenize_skipping_tags(&self, str: &str, tags: &[(usize, String)]) -> Vec<(String, usize)> {
+        let toks = self.tokenize_with_offsets(str);
+        toks.into_iter()
+            .filter(|(tok, off)| {
+                !tags.iter().any(|(pos, tag)| *off >= *pos && *off + tok.len() <= pos + tag.len())
+            })
+            .collect()
+    }
+
+    fn tokenize_with_offsets(&self, str: &str) -> Vec<(String, usize)> {
+        let words = self.tokenize(str);
+        let lower = str.to_lowercase();
+        let mut out = Vec::new();
+        let mut from = 0;
+        for w in words {
+            if let Some(abs) = find_from(&lower, from, &w) {
+                out.push((w.clone(), abs));
+                from = (abs + w.len()).min(lower.len());
+                while from < lower.len() && !lower.is_char_boundary(from) {
+                    from += 1;
+                }
+            } else if let Some(abs) = lower.find(&w) {
+                out.push((w, abs));
+            } else {
+                out.push((w, from));
+            }
+        }
+        out
+    }
+
+    fn is_token_match(&self, full: &[(String, usize)], full_text: &str, term: &str) -> bool {
+        !self.matching_tokens(full, full_text, term).is_empty()
+    }
+
+    fn matching_tokens(&self, full: &[(String, usize)], full_text: &str, term: &str) -> Vec<Vec<String>> {
+        let glos = self.tokenize(term);
+        if glos.is_empty() {
+            return vec![];
+        }
+        let mut found = search_all(full, &glos, self.not_exact_match);
+        found.retain(|toks| self.keep_match(toks, full_text, term));
+        if is_cjk(term) {
+            found.retain(|toks| toks.iter().any(|t| term.contains(t)));
+        }
+        found
+    }
+
+    fn keep_match(&self, tokens: &[String], src_txt: &str, loc_txt: &str) -> bool {
+        if self.require_similar_case && is_upper_case(loc_txt) {
+            for tok in tokens {
+                if let Some(idx) = src_txt.to_lowercase().find(&tok.to_lowercase()) {
+                    let matched = src_txt.get(idx..idx + tok.len()).unwrap_or(tok);
+                    if !is_upper_case(matched) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn is_cjk_match(&self, full_text: &str, term: &str) -> bool {
+        is_cjk_match(full_text, term) && !self.src_lang.is_space_delimited()
+    }
+
+    fn sort_and_filter(&self, mut result: Vec<GlossaryEntry>) -> Vec<GlossaryEntry> {
+        result.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| b.source.len().cmp(&a.source.len()))
+                .then_with(|| a.source.to_lowercase().cmp(&b.source.to_lowercase()))
+                .then_with(|| a.target.to_lowercase().cmp(&b.target.to_lowercase()))
+        });
+        if !self.merge_alt_definitions {
+            return result;
+        }
+        let mut merged: Vec<GlossaryEntry> = Vec::new();
+        for e in result {
+            if let Some(prev) = merged.iter_mut().find(|p| p.source.eq_ignore_ascii_case(&e.source)) {
+                if !prev.target.split(" / ").any(|t| t == e.target) {
+                    if !prev.target.is_empty() && !e.target.is_empty() {
+                        prev.target = format!("{} / {}", prev.target, e.target);
+                    } else if prev.target.is_empty() {
+                        prev.target = e.target;
+                    }
+                }
+            } else {
+                merged.push(e);
+            }
+        }
+        merged
+    }
+}
+
+/// Java `GlossarySearcher.isCjkMatch` once a CJK project is loaded.
+pub fn is_cjk_match(full_text: &str, term: &str) -> bool {
+    is_cjk(term) && full_text.contains(term)
+}
+
+fn find_from(hay: &str, from: usize, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(from.min(hay.len()));
+    }
+    let start = if from <= hay.len() && hay.is_char_boundary(from) {
+        from
+    } else {
+        0
+    };
+    hay.get(start..)?.find(needle).map(|i| start + i)
+}
+
+fn tag_spans(text: &str) -> Vec<(usize, String)> {
+    let re = regex::Regex::new(r"<[^>]+>|\{[0-9]+\}").unwrap();
+    re.find_iter(text).map(|m| (m.start(), m.as_str().to_string())).collect()
+}
+
+fn tokenize_verbatim_non_ws(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+        } else if ch.is_alphanumeric() {
+            cur.push(ch);
+        } else {
+            if !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            out.push(ch.to_string());
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+fn search_all(full: &[(String, usize)], glos: &[String], not_exact: bool) -> Vec<Vec<String>> {
+    let mut hits = Vec::new();
+    if glos.is_empty() {
+        return hits;
+    }
+    for i in 0..full.len() {
+        if token_eq(&full[i].0, &glos[0], not_exact) {
+            if glos.len() == 1 {
+                hits.push(vec![full[i].0.clone()]);
+                continue;
+            }
+            let mut ok = true;
+            let mut matched = vec![full[i].0.clone()];
+            for (k, g) in glos.iter().enumerate().skip(1) {
+                let j = i + k;
+                if j >= full.len() || !token_eq(&full[j].0, g, not_exact) {
+                    ok = false;
+                    break;
+                }
+                matched.push(full[j].0.clone());
+            }
+            if ok {
+                hits.push(matched);
+            }
+        }
+    }
+    hits
+}
+
+fn token_eq(a: &str, b: &str, not_exact: bool) -> bool {
+    if a == b {
+        return true;
+    }
+    if not_exact {
+        a.starts_with(b) || b.starts_with(a)
+    } else {
+        false
+    }
 }
 
 pub fn load_glossary(path: &Path) -> Vec<GlossaryEntry> {
@@ -30,14 +294,9 @@ pub fn parse_glossary(raw: &str) -> Vec<GlossaryEntry> {
         }
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 2 {
-            out.push(GlossaryEntry {
-                source: parts[0].trim().to_string(),
-                target: parts[1].trim().to_string(),
-                comment: parts.get(2).unwrap_or(&"").trim().to_string(),
-            });
+            out.push(GlossaryEntry::new(parts[0].trim(), parts[1].trim(), parts.get(2).unwrap_or(&"").trim()));
         }
     }
-    // TBX-ish: <term>text</term> pairs
     if out.is_empty() && raw.contains("<term") {
         let mut terms = Vec::new();
         let mut rest = raw;
@@ -54,11 +313,7 @@ pub fn parse_glossary(raw: &str) -> Vec<GlossaryEntry> {
         }
         for pair in terms.chunks(2) {
             if pair.len() == 2 {
-                out.push(GlossaryEntry {
-                    source: pair[0].clone(),
-                    target: pair[1].clone(),
-                    comment: "tbx".into(),
-                });
+                out.push(GlossaryEntry::new(&pair[0], &pair[1], "tbx"));
             }
         }
     }
@@ -73,50 +328,29 @@ pub fn lookup_opts(entries: &[GlossaryEntry], segment: &str, ignore_case: bool, 
     lookup_opts_lang(entries, segment, ignore_case, use_stem, "en")
 }
 
-/// `stem_lang` is the project target language (Java glossary stemmer follows the project).
 pub fn lookup_opts_lang(
     entries: &[GlossaryEntry],
     segment: &str,
-    ignore_case: bool,
+    _ignore_case: bool,
     use_stem: bool,
     stem_lang: &str,
 ) -> Vec<GlossaryHitDto> {
-    // Java `GlossarySearcher.tokenize` always lowercases with the source locale.
-    // `GLOSSARY_REQUIRE_SIMILAR_CASE` only drops an ALL-CAPS glossary term when
-    // the matched source tokens are not also all caps.
-    let hay = segment.to_lowercase();
-    entries
-        .iter()
-        .filter(|e| {
-            if e.source.is_empty() {
-                return false;
-            }
-            let needle = e.source.to_lowercase();
-            let matched = if hay.contains(&needle) {
-                true
-            } else if use_stem {
-                let ns = crate::tokenize::stem(&needle, stem_lang);
-                hay.split_whitespace()
-                    .any(|w| crate::tokenize::stem(w, stem_lang) == ns)
-            } else {
-                false
-            };
-            if !matched {
-                return false;
-            }
-            if !ignore_case && e.source.chars().any(|c| c.is_alphabetic()) && e.source.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) {
-                let idx = hay.find(&needle).unwrap_or(0);
-                let orig = segment.get(idx..idx + e.source.len()).unwrap_or("");
-                if !orig.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()) {
-                    return false;
-                }
-            }
-            true
-        })
+    let tok = match stem_lang {
+        "it" | "ita" => "org.omegat.tokenizer.LuceneItalianTokenizer",
+        "ja" | "jpn" => "org.omegat.tokenizer.LuceneJapaneseTokenizer",
+        "ko" | "kor" => "org.omegat.tokenizer.LuceneCJKTokenizer",
+        "zh" | "zho" => "org.omegat.tokenizer.LuceneSmartChineseTokenizer",
+        _ => "org.omegat.tokenizer.LuceneEnglishTokenizer",
+    };
+    let mut searcher = GlossarySearcher::new("en", stem_lang, tok);
+    searcher.stemming = use_stem;
+    searcher
+        .search_source_matches(segment, entries)
+        .into_iter()
         .map(|e| GlossaryHitDto {
-            source: e.source.clone(),
-            target: e.target.clone(),
-            comment: e.comment.clone(),
+            source: e.source,
+            target: e.target,
+            comment: e.comment,
         })
         .collect()
 }
@@ -132,10 +366,7 @@ pub fn append_entry(path: &Path, source: &str, target: &str, comment: &str) -> s
     }
     line.push('\n');
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
     f.write_all(line.as_bytes())
 }
 
@@ -157,5 +388,22 @@ mod tests {
         let entries = parse_glossary(raw);
         assert_eq!(entries[0].source, "cat");
         assert_eq!(entries[0].target, "chat");
+    }
+
+    #[test]
+    fn english_exact_source_match() {
+        let searcher = GlossarySearcher::new("en", "fr", "org.omegat.tokenizer.LuceneEnglishTokenizer");
+        let entries = vec![GlossaryEntry::new("dog", "chien", "")];
+        let hits = searcher.search_source_matches("The dog barked", &entries);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].target, "chien");
+    }
+
+    #[test]
+    fn cjk_contains_when_source_not_space_delimited() {
+        let searcher = GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
+        let entries = vec![GlossaryEntry::new("日本語", "Japanese", "")];
+        let hits = searcher.search_source_matches("これは日本語です", &entries);
+        assert_eq!(hits.len(), 1);
     }
 }

@@ -387,16 +387,20 @@ def check_wave_parity_matches_goldens() -> None:
         f"java_test*={cov['java_methods']} golden_unique={cov['golden_unique']} "
         f"missing={len(missing)}"
     )
+    unassigned = cov.get("unassigned") or []
+    note(
+        not unassigned,
+        "every in-scope *Test class is registered to a rewrite wave"
+        + ("" if not unassigned else f" (unassigned {len(unassigned)}: {unassigned[:8]})"),
+    )
     note(not lies, f"STATUS parity waves have required Java test goldens ({detail})" + ("" if not lies else " (" + "; ".join(lies[:6]) + ")"))
 
 
 def check_product_document3() -> None:
     wired = product_editor_uses_document3()
-    waves = parse_status_waves(read_text("docs/rewrite/STATUS.md"))
-    lie = waves.get("P7") == "parity" and not wired
     note(
-        not lie,
-        "product SegmentEditor uses Document3 when P7 is parity"
+        wired,
+        "product SegmentEditor imports and calls Document3"
         + ("" if wired else " (SegmentEditor.tsx does not reference Document3)"),
     )
 

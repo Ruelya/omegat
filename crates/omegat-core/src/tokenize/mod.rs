@@ -222,6 +222,68 @@ pub fn tokenize_verbatim(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Java `DefaultTokenizer.isContains`.
+pub fn is_contains(tokens: &[String], tok: &str) -> bool {
+    tokens.iter().any(|t| t == tok)
+}
+
+/// Java `DefaultTokenizer.isContainsAll`. `inexact=true` ignores order / gaps.
+pub fn is_contains_all(tokens: &[String], find: &[String], inexact: bool) -> bool {
+    if find.is_empty() {
+        return true;
+    }
+    if inexact {
+        find.iter().all(|f| tokens.iter().any(|t| t == f))
+    } else {
+        tokens.windows(find.len()).any(|w| w == find)
+    }
+}
+
+/// Java `DefaultTokenizer.searchAll`.
+pub fn search_all(tokens: &[String], find: &[String], inexact: bool) -> Vec<Vec<String>> {
+    if find.is_empty() {
+        return vec![];
+    }
+    if inexact {
+        let mut uniq = Vec::new();
+        for f in find {
+            if !uniq.iter().any(|u| u == f) {
+                uniq.push(f.clone());
+            }
+        }
+        let mut hits = Vec::new();
+        for t in tokens {
+            if uniq.iter().any(|f| f == t) {
+                hits.push(t.clone());
+            }
+        }
+        if hits.len() < find.len() {
+            return vec![];
+        }
+        vec![hits]
+    } else {
+        let mut out = Vec::new();
+        if find.len() == 1 {
+            for t in tokens {
+                if t == &find[0] {
+                    out.push(vec![t.clone()]);
+                }
+            }
+            return out;
+        }
+        let mut i = 0;
+        while i + find.len() <= tokens.len() {
+            if tokens[i..i + find.len()] == find[..] {
+                out.push(find.to_vec());
+                i += find.len();
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+}
+
 pub fn stem(word: &str, lang: &str) -> String {
     let lang = lang_base(lang);
     match lang {

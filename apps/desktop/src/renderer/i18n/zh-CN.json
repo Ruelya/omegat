@@ -103,7 +103,7 @@
   "markNoted": "高亮含备注的片段",
   "markTranslated": "高亮已译片段",
   "markUntranslated": "高亮未译片段",
-  "sourceFilesView": "Source Files",
+  "sourceFilesView": "原文文件(S)",
   "showProgress": "Show Source Files progress",
   "showOnLoad": "打开 个原文文件",
   "tagProcessing": "标签处理",

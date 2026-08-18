@@ -103,7 +103,7 @@
   "markNoted": "Выделять сегменты с примечаниями",
   "markTranslated": "Выделять переведённые сегменты",
   "markUntranslated": "Выделять непереведённые сегменты",
-  "sourceFilesView": "Source Files",
+  "sourceFilesView": "Файлы оригинала",
   "showProgress": "Show Source Files progress",
   "showOnLoad": "Открыть файл(а/ов) оригинала",
   "tagProcessing": "Работа с тегами",

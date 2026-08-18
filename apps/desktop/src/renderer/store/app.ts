@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { createDocument3, replaceEditText, type Document3State } from "../editor/Document3";
 import {
   marksFromPrefs,
   nextMissingTag,
@@ -69,6 +70,7 @@ export type AppState = {
   theme: "light" | "dark";
   error: string | null;
   draft: string;
+  document3: Document3State;
   note: string;
   firstRun: boolean;
   locale: string;
@@ -176,6 +178,7 @@ const initialState = {
   theme: "light" as const,
   error: null as string | null,
   draft: "",
+  document3: createDocument3("", ""),
   note: "",
   mt: [] as MtSuggestionDto[],
   dict: [] as DictHitDto[],
@@ -342,6 +345,7 @@ export const useApp = create<AppState>((set, get) => ({
       dict,
       completer,
       draft,
+      document3: createDocument3(e.source, draft),
       note: e.note,
       history: { undo: [], redo: [] },
       selectedMatch: 0,
@@ -497,16 +501,23 @@ export const useApp = create<AppState>((set, get) => ({
   },
   setDraft: (v) => {
     const prev = get().draft;
-    set({ draft: v, history: pushUndo(get().history, prev, v) });
+    const src = get().entries[get().index]?.source ?? get().document3.source;
+    set({
+      draft: v,
+      document3: replaceEditText(createDocument3(src, v), v),
+      history: pushUndo(get().history, prev, v),
+    });
   },
   setNote: (v) => set({ note: v }),
   undo: () => {
     const { draft, stacks } = undoDraft(get().history, get().draft);
-    set({ draft, history: stacks });
+    const src = get().entries[get().index]?.source ?? get().document3.source;
+    set({ draft, document3: createDocument3(src, draft), history: stacks });
   },
   redo: () => {
     const { draft, stacks } = redoDraft(get().history, get().draft);
-    set({ draft, history: stacks });
+    const src = get().entries[get().index]?.source ?? get().document3.source;
+    set({ draft, document3: createDocument3(src, draft), history: stacks });
   },
   applyCase: (mode) => get().setDraft(switchCase(get().draft, mode)),
   insertMatch: (n = 1, mode = "overwrite") => {
@@ -627,13 +638,22 @@ export const useApp = create<AppState>((set, get) => ({
   },
   save: async () => {
     await rpc("project.save");
-    get().logLine("saved project");
-    set({ status: t("save") });
+    const root = get().props?.root ?? "";
+    const d = get().document3;
+    set({
+      document3: { ...d, dirty: false },
+      status: t("save"),
+    });
+    get().logLine(`saved TMX ${root}/omegat/project_save.tmx`);
+    get().logLine(`Document3 range ${d.translationStart}-${d.translationEnd}`);
   },
   compile: async (file) => {
     await rpc("project.compile", file ? { file } : {});
     set({ stats: await rpc<StatsDto>("stats.get") });
-    get().logLine(file ? `compiled ${file}` : "compiled project");
+    const target = file ?? get().props?.target_dir ?? "";
+    get().logLine(`compiled target ${target}`);
+    const d = get().document3;
+    get().logLine(`Document3 range ${d.translationStart}-${d.translationEnd}`);
   },
   jump: async (kind, n, dir = 1) => {
     const { entries, index } = get();

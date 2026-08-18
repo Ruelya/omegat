@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand",
+  "api": "command",
+  "keys": [
+    "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testFileCollisionDialog",
+  "method": "org.omegat.gui.dialogs.DialogsTest#testFileCollisionDialog",
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testFileCollisionDialog"
+  ]
+}

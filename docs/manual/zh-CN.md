@@ -1,5 +1,7 @@
 # OmegaT 用户手册
 
+诚实缺口：完整产品行为以英文长手册 `docs/manual/en.md`（按 Java DocBook 目录）为准；本文件是短译。
+
 OmegaT 是键盘优先的计算机辅助翻译工作站。本手册描述 Rust + Electron 构建。Java 时代的 HTML 手册仍在 `reference/java`（DocBook / `release/index.html`），打包后可从帮助打开。
 
 ## 安装

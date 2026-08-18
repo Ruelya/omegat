@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.SimpleIssueTest#testGetIconUsesExpectedColor",
+  "method": "org.omegat.gui.issues.SimpleIssueTest#testGetIconUsesExpectedColor",
+  "keys": [
+    "org.omegat.gui.issues.SimpleIssueTest#testGetIconUsesExpectedColor"
+  ]
+}

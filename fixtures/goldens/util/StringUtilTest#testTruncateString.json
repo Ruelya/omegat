@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testTruncateString",
+  "n2": "𝐀…",
+  "n3": "𝐀𝐀𝐀",
+  "n1": "…",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testTruncateString"
+  ]
+}

@@ -37,7 +37,7 @@ impl ProjectTmx {
         if !path.exists() {
             return Ok(Self::new());
         }
-        let raw = std::fs::read_to_string(path)?;
+        let raw = read_tmx_text(path)?;
         Ok(parse_tmx(&raw, source_lang, target_lang))
     }
 
@@ -53,6 +53,60 @@ impl ProjectTmx {
 
     pub fn get(&self, source: &str) -> Option<&TmxEntry> {
         self.by_source.get(source).map(|&i| &self.entries[i])
+    }
+
+    pub fn get_default_translation(&self, source: &str) -> Option<&TmxEntry> {
+        self.entries
+            .iter()
+            .find(|e| e.source == source && e.default_translation)
+            .or_else(|| {
+                self.get(source)
+                    .filter(|e| e.default_translation || e.id.is_none())
+            })
+    }
+
+    pub fn get_multiple_translation(&self, id: &str, source: &str) -> Option<&TmxEntry> {
+        self.entries.iter().find(|e| {
+            !e.default_translation && e.id.as_deref() == Some(id) && e.source == source
+        })
+    }
+
+    pub fn set_default_translation(&mut self, source: &str, translation: &str) {
+        let entry = TmxEntry {
+            source: source.into(),
+            translation: translation.into(),
+            default_translation: true,
+            ..Default::default()
+        };
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .position(|e| e.source == source && e.default_translation)
+        {
+            self.entries[idx] = entry;
+            self.by_source.insert(source.into(), idx);
+        } else {
+            self.insert(entry);
+        }
+    }
+
+    pub fn set_multiple_translation(&mut self, id: &str, source: &str, translation: &str) {
+        let entry = TmxEntry {
+            source: source.into(),
+            translation: translation.into(),
+            default_translation: false,
+            id: Some(id.into()),
+            ..Default::default()
+        };
+        if let Some(idx) = self
+            .entries
+            .iter()
+            .position(|e| !e.default_translation && e.id.as_deref() == Some(id) && e.source == source)
+        {
+            self.entries[idx] = entry;
+        } else {
+            self.entries.push(entry);
+        }
     }
 
     pub fn write(&self, path: &Path, source_lang: &str, target_lang: &str) -> Result<()> {
@@ -329,6 +383,44 @@ fn collect_tuvs(tu: &str) -> Vec<Tuv> {
     tuvs
 }
 
+/// Java `TMXReader2.readTMX` accepts `.tmx`, `.tmx.gz`, and a zip that contains a `.tmx`.
+pub fn read_tmx_text(path: &Path) -> Result<String> {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if name.ends_with(".gz") {
+        use std::io::Read;
+        let file = std::fs::File::open(path)?;
+        let mut decoder = flate2::read::GzDecoder::new(file);
+        let mut raw = String::new();
+        decoder.read_to_string(&mut raw)?;
+        return Ok(raw);
+    }
+    if name.ends_with(".zip") {
+        use std::io::Read;
+        let file = std::fs::File::open(path)?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+            crate::error::CoreError::InvalidProject(format!("tmx zip: {e}"))
+        })?;
+        for i in 0..archive.len() {
+            let mut inner = archive.by_index(i).map_err(|e| {
+                crate::error::CoreError::InvalidProject(format!("tmx zip entry: {e}"))
+            })?;
+            if inner.name().to_ascii_lowercase().ends_with(".tmx") {
+                let mut raw = String::new();
+                inner.read_to_string(&mut raw)?;
+                return Ok(raw);
+            }
+        }
+        return Err(crate::error::CoreError::InvalidProject(
+            "zip contains no .tmx".into(),
+        ));
+    }
+    Ok(std::fs::read_to_string(path)?)
+}
+
 /// Project TMX: one entry per TU (defaults + alternatives kept; no collapse).
 pub fn parse_tmx_all(raw: &str, source_lang: &str, target_lang: &str) -> Vec<TmxEntry> {
     let src_l = source_lang.to_ascii_lowercase();
@@ -344,13 +436,12 @@ pub fn parse_tmx_all(raw: &str, source_lang: &str, target_lang: &str) -> Vec<Tmx
         let file = extract_prop(tu, "file");
         let id = extract_prop(tu, "id").or(tuid);
         let tuvs = collect_tuvs(tu);
-        let source = tuvs
-            .iter()
-            .find(|t| lang_matches(&t.lang.to_ascii_lowercase(), &src_l))
-            .map(|t| t.text.clone());
-        let target = tuvs.iter().find(|t| {
-            let ll = t.lang.to_ascii_lowercase();
-            lang_matches(&ll, &tgt_l) || (source.is_some() && !lang_matches(&ll, &src_l))
+        let source = get_tuv_by_lang(&tuvs, &src_l).map(|t| t.text.clone());
+        let target = get_tuv_by_lang(&tuvs, &tgt_l).or_else(|| {
+            tuvs.iter().find(|t| {
+                let ll = t.lang.to_ascii_lowercase();
+                source.is_some() && !lang_matches(&ll, &src_l)
+            })
         });
         if let (Some(s), Some(t)) = (source, target) {
             entries.push(TmxEntry {
@@ -451,6 +542,24 @@ fn extract_prop(tu: &str, ty: &str) -> Option<String> {
     let s = tu.find(&needle)? + needle.len();
     let e = tu[s..].find("</prop>")? + s;
     Some(html_escape::decode_html_entities(&tu[s..e]).into_owned())
+}
+
+/// Java `TMXReader2.getTuvByLang`: exact tag first, then same language code.
+fn get_tuv_by_lang<'a>(tuvs: &'a [Tuv], lang: &str) -> Option<&'a Tuv> {
+    let want = lang.replace('_', "-").to_ascii_lowercase();
+    tuvs.iter()
+        .find(|t| t.lang.replace('_', "-").eq_ignore_ascii_case(&want))
+        .or_else(|| {
+            let base = want.split('-').next().unwrap_or(&want);
+            tuvs.iter().find(|t| {
+                t.lang
+                    .replace('_', "-")
+                    .to_ascii_lowercase()
+                    .split('-')
+                    .next()
+                    == Some(base)
+            })
+        })
 }
 
 fn lang_matches(a: &str, b: &str) -> bool {

@@ -149,7 +149,8 @@ pub(crate) fn lines_with_breaks(raw: &str) -> Vec<(&str, &str)> {
 }
 
 /// Java `LineLengthLimitWriter` wrapping the reconstructed target file.
-fn apply_line_length_limit(text: &str, ctx: &FilterContext) -> String {
+/// Java `LineLengthLimitWriter` product entry (also used by goldens).
+pub fn apply_line_length_limit(text: &str, ctx: &FilterContext) -> String {
     let line_length = ctx
         .option("lineLength")
         .and_then(|s| s.parse::<i32>().ok())
@@ -171,7 +172,7 @@ struct Tok {
     length: usize,
 }
 
-struct LineLengthLimitWriter {
+pub struct LineLengthLimitWriter {
     out: String,
     line_length: i32,
     max_line_length: i32,
@@ -182,7 +183,40 @@ struct LineLengthLimitWriter {
 }
 
 impl LineLengthLimitWriter {
-    fn new(line_length: i32, max_line_length: i32) -> Self {
+    pub fn wrap(text: &str, line_length: i32, max_line_length: i32) -> String {
+        let mut w = Self::new(line_length, max_line_length);
+        w.write_str(text);
+        w.close()
+    }
+
+    pub fn is_spaces_slice(chars: &[char]) -> bool {
+        !chars.is_empty() && chars.iter().all(|c| c.is_whitespace())
+    }
+
+    pub fn is_spaces_token(buf: &str, offset: usize, length: usize) -> bool {
+        let chars: Vec<char> = buf.chars().collect();
+        if offset + length > chars.len() {
+            return false;
+        }
+        Self::is_spaces_slice(&chars[offset..offset + length])
+    }
+
+    pub fn is_possible_break_before_in(buf: &str, pos: usize) -> bool {
+        let chars: Vec<char> = buf.chars().collect();
+        let w = Self::new(80, 100);
+        let mut probe = w;
+        probe.buf = chars;
+        probe.possible_break_before(pos)
+    }
+
+    pub fn break_pos(buf: &str, line_length: i32, max_line_length: i32) -> usize {
+        let mut w = Self::new(line_length, max_line_length);
+        w.buf = buf.chars().collect();
+        let tokens = tokenize_verbatim(&w.buf);
+        w.get_break_pos(&tokens)
+    }
+
+    pub fn new(line_length: i32, max_line_length: i32) -> Self {
         Self {
             out: String::new(),
             line_length,

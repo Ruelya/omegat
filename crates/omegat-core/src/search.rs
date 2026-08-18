@@ -302,6 +302,244 @@ fn replace_whole_word(text: &str, query: &str, repl: &str, case_sensitive: bool)
     out
 }
 
+/// Java `SearchExpression` + `Searcher.searchString` / replace matches.
+#[derive(Debug, Clone)]
+pub struct SearchExpression {
+    pub query: String,
+    pub kind: SearchKind,
+    pub case_sensitive: bool,
+    pub whole_words: bool,
+    pub width_insensitive: bool,
+    pub replacement: Option<String>,
+    pub author: Option<String>,
+    pub search_author: bool,
+    pub search_comments: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchKind {
+    Exact,
+    Keyword,
+    Regex,
+}
+
+impl SearchExpression {
+    pub fn exact(query: &str, case_sensitive: bool) -> Self {
+        Self {
+            query: query.into(),
+            kind: SearchKind::Exact,
+            case_sensitive,
+            whole_words: false,
+            width_insensitive: false,
+            replacement: None,
+            author: None,
+            search_author: false,
+            search_comments: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchMatch {
+    pub replacement: String,
+}
+
+fn fold_width_spaces(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{00A0}' | '\u{2007}' | '\u{2009}' | '\u{202F}' | '\u{3000}' => ' ',
+            other => other,
+        })
+        .collect()
+}
+
+/// Java `StaticUtils.globToRegex` without `\Q`/`\E` (Rust regex has no quoting).
+pub fn glob_to_regex(text: &str, space_match_nbsp: bool) -> String {
+    let mut out = String::new();
+    for ch in text.chars() {
+        match ch {
+            '*' => out.push_str(if space_match_nbsp {
+                r"[^\s\u{00A0}]*"
+            } else {
+                r"\S*"
+            }),
+            '?' => out.push_str(if space_match_nbsp {
+                r"[^\s\u{00A0}]"
+            } else {
+                r"\S"
+            }),
+            ' ' if space_match_nbsp => out.push_str("(?: |\u{00A0})"),
+            c if r".+()[]{}|^$\\".contains(c) => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn compile_search_regex(expr: &SearchExpression, needle: &str) -> Option<Regex> {
+    let pat = match expr.kind {
+        SearchKind::Regex => {
+            let mut p = needle.to_string();
+            if needle.contains(' ') {
+                p = p.replace(' ', "( |\u{00A0})");
+            }
+            p
+        }
+        SearchKind::Exact => glob_to_regex(needle, false),
+        SearchKind::Keyword => return None,
+    };
+    let flags = if expr.case_sensitive { "" } else { "(?i)" };
+    Regex::new(&format!("{flags}{pat}")).ok()
+}
+
+fn is_java_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn regex_hits(re: &Regex, hay: &str, whole_words: bool) -> bool {
+    for m in re.find_iter(hay) {
+        if !whole_words {
+            return true;
+        }
+        let before_ok = hay[..m.start()]
+            .chars()
+            .next_back()
+            .map(|c| !is_java_word_char(c))
+            .unwrap_or(true);
+        let after_ok = hay[m.end()..]
+            .chars()
+            .next()
+            .map(|c| !is_java_word_char(c))
+            .unwrap_or(true);
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn search_string(text: &str, expr: &SearchExpression) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let hay = if expr.width_insensitive {
+        fold_width_spaces(&crate::string_util::normalize_width(text))
+    } else {
+        text.to_string()
+    };
+    let needle = if expr.width_insensitive {
+        fold_width_spaces(&crate::string_util::normalize_width(&expr.query))
+    } else {
+        expr.query.clone()
+    };
+    let whole = expr.whole_words && expr.kind != SearchKind::Regex;
+    match expr.kind {
+        SearchKind::Keyword => {
+            let words: Vec<String> = needle.split(' ').filter(|w| !w.is_empty()).map(|w| w.to_string()).collect();
+            words.iter().all(|w| {
+                let glob = glob_to_regex(w, false);
+                let flags = if expr.case_sensitive { "" } else { "(?i)" };
+                Regex::new(&format!("{flags}{glob}"))
+                    .ok()
+                    .is_some_and(|r| regex_hits(&r, &hay, whole))
+            })
+        }
+        _ => compile_search_regex(expr, &needle).is_some_and(|r| regex_hits(&r, &hay, whole)),
+    }
+}
+
+pub fn search_replace_matches(text: &str, expr: &SearchExpression) -> Vec<SearchMatch> {
+    let repl = expr.replacement.as_deref().unwrap_or("");
+    let mut matches = Vec::new();
+    match expr.kind {
+        SearchKind::Regex => {
+            let re = Regex::new(&format!(
+                "{}{}",
+                if expr.case_sensitive { "" } else { "(?i)" },
+                expr.query
+            ))
+            .ok();
+            if let Some(re) = re {
+                for cap in re.captures_iter(text) {
+                    let mut dest = String::new();
+                    cap.expand(repl, &mut dest);
+                    matches.push(SearchMatch { replacement: dest });
+                }
+            }
+        }
+        _ => {
+            let hay = if expr.case_sensitive {
+                text.to_string()
+            } else {
+                text.to_lowercase()
+            };
+            let needle = if expr.case_sensitive {
+                expr.query.clone()
+            } else {
+                expr.query.to_lowercase()
+            };
+            let mut start = 0;
+            while let Some(pos) = hay[start..].find(&needle) {
+                let abs = start + pos;
+                matches.push(SearchMatch {
+                    replacement: repl.to_string(),
+                });
+                start = abs + needle.len().max(1);
+                if needle.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+    matches
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct SearchHit {
+    pub src_text: String,
+}
+
+pub fn check_entry(
+    source: &str,
+    translation: Option<&str>,
+    note: Option<&str>,
+    comments: Option<&[&str]>,
+    creator: Option<&str>,
+    expr: &SearchExpression,
+) -> Vec<SearchHit> {
+    if expr.search_author {
+        if let Some(want) = &expr.author {
+            if creator != Some(want.as_str()) {
+                return vec![];
+            }
+        }
+    }
+    let mut texts = vec![source.to_string()];
+    if let Some(t) = translation {
+        texts.push(t.to_string());
+    }
+    if let Some(n) = note {
+        texts.push(n.to_string());
+    }
+    if expr.search_comments {
+        if let Some(cs) = comments {
+            for c in cs {
+                texts.push((*c).to_string());
+            }
+        }
+    }
+    if texts.iter().any(|t| search_string(t, expr)) {
+        vec![SearchHit {
+            src_text: source.to_string(),
+        }]
+    } else {
+        vec![]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,6 +37,7 @@ pub use passphrase_dialog::Passphrase;
 pub use prepared_file_info::PreparedFileInfo;
 pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
 pub use rebase_and_commit::{rebase_all, rebase_project, resolve};
+pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{commit_project_files, sync};
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -120,6 +121,20 @@ mod tests {
             raw.push_str(&tu(s, t));
         }
         std::fs::write(path, raw).unwrap();
+    }
+
+    #[test]
+    fn factory_detects_url_prefixes() {
+        assert_eq!(detect_repository_type("svn://example.com/repo"), Some("svn"));
+        assert_eq!(detect_repository_type("git://example.com/repo"), Some("git"));
+        assert_eq!(
+            detect_repository_type("https://git.example.com/repo"),
+            Some("git")
+        );
+        assert_eq!(
+            detect_repository_type("https://example.com/repo.git"),
+            Some("git")
+        );
     }
 
     #[test]

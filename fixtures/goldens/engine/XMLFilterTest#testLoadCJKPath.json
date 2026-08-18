@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters3.XMLFilterTest#testLoadCJKPath",
+  "api": "loadCJKPath",
+  "keys": [
+    "org.omegat.filters3.XMLFilterTest#testLoadCJKPath"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetCurrentSpellChecker_CustomSpellCheckerInitialized",
+  "method": "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetCurrentSpellChecker_CustomSpellCheckerInitialized"
+}

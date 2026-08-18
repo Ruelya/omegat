@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.MainTest#testExtractConfigDirEqualsForm",
+  "flag": "--config-dir=",
+  "keys": [
+    "org.omegat.MainTest#testExtractConfigDirEqualsForm"
+  ]
+}

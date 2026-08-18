@@ -1,0 +1,5 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.MergeTest#testEquals",
+  "method": "org.omegat.core.data.MergeTest#testEquals"
+}

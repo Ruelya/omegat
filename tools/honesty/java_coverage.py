@@ -17,58 +17,7 @@ METHOD_RE = re.compile(r"public\s+void\s+(test[A-Za-z0-9_]*)\s*\(")
 CLASS_RE = re.compile(r"class\s+(\w+Test)\b")
 PKG_RE = re.compile(r"package\s+([\w.]+);")
 
-# Wave → Java *Test FQCN that must be fully exported before that row is parity.
-WAVE_REQUIRED_TESTS: dict[str, tuple[str, ...]] = {
-    "P1": (
-        "org.omegat.core.data.RealProjectTest",
-        "org.omegat.core.data.ProjectPropertiesTest",
-        "org.omegat.core.data.ExternalTMFactoryTest",
-        "org.omegat.core.segmentation.SRXTest",
-        "org.omegat.core.segmentation.SRXManagerTest",
-        "org.omegat.util.TMXReaderTest",
-        "org.omegat.util.ProjectFileStorageTest",
-        "org.omegat.core.search.SearcherTest",
-    ),
-    "P2": (
-        "org.omegat.filters2.text.LineLengthLimitWriterTest",
-        "org.omegat.filters2.master.FilterMasterTest",
-        "org.omegat.filters2.master.PluginUtilsTest",
-        "org.omegat.filters2.latex.LatexFilterUnitTest",
-    ),
-    "P3": ("org.omegat.filters3.XMLFilterTest",),
-    "P5": (
-        "org.omegat.tokenizer.BaseTokenizerTest",
-        "org.omegat.tokenizer.HunspellTokenizerTest",
-        "org.omegat.tokenizer.DefaultTokenizerTest",
-    ),
-    "P6": (
-        "org.omegat.core.spellchecker.SpellCheckerManagerTest",
-        "org.omegat.core.dictionaries.LingvoDSLTest",
-        "org.omegat.core.dictionaries.StarDictTest",
-        "org.omegat.core.dictionaries.DictionariesManagerTest",
-        "org.omegat.languagetools.LanguageToolTest",
-    ),
-    "P8": (
-        "org.omegat.gui.main.MainWindowMenuTest",
-        "org.omegat.gui.main.ProjectUICommandsTest",
-        "org.omegat.gui.dialogs.DialogsTest",
-        "org.omegat.gui.search.SearchWindowTest",
-        "org.omegat.gui.filelist.ProjectFilesListControllerTest",
-        "org.omegat.gui.issues.IssuesTableModelTest",
-        "org.omegat.gui.matches.MatchesVarExpansionTest",
-    ),
-    "P9": (
-        "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest",
-        "org.omegat.externalfinder.ExternalFinderTest",
-        "org.omegat.gui.glossary.GlossarySearcherTest",
-    ),
-    "P10": (
-        "org.omegat.core.team2.RemoteRepositoryProviderTest",
-        "org.omegat.core.team2.RemoteRepositoryFactoryTest",
-        "org.omegat.core.team2.RemoteRepositoryProvider2Test",
-        "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest",
-    ),
-}
+from waves import EXCLUDED_TESTS, STATUS_WAVE_ALIASES, WAVE_REQUIRED_TESTS
 
 
 def java_test_roots() -> list[Path]:
@@ -137,12 +86,21 @@ def coverage() -> dict[str, object]:
         for cls in classes:
             miss.extend(by_class.get(cls, []))
         wave_missing[wave] = miss
+        alias = next((p for p, r in STATUS_WAVE_ALIASES.items() if r == wave), None)
+        if alias:
+            wave_missing[alias] = miss
+    assigned = {c for classes in WAVE_REQUIRED_TESTS.values() for c in classes} | set(EXCLUDED_TESTS)
+    unassigned = sorted({m.split("#", 1)[0] for m in methods if m.split("#", 1)[0] not in assigned})
+    in_scope_missing = [m for m in missing if m.split("#", 1)[0] not in EXCLUDED_TESTS]
     return {
         "java_methods": len(methods),
         "golden_unique": len(gold_set),
         "missing": missing,
+        "in_scope_missing": in_scope_missing,
         "extra": extra,
         "wave_missing": wave_missing,
+        "unassigned": unassigned,
+        "excluded": sorted(EXCLUDED_TESTS),
     }
 
 

@@ -129,11 +129,13 @@ fn glossary_tsv_and_query_match_java() {
         source: "running".into(),
         target: "courir".into(),
         comment: "verb".into(),
+        priority: false,
     });
     entries.push(omegat_core::glossary::GlossaryEntry {
         source: "Cat".into(),
         target: "chat".into(),
         comment: String::new(),
+        priority: false,
     });
     for case in spec["cases"].as_array().unwrap() {
         let segment = case["segment"].as_str().unwrap();

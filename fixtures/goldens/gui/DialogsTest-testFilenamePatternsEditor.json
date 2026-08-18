@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testFilenamePatternsEditor",
+  "method": "org.omegat.gui.dialogs.DialogsTest#testFilenamePatternsEditor",
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testFilenamePatternsEditor"
+  ]
+}
