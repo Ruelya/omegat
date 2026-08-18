@@ -84,6 +84,10 @@ fn sniff_meta_charset(head: &str) -> Option<String> {
         if let Some(v) = charset_attr(window, "charset=") {
             return Some(v);
         }
+        // Java `file-HTMLUtils-x-user-defined-content.html`: `<meta content="x-user-defined"/>`
+        if let Some(v) = take_token(window[8..].trim_start()) {
+            return Some(v);
+        }
     }
     None
 }

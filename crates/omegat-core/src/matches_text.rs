@@ -72,28 +72,41 @@ fn java_parse_int(text: &str) -> Option<i32> {
     if text.is_empty() {
         return None;
     }
-    let mut chars = text.chars().peekable();
+    let mut s = text;
     let mut sign = 1i32;
-    match chars.peek() {
-        Some('-') => {
-            sign = -1;
-            chars.next();
-        }
-        Some('+') => {
-            chars.next();
-        }
-        _ => {}
+    if let Some(rest) = s.strip_prefix('-') {
+        sign = -1;
+        s = rest;
+    } else if let Some(rest) = s.strip_prefix('+') {
+        s = rest;
     }
-    let rest: String = chars.collect();
-    if rest.is_empty() {
+    if s.is_empty() {
         return None;
     }
     let mut n: i32 = 0;
-    for c in rest.chars() {
-        let d = c.to_digit(10)?;
+    for c in s.chars() {
+        let d = unicode_decimal_digit(c)?;
         n = n.checked_mul(10)?.checked_add(d as i32)?;
     }
     Some(n * sign)
+}
+
+/// Java `Character.digit(c, 10)` / `Integer.parseInt` (ASCII, fullwidth, Arabic-Indic).
+fn unicode_decimal_digit(c: char) -> Option<u32> {
+    if let Some(d) = c.to_digit(10) {
+        return Some(d);
+    }
+    let u = c as u32;
+    if (0xFF10..=0xFF19).contains(&u) {
+        return Some(u - 0xFF10);
+    }
+    if (0x0660..=0x0669).contains(&u) {
+        return Some(u - 0x0660);
+    }
+    if (0x06F0..=0x06F9).contains(&u) {
+        return Some(u - 0x06F0);
+    }
+    None
 }
 
 fn map_target_to_source(src_match: &[String], tgt_match: &[String]) -> Vec<usize> {
@@ -133,5 +146,18 @@ fn to_digit_width_of(number: &str, template: &str) -> String {
         to_fullwidth_digits(number)
     } else {
         normalize_width(number)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fullwidth_source_digit_becomes_halfwidth_in_latin_target() {
+        assert_eq!(
+            substitute_numbers("これは例文９です", "これは例文8です", "This is a sample sentence 8"),
+            "This is a sample sentence 9"
+        );
     }
 }

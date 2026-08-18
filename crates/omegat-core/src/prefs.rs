@@ -697,7 +697,7 @@ impl JavaPreferences {
         let mut map = HashMap::new();
         let re = regex::Regex::new(r"<([A-Za-z0-9_.-]+)>([^<]*)</([A-Za-z0-9_.-]+)>").unwrap();
         for cap in re.captures_iter(&raw) {
-            if &cap[1] == cap[3] && !matches!(&cap[1], "omegat" | "preference") {
+            if cap[1] == cap[3] && !matches!(&cap[1], "omegat" | "preference") {
                 map.insert(cap[1].to_string(), cap[2].to_string());
             }
         }
