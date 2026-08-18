@@ -1,7 +1,22 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.MainTest#testConstructCommandParamsRoundTrip",
-  "api": "constructCommandParams",
+  "config_dir": "/tmp/omegat-conf",
+  "quiet": true,
+  "no_team": true,
+  "alt_from": "draft-*.txt",
+  "alt_to": "final-*.txt",
+  "argv": [
+    "--config-dir",
+    "/tmp/omegat-conf",
+    "--no-team",
+    "start",
+    "--quiet",
+    "--alternate-filename-from",
+    "draft-*.txt",
+    "--alternate-filename-to",
+    "final-*.txt"
+  ],
   "keys": [
     "org.omegat.MainTest#testConstructCommandParamsRoundTrip"
   ]

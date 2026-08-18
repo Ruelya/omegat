@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir",
-  "api": "config-dir",
+  "config_dir": "/tmp/omegat-conf",
   "keys": [
     "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir"
   ]

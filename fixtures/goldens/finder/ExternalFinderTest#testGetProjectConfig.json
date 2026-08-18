@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.externalfinder.ExternalFinderTest#testGetProjectConfig",
-  "api": "getProjectConfig",
+  "config": null,
   "keys": [
     "org.omegat.externalfinder.ExternalFinderTest#testGetProjectConfig"
   ]

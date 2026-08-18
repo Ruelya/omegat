@@ -343,6 +343,89 @@ pub fn parse_stardict_idx(idx: &[u8], dict: &[u8], needle: &str, source: &str) -
     hits
 }
 
+/// Java `org.omegat.core.dictionaries.DictionaryData`.
+#[derive(Debug)]
+pub struct DictionaryData {
+    finalized: bool,
+    /// key → values (original + lowercase copies, matching Java `add`).
+    store: std::collections::BTreeMap<String, Vec<(String, String)>>,
+}
+
+impl DictionaryData {
+    pub fn new() -> Self {
+        Self {
+            finalized: false,
+            store: std::collections::BTreeMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, key: &str, value: &str) {
+        let key = crate::string_util::normalize_unicode(key);
+        self.do_add(&key, value);
+        let lower = key.to_lowercase();
+        if lower != key {
+            self.do_add(&lower, value);
+        }
+    }
+
+    fn do_add(&mut self, key: &str, value: &str) {
+        self.store
+            .entry(key.to_string())
+            .or_default()
+            .push((key.to_string(), value.to_string()));
+    }
+
+    pub fn done(&mut self) {
+        self.finalized = true;
+    }
+
+    pub fn size(&self) -> i64 {
+        if !self.finalized {
+            -1
+        } else {
+            self.store.len() as i64
+        }
+    }
+
+    pub fn look_up(&self, word: &str) -> Result<Vec<(String, String)>, &'static str> {
+        self.do_look_up(word, false)
+    }
+
+    pub fn look_up_predictive(&self, word: &str) -> Result<Vec<(String, String)>, &'static str> {
+        self.do_look_up(word, true)
+    }
+
+    fn do_look_up(&self, word: &str, predictive: bool) -> Result<Vec<(String, String)>, &'static str> {
+        if !self.finalized {
+            return Err("not finalized");
+        }
+        let word = crate::string_util::normalize_unicode(word);
+        let mut result = self.collect(&word, predictive);
+        if result.is_empty() {
+            result = self.collect(&word.to_lowercase(), predictive);
+        }
+        Ok(result)
+    }
+
+    fn collect(&self, word: &str, predictive: bool) -> Vec<(String, String)> {
+        if predictive {
+            self.store
+                .iter()
+                .filter(|(k, _)| k.starts_with(word))
+                .flat_map(|(_, v)| v.iter().cloned())
+                .collect()
+        } else {
+            self.store.get(word).cloned().unwrap_or_default()
+        }
+    }
+}
+
+impl Default for DictionaryData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Java `org.omegat.core.dictionaries.DictionariesManager` ignore list + lookup.
 #[derive(Debug, Default)]
 pub struct DictionariesManager {

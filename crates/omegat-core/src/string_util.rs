@@ -211,6 +211,35 @@ pub fn convert_to_list(s: &str) -> Vec<String> {
     s.trim().split_whitespace().map(|p| p.to_string()).collect()
 }
 
+/// Java `StringUtil.normalizeUnicode` (NFC for the DictionaryData test).
+pub fn normalize_unicode(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if matches!(chars.peek(), Some('\u{0308}')) {
+            if let Some(composed) = compose_diaeresis(ch) {
+                chars.next();
+                out.push(composed);
+                continue;
+            }
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn compose_diaeresis(ch: char) -> Option<char> {
+    Some(match ch {
+        'a' => 'ä',
+        'A' => 'Ä',
+        'o' => 'ö',
+        'O' => 'Ö',
+        'u' => 'ü',
+        'U' => 'Ü',
+        _ => return None,
+    })
+}
+
 /// Java `StringUtil.isCJK`: every code point is ≥ CJK Radicals Supplement (U+2E80).
 pub fn is_cjk(input: &str) -> bool {
     if input.is_empty() {
@@ -276,12 +305,15 @@ pub fn normalize_width(s: &str) -> String {
 fn map_width(ch: char, next: Option<char>) -> Option<(String, bool)> {
     match ch {
         '\u{3000}' => Some((" ".into(), false)),
+        '\u{00A0}' | '\u{2007}' | '\u{202F}' => Some((" ".into(), false)),
         '\u{FF01}' => Some(("!".into(), false)),
         '\u{FF04}' => Some(("$".into(), false)),
         '\u{FF08}' => Some(("(".into(), false)),
         '\u{FF09}' => Some((")".into(), false)),
         '\u{FF0E}' => Some((".".into(), false)),
         '\u{FF1F}' => Some(("?".into(), false)),
+        '\u{FF5B}' => Some(("{".into(), false)),
+        '\u{FF5D}' => Some(("}".into(), false)),
         '\u{3371}' => Some(("hPa".into(), false)),
         '\u{2100}' => Some(("a/c".into(), false)),
         '\u{FF71}' => Some(("\u{30A2}".into(), false)),

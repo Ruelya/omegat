@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs",
-  "method": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs",
-  "encoded": "%20",
-  "decoded": " "
+  "encoded": "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre",
+  "decoded": "https://fr.wikipedia.org/wiki/Science_du_système_Terre",
+  "keys": [
+    "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs"
+  ]
 }

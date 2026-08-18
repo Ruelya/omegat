@@ -1,7 +1,15 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.filters2.latex.LatexFilterUnitTest#testParseBracedCommand",
-  "api": "parseBracedCommand",
+  "cases": [
+    {"line": "\\begin{verbatim}", "prefix": "\\begin{", "env": "verbatim"},
+    {"line": "\\begin{verbatim*}", "prefix": "\\begin{", "env": "verbatim*"},
+    {"line": "\\end{verbatim}", "prefix": "\\end{", "env": "verbatim"},
+    {"line": "\\begin{verbatim", "prefix": "\\begin{", "env": null},
+    {"line": "\\begin", "prefix": "\\begin{", "env": null},
+    {"line": "\\end{verbatim}", "prefix": "\\begin{", "env": null},
+    {"line": "hello \\begin{verbatim}", "prefix": "\\begin{", "env": null}
+  ],
   "keys": [
     "org.omegat.filters2.latex.LatexFilterUnitTest#testParseBracedCommand"
   ]

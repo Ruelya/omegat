@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { JAVA_MENU_ACTIONS } from "./menus/actions";
 import { changeCase, removeDirectionChars, replaceGlossaryEntries } from "./editor/EditorUtils";
+import { SEARCH_EXPRESSION_TYPES } from "./search/SearchWindow";
 import type { WindowId } from "./lib/types";
 
 const goldDir = join(dirname(fileURLToPath(import.meta.url)), "../../../../fixtures/goldens");
@@ -80,5 +81,54 @@ describe("leftover GUI Java *Test goldens", () => {
     const multi = [{ source: "snowman party", target: "sneeuwpop parti" }, ...entries];
     expect(replaceGlossaryEntries(g.multi_src, multi)).toBe(g.multi_out);
     expect(replaceGlossaryEntries(g.final_src, multi)).toBe(g.final_out);
+  });
+});
+
+describe("leftover editor / align / finder / mt / cli goldens", () => {
+  it("BiDi / Whitespace / ComesFrom markers disabled goldens assert_eq", async () => {
+    const { BidiMarkers } = await import("./editor/mark/BidiMarkers");
+    const { WhitespaceMarker } = await import("./editor/mark/WhitespaceMarker");
+    const { ComesFromAutoTMMarker } = await import("./editor/mark/ComesFromAutoTMMarker");
+    const { ComesFromMTMarker } = await import("./editor/mark/ComesFromMTMarker");
+    const bidiOff = load("editor/BiDiMarkersTest#testBidiMarkersDisabled.json");
+    const bidi = new BidiMarkers();
+    bidi.enabled = bidiOff.enabled;
+    expect(
+      bidi.getMarksForEntry({
+        sourceText: bidiOff.source,
+        translationText: bidiOff.translation,
+        isActive: bidiOff.is_active,
+      }),
+    ).toBeNull();
+    const wsOff = load("editor/WhitespaceMarkerTest#testMarkersDisabled.json");
+    const ws = new WhitespaceMarker();
+    ws.enabled = wsOff.enabled ?? false;
+    expect(
+      ws.getMarksForEntry({
+        sourceText: wsOff.source ?? "source",
+        translationText: wsOff.translation ?? null,
+        isActive: true,
+      }),
+    ).toBeNull();
+    const autoOff = load("editor/ComesFromAutoTMMarkerTest#testMarkersDisabled.json");
+    const auto = new ComesFromAutoTMMarker();
+    auto.markAutoPopulated = false;
+    expect(auto.getMarksForEntry({ sourceText: null, translationText: null, isActive: true })).toBeNull();
+    expect(autoOff.marks).toBeNull();
+    const mtOff = load("editor/ComesFromMTMarkerTest#testMarkersDisabled.json");
+    const mt = new ComesFromMTMarker();
+    expect(mt.getMarksForEntry({ sourceText: "source", translationText: "target", isActive: false })).toBeNull();
+    expect(mtOff.marks).toBeNull();
+  });
+
+  it("SearchWindowTest modes and radio types assert_eq", () => {
+    const search = load("gui/SearchWindowTest-testLoadSearchWindow.json");
+    const replace = load("gui/SearchWindowTest-testLoadSearchAndReplaceWindow.json");
+    expect(search.mode).toBe("search");
+    expect(replace.mode).toBe("replace");
+    const types = load("gui/SearchWindowTest-testSearchTypeFollowsTheSelectedRadioButton.json");
+    const replaceTypes = load("gui/SearchWindowTest-testReplaceTypeFollowsTheSelectedRadioButton.json");
+    expect(SEARCH_EXPRESSION_TYPES).toEqual(types.types);
+    expect(SEARCH_EXPRESSION_TYPES).toEqual(replaceTypes.types);
   });
 });

@@ -34,7 +34,8 @@ impl Language {
 
     pub fn get_language(&self) -> String {
         if self.tag.is_empty() {
-            String::new()
+            // Java `Locale.of("").toLanguageTag()` is `und`.
+            "und".into()
         } else {
             // Java Locale.toLanguageTag() keeps the input-like BCP47 form.
             self.tag.clone()

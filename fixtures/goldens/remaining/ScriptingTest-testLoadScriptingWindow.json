@@ -1,6 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.scripting.ScriptingTest#testLoadScriptingWindow",
-  "method": "org.omegat.gui.scripting.ScriptingTest#testLoadScriptingWindow",
-  "window": "scripting"
+  "bug": "775",
+  "invalid_is_file": true,
+  "constructs": true,
+  "keys": [
+    "org.omegat.gui.scripting.ScriptingTest#testLoadScriptingWindow"
+  ]
 }

@@ -1,6 +1,13 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.data.MergeTest#testEquals",
-  "method": "org.omegat.core.data.MergeTest#testEquals",
-  "equals": true
+  "same": true,
+  "truncated_equal": true,
+  "other_time": false,
+  "diff_translation": false,
+  "diff_note": false,
+  "diff_changer_ok": true,
+  "keys": [
+    "org.omegat.core.data.MergeTest#testEquals"
+  ]
 }

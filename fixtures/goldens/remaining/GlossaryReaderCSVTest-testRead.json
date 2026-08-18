@@ -1,6 +1,12 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossaryReaderCSVTest#testRead",
-  "method": "org.omegat.gui.glossary.GlossaryReaderCSVTest#testRead",
-  "format": "csv"
+  "count": 7,
+  "src0": "kde",
+  "loc0": "csv kde",
+  "src6": "zz\"zz",
+  "loc6": "zz",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryReaderCSVTest#testRead"
+  ]
 }

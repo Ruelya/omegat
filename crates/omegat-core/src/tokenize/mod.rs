@@ -83,6 +83,48 @@ pub struct Token {
     pub stem: String,
 }
 
+impl Token {
+    /// Java `Token.equals`: hash of `stripAmpersand(text)` only.
+    pub fn java_equals(&self, other: &Self) -> bool {
+        java_string_hash(&strip_ampersand(&self.text)) == java_string_hash(&strip_ampersand(&other.text))
+    }
+
+    pub fn java_deep_equals(&self, offset: usize, other: &Self, other_offset: usize) -> bool {
+        self.java_equals(other) && offset == other_offset && self.text.chars().count() == other.text.chars().count()
+    }
+}
+
+/// Java `String.hashCode` over UTF-16 code units.
+pub fn java_string_hash(s: &str) -> i32 {
+    let mut h: i32 = 0;
+    for u in s.encode_utf16() {
+        h = h.wrapping_mul(31).wrapping_add(u as i32);
+    }
+    h
+}
+
+fn strip_ampersand(s: &str) -> String {
+    s.replace('&', "")
+}
+
+/// Attach display offsets the way Java `Token(text, offset)` does.
+pub fn with_offsets(text: &str, tokens: &[Token]) -> Vec<(Token, usize)> {
+    let mut from = 0;
+    let mut out = Vec::new();
+    for t in tokens {
+        if let Some(pos) = text[from..].find(&t.text) {
+            let abs = from + pos;
+            out.push((t.clone(), abs));
+            from = abs + t.text.len();
+        } else if let Some(pos) = text.find(&t.text) {
+            out.push((t.clone(), pos));
+        } else {
+            out.push((t.clone(), from));
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StemmingMode {
     None,

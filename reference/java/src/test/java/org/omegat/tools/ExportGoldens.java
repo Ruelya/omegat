@@ -67,6 +67,7 @@ import org.omegat.core.tagvalidation.TagValidation;
 import org.omegat.core.threads.CancellationToken;
 import org.omegat.core.threads.Completion;
 import org.omegat.tokenizer.ITokenizer;
+import org.omegat.util.HttpConnectionUtils;
 import org.omegat.util.OConsts;
 import org.omegat.util.StringUtil;
 import org.omegat.util.Token;
@@ -3904,12 +3905,39 @@ public final class ExportGoldens {
         writeCase("engine/PluginUtilsTest#testLoadLatestPluginVersionOnly.json",
                 "org.omegat.filters2.master.PluginUtilsTest#testLoadLatestPluginVersionOnly",
                 Map.of("plugin_abi", "omegat-plugin.toml"));
+        Map<String, Object> beginVerbatim = new LinkedHashMap<>();
+        beginVerbatim.put("line", "\\begin{verbatim}");
+        beginVerbatim.put("prefix", "\\begin{");
+        beginVerbatim.put("env", "verbatim");
+        Map<String, Object> noBrace = new LinkedHashMap<>();
+        noBrace.put("line", "\\begin{verbatim");
+        noBrace.put("prefix", "\\begin{");
+        noBrace.put("env", null);
         writeCase("engine/LatexFilterUnitTest#testParseBracedCommand.json",
                 "org.omegat.filters2.latex.LatexFilterUnitTest#testParseBracedCommand",
-                Map.of("api", "parseBracedCommand"));
+                Map.of("cases", List.of(
+                        beginVerbatim,
+                        Map.of("line", "\\begin{verbatim*}", "prefix", "\\begin{", "env", "verbatim*"),
+                        Map.of("line", "\\end{verbatim}", "prefix", "\\end{", "env", "verbatim"),
+                        noBrace,
+                        new LinkedHashMap<String, Object>() {{
+                            put("line", "\\begin");
+                            put("prefix", "\\begin{");
+                            put("env", null);
+                        }},
+                        new LinkedHashMap<String, Object>() {{
+                            put("line", "\\end{verbatim}");
+                            put("prefix", "\\begin{");
+                            put("env", null);
+                        }},
+                        new LinkedHashMap<String, Object>() {{
+                            put("line", "hello \\begin{verbatim}");
+                            put("prefix", "\\begin{");
+                            put("env", null);
+                        }})));
         writeCase("engine/XMLFilterTest#testLoadCJKPath.json",
                 "org.omegat.filters3.XMLFilterTest#testLoadCJKPath",
-                Map.of("api", "loadCJKPath"));
+                Map.of("file", "data/xml/\u6587\u4EF6/test.xml", "segments", 0, "ok", true));
     }
 
     private void exportFilterMasterPluginTests() throws Exception {
@@ -4381,65 +4409,243 @@ public final class ExportGoldens {
                         "multi_out", "Sneeuwpop Blub went to the sneeuwpop parti. sneeuwpop!",
                         "final_src", "Snowman Bob went to the snowman party. SnOwMaN",
                         "final_out", "Sneeuwpop Blub went to the sneeuwpop parti. sneeuwpop"));
+        writeCase("remaining/TMXDateParserTest-testParseDate.json",
+                "org.omegat.util.TMXDateParserTest#testParseDate",
+                Map.of("format", "yyyyMMdd'T'HHmmss'Z'",
+                        "roundtrip", List.of("19971116T192059Z", "19970716T192059Z"),
+                        "invalid", List.of("19971116T192059+00:00", "19971116T", "")));
+        writeCase("remaining/TmxEscapingWriterTest-testNBSP.json",
+                "org.omegat.util.TmxEscapingWriterTest#testNBSP",
+                Map.of("input", "[\u00A0]", "output", "[\u00A0]"));
+        writeCase("remaining/TmxEscapingWriterTest-testNBH.json",
+                "org.omegat.util.TmxEscapingWriterTest#testNBH",
+                Map.of("input", "\u0083", "output", "&#x83;"));
+        writeCase("remaining/TmxEscapingWriterTest-testSurrogatePair.json",
+                "org.omegat.util.TmxEscapingWriterTest#testSurrogatePair",
+                Map.of("input", "[😀]", "output", "[😀]"));
+        writeCase("remaining/TmxEscapingWriterTest-testInvalidChar.json",
+                "org.omegat.util.TmxEscapingWriterTest#testInvalidChar",
+                Map.of("input", "\uFFFE", "output", "&#xfffe;"));
+        writeCase("remaining/HttpConnectionUtilsTest-testDecodeURLs.json",
+                "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs",
+                Map.of("encoded", "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre",
+                        "decoded", HttpConnectionUtils.decodeHttpURLs(
+                                "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre")));
+        String decodeInText = "1. https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre";
+        String decodeJa = "2. https://ja.wikipedia.org/wiki/2024%E5%B9%B4%E3%81%AE%E3%82%AB%E3%82%BF%E3%83%BC%E3"
+                + "%83%AB%E3%82%B0%E3%83%A9%E3%83%B3%E3%83%97%E3%83%AA"
+                + "_%28%E3%83%AD%E3%83%BC%E3%83%89%E3%83%AC%E3%83%BC%E3%82%B9%29 参照";
+        writeCase("remaining/HttpConnectionUtilsTest-testDecodeURLsInText.json",
+                "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsInText",
+                Map.of("input", decodeInText, "output", HttpConnectionUtils.decodeHttpURLs(decodeInText),
+                        "input_ja", decodeJa, "output_ja", HttpConnectionUtils.decodeHttpURLs(decodeJa)));
+        String decodeMulti = "1. https://google.com/\n2. bar\n"
+                + "3. https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre";
+        writeCase("remaining/HttpConnectionUtilsTest-testDecodeURLsMultipleLines.json",
+                "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines",
+                Map.of("input", decodeMulti, "output", HttpConnectionUtils.decodeHttpURLs(decodeMulti),
+                        "lines", 3));
+        String encBase = "https://fr.wikipedia.org/";
+        String encPath = "wiki/Science_du_système_Terre";
+        String encQuery = "?query=search&lang=en";
+        String encBracket = "https://fr.wikipedia.org/wiki/Doughnut_(modèle_économique)";
+        String encJa = "2. https://ja.wikipedia.org/wiki/2024年のカタールグランプリ_(ロードレース)";
+        writeCase("remaining/HttpConnectionUtilsTest-testEncodeURLs.json",
+                "org.omegat.util.HttpConnectionUtilsTest#testEncodeURLs",
+                Map.of("cases", List.of(
+                        Map.of("in", encBase, "out", HttpConnectionUtils.encodeHttpURLs(encBase)),
+                        Map.of("in", encBase + encPath, "out",
+                                HttpConnectionUtils.encodeHttpURLs(encBase + encPath)),
+                        Map.of("in", encBase + encPath + encQuery, "out",
+                                HttpConnectionUtils.encodeHttpURLs(encBase + encPath + encQuery)),
+                        Map.of("in", encBracket, "out", HttpConnectionUtils.encodeHttpURLs(encBracket)),
+                        Map.of("in", encJa, "out", HttpConnectionUtils.encodeHttpURLs(encJa)))));
+        writeCase("remaining/StatisticsTest-testNumberOfWords.json",
+                "org.omegat.core.statistics.StatisticsTest#testNumberOfWords",
+                Map.of("cases", List.of(
+                        Map.of("text", "one two three", "words", 3),
+                        Map.of("text", "one , \b two three", "words", 3),
+                        Map.of("text", "o\bne <b>two</b>", "words", 5))));
+        writeCase("remaining/StatisticsTest-testNumberOfChars.json",
+                "org.omegat.core.statistics.StatisticsTest#testNumberOfChars",
+                Map.of("without_spaces", 3, "with_spaces", 4, "text", "1 2\b3"));
+        writeCase("remaining/TokenTest-testGlossaryTokenEqualityEnglish.json",
+                "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityEnglish",
+                Map.of("str", "source and target", "glos", "target", "str_len", 3, "glos_len", 1,
+                        "first_deep_eq", false, "last_eq", true));
+        writeCase("remaining/TokenTest-testGlossaryTokenEqualityJapanese.json",
+                "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityJapanese",
+                Map.of("bug", "1034", "expected", "AssertionError", "str", "場所", "glos", "塗布"));
+        writeCase("remaining/VersionTest-testVersionComparison.json",
+                "org.omegat.util.VersionTest#testVersionComparison",
+                Map.of("eq", List.of("1.0.0", "0", "1.0.0", "0"),
+                        "less", List.of(
+                                List.of("1.0.0", "0", "1.0.0", "1"),
+                                List.of("1.0.0", "0", "1.0.1", "0"),
+                                List.of("1.0.0", "0", "1.1.0", "0"),
+                                List.of("1.0.0", "0", "2.0.0", "0")),
+                        "bad_len", List.of("1.0", "0", "1.0.0", "0"),
+                        "bad_parse", List.of("a.b.c", "0", "1.0.0", "0")));
+        Map<String, Object> abcOnly = new LinkedHashMap<>();
+        abcOnly.put("text", "abc");
+        abcOnly.put("match", true);
+        abcOnly.put("lang", "abc");
+        abcOnly.put("country", null);
+        writeCase("remaining/PatternConstsTest-testLangAndCountry.json",
+                "org.omegat.util.PatternConstsTest#testLangAndCountry",
+                Map.of("cases", List.of(
+                        Map.of("text", "abc*DEF", "match", false),
+                        Map.of("text", "abc-DEF", "match", true, "lang", "abc", "country", "DEF"),
+                        abcOnly,
+                        Map.of("text", "Z-abc", "match", true, "lang", "Z", "country", "abc"))));
+        writeCase("remaining/MergeTest-testTimeTruncate.json",
+                "org.omegat.core.data.MergeTest#testTimeTruncate",
+                Map.of("input_ms", 123456999L, "truncated_ms", 123456000L));
+        writeCase("remaining/MergeTest-testEquals.json",
+                "org.omegat.core.data.MergeTest#testEquals",
+                Map.of("same", true, "truncated_equal", true, "other_time", false,
+                        "diff_translation", false, "diff_note", false, "diff_changer_ok", true));
+        writeCase("remaining/MixedEolHandlingReaderTest-testDetection.json",
+                "org.omegat.util.MixedEolHandlingReaderTest#testDetection",
+                Map.of("cases", List.of(
+                        Map.of("text", "a", "eol", "\n", "mixed", false),
+                        Map.of("text", "a\nb\nc\n", "eol", "\n", "mixed", false),
+                        Map.of("text", "a\rb\rc\r", "eol", "\r", "mixed", false),
+                        Map.of("text", "a\r\nb\r\nc\r\n", "eol", "\r\n", "mixed", false),
+                        Map.of("text", "a\r\r\nb\r\nc\r\n", "eol", "\r\n", "mixed", true),
+                        Map.of("text", "a\r\r\nb\rc\r", "eol", "\r", "mixed", true),
+                        Map.of("text", "a\n\r\nb\nc\n", "eol", "\n", "mixed", true),
+                        Map.of("text", "a\r\r\nb\nc", "eol", "\r\n", "mixed", true))));
+        writeCase("remaining/MixedEolHandlingReaderTest-testReadLine.json",
+                "org.omegat.util.MixedEolHandlingReaderTest#testReadLine",
+                Map.of("cases", List.of(
+                        Map.of("text", "a\rb\rc", "eol", "\r", "lines", List.of("a", "b", "c")),
+                        Map.of("text", "a\nb\nc", "eol", "\n", "lines", List.of("a", "b", "c")),
+                        Map.of("text", "a\r\nb\r\nc", "eol", "\r\n", "lines", List.of("a", "b", "c")))));
+        writeCase("remaining/MixedEolHandlingReaderTest-testFile.json",
+                "org.omegat.util.MixedEolHandlingReaderTest#testFile",
+                Map.of("file", "data/filters/text/file-TextFilter.txt",
+                        "line0", "This test file for test TextFilter.",
+                        "eol", "\r\n", "mixed", false));
+        writeCase("remaining/KnownExceptionTest-testExceptions.json",
+                "org.omegat.core.KnownExceptionTest#testExceptions",
+                Map.of("code", "TF_ERROR", "params", List.of("param1", "param2"),
+                        "localized", "Error", "cause", "Cause"));
+        writeCase("remaining/GlossaryReaderCSVTest-testRead.json",
+                "org.omegat.gui.glossary.GlossaryReaderCSVTest#testRead",
+                Map.of("count", 7, "src0", "kde", "loc0", "csv kde", "src6", "zz\"zz", "loc6", "zz"));
+        writeCase("remaining/GlossaryReaderTBXTest-testRead.json",
+                "org.omegat.gui.glossary.GlossaryReaderTBXTest#testRead",
+                Map.of("count", 1, "src", "alpha smoothing factor", "loc", "hu translation"));
+        writeCase("remaining/DictionaryDataTest-testLookup.json",
+                "org.omegat.core.dictionaries.DictionaryDataTest#testLookup",
+                Map.of("size_before", -1, "size_after", 4, "foobar", 2, "FOOBAR", 2,
+                        "blah", 2, "BLAH", 1, "pred_foo", 2, "exact_foo", 0, "nfc", 1, "zzzz", 0));
+        writeCase("remaining/CalcStandardStatisticsTest-testStatistics.json",
+                "org.omegat.core.statistics.CalcStandardStatisticsTest#testStatistics",
+                Map.of("file", "data/filters/po/file-POFilter-match-stat-en-ca.po",
+                        "total_segments", 108, "total_words", 938, "total_nosp", 4894,
+                        "total_chars", 5699, "unique_segments", 97, "unique_words", 848,
+                        "unique_nosp", 4385, "unique_chars", 5116, "file_segments", 108));
+        writeCase("remaining/ScriptingTest-testLoadScriptingWindow.json",
+                "org.omegat.gui.scripting.ScriptingTest#testLoadScriptingWindow",
+                Map.of("bug", "775", "invalid_is_file", true, "constructs", true));
+        writeCase("remaining/ScriptingTest-testDefaultScriptFolderOnScriptWindow.json",
+                "org.omegat.gui.scripting.ScriptingTest#testDefaultScriptFolderOnScriptWindow",
+                Map.of("config_dir", "/tmp/omegat-config", "scripts", "/tmp/omegat-config/scripts"));
     }
 
     private void exportMtFinderTests() throws Exception {
         writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier.json",
                 "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier",
-                Map.of("engines", List.of("mymemory", "google", "deepl", "azure", "ibm", "yandex", "apertium")));
+                Map.of("translators", 2, "sets_supplier", true, "supplier", "glossary"));
         writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators.json",
                 "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators",
                 Map.of("count", 0));
         writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier.json",
                 "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier",
-                Map.of("supplier", "null"));
+                new LinkedHashMap<String, Object>() {{
+                    put("supplier", null);
+                    put("sets_supplier", true);
+                }});
         writeCase("finder/ExternalFinderTest#testGetProjectConfig.json",
                 "org.omegat.externalfinder.ExternalFinderTest#testGetProjectConfig",
-                Map.of("api", "getProjectConfig"));
+                new LinkedHashMap<String, Object>() {{
+                    put("config", null);
+                }});
         writeCase("finder/ExternalFinderTest#testGetItems.json",
-                "org.omegat.externalfinder.ExternalFinderTest#testGetItems", Map.of("api", "getItems"));
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItems",
+                Map.of("count", 6, "name0", "Google", "ascii_only2", true, "nopopup0", true));
         writeCase("finder/ExternalFinderTest#testGetItemCommand.json",
-                "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand", Map.of("api", "command"));
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand",
+                Map.of("command", "/usr/bin/open|dict://{target}", "keystroke", "ctrl shift K"));
         writeCase("finder/ExternalFinderTest#testGetItemUrl.json",
-                "org.omegat.externalfinder.ExternalFinderTest#testGetItemUrl", Map.of("api", "url"));
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItemUrl",
+                Map.of("url0", "https://www.google.com/search?q={target}",
+                        "url1", "https://www.google.com/search?q=define%3A{target}", "count", 2));
         writeCase("finder/ExternalFinderTest#testGetItemPopup.json",
-                "org.omegat.externalfinder.ExternalFinderTest#testGetItemPopup", Map.of("api", "popup"));
+                "org.omegat.externalfinder.ExternalFinderTest#testGetItemPopup",
+                Map.of("nopopup", true));
     }
 
     private void exportCliTests() throws Exception {
         writeCase("cli/MainTest#testExtractConfigDirSeparateValue.json",
                 "org.omegat.MainTest#testExtractConfigDirSeparateValue",
-                Map.of("flag", "--config-dir"));
+                Map.of("flag", "--config-dir", "value", "/tmp/omegat-config"));
         writeCase("cli/MainTest#testExtractConfigDirEqualsForm.json",
                 "org.omegat.MainTest#testExtractConfigDirEqualsForm",
-                Map.of("flag", "--config-dir="));
+                Map.of("flag", "--config-dir=", "value", "/tmp/omegat-config"));
         writeCase("cli/MainTest#testExtractConfigDirAbsent.json",
                 "org.omegat.MainTest#testExtractConfigDirAbsent", Map.of("present", false));
         writeCase("cli/MainTest#testConstructCommandParamsRoundTrip.json",
-                "org.omegat.MainTest#testConstructCommandParamsRoundTrip", Map.of("api", "constructCommandParams"));
+                "org.omegat.MainTest#testConstructCommandParamsRoundTrip",
+                Map.of("config_dir", "/tmp/omegat-conf", "quiet", true, "no_team", true,
+                        "alt_from", "draft-*.txt", "alt_to", "final-*.txt",
+                        "argv", List.of("--config-dir", "/tmp/omegat-conf", "--no-team", "start",
+                                "--quiet", "--alternate-filename-from", "draft-*.txt",
+                                "--alternate-filename-to", "final-*.txt")));
         writeCase("cli/MainTest#testConstructCommandParamsKeepsRuntimeOptions.json",
-                "org.omegat.MainTest#testConstructCommandParamsKeepsRuntimeOptions", Map.of("api", "runtime"));
+                "org.omegat.MainTest#testConstructCommandParamsKeepsRuntimeOptions",
+                Map.of("config_file", "/tmp/omegat.properties",
+                        "resource_bundle", "/tmp/Bundle_xx.properties",
+                        "project_locking", false, "location_save", false,
+                        "tokenizer_source", "org.omegat.tokenizer.LuceneEnglishTokenizer",
+                        "tokenizer_target", "org.omegat.tokenizer.LuceneGermanTokenizer",
+                        "argv", List.of("--config-file", "/tmp/omegat.properties",
+                                "--resource-bundle", "/tmp/Bundle_xx.properties",
+                                "--disable-project-locking", "--disable-location-save", "start",
+                                "--ITokenizer", "org.omegat.tokenizer.LuceneEnglishTokenizer",
+                                "--ITokenizerTarget", "org.omegat.tokenizer.LuceneGermanTokenizer")));
         writeCase("cli/MainTest#testConstructCommandParamsProjectAfterOptions.json",
-                "org.omegat.MainTest#testConstructCommandParamsProjectAfterOptions", Map.of("api", "project"));
+                "org.omegat.MainTest#testConstructCommandParamsProjectAfterOptions",
+                Map.of("config_dir", "/tmp/omegat-conf", "project", "/tmp/project"));
         writeCase("cli/CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions",
-                Map.of("api", "parseCommonParams"));
+                Map.of("project_locking", false, "location_save", false, "no_team", true,
+                        "tokenizer_source", "org.omegat.tokenizer.LuceneEnglishTokenizer",
+                        "tokenizer_target", "org.omegat.tokenizer.LuceneGermanTokenizer"));
         writeCase("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault",
-                Map.of("api", "team"));
+                Map.of("no_team", false));
         writeCase("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched",
-                Map.of("api", "defaults"));
+                Map.of("project_locking", true, "location_save", true, "no_team", false));
         writeCase("cli/LegacyParametersTest#testInitializeAppliesConfigDir.json",
-                "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir", Map.of("api", "config-dir"));
+                "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir",
+                Map.of("config_dir", "/tmp/omegat-conf"));
         writeCase("cli/LegacyParametersTest#testInitializeExpandsTilde.json",
-                "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde", Map.of("api", "tilde"));
+                "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde",
+                Map.of("input", "~/omegat-conf", "home_relative", "omegat-conf"));
         writeCase("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json",
-                "org.omegat.cli.LegacyParametersTest#testInitializeWithoutConfigDir", Map.of("api", "none"));
+                "org.omegat.cli.LegacyParametersTest#testInitializeWithoutConfigDir",
+                Map.of("present", false));
         writeCase("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json",
-                "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags", Map.of("api", "flags"));
+                "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags",
+                Map.of("project_locking", false, "location_save", false, "no_team", true));
         writeCase("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json",
-                "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle", Map.of("api", "bundle"));
+                "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle",
+                Map.of("file", "/tmp/Bundle.properties", "key", "TF_MENU_FILE",
+                        "value", "Bundle from the command line"));
         exportProjectPropertiesTests();
         exportTmxReaderAndSrxTests();
     }
@@ -4586,6 +4792,14 @@ public final class ExportGoldens {
         writeCase("align/AlignerWindowTest#testMergeSplitMove.json",
                 "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
                 Map.of("ops", List.of("merge", "split", "move-up", "move-down")));
+        writeCase("align/AlignSettingsPersistenceTest#testRoundTrip.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testRoundTrip",
+                Map.of("algorithm", "forward-backward", "calculator", "poisson",
+                        "counter", "char", "segment", false, "remove_tags", true));
+        writeCase("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored",
+                Map.of("algorithm", "viterbi", "calculator", "normal",
+                        "counter", "word", "segment", true, "remove_tags", false));
     }
 
     private void writeJson(Path path, Map<String, Object> data) throws Exception {

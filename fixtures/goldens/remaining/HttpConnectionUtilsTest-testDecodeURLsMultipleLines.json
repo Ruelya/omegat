@@ -1,6 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines",
-  "method": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines",
-  "lines": 2
+  "input": "1. https://google.com/\n2. bar\n3. https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre",
+  "output": "1. https://google.com/\n2. bar\n3. https://fr.wikipedia.org/wiki/Science_du_système_Terre",
+  "lines": 3,
+  "keys": [
+    "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines"
+  ]
 }

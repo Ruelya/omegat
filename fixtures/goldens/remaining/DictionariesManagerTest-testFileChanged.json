@@ -3,5 +3,8 @@
   "java_test": "org.omegat.core.dictionaries.DictionariesManagerTest#testFileChanged",
   "word": "testor",
   "empty_before_load": true,
-  "empty_after_ignore": true
+  "empty_after_ignore": true,
+  "keys": [
+    "org.omegat.core.dictionaries.DictionariesManagerTest#testFileChanged"
+  ]
 }

@@ -58,6 +58,65 @@ impl Default for AlignConfig {
     }
 }
 
+/// Java `AlignPanelController` persisted aligner settings.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlignSettings {
+    pub algorithm: String,
+    pub calculator: String,
+    pub counter: String,
+    pub segment: bool,
+    pub remove_tags: bool,
+}
+
+impl Default for AlignSettings {
+    fn default() -> Self {
+        Self {
+            algorithm: "viterbi".into(),
+            calculator: "normal".into(),
+            counter: "word".into(),
+            segment: true,
+            remove_tags: false,
+        }
+    }
+}
+
+impl AlignSettings {
+    pub fn persist(&self, store: &mut std::collections::HashMap<String, String>) {
+        store.insert("aligner.algorithmClass".into(), self.algorithm.clone());
+        store.insert("aligner.calculatorType".into(), self.calculator.clone());
+        store.insert("aligner.counterType".into(), self.counter.clone());
+        store.insert("aligner.segment".into(), self.segment.to_string());
+        store.insert("aligner.removeTags".into(), self.remove_tags.to_string());
+    }
+
+    pub fn restore(store: &std::collections::HashMap<String, String>) -> Self {
+        let mut s = Self::default();
+        if let Some(v) = store.get("aligner.algorithmClass") {
+            s.algorithm = normalize_algo(v);
+        }
+        if let Some(v) = store.get("aligner.calculatorType") {
+            s.calculator = v.to_ascii_lowercase();
+        }
+        if let Some(v) = store.get("aligner.counterType") {
+            s.counter = v.to_ascii_lowercase();
+        }
+        if let Some(v) = store.get("aligner.segment") {
+            s.segment = v == "true";
+        }
+        if let Some(v) = store.get("aligner.removeTags") {
+            s.remove_tags = v == "true";
+        }
+        s
+    }
+}
+
+fn normalize_algo(v: &str) -> String {
+    match v.to_ascii_lowercase().as_str() {
+        "fb" | "forward-backward" | "forward_backward" => "forward-backward".into(),
+        other => other.to_string(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlignUnit {
     pub id: Option<String>,

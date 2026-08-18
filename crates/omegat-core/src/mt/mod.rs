@@ -19,18 +19,26 @@ pub struct MtEngine {
     pub id: String,
     pub name: String,
     pub endpoint: String,
+    pub glossary_supplier: Option<String>,
 }
 
 pub fn engines() -> Vec<MtEngine> {
     vec![
-        MtEngine { id: google::ID.into(), name: "Google Translate".into(), endpoint: google::ENDPOINT.into() },
-        MtEngine { id: ibmwatson::ID.into(), name: "IBM Watson".into(), endpoint: ibmwatson::ENDPOINT.into() },
-        MtEngine { id: mymemory::ID.into(), name: "MyMemory Machine".into(), endpoint: mymemory::ENDPOINT.into() },
-        MtEngine { id: mymemory_human::ID.into(), name: "MyMemory Human".into(), endpoint: mymemory_human::ENDPOINT.into() },
-        MtEngine { id: apertium::ID.into(), name: "Apertium".into(), endpoint: apertium::ENDPOINT.into() },
-        MtEngine { id: yandex::ID.into(), name: "Yandex Cloud".into(), endpoint: yandex::ENDPOINT.into() },
-        MtEngine { id: belazar::ID.into(), name: "Belazar".into(), endpoint: belazar::ENDPOINT.into() },
+        MtEngine { id: google::ID.into(), name: "Google Translate".into(), endpoint: google::ENDPOINT.into(), glossary_supplier: None },
+        MtEngine { id: ibmwatson::ID.into(), name: "IBM Watson".into(), endpoint: ibmwatson::ENDPOINT.into(), glossary_supplier: None },
+        MtEngine { id: mymemory::ID.into(), name: "MyMemory Machine".into(), endpoint: mymemory::ENDPOINT.into(), glossary_supplier: None },
+        MtEngine { id: mymemory_human::ID.into(), name: "MyMemory Human".into(), endpoint: mymemory_human::ENDPOINT.into(), glossary_supplier: None },
+        MtEngine { id: apertium::ID.into(), name: "Apertium".into(), endpoint: apertium::ENDPOINT.into(), glossary_supplier: None },
+        MtEngine { id: yandex::ID.into(), name: "Yandex Cloud".into(), endpoint: yandex::ENDPOINT.into(), glossary_supplier: None },
+        MtEngine { id: belazar::ID.into(), name: "Belazar".into(), endpoint: belazar::ENDPOINT.into(), glossary_supplier: None },
     ]
+}
+
+/// Java `MachineTranslatorsManager.setGlossaryMap`.
+pub fn set_glossary_map(translators: &mut [MtEngine], supplier: Option<&str>) {
+    for t in translators {
+        t.glossary_supplier = supplier.map(|s| s.to_string());
+    }
 }
 
 #[derive(Default)]

@@ -125,6 +125,12 @@ impl DefaultXmlDialect {
     }
 }
 
+impl XmlDialect for DefaultXmlDialect {
+    fn base(&self) -> &DefaultXmlDialect {
+        self
+    }
+}
+
 /// Java `XMLDialect` instance behaviour. Defaults match `DefaultXMLDialect`.
 pub trait XmlDialect {
     fn base(&self) -> &DefaultXmlDialect;

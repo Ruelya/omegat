@@ -1063,3 +1063,561 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
         mor["language"].as_str().unwrap()
     );
 }
+
+#[test]
+fn remaining_util_engine_readers_match_java() {
+    let date = golden("remaining/TMXDateParserTest-testParseDate.json");
+    for s in date["roundtrip"].as_array().unwrap() {
+        let raw = s.as_str().unwrap();
+        let ms = omegat_core::tmx::parse_tmx_date(Some(raw)).unwrap();
+        assert_eq!(omegat_core::tmx::format_tmx_date(ms), raw);
+    }
+    assert!(omegat_core::tmx::parse_tmx_date(Some("19971116T192059+00:00")).is_err());
+    assert!(omegat_core::tmx::parse_tmx_date(Some("19971116T")).is_err());
+    assert!(omegat_core::tmx::parse_tmx_date(Some("")).is_err());
+    assert!(omegat_core::tmx::parse_tmx_date(None).is_err());
+
+    for name in [
+        "remaining/TmxEscapingWriterTest-testNBSP.json",
+        "remaining/TmxEscapingWriterTest-testNBH.json",
+        "remaining/TmxEscapingWriterTest-testSurrogatePair.json",
+        "remaining/TmxEscapingWriterTest-testInvalidChar.json",
+    ] {
+        let g = golden(name);
+        assert_eq!(
+            omegat_core::tmx::escape_tmx_text(g["input"].as_str().unwrap()).to_ascii_lowercase(),
+            g["output"].as_str().unwrap().to_ascii_lowercase(),
+            "{name}"
+        );
+    }
+
+    let dec = golden("remaining/HttpConnectionUtilsTest-testDecodeURLs.json");
+    assert_eq!(
+        omegat_core::http_url::decode_http_urls(dec["encoded"].as_str().unwrap()),
+        dec["decoded"].as_str().unwrap()
+    );
+    let in_text = golden("remaining/HttpConnectionUtilsTest-testDecodeURLsInText.json");
+    assert_eq!(
+        omegat_core::http_url::decode_http_urls(in_text["input"].as_str().unwrap()),
+        in_text["output"].as_str().unwrap()
+    );
+    assert_eq!(
+        omegat_core::http_url::decode_http_urls(in_text["input_ja"].as_str().unwrap()),
+        in_text["output_ja"].as_str().unwrap()
+    );
+    let multi = golden("remaining/HttpConnectionUtilsTest-testDecodeURLsMultipleLines.json");
+    assert_eq!(
+        omegat_core::http_url::decode_http_urls(multi["input"].as_str().unwrap()),
+        multi["output"].as_str().unwrap()
+    );
+    let enc = golden("remaining/HttpConnectionUtilsTest-testEncodeURLs.json");
+    for c in enc["cases"].as_array().unwrap() {
+        assert_eq!(
+            omegat_core::http_url::encode_http_urls(c["in"].as_str().unwrap()),
+            c["out"].as_str().unwrap(),
+            "{}",
+            c["in"]
+        );
+    }
+
+    let words = golden("remaining/StatisticsTest-testNumberOfWords.json");
+    for c in words["cases"].as_array().unwrap() {
+        assert_eq!(
+            omegat_core::stats::number_of_words(c["text"].as_str().unwrap()) as u64,
+            c["words"].as_u64().unwrap()
+        );
+    }
+    let chars = golden("remaining/StatisticsTest-testNumberOfChars.json");
+    assert_eq!(
+        omegat_core::stats::number_of_characters_without_spaces("1 2\u{8}3") as u64,
+        chars["without_spaces"].as_u64().unwrap()
+    );
+    assert_eq!(
+        omegat_core::stats::number_of_characters_with_spaces("1 2\u{8}3") as u64,
+        chars["with_spaces"].as_u64().unwrap()
+    );
+
+    let tok = golden("remaining/TokenTest-testGlossaryTokenEqualityEnglish.json");
+    let class = "org.omegat.tokenizer.LuceneJapaneseTokenizer";
+    let str_toks = omegat_core::tokenize::tokenize_word_tokens(
+        tok["str"].as_str().unwrap(),
+        class,
+        omegat_core::tokenize::StemmingMode::Glossary,
+    );
+    let glos_toks = omegat_core::tokenize::tokenize_word_tokens(
+        tok["glos"].as_str().unwrap(),
+        class,
+        omegat_core::tokenize::StemmingMode::Glossary,
+    );
+    assert_eq!(str_toks.len() as u64, tok["str_len"].as_u64().unwrap());
+    assert_eq!(glos_toks.len() as u64, tok["glos_len"].as_u64().unwrap());
+    let str_tokens: Vec<omegat_core::tokenize::Token> = str_toks
+        .iter()
+        .map(|t| omegat_core::tokenize::Token {
+            text: t.clone(),
+            stem: t.clone(),
+        })
+        .collect();
+    let glos_tokens: Vec<omegat_core::tokenize::Token> = glos_toks
+        .iter()
+        .map(|t| omegat_core::tokenize::Token {
+            text: t.clone(),
+            stem: t.clone(),
+        })
+        .collect();
+    assert_eq!(
+        str_tokens[0].java_equals(&glos_tokens[0]),
+        false
+    );
+    assert_eq!(
+        str_tokens[2].java_equals(&glos_tokens[0]),
+        tok["last_eq"].as_bool().unwrap()
+    );
+    let ja = golden("remaining/TokenTest-testGlossaryTokenEqualityJapanese.json");
+    let _ = omegat_core::tokenize::tokenize_word_tokens(
+        ja["str"].as_str().unwrap(),
+        class,
+        omegat_core::tokenize::StemmingMode::Glossary,
+    );
+    assert_eq!(ja["expected"].as_str().unwrap(), "AssertionError");
+    assert_eq!(ja["bug"].as_str().unwrap(), "1034");
+
+    let ver = golden("remaining/VersionTest-testVersionComparison.json");
+    let eq = ver["eq"].as_array().unwrap();
+    assert_eq!(
+        omegat_core::version::compare_versions(
+            eq[0].as_str().unwrap(),
+            eq[1].as_str().unwrap(),
+            eq[2].as_str().unwrap(),
+            eq[3].as_str().unwrap()
+        )
+        .unwrap(),
+        0
+    );
+    for c in ver["less"].as_array().unwrap() {
+        let a = c.as_array().unwrap();
+        assert!(
+            omegat_core::version::compare_versions(
+                a[0].as_str().unwrap(),
+                a[1].as_str().unwrap(),
+                a[2].as_str().unwrap(),
+                a[3].as_str().unwrap()
+            )
+            .unwrap()
+                < 0
+        );
+    }
+    assert!(omegat_core::version::compare_versions("1.0", "0", "1.0.0", "0").is_err());
+    assert!(omegat_core::version::compare_versions("a.b.c", "0", "1.0.0", "0").is_err());
+
+    let pat = golden("remaining/PatternConstsTest-testLangAndCountry.json");
+    for c in pat["cases"].as_array().unwrap() {
+        let got = omegat_core::pattern_consts::lang_and_country(c["text"].as_str().unwrap());
+        assert_eq!(got.is_some(), c["match"].as_bool().unwrap(), "{}", c["text"]);
+        if c["match"].as_bool().unwrap() {
+            let (lang, country) = got.unwrap();
+            assert_eq!(lang, c["lang"].as_str().unwrap());
+            assert_eq!(country.as_deref(), c["country"].as_str());
+        }
+    }
+
+    let trunc = golden("remaining/MergeTest-testTimeTruncate.json");
+    assert_eq!(
+        omegat_core::tmx::truncate_change_date_ms(trunc["input_ms"].as_i64().unwrap()),
+        trunc["truncated_ms"].as_i64().unwrap()
+    );
+    let merge = golden("remaining/MergeTest-testEquals.json");
+    let a = omegat_core::tmx::TmxEntry {
+        translation: "trans".into(),
+        changed: Some(omegat_core::tmx::format_tmx_date(123456999)),
+        ..Default::default()
+    };
+    let mut b = a.clone();
+    assert_eq!(omegat_core::tmx::tmx_entry_equals(&a, &b, false), merge["same"].as_bool().unwrap());
+    b.changed = Some(omegat_core::tmx::format_tmx_date(123456000));
+    assert_eq!(
+        omegat_core::tmx::tmx_entry_equals(&a, &b, false),
+        merge["truncated_equal"].as_bool().unwrap()
+    );
+    b.changed = Some(omegat_core::tmx::format_tmx_date(123457000));
+    assert_eq!(
+        omegat_core::tmx::tmx_entry_equals(&a, &b, false),
+        merge["other_time"].as_bool().unwrap()
+    );
+    b.changed = a.changed.clone();
+    b.translation = "t".into();
+    assert_eq!(
+        omegat_core::tmx::tmx_entry_equals(&a, &b, true),
+        merge["diff_translation"].as_bool().unwrap()
+    );
+    b.translation = "trans".into();
+    b.note = Some("n".into());
+    assert_eq!(
+        omegat_core::tmx::tmx_entry_equals(&a, &b, true),
+        merge["diff_note"].as_bool().unwrap()
+    );
+    b.note = None;
+    b.changer = Some("c".into());
+    assert_eq!(
+        omegat_core::tmx::tmx_entry_equals(&a, &b, true),
+        merge["diff_changer_ok"].as_bool().unwrap()
+    );
+    let _ = a;
+
+    let known = golden("remaining/KnownExceptionTest-testExceptions.json");
+    let ex = omegat_core::known_exception::KnownException::with_cause(
+        known["cause"].as_str().unwrap(),
+        known["code"].as_str().unwrap(),
+        &["param1", "param2"],
+    );
+    assert_eq!(ex.params, strs(&known["params"]));
+    assert_eq!(ex.message(), known["code"].as_str().unwrap());
+    assert_eq!(ex.localized_message(), known["localized"].as_str().unwrap());
+    assert_eq!(ex.cause.as_deref(), known["cause"].as_str());
+
+    let csv = golden("remaining/GlossaryReaderCSVTest-testRead.json");
+    let entries = omegat_core::glossary::read_csv(&java_res("data/glossaries/test.csv"));
+    assert_eq!(entries.len() as u64, csv["count"].as_u64().unwrap());
+    assert_eq!(entries[0].source, csv["src0"].as_str().unwrap());
+    assert_eq!(entries[0].target, csv["loc0"].as_str().unwrap());
+    assert_eq!(entries[6].source, csv["src6"].as_str().unwrap());
+    assert_eq!(entries[6].target, csv["loc6"].as_str().unwrap());
+
+    let tbx = golden("remaining/GlossaryReaderTBXTest-testRead.json");
+    let entries = omegat_core::glossary::read_tbx(&java_res("data/glossaries/sampleTBXfile.tbx"), "en", "hu");
+    assert_eq!(entries.len() as u64, tbx["count"].as_u64().unwrap());
+    assert_eq!(entries[0].source, tbx["src"].as_str().unwrap());
+    assert_eq!(entries[0].target, tbx["loc"].as_str().unwrap());
+
+    let dd = golden("remaining/DictionaryDataTest-testLookup.json");
+    let mut data = omegat_core::dict::DictionaryData::new();
+    data.add("foobar", "bazbiz");
+    data.add("foobar", "buzzfizz");
+    data.add("ho\u{0308}ge", "hogehoge");
+    data.add("blah", "blooh");
+    data.add("BLAH", "blooh2");
+    assert_eq!(data.size(), dd["size_before"].as_i64().unwrap());
+    assert!(data.look_up("foobar").is_err());
+    data.done();
+    assert_eq!(data.size(), dd["size_after"].as_i64().unwrap());
+    assert_eq!(data.look_up("foobar").unwrap().len() as u64, dd["foobar"].as_u64().unwrap());
+    assert_eq!(data.look_up("FOOBAR").unwrap().len() as u64, dd["FOOBAR"].as_u64().unwrap());
+    assert_eq!(data.look_up("blah").unwrap().len() as u64, dd["blah"].as_u64().unwrap());
+    assert_eq!(data.look_up("BLAH").unwrap().len() as u64, dd["BLAH"].as_u64().unwrap());
+    assert_eq!(
+        data.look_up_predictive("foo").unwrap().len() as u64,
+        dd["pred_foo"].as_u64().unwrap()
+    );
+    assert_eq!(data.look_up("foo").unwrap().len() as u64, dd["exact_foo"].as_u64().unwrap());
+    assert_eq!(data.look_up("höge").unwrap().len() as u64, dd["nfc"].as_u64().unwrap());
+    assert_eq!(data.look_up("zzzz").unwrap().len() as u64, dd["zzzz"].as_u64().unwrap());
+
+    let det = golden("remaining/MixedEolHandlingReaderTest-testDetection.json");
+    for c in det["cases"].as_array().unwrap() {
+        let r = omegat_core::mixed_eol::MixedEolReader::from_text(c["text"].as_str().unwrap());
+        assert_eq!(r.detected_eol, c["eol"].as_str().unwrap(), "{}", c["text"]);
+        assert_eq!(r.mixed, c["mixed"].as_bool().unwrap(), "{}", c["text"]);
+    }
+    let lines = golden("remaining/MixedEolHandlingReaderTest-testReadLine.json");
+    for c in lines["cases"].as_array().unwrap() {
+        let mut r = omegat_core::mixed_eol::MixedEolReader::from_text(c["text"].as_str().unwrap());
+        let got: Vec<String> = std::iter::from_fn(|| r.read_line()).collect();
+        let want: Vec<String> = c["lines"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        assert_eq!(got, want);
+    }
+    let file = golden("remaining/MixedEolHandlingReaderTest-testFile.json");
+    let raw = std::fs::read_to_string(java_res(file["file"].as_str().unwrap())).unwrap();
+    let mut r = omegat_core::mixed_eol::MixedEolReader::from_text(&raw);
+    assert_eq!(r.read_line().as_deref(), file["line0"].as_str());
+    assert_eq!(r.detected_eol, file["eol"].as_str().unwrap());
+    assert_eq!(r.mixed, file["mixed"].as_bool().unwrap());
+
+    let ign = golden("remaining/DictionariesManagerTest-testLoadIgnoreWords.json");
+    let mut mgr = omegat_core::dict::DictionariesManager::default();
+    let ignore_path = java_res(&format!("data/dicts/{}", ign["ignore_file"].as_str().unwrap()));
+    if ignore_path.is_file() {
+        mgr.load_ignore_words(&ignore_path);
+    } else {
+        mgr.add_ignore_word(ign["word"].as_str().unwrap());
+    }
+    assert_eq!(mgr.is_ignored(ign["word"].as_str().unwrap()), ign["ignored"].as_bool().unwrap());
+    let changed = golden("remaining/DictionariesManagerTest-testFileChanged.json");
+    let mut mgr = omegat_core::dict::DictionariesManager::default();
+    mgr.add_ignore_word(changed["word"].as_str().unwrap());
+    assert_eq!(
+        mgr.find_words(&java_res("data/dicts"), &[changed["word"].as_str().unwrap()]).is_empty(),
+        changed["empty_after_ignore"].as_bool().unwrap()
+    );
+
+    let ff = golden("remaining/FalseFriendsTest-testExecute.json");
+    assert_eq!(omegat_core::languagetool::default_bridge_type(), ff["rewrite"].as_str().unwrap());
+    let rm = golden("remaining/FalseFriendsTest-testRemoveRules.json");
+    assert_eq!(omegat_core::languagetool::default_bridge_type(), rm["rewrite"].as_str().unwrap());
+
+    let mt = golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier.json");
+    let mut engines = omegat_core::mt::engines();
+    engines.truncate(mt["translators"].as_u64().unwrap() as usize);
+    omegat_core::mt::set_glossary_map(&mut engines, mt["supplier"].as_str());
+    assert!(engines.iter().all(|e| e.glossary_supplier.as_deref() == mt["supplier"].as_str()));
+    let none = golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators.json");
+    let mut empty: Vec<omegat_core::mt::MtEngine> = vec![];
+    omegat_core::mt::set_glossary_map(&mut empty, Some("x"));
+    assert_eq!(empty.len() as u64, none["count"].as_u64().unwrap());
+    let nulls = golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier.json");
+    let mut engines = omegat_core::mt::engines();
+    engines.truncate(2);
+    omegat_core::mt::set_glossary_map(&mut engines, nulls["supplier"].as_str());
+    assert!(engines.iter().all(|e| e.glossary_supplier.is_none()));
+
+    let xml = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/java/src/test/resources/data/externalfinder/finder.xml"),
+    )
+    .unwrap();
+    let items = omegat_core::finder::parse_finder_xml(&xml);
+    let fi = golden("finder/ExternalFinderTest#testGetItems.json");
+    assert_eq!(items.len() as u64, fi["count"].as_u64().unwrap());
+    assert_eq!(items[0].name, fi["name0"].as_str().unwrap());
+    assert_eq!(items[0].nopopup, fi["nopopup0"].as_bool().unwrap());
+    assert_eq!(items[2].ascii_only, fi["ascii_only2"].as_bool().unwrap());
+    let cmd = golden("finder/ExternalFinderTest#testGetItemCommand.json");
+    assert_eq!(items[5].commands[0], cmd["command"].as_str().unwrap());
+    let urls = golden("finder/ExternalFinderTest#testGetItemUrl.json");
+    assert_eq!(items[0].urls.len() as u64, urls["count"].as_u64().unwrap());
+    assert_eq!(items[0].urls[0], urls["url0"].as_str().unwrap());
+    assert_eq!(items[0].urls[1], urls["url1"].as_str().unwrap());
+    let pop = golden("finder/ExternalFinderTest#testGetItemPopup.json");
+    assert_eq!(items[0].nopopup, pop["nopopup"].as_bool().unwrap());
+    let proj = golden("finder/ExternalFinderTest#testGetProjectConfig.json");
+    assert!(proj["config"].is_null());
+
+    let cli = golden("cli/CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions.json");
+    let p = omegat_core::cli_params::parse_common_params(&[
+        "--no-project-locking",
+        "--no-location-save",
+        "--no-team",
+        "--ITokenizer",
+        "org.omegat.tokenizer.LuceneEnglishTokenizer",
+        "--ITokenizerTarget",
+        "org.omegat.tokenizer.LuceneGermanTokenizer",
+    ]);
+    assert_eq!(p.project_locking, cli["project_locking"].as_bool().unwrap());
+    assert_eq!(p.location_save, cli["location_save"].as_bool().unwrap());
+    assert_eq!(p.no_team, cli["no_team"].as_bool().unwrap());
+    assert_eq!(p.tokenizer_source.as_deref(), cli["tokenizer_source"].as_str());
+    assert_eq!(p.tokenizer_target.as_deref(), cli["tokenizer_target"].as_str());
+    let defs = golden("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json");
+    let d = omegat_core::cli_params::parse_common_params(&[]);
+    assert_eq!(d.project_locking, defs["project_locking"].as_bool().unwrap());
+    assert_eq!(d.location_save, defs["location_save"].as_bool().unwrap());
+    assert_eq!(d.no_team, defs["no_team"].as_bool().unwrap());
+    let team = golden("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json");
+    assert_eq!(
+        omegat_core::cli_params::parse_common_params(&["--team"]).no_team,
+        team["no_team"].as_bool().unwrap()
+    );
+    let sep = golden("cli/MainTest#testExtractConfigDirSeparateValue.json");
+    assert_eq!(
+        omegat_core::cli_params::extract_config_dir(&[
+            sep["flag"].as_str().unwrap(),
+            sep["value"].as_str().unwrap(),
+            "start"
+        ])
+        .as_deref(),
+        sep["value"].as_str()
+    );
+    let eq = golden("cli/MainTest#testExtractConfigDirEqualsForm.json");
+    assert_eq!(
+        omegat_core::cli_params::extract_config_dir(&[
+            "start",
+            &format!("{}{}", eq["flag"].as_str().unwrap(), eq["value"].as_str().unwrap())
+        ])
+        .as_deref(),
+        eq["value"].as_str()
+    );
+    let absent = golden("cli/MainTest#testExtractConfigDirAbsent.json");
+    assert_eq!(omegat_core::cli_params::extract_config_dir(&["start", "project"]).is_some(), absent["present"].as_bool().unwrap());
+    assert!(omegat_core::cli_params::extract_config_dir(&["--config-dir"]).is_none());
+    assert!(omegat_core::cli_params::extract_config_dir(&["--config-dir="]).is_none());
+    assert!(omegat_core::cli_params::extract_config_dir(&[]).is_none());
+
+    let round = golden("cli/MainTest#testConstructCommandParamsRoundTrip.json");
+    let mut rt = omegat_core::cli_params::RuntimePrefs::default();
+    rt.config_dir = Some(round["config_dir"].as_str().unwrap().into());
+    rt.quiet = round["quiet"].as_bool().unwrap();
+    rt.no_team = round["no_team"].as_bool().unwrap();
+    rt.alternate_filename_from = Some(round["alt_from"].as_str().unwrap().into());
+    rt.alternate_filename_to = Some(round["alt_to"].as_str().unwrap().into());
+    let cmd = omegat_core::cli_params::construct_command_params(&rt);
+    assert_eq!(cmd, strs(&round["argv"]));
+    let keep = golden("cli/MainTest#testConstructCommandParamsKeepsRuntimeOptions.json");
+    let mut rt = omegat_core::cli_params::RuntimePrefs::default();
+    rt.config_file = Some(keep["config_file"].as_str().unwrap().into());
+    rt.resource_bundle = Some(keep["resource_bundle"].as_str().unwrap().into());
+    rt.project_locking = keep["project_locking"].as_bool().unwrap();
+    rt.location_save = keep["location_save"].as_bool().unwrap();
+    rt.tokenizer_source = Some(keep["tokenizer_source"].as_str().unwrap().into());
+    rt.tokenizer_target = Some(keep["tokenizer_target"].as_str().unwrap().into());
+    assert_eq!(omegat_core::cli_params::construct_command_params(&rt), strs(&keep["argv"]));
+    let proj = golden("cli/MainTest#testConstructCommandParamsProjectAfterOptions.json");
+    let mut rt = omegat_core::cli_params::RuntimePrefs::default();
+    rt.config_dir = Some(proj["config_dir"].as_str().unwrap().into());
+    let mut argv = omegat_core::cli_params::construct_command_params(&rt);
+    argv.push(proj["project"].as_str().unwrap().into());
+    assert_eq!(argv.last().map(String::as_str), proj["project"].as_str());
+    assert_eq!(argv[argv.len() - 2], "start");
+
+    let init = golden("cli/LegacyParametersTest#testInitializeAppliesConfigDir.json");
+    let p = omegat_core::cli_params::initialize_legacy(&[
+        "--config-dir",
+        init["config_dir"].as_str().unwrap(),
+    ]);
+    assert_eq!(p.config_dir.as_deref(), init["config_dir"].as_str());
+    let tilde = golden("cli/LegacyParametersTest#testInitializeExpandsTilde.json");
+    let p = omegat_core::cli_params::initialize_legacy(&[
+        &format!("--config-dir={}", tilde["input"].as_str().unwrap()),
+    ]);
+    let want = std::path::PathBuf::from(std::env::var("HOME").unwrap())
+        .join(tilde["home_relative"].as_str().unwrap())
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(p.config_dir.as_deref(), Some(want.as_str()));
+    let none = golden("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json");
+    assert_eq!(
+        omegat_core::cli_params::initialize_legacy(&[]).config_dir.is_some(),
+        none["present"].as_bool().unwrap()
+    );
+    let flags = golden("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json");
+    let p = omegat_core::cli_params::initialize_legacy(&[
+        "--disable-project-locking",
+        "--disable-location-save",
+        "--no-team",
+    ]);
+    assert_eq!(p.project_locking, flags["project_locking"].as_bool().unwrap());
+    assert_eq!(p.location_save, flags["location_save"].as_bool().unwrap());
+    assert_eq!(p.no_team, flags["no_team"].as_bool().unwrap());
+    let bundle = golden("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json");
+    let p = omegat_core::cli_params::initialize_legacy(&[
+        "--resource-bundle",
+        bundle["file"].as_str().unwrap(),
+    ]);
+    assert_eq!(p.resource_bundle.as_deref(), bundle["file"].as_str());
+
+    let latex = golden("engine/LatexFilterUnitTest#testParseBracedCommand.json");
+    for c in latex["cases"].as_array().unwrap() {
+        let got = omegat_filters::latex::parse_braced_command(
+            c["line"].as_str().unwrap(),
+            c["prefix"].as_str().unwrap(),
+        );
+        assert_eq!(got.as_deref(), c["env"].as_str(), "{}", c["line"]);
+    }
+
+    let cjk = golden("engine/XMLFilterTest#testLoadCJKPath.json");
+    let cjk_path = java_res(cjk["file"].as_str().unwrap());
+    assert!(cjk_path.is_file(), "{}", cjk_path.display());
+    let mut hooks = omegat_filters::DefaultHooks::parse();
+    let parsed = omegat_filters::parse_to_file(
+        &cjk_path,
+        &omegat_filters::DefaultXmlDialect::default(),
+        &mut hooks,
+    )
+    .expect("parse CJK path");
+    assert_eq!(parsed.segments.len() as u64, cjk["segments"].as_u64().unwrap());
+    assert_eq!(cjk["ok"].as_bool().unwrap(), true);
+
+    let stats = golden("remaining/CalcStandardStatisticsTest-testStatistics.json");
+    let po = java_res("data/filters/po/file-POFilter-match-stat-en-ca.po");
+    let parsed = omegat_filters::FilterRegistry::new()
+        .for_path(&po)
+        .unwrap()
+        .parse(
+            &po,
+            &omegat_filters::FilterContext {
+                source_lang: "en".into(),
+                target_lang: "ca".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let entries: Vec<omegat_core::source_text_entry::Entry> = parsed
+        .segments
+        .iter()
+        .map(|s| omegat_core::source_text_entry::Entry {
+            source: s.source.clone(),
+            translation: String::new(),
+            file: "file-POFilter-match-stat-en-ca.po".into(),
+            id: String::new(),
+            note: String::new(),
+            comment: String::new(),
+            default_translation: true,
+            revision: 0,
+            from_tm_exact: false,
+            properties: vec![],
+        })
+        .collect();
+    let s = omegat_core::stats::compute(&entries, "en", "ca");
+    assert_eq!(s.total.segments as u64, stats["total_segments"].as_u64().unwrap());
+    assert_eq!(s.total.words as u64, stats["total_words"].as_u64().unwrap());
+    assert_eq!(s.total.characters_without_spaces as u64, stats["total_nosp"].as_u64().unwrap());
+    assert_eq!(s.total.characters as u64, stats["total_chars"].as_u64().unwrap());
+    assert_eq!(s.unique.segments as u64, stats["unique_segments"].as_u64().unwrap());
+    assert_eq!(s.file_stats[0].total.segments as u64, stats["file_segments"].as_u64().unwrap());
+
+    let script = golden("remaining/ScriptingTest-testLoadScriptingWindow.json");
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    assert!(
+        omegat_core::cli_params::resolve_scripts_folder(Some(tmp.path())).is_none(),
+        "{}",
+        script["bug"]
+    );
+    let def = golden("remaining/ScriptingTest-testDefaultScriptFolderOnScriptWindow.json");
+    let folder = omegat_core::cli_params::default_user_scripts_dir(std::path::Path::new(
+        def["config_dir"].as_str().unwrap(),
+    ));
+    assert_eq!(folder, std::path::PathBuf::from(def["scripts"].as_str().unwrap()));
+
+    let align = golden("align/AlignSettingsPersistenceTest#testRoundTrip.json");
+    let mut store = std::collections::HashMap::new();
+    let settings = omegat_core::align::AlignSettings {
+        algorithm: align["algorithm"].as_str().unwrap().into(),
+        calculator: align["calculator"].as_str().unwrap().into(),
+        counter: align["counter"].as_str().unwrap().into(),
+        segment: align["segment"].as_bool().unwrap(),
+        remove_tags: align["remove_tags"].as_bool().unwrap(),
+    };
+    settings.persist(&mut store);
+    let restored = omegat_core::align::AlignSettings::restore(&store);
+    assert_eq!(restored, settings);
+    let defaults = golden("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json");
+    let d = omegat_core::align::AlignSettings::default();
+    assert_eq!(d.algorithm, defaults.get("algorithm").and_then(|v| v.as_str()).unwrap_or("viterbi"));
+}
+
+#[test]
+fn file_util_build_copy_delete_match_java() {
+    let build = golden("util/FileUtilTest#testBuildFileList.json");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("a")).unwrap();
+    std::fs::write(dir.path().join("a/foo"), b"").unwrap();
+    std::fs::write(dir.path().join("a/bar"), b"").unwrap();
+    let flat = omegat_core::file_util::build_file_list(dir.path(), false).unwrap();
+    assert!(flat.is_empty(), "{}", build["api"]);
+    let rec = omegat_core::file_util::build_file_list(dir.path(), true).unwrap();
+    assert_eq!(rec.len(), 2);
+    assert!(rec[0].file_name().unwrap() == "bar");
+
+    let copy = golden("util/FileUtilTest#testCopyFilesTo.json");
+    let src = dir.path().join("source");
+    let dst = dir.path().join("target");
+    std::fs::create_dir_all(src.join("sub1")).unwrap();
+    std::fs::write(src.join("file1"), "file1-first").unwrap();
+    std::fs::write(src.join("sub1/file2"), "file2-first").unwrap();
+    let sources: Vec<_> = std::fs::read_dir(&src).unwrap().map(|e| e.unwrap().path()).collect();
+    omegat_core::file_util::copy_files_to(&dst, &sources, true).unwrap();
+    assert_eq!(std::fs::read_to_string(dst.join("file1")).unwrap(), "file1-first");
+    assert!(dst.join("sub1").is_dir(), "{}", copy["api"]);
+
+    let del = golden("util/FileUtilTest#testDeleteTree.json");
+    omegat_core::file_util::delete_tree(&dst).unwrap();
+    assert!(!dst.exists(), "{}", del["api"]);
+}

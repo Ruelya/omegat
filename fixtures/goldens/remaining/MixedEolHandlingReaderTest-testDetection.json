@@ -1,7 +1,49 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.MixedEolHandlingReaderTest#testDetection",
-  "method": "org.omegat.util.MixedEolHandlingReaderTest#testDetection",
-  "crlf": "CRLF",
-  "lf": "LF"
+  "cases": [
+    {
+      "text": "a",
+      "eol": "\n",
+      "mixed": false
+    },
+    {
+      "text": "a\nb\nc\n",
+      "eol": "\n",
+      "mixed": false
+    },
+    {
+      "text": "a\rb\rc\r",
+      "eol": "\r",
+      "mixed": false
+    },
+    {
+      "text": "a\r\nb\r\nc\r\n",
+      "eol": "\r\n",
+      "mixed": false
+    },
+    {
+      "text": "a\r\r\nb\r\nc\r\n",
+      "eol": "\r\n",
+      "mixed": true
+    },
+    {
+      "text": "a\r\r\nb\rc\r",
+      "eol": "\r",
+      "mixed": true
+    },
+    {
+      "text": "a\n\r\nb\nc\n",
+      "eol": "\n",
+      "mixed": true
+    },
+    {
+      "text": "a\r\r\nb\nc",
+      "eol": "\r\n",
+      "mixed": true
+    }
+  ],
+  "keys": [
+    "org.omegat.util.MixedEolHandlingReaderTest#testDetection"
+  ]
 }

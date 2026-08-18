@@ -1,6 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.data.MergeTest#testTimeTruncate",
-  "method": "org.omegat.core.data.MergeTest#testTimeTruncate",
-  "truncates_ms": true
+  "input_ms": 123456999,
+  "truncated_ms": 123456000,
+  "keys": [
+    "org.omegat.core.data.MergeTest#testTimeTruncate"
+  ]
 }

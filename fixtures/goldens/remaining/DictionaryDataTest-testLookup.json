@@ -1,6 +1,17 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.DictionaryDataTest#testLookup",
-  "method": "org.omegat.core.dictionaries.DictionaryDataTest#testLookup",
-  "lookup": true
+  "size_before": -1,
+  "size_after": 4,
+  "foobar": 2,
+  "FOOBAR": 2,
+  "blah": 2,
+  "BLAH": 1,
+  "pred_foo": 2,
+  "exact_foo": 0,
+  "nfc": 1,
+  "zzzz": 0,
+  "keys": [
+    "org.omegat.core.dictionaries.DictionaryDataTest#testLookup"
+  ]
 }

@@ -3,5 +3,8 @@
   "java_test": "org.omegat.core.dictionaries.DictionariesManagerTest#testLoadIgnoreWords",
   "ignore_file": "ignore.txt",
   "word": "testor",
-  "ignored": true
+  "ignored": true,
+  "keys": [
+    "org.omegat.core.dictionaries.DictionariesManagerTest#testLoadIgnoreWords"
+  ]
 }

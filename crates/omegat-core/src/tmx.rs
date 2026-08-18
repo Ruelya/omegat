@@ -293,6 +293,120 @@ fn unwrap_level2(seg: &str) -> String {
     html_escape::decode_html_entities(&inner).into_owned()
 }
 
+/// Java `TMXDateParser.parse`: length must be exactly 16 (`YYYYMMDDThhmmssZ`).
+pub fn parse_tmx_date(s: Option<&str>) -> std::result::Result<i64, String> {
+    let Some(s) = s else {
+        return Err("date 'null' is null or not equal to YYYYMMDDThhmmssZ".into());
+    };
+    if s.len() != 16 || !s.as_bytes().get(8).is_some_and(|b| *b == b'T') || !s.ends_with('Z') {
+        return Err(format!("date '{s}' is null or not equal to YYYYMMDDThhmmssZ"));
+    }
+    let y: i64 = s[0..4].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let mo: i64 = s[4..6].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let d: i64 = s[6..8].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let hh: i64 = s[9..11].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let mm: i64 = s[11..13].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let ss: i64 = s[13..15].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    Ok(ymd_hms_to_millis(y, mo, d, hh, mm, ss))
+}
+
+/// Java `TMXDateParser.getTMXDate`.
+pub fn format_tmx_date(millis: i64) -> String {
+    let secs = millis.div_euclid(1000);
+    let days = secs.div_euclid(86400);
+    let rem = secs.rem_euclid(86400);
+    let (y, m, d) = civil_from_days(days);
+    let hh = rem / 3600;
+    let mm = (rem % 3600) / 60;
+    let ss = rem % 60;
+    format!("{y:04}{m:02}{d:02}T{hh:02}{mm:02}{ss:02}Z")
+}
+
+fn ymd_hms_to_millis(y: i64, mo: i64, d: i64, hh: i64, mm: i64, ss: i64) -> i64 {
+    let z = days_from_civil(y, mo, d);
+    ((z * 86400) + hh * 3600 + mm * 60 + ss) * 1000
+}
+
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as u64 + 2) / 5 + d as u64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146097 + doe as i64) - 719468
+}
+
+/// Java `MergeTest#testTimeTruncate`: TMX dates drop milliseconds (not round).
+pub fn truncate_change_date_ms(ms: i64) -> i64 {
+    ms - ms.rem_euclid(1000)
+}
+
+/// Java `TMXEntry.equals` / `equalsTranslation` (truncated change date).
+pub fn tmx_entry_equals(a: &TmxEntry, b: &TmxEntry, compare_translation_only: bool) -> bool {
+    if a.translation != b.translation {
+        return false;
+    }
+    if compare_translation_only {
+        return a.note == b.note && a.penalty == b.penalty;
+    }
+    let da = a.changed.as_deref().and_then(|s| parse_tmx_date(Some(s)).ok()).unwrap_or(0);
+    let db = b.changed.as_deref().and_then(|s| parse_tmx_date(Some(s)).ok()).unwrap_or(0);
+    truncate_change_date_ms(da) == truncate_change_date_ms(db)
+}
+
+/// Java `TmxEscapingWriterFactory.EscapeWriter` for TEXT (not attributes).
+/// Woodstox walks **UTF-16 code units**; supplementary-plane emoji therefore
+/// stay as a surrogate pair (neither unit is `>= 0xFFFE`).
+pub fn escape_tmx_text(s: &str) -> String {
+    let units: Vec<u16> = s.encode_utf16().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < units.len() {
+        let c = units[i] as u32;
+        if c < 256 && quotable_text_char(c) {
+            match char::from_u32(c) {
+                Some('<') => out.push_str("&lt;"),
+                Some('>') => out.push_str("&gt;"),
+                Some('&') => out.push_str("&amp;"),
+                _ => out.push_str(&format!("&#x{c:02x};")),
+            }
+            i += 1;
+            continue;
+        }
+        if c >= 0xFFFE {
+            out.push_str(&format!("&#x{c:04x};"));
+            i += 1;
+            continue;
+        }
+        if (0xD800..=0xDBFF).contains(&c) && i + 1 < units.len() {
+            let low = units[i + 1] as u32;
+            if (0xDC00..=0xDFFF).contains(&low) {
+                let cp = 0x10000 + ((c - 0xD800) << 10) + (low - 0xDC00);
+                if let Some(ch) = char::from_u32(cp) {
+                    out.push(ch);
+                }
+                i += 2;
+                continue;
+            }
+        }
+        if let Some(ch) = char::from_u32(c) {
+            out.push(ch);
+        }
+        i += 1;
+    }
+    out
+}
+
+fn quotable_text_char(c: u32) -> bool {
+    if c == b'\t' as u32 || c == b'\n' as u32 {
+        return false;
+    }
+    if cfg!(windows) && c == b'\r' as u32 {
+        return false;
+    }
+    (c < 32) || (127..160).contains(&c) || matches!(c, 0x3C | 0x3E | 0x26)
+}
+
 fn to_tmx_date(raw: &str) -> String {
     if raw.len() == 16 && raw.chars().nth(8) == Some('T') && raw.ends_with('Z') {
         return raw.to_string();

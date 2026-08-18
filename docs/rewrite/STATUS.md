@@ -76,7 +76,14 @@ glossary paths, DTD entities, team XML, abs2rel) now `assert_eq` Java
 method results. Remaining util goldens (`EntityUtil` / `MagicComment` /
 `TagUtil` / `StaticUtils` / `EncodingDetector` / `Preferences` /
 `MatchesTextArea.substituteNumbers`) also `assert_eq`. `Searcher.java`
-**1133** vs `search.rs` still shorter.
+**1133** vs `search.rs` still shorter. Remaining util goldens now
+`assert_eq` StringUtil / Language / BiDi / FileUtil / TMXDateParser /
+TmxEscapingWriter / HttpConnectionUtils / Statistics / Token / Version /
+PatternConsts / Merge / KnownException / Glossary CSV+TBX /
+DictionaryData / MixedEol / ExternalFinder / CLI common params +
+`constructCommandParams` / LegacyParameters initialize /
+AlignSettings persist / CalcStandardStatistics PO table /
+Latex `parseBracedCommand` / XML CJK path / Scripting #775.
 
 **P2 filters2:** `org.omegat.filters.*FilterTest` **150/150**.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for

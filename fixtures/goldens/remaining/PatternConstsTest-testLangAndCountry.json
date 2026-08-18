@@ -1,6 +1,31 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.PatternConstsTest#testLangAndCountry",
-  "method": "org.omegat.util.PatternConstsTest#testLangAndCountry",
-  "pattern": true
+  "cases": [
+    {
+      "text": "abc*DEF",
+      "match": false
+    },
+    {
+      "text": "abc-DEF",
+      "match": true,
+      "lang": "abc",
+      "country": "DEF"
+    },
+    {
+      "text": "abc",
+      "match": true,
+      "lang": "abc",
+      "country": null
+    },
+    {
+      "text": "Z-abc",
+      "match": true,
+      "lang": "Z",
+      "country": "abc"
+    }
+  ],
+  "keys": [
+    "org.omegat.util.PatternConstsTest#testLangAndCountry"
+  ]
 }

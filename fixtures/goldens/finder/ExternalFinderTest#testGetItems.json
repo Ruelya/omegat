@@ -1,7 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.externalfinder.ExternalFinderTest#testGetItems",
-  "api": "getItems",
+  "count": 6,
+  "name0": "Google",
+  "ascii_only2": true,
+  "nopopup0": true,
   "keys": [
     "org.omegat.externalfinder.ExternalFinderTest#testGetItems"
   ]

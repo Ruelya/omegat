@@ -2,6 +2,7 @@
 
 pub mod align;
 pub mod bidi;
+pub mod cli_params;
 pub mod completer;
 pub mod consts;
 pub mod dict;
@@ -11,6 +12,8 @@ pub mod error;
 pub mod external_tm;
 pub mod file_progress;
 pub mod file_util;
+pub mod http_url;
+pub mod known_exception;
 pub mod find_matches;
 pub mod finder;
 pub mod glossary;
@@ -25,7 +28,9 @@ pub mod magic_comment;
 pub mod matches_var;
 pub mod matches_text;
 pub mod matching;
+pub mod mixed_eol;
 pub mod mt;
+pub mod pattern_consts;
 pub mod prefs;
 pub mod properties;
 pub mod real_project;
@@ -43,6 +48,7 @@ pub mod tag_validation;
 pub mod tags;
 pub mod tmx;
 pub mod tokenize;
+pub mod version;
 pub mod wiki;
 
 pub use error::{CoreError, Result};

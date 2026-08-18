@@ -501,7 +501,8 @@ fn find_category(c: char) -> i32 {
     }
 }
 
-fn parse_braced_command(line: &str, prefix: &str) -> Option<String> {
+/// Java `LatexFilter.parseBracedCommand`.
+pub fn parse_braced_command(line: &str, prefix: &str) -> Option<String> {
     if !line.starts_with(prefix) {
         return None;
     }

@@ -449,6 +449,102 @@ fn ja_rank(s: &str) -> i32 {
     }
 }
 
+/// Java `GlossaryReaderCSV.read`.
+pub fn read_csv(path: &Path) -> Vec<GlossaryEntry> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    parse_csv(&raw)
+}
+
+pub fn parse_csv(raw: &str) -> Vec<GlossaryEntry> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let cols = parse_csv_line(line);
+        if cols.len() >= 2 {
+            out.push(GlossaryEntry::new(
+                &cols[0],
+                &cols[1],
+                cols.get(2).map(String::as_str).unwrap_or(""),
+            ));
+        }
+    }
+    out
+}
+
+fn parse_csv_line(line: &str) -> Vec<String> {
+    let mut cols = Vec::new();
+    let mut cur = String::new();
+    let mut chars = line.chars().peekable();
+    let mut in_quote = false;
+    while let Some(ch) = chars.next() {
+        if in_quote {
+            if ch == '"' {
+                if matches!(chars.peek(), Some('"')) {
+                    chars.next();
+                    cur.push('"');
+                } else {
+                    in_quote = false;
+                }
+            } else {
+                cur.push(ch);
+            }
+        } else if ch == '"' {
+            in_quote = true;
+        } else if ch == ',' {
+            cols.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(ch);
+        }
+    }
+    cols.push(cur);
+    cols
+}
+
+/// Java `GlossaryReaderTBX.read` (en source / hu target of the sample file).
+pub fn read_tbx(path: &Path, src_lang: &str, tgt_lang: &str) -> Vec<GlossaryEntry> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return vec![];
+    };
+    parse_tbx(&raw, src_lang, tgt_lang)
+}
+
+pub fn parse_tbx(raw: &str, src_lang: &str, tgt_lang: &str) -> Vec<GlossaryEntry> {
+    let mut out = Vec::new();
+    let src = src_lang.to_ascii_lowercase();
+    let tgt = tgt_lang.to_ascii_lowercase();
+    let mut rest = raw;
+    while let Some(s) = rest.find("<termEntry") {
+        let slice = &rest[s..];
+        let end = slice.find("</termEntry>").unwrap_or(slice.len());
+        let block = &slice[..end];
+        let source = term_for_lang(block, &src);
+        let target = term_for_lang(block, &tgt);
+        if let (Some(source), Some(target)) = (source, target) {
+            out.push(GlossaryEntry::new(&source, &target, ""));
+        }
+        rest = &rest[s + 10..];
+    }
+    if out.is_empty() {
+        return parse_glossary(raw);
+    }
+    out
+}
+
+fn term_for_lang(block: &str, lang: &str) -> Option<String> {
+    let key = format!("xml:lang=\"{lang}\"");
+    let start = block.to_ascii_lowercase().find(&key)?;
+    let after = &block[start..];
+    let term_at = after.find("<term")?;
+    let gt = after[term_at..].find('>')?;
+    let inner = &after[term_at + gt + 1..];
+    let end = inner.find("</term>")?;
+    Some(inner[..end].to_string())
+}
+
 pub fn load_glossary(path: &Path) -> Vec<GlossaryEntry> {
     if !path.exists() {
         return vec![];

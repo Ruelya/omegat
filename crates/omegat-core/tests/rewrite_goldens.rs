@@ -475,3 +475,228 @@ fn issues_table_model_matches_java() {
     );
 }
 
+#[test]
+fn string_util_language_bidi_file_util_remaining_match_java() {
+    let alnum = golden("util/StringUtilTest#testAlphanumericStringCase.json");
+    assert_eq!(omegat_core::string_util::is_upper_case("MQL5"), alnum["MQL5_upper"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_lower_case("mql5"), alnum["mql5_lower"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_title_case("Mql5"), alnum["Mql5_title"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_mixed_case("mQl5"), alnum["mQl5_mixed"].as_bool().unwrap());
+
+    let empty = golden("util/StringUtilTest#testEmptyStringCase.json");
+    assert_eq!(omegat_core::string_util::is_upper_case(""), empty["empty_upper"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_lower_case(""), empty["empty_lower"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_title_case(""), empty["empty_title"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::to_title_case("", "en"), empty["empty_toTitle"].as_str().unwrap());
+
+    let mixed = golden("util/StringUtilTest#testIsMixedCase.json");
+    assert_eq!(omegat_core::string_util::is_mixed_case("ABc"), mixed["ABc"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_mixed_case("Abc"), mixed["Abc"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_mixed_case(" {ABc"), mixed["braced"].as_bool().unwrap());
+
+    let nonword = golden("util/StringUtilTest#testNonWordCase.json");
+    assert_eq!(omegat_core::string_util::is_lower_case("{"), nonword["lower"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_upper_case("{"), nonword["upper"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_title_case("{"), nonword["title"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_mixed_case("{"), nonword["mixed"].as_bool().unwrap());
+
+    let title = golden("util/StringUtilTest#testToTitleCase.json");
+    assert_eq!(omegat_core::string_util::to_title_case("abc", "en"), title["abc"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::to_title_case("ijk", "tr"), title["tr"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::to_title_case("\u{01CC}", "en"), title["nj"].as_str().unwrap());
+
+    let cap = golden("util/StringUtilTest#testCapitalizeFirst.json");
+    assert_eq!(omegat_core::string_util::capitalize_first("abc", "en"), cap["abc"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::capitalize_first("abC", "en"), cap["abC"].as_str().unwrap());
+
+    let mc = golden("util/StringUtilTest#testMatchCapitalization.json");
+    assert_eq!(
+        omegat_core::string_util::match_capitalization("foo", Some("Abc"), "en"),
+        mc["title"].as_str().unwrap()
+    );
+    assert_eq!(
+        omegat_core::string_util::match_capitalization("FOO", Some("lower"), "en"),
+        mc["lower"].as_str().unwrap()
+    );
+    assert_eq!(
+        omegat_core::string_util::match_capitalization("foo", Some("UPPER"), "en"),
+        mc["upper"].as_str().unwrap()
+    );
+
+    let compress = golden("util/StringUtilTest#testCompressSpace.json");
+    assert_eq!(
+        omegat_core::string_util::compress_spaces(" One Two\nThree   Four\r\nFive "),
+        compress["a"].as_str().unwrap()
+    );
+    assert_eq!(omegat_core::string_util::compress_spaces("Six\tseven"), compress["b"].as_str().unwrap());
+
+    let first = golden("util/StringUtilTest#testFirstN.json");
+    let bmp = "𝐀𝐀";
+    assert_eq!(omegat_core::string_util::first_n(bmp, 0), first["n0"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::first_n(bmp, 1), first["n1"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::first_n(bmp, 2), first["n2"].as_str().unwrap());
+
+    let trunc = golden("util/StringUtilTest#testTruncateString.json");
+    let bmp3 = "𝐀𝐀𝐀";
+    assert_eq!(omegat_core::string_util::truncate(bmp3, 1), trunc["n1"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::truncate(bmp3, 2), trunc["n2"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::truncate(bmp3, 3), trunc["n3"].as_str().unwrap());
+
+    let width = golden("util/StringUtilTest#testNormalizeWidth.json");
+    assert_eq!(
+        omegat_core::string_util::normalize_width("\u{FF26}\u{FF4F}\u{FF4F}\u{3000}\u{FF11}\u{FF12}\u{FF13}"),
+        width["fw"].as_str().unwrap()
+    );
+    let conv = golden("util/StringUtilTest#testNormalizeWidthConversion.json");
+    assert_eq!(
+        omegat_core::string_util::normalize_width("\u{FF21}\u{FF22}\u{FF23}\u{FF11}\u{FF12}\u{FF13}"),
+        conv["abc"].as_str().unwrap()
+    );
+    let punct = golden("util/StringUtilTest#testNormalizeWidthSpecialCharacters.json");
+    assert_eq!(
+        omegat_core::string_util::normalize_width("\u{FF01}\u{FF1F}\u{FF08}\u{FF09}\u{FF5B}\u{FF5D}"),
+        punct["punct"].as_str().unwrap()
+    );
+    let spaces = golden("util/StringUtilTest#testNormalizeWidthSpaces.json");
+    assert_eq!(omegat_core::string_util::normalize_width("a\u{00a0}b"), spaces["nbsp"].as_str().unwrap());
+    let edge = golden("util/StringUtilTest#testNormalizeWidthEdgeCases.json");
+    assert_eq!(omegat_core::string_util::normalize_width(""), edge["empty"].as_str().unwrap());
+    assert_eq!(
+        omegat_core::string_util::normalize_width("Already normalized"),
+        edge["plain"].as_str().unwrap()
+    );
+    let hpa = golden("util/StringUtilTest#testReplaceSquaredLatinAbbreviations.json");
+    assert_eq!(omegat_core::string_util::normalize_width("\u{3371}"), hpa["hpa"].as_str().unwrap());
+    let ka = golden("util/StringUtilTest#testProcessKatakana.json");
+    assert_eq!(omegat_core::string_util::normalize_width("\u{FF76}"), ka["ka"].as_str().unwrap());
+    let hang = golden("util/StringUtilTest#testProcessHangul.json");
+    assert_eq!(omegat_core::string_util::normalize_width("\u{FFBE}"), hang["h"].as_str().unwrap());
+
+    let rstrip = golden("util/StringUtilTest#testRstrip.json");
+    assert_eq!(omegat_core::string_util::rstrip("abc  "), rstrip["a"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::rstrip("abc"), rstrip["b"].as_str().unwrap());
+
+    let wrap_e = golden("util/StringUtilTest#testWrapEdgeCases.json");
+    assert_eq!(omegat_core::string_util::wrap("", 5), wrap_e["empty"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::wrap("Longword", 5), wrap_e["long"].as_str().unwrap());
+
+    let cmp = golden("util/StringUtilTest#testCompareToNullable.json");
+    assert_eq!(omegat_core::string_util::compare_to_nullable(None, None), cmp["nn"].as_i64().unwrap() as i32);
+    assert_eq!(
+        omegat_core::string_util::compare_to_nullable(Some("a"), Some("a")),
+        cmp["aa"].as_i64().unwrap() as i32
+    );
+
+    let rc = golden("util/StringUtilTest#testReplaceCaseBasicFunctionality.json");
+    assert_eq!(omegat_core::string_util::replace_case("\\Uhello\\E", "en"), rc["u"].as_str().unwrap());
+    let rce = golden("util/StringUtilTest#testReplaceCaseEscapeSequences.json");
+    assert_eq!(omegat_core::string_util::replace_case("\\\\", "en"), rce["q"].as_str().unwrap());
+    let rcedge = golden("util/StringUtilTest#testReplaceCaseEdgeCases.json");
+    assert_eq!(
+        omegat_core::string_util::replace_case("Hello, World!", "en"),
+        rcedge["plain"].as_str().unwrap()
+    );
+    assert_eq!(omegat_core::string_util::replace_case("\\UHello", "en"), rcedge["U"].as_str().unwrap());
+    let casec = golden("util/StringUtilTest#testCaseConversion.json");
+    assert_eq!(omegat_core::string_util::replace_case("\\uistanbul", "en"), casec["en"].as_str().unwrap());
+    assert_eq!(omegat_core::string_util::replace_case("\\uistanbul", "tr"), casec["tr"].as_str().unwrap());
+
+    let nonbmp = golden("util/StringUtilTest#testUnicodeNonBMP.json");
+    assert_eq!(omegat_core::string_util::is_upper_case("𝐀"), nonbmp["upperA"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_title_case("𝐀"), nonbmp["titleA"].as_bool().unwrap());
+    assert_eq!(omegat_core::string_util::is_title_case("𝐀𝐚"), nonbmp["titleAa"].as_bool().unwrap());
+
+    let lang = golden("util/LanguageTest#testGetLanguage.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("xx-YY")).get_language(),
+        lang["xx-YY"].as_str().unwrap()
+    );
+    let ctor = golden("util/LanguageTest#testConstructor.json");
+    assert_eq!(
+        omegat_core::language::Language::new(None).get_language(),
+        ctor["empty"].as_str().unwrap()
+    );
+    let eq = golden("util/LanguageTest#testEquals.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("xxx-YY"))
+            == omegat_core::language::Language::new(Some("XXX-yy")),
+        eq["eq"].as_bool().unwrap()
+    );
+    let bcp = golden("util/LanguageTest#testBCP47.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("en-KW-x-ukeng")).get_language_code(),
+        bcp["code"].as_str().unwrap()
+    );
+    assert_eq!(
+        omegat_core::language::Language::verify_single_lang_code("es-419"),
+        bcp["es419"].as_bool().unwrap()
+    );
+    assert_eq!(
+        omegat_core::language::Language::verify_single_lang_code("xxx+ZZZ-a-BBB-ccc"),
+        bcp["plus"].as_bool().unwrap()
+    );
+    let ar = golden("util/LanguageTest#testGetLowerCaseLanguageFromLocale_languageAndCountryLocale.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("AR-DZ")).get_language_code(),
+        ar["lang"].as_str().unwrap()
+    );
+    let es = golden("util/LanguageTest#testGetLowerCaseLanguageFromLocale_languageOnlyLocale.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("ES")).get_language_code(),
+        es["lang"].as_str().unwrap()
+    );
+    let dz = golden("util/LanguageTest#testGetUpperCaseCountryFromLocale_languageAndCountryLocale.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("AR-DZ")).get_country_code(),
+        dz["country"].as_str().unwrap()
+    );
+    let esc = golden("util/LanguageTest#testGetUpperCaseCountryFromLocale_languageOnlyLocale.json");
+    assert_eq!(
+        omegat_core::language::Language::new(Some("ES")).get_country_code(),
+        esc["country"].as_str().unwrap()
+    );
+
+    let ltr = golden("util/BiDiUtilsTest#testAddLtrBidiAround.json");
+    assert_eq!(omegat_core::bidi::add_ltr_bidi_around("x"), ltr["text"].as_str().unwrap());
+    let rtl = golden("util/BiDiUtilsTest#testAddRtlBidiAround.json");
+    assert_eq!(omegat_core::bidi::add_rtl_bidi_around("x"), rtl["text"].as_str().unwrap());
+    let no_ltr = golden("util/BiDiUtilsTest#testGetOrientationType_noProjectLocaleLtr_allLtr.json");
+    assert_eq!(omegat_core::bidi::is_rtl("pl"), no_ltr["rtl"].as_bool().unwrap());
+    let pair = golden("util/BiDiUtilsTest#testIsRtl_RtlLocale_true.json");
+    assert_eq!(omegat_core::bidi::is_rtl("ar"), pair["rtl_ar"].as_bool().unwrap());
+    assert_eq!(omegat_core::bidi::is_rtl("en"), pair["rtl_en"].as_bool().unwrap());
+    assert_eq!(
+        omegat_core::bidi::orientation_type(Some("en"), Some("fr"), "en"),
+        omegat_core::bidi::Orientation::AllLtr
+    );
+    assert_eq!(
+        omegat_core::bidi::orientation_type(Some("ar"), Some("he"), "ar"),
+        omegat_core::bidi::Orientation::AllRtl
+    );
+    assert_eq!(
+        omegat_core::bidi::orientation_type(Some("en"), Some("ar"), "en"),
+        omegat_core::bidi::Orientation::Differ
+    );
+
+    let abs = golden("util/FileUtilTest#testAbsoluteForSystem.json");
+    assert_eq!(omegat_core::file_util::absolute_for_system("C:\\zzz"), abs["converted"].as_str().unwrap());
+    assert_eq!(omegat_core::file_util::absolute_for_system("\\zzz"), abs["slash"].as_str().unwrap());
+    let eol = golden("util/FileUtilTest#testEOL.json");
+    assert_eq!(omegat_core::file_util::get_eol(b"12\n34\n"), eol["lf"].as_str());
+    assert_eq!(omegat_core::file_util::get_eol(b"12\r34\r"), eol["cr"].as_str());
+    assert_eq!(omegat_core::file_util::get_eol(b"12\r\n34\r\n"), eol["crlf"].as_str());
+    let bak = golden("util/FileUtilTest#testBackupFilename.json");
+    let got = omegat_core::file_util::get_backup_filename(std::path::Path::new("backup.test"), 1684085727566);
+    assert_eq!(got, bak["pattern"].as_str().unwrap());
+    let masks = golden("util/FileUtilTest#testFilePatterns.json");
+    for c in masks["cases"].as_array().unwrap() {
+        assert_eq!(
+            omegat_core::file_util::file_mask_matches(c["mask"].as_str().unwrap(), c["path"].as_str().unwrap()),
+            c["match"].as_bool().unwrap(),
+            "{} {}",
+            c["mask"],
+            c["path"]
+        );
+    }
+}
+

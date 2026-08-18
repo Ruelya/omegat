@@ -11,7 +11,7 @@ mod inline_tag;
 mod ilias;
 mod ini;
 mod json;
-mod latex;
+pub mod latex;
 mod magento;
 mod markdown;
 mod misc;
@@ -337,6 +337,9 @@ impl FilterRegistry {
             .map(|f| f.as_ref())
     }
 }
+
+pub use xml_dialect::DefaultXmlDialect;
+pub use xml_filter::{parse_to_file, DefaultHooks};
 
 pub fn placeholder(index: usize) -> String {
     format!("\u{0000}{index}\u{0000}")

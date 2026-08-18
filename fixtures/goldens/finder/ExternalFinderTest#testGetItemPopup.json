@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.externalfinder.ExternalFinderTest#testGetItemPopup",
-  "api": "popup",
+  "nopopup": true,
   "keys": [
     "org.omegat.externalfinder.ExternalFinderTest#testGetItemPopup"
   ]

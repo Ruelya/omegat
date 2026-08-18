@@ -1,6 +1,9 @@
 import { t } from "../i18n";
 import { useApp } from "../store/app";
 
+/** Java `SearchExpression.SearchExpressionType` radio set. */
+export const SEARCH_EXPRESSION_TYPES = ["exact", "keyword", "regex"] as const;
+
 export function SearchWindow({ mode }: { mode: "search" | "replace" }) {
   const form = useApp((s) => s.searchForm);
   const set = useApp((s) => s.setSearchForm);
@@ -33,7 +36,7 @@ export function SearchWindow({ mode }: { mode: "search" | "replace" }) {
           )}
           <fieldset className="checks">
             <legend>{t("searchType")}</legend>
-            {(["exact", "keyword", "regex"] as const).map((ty) => (
+            {SEARCH_EXPRESSION_TYPES.map((ty) => (
               <label key={ty}>
                 <input
                   type="radio"

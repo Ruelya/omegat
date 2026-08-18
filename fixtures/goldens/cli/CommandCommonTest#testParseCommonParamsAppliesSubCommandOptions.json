@@ -1,7 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions",
-  "api": "parseCommonParams",
+  "project_locking": false,
+  "location_save": false,
+  "no_team": true,
+  "tokenizer_source": "org.omegat.tokenizer.LuceneEnglishTokenizer",
+  "tokenizer_target": "org.omegat.tokenizer.LuceneGermanTokenizer",
   "keys": [
     "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions"
   ]

@@ -214,6 +214,81 @@ pub fn compute_relative_path(root: &Path, file: &Path) -> std::io::Result<String
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
+/// Java `FileUtil.buildFileList`.
+pub fn build_file_list(root: &Path, recursive: bool) -> std::io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    if recursive {
+        for ent in walkdir::WalkDir::new(root).follow_links(true) {
+            let ent = ent?;
+            if ent.file_type().is_file() {
+                out.push(ent.path().to_path_buf());
+            }
+        }
+    } else {
+        for ent in std::fs::read_dir(root)? {
+            let ent = ent?;
+            if ent.file_type()?.is_file() {
+                out.push(ent.path());
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// Java `FileUtil.copyFilesTo` (replace-all when `overwrite` is true).
+pub fn copy_files_to(target: &Path, sources: &[PathBuf], overwrite: bool) -> std::io::Result<()> {
+    if target.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "copyFilesTo should fail when target dir is a file.",
+        ));
+    }
+    std::fs::create_dir_all(target)?;
+    for src in sources {
+        let name = src.file_name().unwrap_or_default();
+        let dest = target.join(name);
+        copy_one(src, &dest, overwrite)?;
+    }
+    Ok(())
+}
+
+fn copy_one(src: &Path, dest: &Path, overwrite: bool) -> std::io::Result<()> {
+    if src.is_dir() {
+        if dest.exists() && !overwrite {
+            return Ok(());
+        }
+        if dest.exists() && overwrite {
+            delete_tree(dest)?;
+        }
+        std::fs::create_dir_all(dest)?;
+        for ent in std::fs::read_dir(src)? {
+            let ent = ent?;
+            copy_one(&ent.path(), &dest.join(ent.file_name()), true)?;
+        }
+        return Ok(());
+    }
+    if dest.exists() && !overwrite {
+        return Ok(());
+    }
+    if let Some(p) = dest.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    std::fs::copy(src, dest)?;
+    Ok(())
+}
+
+/// Java `FileUtil.deleteTree`.
+pub fn delete_tree(path: &Path) -> std::io::Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else if path.exists() {
+        std::fs::remove_file(path)
+    } else {
+        Ok(())
+    }
+}
+
 pub fn expand_tilde_home_dir(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {

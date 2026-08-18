@@ -1,6 +1,17 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.statistics.CalcStandardStatisticsTest#testStatistics",
-  "method": "org.omegat.core.statistics.CalcStandardStatisticsTest#testStatistics",
-  "computes": true
+  "file": "data/filters/po/file-POFilter-match-stat-en-ca.po",
+  "total_segments": 108,
+  "total_words": 938,
+  "total_nosp": 4894,
+  "total_chars": 5699,
+  "unique_segments": 97,
+  "unique_words": 848,
+  "unique_nosp": 4385,
+  "unique_chars": 5116,
+  "file_segments": 108,
+  "keys": [
+    "org.omegat.core.statistics.CalcStandardStatisticsTest#testStatistics"
+  ]
 }

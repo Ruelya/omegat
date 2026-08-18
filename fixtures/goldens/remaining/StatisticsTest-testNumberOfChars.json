@@ -1,6 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.statistics.StatisticsTest#testNumberOfChars",
-  "method": "org.omegat.core.statistics.StatisticsTest#testNumberOfChars",
-  "chars": true
+  "without_spaces": 3,
+  "with_spaces": 4,
+  "text": "1 2\b3",
+  "keys": [
+    "org.omegat.core.statistics.StatisticsTest#testNumberOfChars"
+  ]
 }

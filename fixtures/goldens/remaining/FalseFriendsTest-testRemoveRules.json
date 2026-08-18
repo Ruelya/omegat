@@ -1,6 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.languagetools.FalseFriendsTest#testRemoveRules",
-  "method": "org.omegat.languagetools.FalseFriendsTest#testRemoveRules",
-  "removes": true
+  "removes": true,
+  "rewrite": "http",
+  "keys": [
+    "org.omegat.languagetools.FalseFriendsTest#testRemoveRules"
+  ]
 }

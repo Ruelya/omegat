@@ -10,14 +10,24 @@ fn is_java_space_char(c: char) -> bool {
     c.is_whitespace() && !matches!(c, '\t' | '\n' | '\r' | '\u{000B}' | '\u{000C}')
 }
 
-fn chars_nosp(s: &str) -> usize {
+/// Java `Statistics.numberOfCharactersWithoutSpaces`.
+pub fn number_of_characters_without_spaces(s: &str) -> usize {
     s.chars()
         .filter(|c| *c != '\u{0008}' && !is_java_space_char(*c))
         .count()
 }
 
-fn chars_with_spaces(s: &str) -> usize {
+/// Java `Statistics.numberOfCharactersWithSpaces`.
+pub fn number_of_characters_with_spaces(s: &str) -> usize {
     s.chars().filter(|c| *c != '\u{0008}').count()
+}
+
+fn chars_nosp(s: &str) -> usize {
+    number_of_characters_without_spaces(s)
+}
+
+fn chars_with_spaces(s: &str) -> usize {
+    number_of_characters_with_spaces(s)
 }
 
 /// Java `PatternConsts.OMEGAT_TAG`: letter **and** digits required (`<x0/>`).

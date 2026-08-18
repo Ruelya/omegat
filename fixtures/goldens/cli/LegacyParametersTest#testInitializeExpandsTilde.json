@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde",
-  "api": "tilde",
+  "input": "~/omegat-conf",
+  "home_relative": "omegat-conf",
   "keys": [
     "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde"
   ]
