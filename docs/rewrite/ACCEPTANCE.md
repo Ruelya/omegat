@@ -64,7 +64,13 @@ checks. `./gradlew` is for local golden export only.
 - Each `apps/desktop/src/renderer/i18n/*.json` key set ≠ `en.json`; a key
   that exists in `Bundle_xx.properties` still equals the English string
   (`en` excepted)
-- STATUS table is all `parity` before P12 gates are green
+- STATUS table is all `parity` (the old `P12_GATES_GREEN` marker is not
+  a bypass)
+- A STATUS wave is `parity` while its required Java `*Test` methods
+  (`tools/honesty/java_coverage.py`) lack `java_test` goldens
+- P7 is `parity` while `SegmentEditor.tsx` does not use `Document3`
+- P12 is `parity` while a locale value equals a *different* English
+  `en.json` string (same-key leftover gate is not enough)
 - `python3 tools/export_java_goldens/check_provenance.py` fails
 
 P0 commits these gates **red** on the current tree. Later waves may turn

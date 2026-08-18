@@ -14,6 +14,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from java_coverage import (
+    coverage,
+    english_phrase_leftovers,
+    parse_status_waves,
+    product_editor_uses_document3,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 FAILS: list[str] = []
 PASSES: list[str] = []
@@ -351,13 +359,57 @@ def check_status() -> None:
         note(False, "STATUS.md has no status table rows")
         return
     all_parity = all(s == "parity" for _, _, s in rows)
-    # P12 may allow multi-row parity only when no scaffold remains and gates are green.
-    # Until then a full-table parity is a fail. This script is itself a gate, so
-    # all-parity always fails here; P12 will delete this clause when flipping.
-    p12_done = (ROOT / "tools/honesty/P12_GATES_GREEN").is_file()
-    ok = (not all_parity) or p12_done
+    # Full-table parity is forbidden. The old P12_GATES_GREEN marker was a
+    # bypass and is ignored: 503 missing Java test* goldens is not P12 done.
     scaffold = sum(1 for *_, s in rows if s == "scaffold")
-    note(ok, f"STATUS not full-table parity ({len(rows)} rows, {scaffold} scaffold)" + ("" if ok else " (all rows are parity)"))
+    gap = sum(1 for *_, s in rows if s == "parity_gap")
+    note(
+        not all_parity,
+        f"STATUS not full-table parity ({len(rows)} rows, {scaffold} scaffold, {gap} parity_gap)"
+        + ("" if not all_parity else " (all rows are parity)"),
+    )
+
+
+def check_wave_parity_matches_goldens() -> None:
+    """A `parity` STATUS wave fails if its required Java *Test methods lack goldens."""
+    cov = coverage()
+    status_text = read_text("docs/rewrite/STATUS.md")
+    waves = parse_status_waves(status_text)
+    lies = []
+    wave_missing: dict[str, list[str]] = cov["wave_missing"]  # type: ignore[assignment]
+    for wave, miss in wave_missing.items():
+        if waves.get(wave) == "parity" and miss:
+            lies.append(f"{wave} marked parity but {len(miss)} required test* lack goldens e.g. {miss[:3]}")
+    inv = ROOT / "tools/honesty/missing_java_tests.txt"
+    missing: list[str] = cov["missing"]  # type: ignore[assignment]
+    inv.write_text("\n".join(missing) + ("\n" if missing else ""), encoding="utf-8")
+    detail = (
+        f"java_test*={cov['java_methods']} golden_unique={cov['golden_unique']} "
+        f"missing={len(missing)}"
+    )
+    note(not lies, f"STATUS parity waves have required Java test goldens ({detail})" + ("" if not lies else " (" + "; ".join(lies[:6]) + ")"))
+
+
+def check_product_document3() -> None:
+    wired = product_editor_uses_document3()
+    waves = parse_status_waves(read_text("docs/rewrite/STATUS.md"))
+    lie = waves.get("P7") == "parity" and not wired
+    note(
+        not lie,
+        "product SegmentEditor uses Document3 when P7 is parity"
+        + ("" if wired else " (SegmentEditor.tsx does not reference Document3)"),
+    )
+
+
+def check_locale_english_phrases() -> None:
+    hits = english_phrase_leftovers()
+    waves = parse_status_waves(read_text("docs/rewrite/STATUS.md"))
+    lie = waves.get("P12") == "parity" and bool(hits)
+    note(
+        not lie,
+        "P12 leftover English phrases (values equal a different en.json string)"
+        + (f" ({len(hits)} hits, e.g. {hits[:4]})" if hits else " (0)"),
+    )
 
 
 def check_provenance() -> None:
@@ -384,6 +436,9 @@ def main() -> int:
     check_menus()
     check_locales()
     check_status()
+    check_wave_parity_matches_goldens()
+    check_product_document3()
+    check_locale_english_phrases()
     check_provenance()
     print()
     print(f"{len(PASSES)} passed, {len(FAILS)} failed")
