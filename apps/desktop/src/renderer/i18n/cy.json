@@ -3,7 +3,7 @@
   "welcomeLead": "Gweithfan allweddell-gyntaf ar gyfer atgofion cyfieithu, geirfaoedd a dogfennau tag.",
   "openProject": "Agor",
   "newProject": "Newydd",
-  "recent": "Open Recent...",
+  "recent": "Agor diweddar...",
   "sourceLang": "Iaith Ffeiliau Ffynhonnell:",
   "targetLang": "Iaith Ffeiliau Cyfieithwyd",
   "sentenceSeg": "Galluogi Segmentu",
@@ -224,5 +224,9 @@
   "accessConfig": "Åbn konfigurationsmappe",
   "clearRecent": "Ryd seneste projekter",
   "restart": "Ailgychwyn",
-  "exportSelection": "Allforio'r Dewis"
+  "exportSelection": "Allforio'r Dewis",
+  "alignMerge": "Cyfuno",
+  "alignSplit": "Hollti",
+  "alignUp": "Symud i fyny",
+  "alignDown": "Symud i lawr"
 }

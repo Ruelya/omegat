@@ -224,5 +224,9 @@
   "accessConfig": "Acceder a carpeta de configuración",
   "clearRecent": "Limpiar menú",
   "restart": "Reiniciar",
-  "exportSelection": "Exportar selección"
+  "exportSelection": "Exportar selección",
+  "alignMerge": "Combinar",
+  "alignSplit": "Dividir",
+  "alignUp": "Mover arriba",
+  "alignDown": "Mover abajo"
 }

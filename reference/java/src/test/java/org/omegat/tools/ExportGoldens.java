@@ -3261,6 +3261,31 @@ public final class ExportGoldens {
                 Map.of("startOffset", 3, "endOffset", 4, "entryPart", "SOURCE"),
                 Map.of("startOffset", 1, "endOffset", 2, "entryPart", "TRANSLATION")));
         writeJson(goldenRoot.resolve("editor/NBSPMarkerTest#testMarkerBothNoBreakSpaces.json"), nbsp);
+
+        Map<String, Object> color = new LinkedHashMap<>();
+        color.put("exported_by", "org.omegat.tools.ExportGoldens");
+        color.put("java_test",
+                "org.omegat.gui.editor.mark.MarkerColorFreshnessTest#testPainterFollowsColorPreferenceChange");
+        color.put("source", "Edit");
+        color.put("translation", "target");
+        color.put("linked", "xAUTO");
+        color.put("before_color", "#1565c0");
+        color.put("after_color", "#123456");
+        writeJson(goldenRoot.resolve(
+                "editor/MarkerColorFreshnessTest#testPainterFollowsColorPreferenceChange.json"), color);
+
+        Map<String, Object> gloss = new LinkedHashMap<>();
+        gloss.put("exported_by", "org.omegat.tools.ExportGoldens");
+        gloss.put("java_test", "org.omegat.gui.glossary.GlossaryAutoCompleterViewTest#testSuggestions");
+        gloss.put("terms", List.of("foo", "bar", "BAZ"));
+        writeJson(goldenRoot.resolve("editor/GlossaryAutoCompleterViewTest#testSuggestions.json"), gloss);
+
+        Map<String, Object> enc = new LinkedHashMap<>();
+        enc.put("exported_by", "org.omegat.tools.ExportGoldens");
+        enc.put("java_test", "org.omegat.gui.align.BundleTest#testBundleEncodings");
+        enc.put("bundle", "org.omegat.gui.align.Bundle");
+        enc.put("accepted_encodings", List.of("US-ASCII", "WINDOWS-1252"));
+        writeJson(goldenRoot.resolve("align/BundleTest#testBundleEncodings.json"), enc);
     }
 
     private void exportAlignerGoldens() throws Exception {

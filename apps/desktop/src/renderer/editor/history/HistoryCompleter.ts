@@ -8,7 +8,7 @@ export class HistoryCompleter extends AutoCompleterListView {
   constructor() {
     super("history");
   }
-  computeListData(wordChunk: string): AutoCompleterItem[] {
+  computeListData(wordChunk: string, _contextualOnly = false): AutoCompleterItem[] {
     return completeWords(this.translations, wordChunk).map((w) => item(w, "history"));
   }
 }

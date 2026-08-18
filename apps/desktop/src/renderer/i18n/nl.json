@@ -224,5 +224,9 @@
   "accessConfig": "Ga naar map voor configuratie",
   "clearRecent": "Menu opschonen",
   "restart": "Opnieuw starten",
-  "exportSelection": "Selectie exporteren"
+  "exportSelection": "Selectie exporteren",
+  "alignMerge": "Samenvoegen",
+  "alignSplit": "Splitsen",
+  "alignUp": "Naar boven",
+  "alignDown": "Naar beneden"
 }

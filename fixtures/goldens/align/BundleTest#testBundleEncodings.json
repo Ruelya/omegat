@@ -1,5 +1,9 @@
 {
   "java_test": "org.omegat.gui.align.BundleTest#testBundleEncodings",
   "bundle": "org.omegat.gui.align.Bundle",
+  "accepted_encodings": [
+    "US-ASCII",
+    "WINDOWS-1252"
+  ],
   "exported_by": "org.omegat.tools.ExportGoldens"
 }

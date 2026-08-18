@@ -1,4 +1,5 @@
 /** Java `org.omegat.gui.editor.DocumentFilter3` — edits stay inside the translation range. */
+import { FilterBypass } from "./FilterBypass";
 
 export type FilterDocument = {
   text: string;
@@ -12,7 +13,7 @@ export type FilterDocument = {
 
 export type FilterAttrs = { composed?: boolean } | null;
 
-export type FilterResult = { applied: boolean; doc: FilterDocument };
+export type FilterResult = { applied: boolean; doc: FilterDocument; bypass: FilterBypass };
 
 export function createFilterDocument(text: string, translationStart: number, translationEnd: number): FilterDocument {
   return {
@@ -51,30 +52,36 @@ export function allowInsert(text: string, offset: number): boolean {
   return !isInsideTag(text, offset);
 }
 
+/**
+ * Java `replace(FilterBypass, offset, length, text, attrs)`:
+ * set composed from attrs, then `isPossible` then `fb.replace`.
+ */
 export function replace(
   doc: FilterDocument,
   offset: number,
   length: number,
   text: string,
   attrs: FilterAttrs = null,
+  bypass?: FilterBypass,
 ): FilterResult {
   let next = doc;
   if (attrs?.composed) next = { ...next, textBeingComposed: true };
-  if (!isPossible(next, offset, length)) return { applied: false, doc: next };
-  const written = next.text.slice(0, offset) + text + next.text.slice(offset + length);
-  const delta = text.length - length;
-  return {
-    applied: true,
-    doc: {
-      ...next,
-      text: written,
-      translationEnd: next.translationEnd + delta,
-    },
-  };
+  const fb = bypass ?? new FilterBypass(next);
+  fb.doc = { ...fb.doc, textBeingComposed: next.textBeingComposed };
+  if (!isPossible(fb.doc, offset, length)) return { applied: false, doc: fb.doc, bypass: fb };
+  fb.replace(offset, length, text);
+  return { applied: true, doc: fb.doc, bypass: fb };
 }
 
 export class DocumentFilter3 {
-  replace(doc: FilterDocument, offset: number, length: number, text: string, attrs: FilterAttrs = null): FilterResult {
-    return replace(doc, offset, length, text, attrs);
+  replace(
+    doc: FilterDocument,
+    offset: number,
+    length: number,
+    text: string,
+    attrs: FilterAttrs = null,
+    bypass?: FilterBypass,
+  ): FilterResult {
+    return replace(doc, offset, length, text, attrs, bypass);
   }
 }

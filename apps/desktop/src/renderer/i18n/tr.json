@@ -224,5 +224,9 @@
   "accessConfig": "Yapılandırma Klasörüne Eriş",
   "clearRecent": "Menüyü Temizle",
   "restart": "Yeniden başlat",
-  "exportSelection": "Seçimi Dışa Aktar"
+  "exportSelection": "Seçimi Dışa Aktar",
+  "alignMerge": "Birleşdir",
+  "alignSplit": "Böl",
+  "alignUp": "Ýokaryk Süýşür",
+  "alignDown": "Aşak Süýşür"
 }

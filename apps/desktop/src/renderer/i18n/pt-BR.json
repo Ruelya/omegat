@@ -3,7 +3,7 @@
   "welcomeLead": "Estação de trabalho centrada no teclado para memórias, glossários e documentos etiquetados.",
   "openProject": "Abrir",
   "newProject": "Novo",
-  "recent": "Abrir recente",
+  "recent": "Abrir recente...",
   "sourceLang": "Idioma dos arquivos de origem:",
   "targetLang": "Idioma dos arquivos traduzidos:",
   "sentenceSeg": "Segmentação em nível de sentença",
@@ -224,5 +224,9 @@
   "accessConfig": "Acessar pasta de configurações",
   "clearRecent": "Menu Limpar",
   "restart": "Reiniciar",
-  "exportSelection": "Exportar seleção"
+  "exportSelection": "Exportar seleção",
+  "alignMerge": "Combinar",
+  "alignSplit": "Separar",
+  "alignUp": "Mover para cima",
+  "alignDown": "Mover para baixo"
 }

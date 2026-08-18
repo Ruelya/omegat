@@ -3,7 +3,7 @@
   "welcomeLead": "Postazione a tastiera per memorie di traduzione, glossari e documenti con tag.",
   "openProject": "Apri",
   "newProject": "Nuovo",
-  "recent": "Apri progetto recente",
+  "recent": "Apri progetto recente...",
   "sourceLang": "Lingua dei file di partenza:",
   "targetLang": "Lingua dei file di arrivo:",
   "sentenceSeg": "Segmentazione a livello di frase",
@@ -224,5 +224,9 @@
   "accessConfig": "Accedi alla cartella di configurazione",
   "clearRecent": "Pulisci il menu",
   "restart": "Riavvia",
-  "exportSelection": "Esporta la selezione"
+  "exportSelection": "Esporta la selezione",
+  "alignMerge": "Unisci",
+  "alignSplit": "Dividi",
+  "alignUp": "Sposta in alto",
+  "alignDown": "Sposta in basso"
 }

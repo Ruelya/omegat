@@ -11,6 +11,7 @@ export type MarkerInput = {
   isAlt?: boolean;
   fromAuto?: boolean;
   fromMt?: boolean;
+  linked?: "xICE" | "x100PC" | "xAUTO" | "xENFORCED";
   enabled?: boolean;
   protectedParts?: ProtectedPart[];
 };

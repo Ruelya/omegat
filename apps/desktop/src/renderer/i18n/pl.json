@@ -224,5 +224,9 @@
   "accessConfig": "Otwórz folder konfiguracji",
   "clearRecent": "Wyczyść ostatnie projekty",
   "restart": "Uruchom ponownie",
-  "exportSelection": "Eksportuj zaznaczenie"
+  "exportSelection": "Eksportuj zaznaczenie",
+  "alignMerge": "Scal",
+  "alignSplit": "Podziel",
+  "alignUp": "W górę",
+  "alignDown": "W dół"
 }

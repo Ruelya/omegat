@@ -224,5 +224,9 @@
   "accessConfig": "Accede à u cartulare di cunfigurazione",
   "clearRecent": "Squassà a lista di i prughjetti recenti",
   "restart": "Rilancià",
-  "exportSelection": "Espurtà a selezzione"
+  "exportSelection": "Espurtà a selezzione",
+  "alignMerge": "Fusione",
+  "alignSplit": "Divide",
+  "alignUp": "Move in sù",
+  "alignDown": "Move in ghjò"
 }

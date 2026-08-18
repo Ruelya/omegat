@@ -9,7 +9,7 @@ export class AutotextAutoCompleterView extends AutoCompleterListView {
     super("autotext");
     this.entries = parseAutotext(raw);
   }
-  computeListData(wordChunk: string): AutoCompleterItem[] {
+  computeListData(wordChunk: string, _contextualOnly = false): AutoCompleterItem[] {
     return matchAutotext(this.entries, wordChunk).map((e) => item(e.full, "autotext", [e.shortcut, e.comment]));
   }
 }

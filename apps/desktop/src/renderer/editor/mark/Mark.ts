@@ -5,6 +5,7 @@ export type Mark = {
   startOffset: number;
   endOffset: number;
   painter: string;
+  painterColor?: string;
   toolTipText?: string;
   entryPart: EntryPart;
 };

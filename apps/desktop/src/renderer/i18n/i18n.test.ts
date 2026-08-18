@@ -14,8 +14,10 @@ describe("UI locales", () => {
   const en = load("en.json");
   const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
 
-  it("ships 41 catalogs with the same keys as en.json", () => {
+  it("ships 41 catalogs and 41 manuals with the same keys as en.json", () => {
     expect(files).toHaveLength(41);
+    const manuals = readdirSync(join(dir, "../../../../../docs/manual")).filter((f) => f.endsWith(".md"));
+    expect(manuals).toEqual(expect.arrayContaining(files.map((f) => f.replace(".json", ".md")).concat(["java-html.md"])));
     expect(availableLocales()).toHaveLength(41);
     const keys = Object.keys(en).sort();
     expect(keys.length).toBeGreaterThan(130);
@@ -44,6 +46,8 @@ describe("UI locales", () => {
     expect(en.completer).toBe("Auto-Completion");
     expect(load("zh-CN.json").completer).toBe("自动完成");
     expect(load("de.json").completer).not.toBe("Auto-completion");
+    expect(load("ar.json").recent).not.toBe("Open Recent...");
+    expect(load("ar.json").recent).not.toBe("Recent");
   });
 
   it("applies ar as RTL and keeps native menu keys", () => {

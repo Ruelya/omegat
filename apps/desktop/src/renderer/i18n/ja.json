@@ -3,7 +3,7 @@
   "welcomeLead": "翻訳メモリ・用語集・タグ付き文書向けの、キーボード優先ワークステーション。",
   "openProject": "開く(O)",
   "newProject": "新規作成(N)",
-  "recent": "最近開いた(H)",
+  "recent": "最近開いた(H)...",
   "sourceLang": "原文ファイル言語：",
   "targetLang": "訳文ファイル言語：",
   "sentenceSeg": "文単位の分節化(N)",
@@ -224,5 +224,9 @@
   "accessConfig": "設定フォルダにアクセス(C)",
   "clearRecent": "メニューをクリア(C)",
   "restart": "再起動",
-  "exportSelection": "選択領域を出力(X)"
+  "exportSelection": "選択領域を出力(X)",
+  "alignMerge": "マージ",
+  "alignSplit": "分割",
+  "alignUp": "上へ移動",
+  "alignDown": "下へ移動"
 }

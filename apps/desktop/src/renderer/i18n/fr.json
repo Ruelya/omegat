@@ -224,5 +224,9 @@
   "accessConfig": "Dossier de configuration",
   "clearRecent": "Effacer la liste",
   "restart": "Redémarrer",
-  "exportSelection": "Exporter la sélection"
+  "exportSelection": "Exporter la sélection",
+  "alignMerge": "Fusionner",
+  "alignSplit": "Fractionner",
+  "alignUp": "Glisser vers le haut",
+  "alignDown": "Glisser vers le bas"
 }

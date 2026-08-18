@@ -11,7 +11,7 @@ export class HistoryPredictor extends AutoCompleterListView {
   train(translations: string[]) {
     this.model = trainPredictor(translations);
   }
-  computeListData(wordChunk: string): AutoCompleterItem[] {
+  computeListData(wordChunk: string, _contextualOnly = false): AutoCompleterItem[] {
     return predictNext(this.model, wordChunk).map((p) => item(p.word, "history-predict", [`${p.pct}%`]));
   }
 }

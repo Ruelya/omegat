@@ -436,7 +436,7 @@ pub fn ensure_lang(lang: &str, dest: &Path) -> bool {
     if dest.join(format!("{stem}.aff")).exists() && dest.join(format!("{stem}.dic")).exists() {
         return true;
     }
-    let Some((aff, dic)) = reference_dict_paths(stem) else {
+    let Some((aff, dic)) = reference_dict_paths(stem).or_else(|| resources_dict_paths(stem)) else {
         return false;
     };
     if !aff.exists() || !dic.exists() {
@@ -445,6 +445,27 @@ pub fn ensure_lang(lang: &str, dest: &Path) -> bool {
     let _ = std::fs::copy(&aff, dest.join(format!("{stem}.aff")));
     let _ = std::fs::copy(&dic, dest.join(format!("{stem}.dic")));
     dest.join(format!("{stem}.aff")).exists()
+}
+
+/// Language-module stems that must have an `.aff`/`.dic` pair after `ensure_lang`.
+pub const LANGUAGE_MODULE_STEMS: &[&str] = &[
+    "ar", "ast", "be", "br", "ca", "da", "de", "el", "en", "eo", "es", "fa", "fr", "ga", "gl", "it",
+    "ja", "km", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "ta", "tl", "uk", "zh",
+];
+
+fn resources_dict_paths(stem: &str) -> Option<(PathBuf, PathBuf)> {
+    let roots = [
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources/languages/hunspell"),
+        PathBuf::from("resources/languages/hunspell"),
+    ];
+    for root in roots {
+        let aff = root.join(format!("{stem}.aff"));
+        let dic = root.join(format!("{stem}.dic"));
+        if aff.exists() && dic.exists() {
+            return Some((aff, dic));
+        }
+    }
+    None
 }
 
 fn reference_dict_paths(stem: &str) -> Option<(PathBuf, PathBuf)> {
@@ -585,5 +606,18 @@ mod tests {
         };
         assert!(s.is_correct("maison") || s.is_correct("bonjour"), "fr stems loaded");
         assert!(!s.is_correct("xyzzyqqfr"), "real misspelling must be flagged");
+    }
+
+    #[test]
+    fn all_language_module_stems_have_aff_dic() {
+        for stem in LANGUAGE_MODULE_STEMS {
+            let dest = tempdir().unwrap();
+            assert!(
+                ensure_lang(stem, dest.path()),
+                "{stem}: need reference/java or resources/languages/hunspell aff/dic"
+            );
+            assert!(dest.path().join(format!("{stem}.aff")).exists());
+            assert!(dest.path().join(format!("{stem}.dic")).exists());
+        }
     }
 }

@@ -732,6 +732,43 @@ mod tests {
     }
 
     #[test]
+    fn align_bundle_encodings_ascii_or_windows1252() {
+        let g = load_align_golden("BundleTest#testBundleEncodings.json");
+        assert_eq!(g["bundle"], "org.omegat.gui.align.Bundle");
+        let accepted: Vec<String> = g["accepted_encodings"]
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(accepted, vec!["US-ASCII".to_string(), "WINDOWS-1252".to_string()]);
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../reference/java/aligner/src/main/resources/org/omegat/gui/align");
+        let mut files = 0usize;
+        for ent in std::fs::read_dir(&dir).unwrap() {
+            let p = ent.unwrap().path();
+            if p.extension().and_then(|e| e.to_str()) != Some("properties") {
+                continue;
+            }
+            files += 1;
+            let bytes = std::fs::read(&p).unwrap();
+            let ascii = bytes.iter().all(|&b| b < 0x80);
+            let utf8_non_ascii = std::str::from_utf8(&bytes)
+                .ok()
+                .is_some_and(|s| s.chars().any(|c| (c as u32) > 127));
+            assert!(
+                ascii || !utf8_non_ascii,
+                "{} must be US-ASCII or Windows-1252 (Java BundleTest), not UTF-8 text",
+                p.display()
+            );
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(!text.contains('\u{202e}'), "{} contains RTLO", p.display());
+            assert!(text.contains('='), "{} must load at least one key", p.display());
+        }
+        assert!(files >= 20, "aligner Bundle locales present: {files}");
+    }
+
+    #[test]
     fn id_mode_zips_lines() {
         let cfg = AlignConfig {
             mode: AlignMode::Id,

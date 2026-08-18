@@ -224,5 +224,9 @@
   "accessConfig": "開啟設定值資料夾(D)",
   "clearRecent": "Clear Recent Projects (zh-TW)",
   "restart": "Restart (zh-TW)",
-  "exportSelection": "匯出所選內容(X)"
+  "exportSelection": "匯出所選內容(X)",
+  "alignMerge": "合併",
+  "alignSplit": "分割",
+  "alignUp": "上移",
+  "alignDown": "下移"
 }

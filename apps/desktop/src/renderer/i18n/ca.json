@@ -3,7 +3,7 @@
   "welcomeLead": "Estació de treball centrada en el teclat per a memòries, glossaris i documents etiquetats.",
   "openProject": "Obre",
   "newProject": "Crea",
-  "recent": "Obre un projecte recent",
+  "recent": "Obre un projecte recent...",
   "sourceLang": "Llengua dels fitxers d'origen:",
   "targetLang": "Llengua dels fitxers traduïts:",
   "sentenceSeg": "Segmentació per frases",
@@ -224,5 +224,9 @@
   "accessConfig": "Obre la carpeta de configuració",
   "clearRecent": "Esborra el menú",
   "restart": "Reinicia",
-  "exportSelection": "Exporta la selecció"
+  "exportSelection": "Exporta la selecció",
+  "alignMerge": "Uneix",
+  "alignSplit": "Divideix",
+  "alignUp": "Mou amunt",
+  "alignDown": "Mou avall"
 }

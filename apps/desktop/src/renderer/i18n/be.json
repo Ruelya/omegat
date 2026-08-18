@@ -224,5 +224,9 @@
   "accessConfig": "Доступ да каталёга канфігурацыі",
   "clearRecent": "Ачысьціць мэню",
   "restart": "Перазапуск",
-  "exportSelection": "Экспартаваць вылучанае"
+  "exportSelection": "Экспартаваць вылучанае",
+  "alignMerge": "Аб’яднаць",
+  "alignSplit": "Разьбіць",
+  "alignUp": "Уверх",
+  "alignDown": "Уніз"
 }

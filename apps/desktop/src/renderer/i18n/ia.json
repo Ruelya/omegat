@@ -224,5 +224,9 @@
   "accessConfig": "Acceder al plica de configuration",
   "clearRecent": "Clarar le menu",
   "restart": "Reinitiar",
-  "exportSelection": "Exportar le selection"
+  "exportSelection": "Exportar le selection",
+  "alignMerge": "Funder",
+  "alignSplit": "Divider",
+  "alignUp": "Mover in Alto",
+  "alignDown": "Mover in basso"
 }

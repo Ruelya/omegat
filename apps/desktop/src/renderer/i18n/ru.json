@@ -224,5 +224,9 @@
   "accessConfig": "Открыть папку настроек",
   "clearRecent": "Отчистить список",
   "restart": "Перезапустить",
-  "exportSelection": "Экспортировать выделенное"
+  "exportSelection": "Экспортировать выделенное",
+  "alignMerge": "Объединить",
+  "alignSplit": "Разделить",
+  "alignUp": "Вверх",
+  "alignDown": "Вниз"
 }

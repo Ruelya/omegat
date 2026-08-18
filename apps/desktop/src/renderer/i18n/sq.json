@@ -3,7 +3,7 @@
   "welcomeLead": "Stacion pune me përparësi tastierën për kujtesa përkthimi, glossarë dhe dokumente me etiketë.",
   "openProject": "Hap",
   "newProject": "Krijo",
-  "recent": "Open Recent...",
+  "recent": "Hap të fundit...",
   "sourceLang": "Gjuha e Skedarëve burimor:",
   "targetLang": "Gjuha e skedarëve të përkthyer",
   "sentenceSeg": "Aftëso segmentimin në nivel fjalie",
@@ -224,5 +224,9 @@
   "accessConfig": "Malfermi agordan dosierujon",
   "clearRecent": "Viŝi lastajn projektojn",
   "restart": "Rinis",
-  "exportSelection": "Eksporti elektaĵon"
+  "exportSelection": "Eksporti elektaĵon",
+  "alignMerge": "Bashko",
+  "alignSplit": "Ndaj",
+  "alignUp": "Lëviz lart",
+  "alignDown": "Lëviz poshtë"
 }

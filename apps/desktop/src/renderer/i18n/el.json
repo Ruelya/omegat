@@ -3,7 +3,7 @@
   "welcomeLead": "Σταθμός εργασίας με προτεραιότητα το πληκτρολόγιο για μνήμες, γλωσσάρια και ετικετοποιημένα έγγραφα.",
   "openProject": "Άνοιγμα",
   "newProject": "Νέο",
-  "recent": "Open Recent...",
+  "recent": "Άνοιγμα πρόσφατων...",
   "sourceLang": "Γλώσσα Αρχείων προέλευσης:",
   "targetLang": "Γλώσσα Μεταφρασμένων αρχείων",
   "sentenceSeg": "Ενεργοποίηση κατάτμησης σε επίπεδο πρότασης",
@@ -222,7 +222,11 @@
   "lastChanges": "Τελευταίες αλλαγές",
   "checkUpdates": "Søg efter opdateringer...",
   "accessConfig": "Åbn konfigurationsmappe",
-  "clearRecent": "Ryd seneste projekter",
+  "clearRecent": "Εκκαθάριση μενού",
   "restart": "Επανεκκίνηση",
-  "exportSelection": "Εξαγωγή επιλογής"
+  "exportSelection": "Εξαγωγή επιλογής",
+  "alignMerge": "Συγχώνευση",
+  "alignSplit": "Διαίρεση",
+  "alignUp": "Μετακίνηση πάνω",
+  "alignDown": "Μετακίνηση κάτω"
 }

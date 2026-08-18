@@ -3,7 +3,7 @@
   "welcomeLead": "Klávesnicová pracovná stanica pre prekladovú pamäť, glosáre a označené dokumenty.",
   "openProject": "Otvoriť",
   "newProject": "Nový",
-  "recent": "Open Recent...",
+  "recent": "Otvoriť nedávne...",
   "sourceLang": "Jazyk zdrojových súborov:",
   "targetLang": "Jazyk preložených súborov:",
   "sentenceSeg": "Zapnúť segmentáciu na úrovni viet",
@@ -222,7 +222,11 @@
   "lastChanges": "Seneste ændringer...",
   "checkUpdates": "Søg efter opdateringer...",
   "accessConfig": "Åbn konfigurationsmappe",
-  "clearRecent": "Ryd seneste projekter",
+  "clearRecent": "Vymazať nedávne projekty",
   "restart": "Reštartovať",
-  "exportSelection": "Eksportér markering"
+  "exportSelection": "Eksportér markering",
+  "alignMerge": "Zlúčiť",
+  "alignSplit": "Rozdeliť",
+  "alignUp": "Posunúť nahor",
+  "alignDown": "Posunúť nadol"
 }

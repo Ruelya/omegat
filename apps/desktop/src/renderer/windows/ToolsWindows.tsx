@@ -60,10 +60,10 @@ export function AlignWindow() {
         </select>
         <div className="btn-row">
           <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
-          <button type="button" onClick={() => void edit("merge")}>合并</button>
-          <button type="button" onClick={() => void edit("split")}>拆分</button>
-          <button type="button" onClick={() => void edit("up")}>上移</button>
-          <button type="button" onClick={() => void edit("down")}>下移</button>
+          <button type="button" onClick={() => void edit("merge")}>{t("alignMerge")}</button>
+          <button type="button" onClick={() => void edit("split")}>{t("alignSplit")}</button>
+          <button type="button" onClick={() => void edit("up")}>{t("alignUp")}</button>
+          <button type="button" onClick={() => void edit("down")}>{t("alignDown")}</button>
         </div>
         <table className="align-table">
           <thead>

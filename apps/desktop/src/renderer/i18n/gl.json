@@ -3,7 +3,7 @@
   "welcomeLead": "Estación de traballo centrada no teclado para memorias, glosarios e documentos etiquetados.",
   "openProject": "Abrir",
   "newProject": "Novo",
-  "recent": "Open Recent...",
+  "recent": "Abrir recentes...",
   "sourceLang": "Idioma dos ficheiros orixe:",
   "targetLang": "Idioma dos ficheiros traducidos:",
   "sentenceSeg": "Activar a segmentación a nivel de frase",
@@ -224,5 +224,9 @@
   "accessConfig": "Abrir o cartafol de configuración",
   "clearRecent": "Borrar proxectos recentes",
   "restart": "Reiniciar",
-  "exportSelection": "Exportar selección"
+  "exportSelection": "Exportar selección",
+  "alignMerge": "Combinar",
+  "alignSplit": "Dividir",
+  "alignUp": "Mover arriba",
+  "alignDown": "Mover abaixo"
 }

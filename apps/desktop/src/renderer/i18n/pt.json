@@ -224,5 +224,9 @@
   "accessConfig": "Aceder à pasta de configuração",
   "clearRecent": "Limpar menu",
   "restart": "Reiniciar",
-  "exportSelection": "Exportar selecção"
+  "exportSelection": "Exportar selecção",
+  "alignMerge": "Unir",
+  "alignSplit": "Dividir",
+  "alignUp": "Mover acima",
+  "alignDown": "Mover abaixo"
 }

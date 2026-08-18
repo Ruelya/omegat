@@ -224,5 +224,9 @@
   "accessConfig": "Åpne konfigurasjonsmappen",
   "clearRecent": "Tøm nylige prosjekter",
   "restart": "Start på nytt",
-  "exportSelection": "Eksporter utvalg"
+  "exportSelection": "Eksporter utvalg",
+  "alignMerge": "Slå sammen",
+  "alignSplit": "Del",
+  "alignUp": "Flytt opp",
+  "alignDown": "Flytt ned"
 }

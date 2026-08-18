@@ -3,7 +3,7 @@
   "welcomeLead": "Klavar-unua laborejo por tradukmemoroj, vortaroj kaj etikedaj dokumentoj.",
   "openProject": "Malfermu projekton",
   "newProject": "Kreu novan projekton",
-  "recent": "Open Recent...",
+  "recent": "Malfermi lastatempajn...",
   "sourceLang": "Fontolingvo:",
   "targetLang": "Celolingvo:",
   "sentenceSeg": "Sentence-level segmenting",
@@ -224,5 +224,9 @@
   "accessConfig": "Malfermi agordan dosierujon",
   "clearRecent": "Viŝi lastajn projektojn",
   "restart": "Restartigi",
-  "exportSelection": "Eksporti elektaĵon"
+  "exportSelection": "Eksporti elektaĵon",
+  "alignMerge": "Kunfandi",
+  "alignSplit": "Disigi",
+  "alignUp": "Movi supren",
+  "alignDown": "Movi malsupren"
 }

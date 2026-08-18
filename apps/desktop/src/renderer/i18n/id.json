@@ -3,7 +3,7 @@
   "welcomeLead": "Stasiun kerja berprioritas papan ketik untuk memori terjemahan, glosarium, dan dokumen bertanda.",
   "openProject": "Buka",
   "newProject": "Baru",
-  "recent": "Open Recent...",
+  "recent": "Buka terbaru...",
   "sourceLang": "Bahasa Berkas Sumber:",
   "targetLang": "Bahasa Berkas Terjemahan:",
   "sentenceSeg": "Aktifkan Segmentasi Level-Kalimat",
@@ -222,7 +222,11 @@
   "lastChanges": "Seneste ændringer...",
   "checkUpdates": "Søg efter opdateringer...",
   "accessConfig": "Åbn konfigurationsmappe",
-  "clearRecent": "Ryd seneste projekter",
+  "clearRecent": "Kosongkan proyek terbaru",
   "restart": "Mulai ulang",
-  "exportSelection": "Ekspor Teks Terpilih"
+  "exportSelection": "Ekspor Teks Terpilih",
+  "alignMerge": "Gabung",
+  "alignSplit": "Pisah",
+  "alignUp": "Naik",
+  "alignDown": "Turun"
 }

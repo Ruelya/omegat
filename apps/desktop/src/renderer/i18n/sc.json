@@ -224,5 +224,9 @@
   "accessConfig": "Atzede a sa cartella de cunfiguratzione",
   "clearRecent": "Lìmpia su menù",
   "restart": "Torra a aviare",
-  "exportSelection": "Esporta sa seletzione"
+  "exportSelection": "Esporta sa seletzione",
+  "alignMerge": "Uni",
+  "alignSplit": "Partzi",
+  "alignUp": "Moe a susu",
+  "alignDown": "Moe in giosso"
 }

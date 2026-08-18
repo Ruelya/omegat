@@ -18,6 +18,26 @@ export type Document3State = {
   textBeingComposed: boolean;
 };
 
+/** Swing `DefaultStyledDocument` string buffer used by SegmentBuilder.insert. */
+export class StyledDocument {
+  text = "";
+  insertString(offset: number, inserted: string): void {
+    if (offset < 0 || offset > this.text.length) {
+      throw new Error("BadLocationException");
+    }
+    this.text = this.text.slice(0, offset) + inserted + this.text.slice(offset);
+  }
+  remove(offset: number, length: number): void {
+    this.text = this.text.slice(0, offset) + this.text.slice(offset + length);
+  }
+  getLength(): number {
+    return this.text.length;
+  }
+  getText(offset: number, length: number): string {
+    return this.text.slice(offset, offset + length);
+  }
+}
+
 export function createDocument3(source = "", translation = ""): Document3State {
   return {
     source,
@@ -34,6 +54,18 @@ export function createDocument3(source = "", translation = ""): Document3State {
     trustedChangesInProgress: false,
     textBeingComposed: false,
   };
+}
+
+export function insertString(doc: Document3State, offset: number, text: string): Document3State {
+  const full = new StyledDocument();
+  full.text = doc.fullText;
+  full.insertString(offset, text);
+  const delta = text.length;
+  let translationStart = doc.translationStart;
+  let translationEnd = doc.translationEnd;
+  if (offset <= translationStart) translationStart += delta;
+  if (offset < translationEnd) translationEnd += delta;
+  return { ...doc, fullText: full.text, translationStart, translationEnd, dirty: true };
 }
 
 export function replaceEditText(doc: Document3State, text: string): Document3State {

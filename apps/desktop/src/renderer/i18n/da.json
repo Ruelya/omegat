@@ -3,7 +3,7 @@
   "welcomeLead": "En tastaturførst arbejdsstation til oversættelseshukommelser, glossarer og mærkede dokumenter.",
   "openProject": "Åbn",
   "newProject": "Nyt ",
-  "recent": "Open Recent...",
+  "recent": "Åbn seneste...",
   "sourceLang": "Kildefilers sprog:",
   "targetLang": "Oversatte filers sprog:",
   "sentenceSeg": "Aktiver sœtnings segmentering",
@@ -224,5 +224,9 @@
   "accessConfig": "Åbn konfigurationsmappe",
   "clearRecent": "Ryd seneste projekter",
   "restart": "Genstart",
-  "exportSelection": "Eksporter selektion"
+  "exportSelection": "Eksporter selektion",
+  "alignMerge": "Flet",
+  "alignSplit": "Opdel",
+  "alignUp": "Flyt op",
+  "alignDown": "Flyt ned"
 }

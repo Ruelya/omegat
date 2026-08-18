@@ -224,5 +224,9 @@
   "accessConfig": "Mene Määrittely-kansioon",
   "clearRecent": "Tyhjennä valikko",
   "restart": "Käynnistä uudelleen",
-  "exportSelection": "Vie valinta"
+  "exportSelection": "Vie valinta",
+  "alignMerge": "Yhdistä",
+  "alignSplit": "Jaa kahtia",
+  "alignUp": "Siirrä ylöspäin",
+  "alignDown": "Siirrä alaspäin"
 }

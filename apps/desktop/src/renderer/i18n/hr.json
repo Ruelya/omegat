@@ -224,5 +224,9 @@
   "accessConfig": "Pristup konfiguracijskoj mapi",
   "clearRecent": "Očisti izbornik",
   "restart": "Ponovno pokreni",
-  "exportSelection": "Izvezi odabrani sadržaj"
+  "exportSelection": "Izvezi odabrani sadržaj",
+  "alignMerge": "Spoji",
+  "alignSplit": "Razdvoji",
+  "alignUp": "Premjesti nagore",
+  "alignDown": "Premjesti nadolje"
 }

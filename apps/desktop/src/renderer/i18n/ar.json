@@ -3,7 +3,7 @@
   "welcomeLead": "محطة عمل تعتمد على لوحة المفاتيح للذاكرة الترجمية والمسارد والمستندات ذات الوسوم.",
   "openProject": "افتح",
   "newProject": "جديد",
-  "recent": "Open Recent...",
+  "recent": "فتح الأخير...",
   "sourceLang": "لغة ملفات المصدر:",
   "targetLang": "لغة الملفات المترجمة:",
   "sentenceSeg": "السماح بالتجزئة على مستوى الجملة",
@@ -224,5 +224,9 @@
   "accessConfig": "فتح مجلد الإعدادات",
   "clearRecent": "مسح المشاريع الأخيرة",
   "restart": "إعادة التشغيل",
-  "exportSelection": "تصدير التحديد"
+  "exportSelection": "تصدير التحديد",
+  "alignMerge": "دمج",
+  "alignSplit": "تقسيم",
+  "alignUp": "تحريك لأعلى",
+  "alignDown": "تحريك لأسفل"
 }

@@ -224,5 +224,9 @@
   "accessConfig": "Öppna konfigurationsmappen",
   "clearRecent": "Töm meny",
   "restart": "Starta om",
-  "exportSelection": "Exportera markering"
+  "exportSelection": "Exportera markering",
+  "alignMerge": "Slå samman",
+  "alignSplit": "Dela",
+  "alignUp": "Flytta upp",
+  "alignDown": "Flytta ned"
 }

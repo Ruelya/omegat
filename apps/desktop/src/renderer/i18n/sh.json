@@ -3,7 +3,7 @@
   "welcomeLead": "Radna stanica usmerena na tastaturu za prevodilačku memoriju, glosare i označene dokumente.",
   "openProject": "Otvori",
   "newProject": "Novi",
-  "recent": "Open Recent...",
+  "recent": "Otvori nedavne...",
   "sourceLang": "Jezik izvornih datoteka:",
   "targetLang": "Jezik prevedenih datoteka:",
   "sentenceSeg": "Omogući rečeničnu segmentaciju",
@@ -222,7 +222,11 @@
   "lastChanges": "Seneste ændringer...",
   "checkUpdates": "Søg efter opdateringer...",
   "accessConfig": "Åbn konfigurationsmappe",
-  "clearRecent": "Ryd seneste projekter",
+  "clearRecent": "Obriši nedavne projekte",
   "restart": "Ponovo pokreni",
-  "exportSelection": "Eksportér markering"
+  "exportSelection": "Eksportér markering",
+  "alignMerge": "Spoji",
+  "alignSplit": "Podeli",
+  "alignUp": "Pomeri gore",
+  "alignDown": "Pomeri dole"
 }

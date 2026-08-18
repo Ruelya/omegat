@@ -3,7 +3,7 @@
   "welcomeLead": "面向译员的键盘优先工作站：翻译记忆、术语表与带标签文档。",
   "openProject": "打开(O)",
   "newProject": "新建(N)",
-  "recent": "打开最近的(E)",
+  "recent": "打开最近的(E)...",
   "sourceLang": "原文文件语言：",
   "targetLang": "译文文件语言：",
   "sentenceSeg": "语句级别分割(N)",
@@ -224,5 +224,9 @@
   "accessConfig": "访问配置文件夹(C)",
   "clearRecent": "清空菜单(C)",
   "restart": "重启(R)",
-  "exportSelection": "导出所选部分(X)"
+  "exportSelection": "导出所选部分(X)",
+  "alignMerge": "合并",
+  "alignSplit": "拆分",
+  "alignUp": "上移",
+  "alignDown": "下移"
 }

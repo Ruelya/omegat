@@ -224,5 +224,9 @@
   "accessConfig": "Akse Dosie Konfigirasion",
   "clearRecent": "Efas Meni",
   "restart": "Redemare",
-  "exportSelection": "Export Seleksion"
+  "exportSelection": "Export Seleksion",
+  "alignMerge": "Fusionn",
+  "alignSplit": "Separe",
+  "alignUp": "Monte",
+  "alignDown": "Desann"
 }

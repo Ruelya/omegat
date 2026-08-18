@@ -224,5 +224,9 @@
   "accessConfig": "Access Configuration Folder",
   "clearRecent": "Clear Recent Projects",
   "restart": "Restart",
-  "exportSelection": "Export Selection"
+  "exportSelection": "Export Selection",
+  "alignMerge": "Merge",
+  "alignSplit": "Split",
+  "alignUp": "Move Up",
+  "alignDown": "Move Down"
 }

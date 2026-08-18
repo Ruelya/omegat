@@ -224,5 +224,9 @@
   "accessConfig": "Beállítási mappa elérése",
   "clearRecent": "Legutóbbi projektek törlése",
   "restart": "Újraindítás",
-  "exportSelection": "A kiválasztott rész exportálása"
+  "exportSelection": "A kiválasztott rész exportálása",
+  "alignMerge": "Összevonás",
+  "alignSplit": "Felosztás",
+  "alignUp": "Mozgatás fel",
+  "alignDown": "Mozgatás le"
 }

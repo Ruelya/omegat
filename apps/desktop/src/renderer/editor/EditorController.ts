@@ -1,5 +1,5 @@
 /** Java `org.omegat.gui.editor.EditorController` — IEditor implementation host. */
-import { createDocument3, type Document3State } from "./Document3";
+import type { Document3State } from "./Document3";
 import { IEditor } from "./IEditor";
 import { MarkerController } from "./MarkerController";
 import { buildActiveDocument } from "./SegmentBuilder";
@@ -87,6 +87,11 @@ export class EditorController {
     this.currentFile = e.file;
     this.currentEntryNumber = index + 1;
     this.document = buildActiveDocument(this.currentEntryNumber, e.source, e.translation);
+  }
+
+  /** Drop per-project document state (EditorProjectReloadLeakTest). */
+  closeProject(): void {
+    this.loadEmptyProject();
   }
 }
 

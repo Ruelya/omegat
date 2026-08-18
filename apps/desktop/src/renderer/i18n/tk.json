@@ -224,5 +224,9 @@
   "accessConfig": "Konfigurasýa Bukjasyny Aç",
   "clearRecent": "Menýuny Arassala",
   "restart": "Täzeden başlat",
-  "exportSelection": "Seçileni Eksport Et"
+  "exportSelection": "Seçileni Eksport Et",
+  "alignMerge": "Birleşdir",
+  "alignSplit": "Böl",
+  "alignUp": "Ýokaryk Süýşür",
+  "alignDown": "Aşak Süýşür"
 }

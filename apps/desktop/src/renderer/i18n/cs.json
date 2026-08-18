@@ -224,5 +224,9 @@
   "accessConfig": "Zpřístupnit adresář nastavení",
   "clearRecent": "Smazat nabídku",
   "restart": "Restartovat",
-  "exportSelection": "Exportovat výběr"
+  "exportSelection": "Exportovat výběr",
+  "alignMerge": "Sločit",
+  "alignSplit": "Rozdělit",
+  "alignUp": "Přesunout nahoru",
+  "alignDown": "Přesunout dolů"
 }

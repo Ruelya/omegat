@@ -224,5 +224,9 @@
   "accessConfig": "Sartu konfigurazioaren karpetara",
   "clearRecent": "Garbitu menua",
   "restart": "Berrabiarazi",
-  "exportSelection": "Esportatu hautapena"
+  "exportSelection": "Esportatu hautapena",
+  "alignMerge": "Batu",
+  "alignSplit": "Zatitu",
+  "alignUp": "Mugitu gora",
+  "alignDown": "Mugitu behera"
 }

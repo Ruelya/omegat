@@ -3,7 +3,7 @@
   "welcomeLead": "번역 메모리, 용어집, 태그 문서를 위한 키보드 우선 워크스테이션.",
   "openProject": "열기...(O)",
   "newProject": "새 작업...(N)",
-  "recent": "Open Recent...",
+  "recent": "최근 항목 열기...",
   "sourceLang": "원본 파일 언어(S) :",
   "targetLang": "번역된 파일 언어(T) :",
   "sentenceSeg": "문장 단위의 구분 사용(N)",
@@ -224,5 +224,9 @@
   "accessConfig": "설정 폴더 열기",
   "clearRecent": "최근 프로젝트 지우기",
   "restart": "다시 시작",
-  "exportSelection": "선택 내보내기(X)"
+  "exportSelection": "선택 내보내기(X)",
+  "alignMerge": "병합",
+  "alignSplit": "분할",
+  "alignUp": "위로",
+  "alignDown": "아래로"
 }

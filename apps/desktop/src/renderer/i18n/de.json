@@ -3,7 +3,7 @@
   "welcomeLead": "Eine tastaturgeführte Arbeitsstation für Translation Memory, Glossare und markierte Dokumente.",
   "openProject": "Öffnen",
   "newProject": "Neu",
-  "recent": "Zuletzt verwendetes Projekt öffnen",
+  "recent": "Zuletzt verwendetes Projekt öffnen...",
   "sourceLang": "Sprache der Quelldateien:",
   "targetLang": "Sprache der Zieldateien:",
   "sentenceSeg": "Satzsegmentierung",
@@ -224,5 +224,9 @@
   "accessConfig": "Konfigurationsordner öffnen",
   "clearRecent": "Menü leeren",
   "restart": "Neu starten",
-  "exportSelection": "Markiertes exportieren"
+  "exportSelection": "Markiertes exportieren",
+  "alignMerge": "Zusammenführen",
+  "alignSplit": "Teilen",
+  "alignUp": "Nach oben schieben",
+  "alignDown": "Nach unten schieben"
 }

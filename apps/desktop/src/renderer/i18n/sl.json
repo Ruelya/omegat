@@ -3,7 +3,7 @@
   "welcomeLead": "Delovna postaja s prednostjo tipkovnice za prevajalski pomnilnik, glosarje in označene dokumente.",
   "openProject": "Odpri ",
   "newProject": "Nov ",
-  "recent": "Open Recent...",
+  "recent": "Odpri nedavne...",
   "sourceLang": "Jezik izvornih datotek:",
   "targetLang": "Jezik prevedenih datotek:",
   "sentenceSeg": "Omogoči stavčno segmentiranje",
@@ -222,7 +222,11 @@
   "lastChanges": "Najnovejše spremembe",
   "checkUpdates": "Søg efter opdateringer...",
   "accessConfig": "Åbn konfigurationsmappe",
-  "clearRecent": "Ryd seneste projekter",
+  "clearRecent": "Počisti nedavne projekte",
   "restart": "Reštartovať",
-  "exportSelection": "Izvozi izbiro"
+  "exportSelection": "Izvozi izbiro",
+  "alignMerge": "Združi",
+  "alignSplit": "Razdeli",
+  "alignUp": "Premakni gor",
+  "alignDown": "Premakni dol"
 }

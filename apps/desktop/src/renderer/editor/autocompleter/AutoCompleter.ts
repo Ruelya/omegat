@@ -20,6 +20,9 @@ export class AutoCompleter implements IAutoCompleter {
   updatePopup(wordChunk = ""): AutoCompleterItem[] {
     const view = this.views[this.viewIndex];
     this.items = view ? view.computeListData(wordChunk, true) : [];
+    if (view && this.items.length === 0) {
+      this.items = view.computeListData(wordChunk, false);
+    }
     this.visible = this.items.length > 0;
     this.selected = 0;
     return this.items;
