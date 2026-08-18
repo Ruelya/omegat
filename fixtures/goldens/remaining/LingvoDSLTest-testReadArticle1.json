@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticle1",
-  "method": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticle1"
+  "word": "tab",
+  "article": "<div style=\"text-indent: 30px\">Translation line also can have a single TAB char</div>",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticle1"
+  ]
 }

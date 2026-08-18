@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleFontStyles",
-  "method": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleFontStyles"
+  "word": "italic",
+  "article": "<div>Here is an <span style='font-style: italic'>italic</span> <strong>word</strong>.</div>",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleFontStyles"
+  ]
 }

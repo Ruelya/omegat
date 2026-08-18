@@ -1,5 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.data.ExternalTMFactoryTest#testFuzzyMultipleTuv",
-  "method": "org.omegat.core.data.ExternalTMFactoryTest#testFuzzyMultipleTuv"
+  "fr_count": 5,
+  "hello_fr": 3,
+  "all_count": 11,
+  "hello_all": 7,
+  "keys": [
+    "org.omegat.core.data.ExternalTMFactoryTest#testFuzzyMultipleTuv"
+  ]
 }

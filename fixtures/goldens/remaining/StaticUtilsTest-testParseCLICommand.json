@@ -1,5 +1,20 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.StaticUtilsTest#testParseCLICommand",
-  "method": "org.omegat.util.StaticUtilsTest#testParseCLICommand"
+  "cmd": " sort  \"/path with/spaces in/it\"    /path\\ with/escaped\\ spaces/ \"escape\\\"escape\" 'noescape\\'noescape'' \"noescape\\ noescape\" C:\\windows\\path",
+  "args": [
+    "sort",
+    "/path with/spaces in/it",
+    "/path with/escaped spaces/",
+    "escape\"escape",
+    "noescape\\noescape",
+    "noescape\\ noescape",
+    "C:\\windows\\path"
+  ],
+  "space": [
+    ""
+  ],
+  "keys": [
+    "org.omegat.util.StaticUtilsTest#testParseCLICommand"
+  ]
 }

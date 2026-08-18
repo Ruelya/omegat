@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityJapanese",
-  "method": "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityJapanese"
+  "method": "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityJapanese",
+  "eq": true
 }

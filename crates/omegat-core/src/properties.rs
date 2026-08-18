@@ -145,22 +145,30 @@ impl ProjectProperties {
     }
 
     pub fn load(root: &Path) -> Result<Self> {
-        let path = root.join(FILE_PROJECT);
-        if !path.exists() {
+        Self::load_from_file(root, &root.join(FILE_PROJECT))
+    }
+
+    /// Java `ProjectFileStorage.loadPropertiesFile(projectDir, projectFile)`.
+    pub fn load_from_file(root: &Path, file: &Path) -> Result<Self> {
+        if !file.exists() {
             return Err(CoreError::InvalidProject(format!(
                 "missing {}",
-                FILE_PROJECT
+                file.display()
             )));
         }
-        let raw = std::fs::read_to_string(&path)?;
+        let raw = std::fs::read_to_string(file)?;
         parse_project_xml(root, &raw)
     }
 
+    pub fn is_export_tm(&self, level: &str) -> bool {
+        self.export_tm_level_list()
+            .iter()
+            .any(|l| l.eq_ignore_ascii_case(level))
+    }
+
     pub fn to_xml(&self) -> String {
-        let rel = |p: &Path| -> String {
-            p.strip_prefix(&self.root)
-                .map(|s| s.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| p.to_string_lossy().replace('\\', "/"))
+        let rel = |p: &Path, default_name: &str| -> String {
+            path_for_storing(&self.root, p, Some(default_name))
         };
         let mut excludes = String::new();
         for m in &self.source_dir_excludes {
@@ -237,14 +245,14 @@ impl ProjectProperties {
 </omegat>
 "#,
             version = PROJ_VERSION,
-            source = xml_escape(&rel(&self.source_dir)),
+            source = xml_escape(&rel(&self.source_dir, DEFAULT_SOURCE)),
             excludes = excludes,
-            target = xml_escape(&rel(&self.target_dir)),
-            tm = xml_escape(&rel(&self.tm_dir)),
-            glossary = xml_escape(&rel(&self.glossary_dir)),
-            gfile = xml_escape(&rel(&self.glossary_file)),
-            dict = xml_escape(&rel(&self.dictionary_dir)),
-            export = xml_escape(&rel(&self.export_tm_dir)),
+            target = xml_escape(&rel(&self.target_dir, DEFAULT_TARGET)),
+            tm = xml_escape(&rel(&self.tm_dir, DEFAULT_TM)),
+            glossary = xml_escape(&rel(&self.glossary_dir, DEFAULT_GLOSSARY)),
+            gfile = xml_escape(&rel(&self.glossary_file, DEFAULT_W_GLOSSARY)),
+            dict = xml_escape(&rel(&self.dictionary_dir, DEFAULT_DICT)),
+            export = xml_escape(&rel(&self.export_tm_dir, "")),
             levels = xml_escape(&self.export_tm_levels),
             slang = xml_escape(&self.source_lang),
             tlang = xml_escape(&self.target_lang),
@@ -326,57 +334,65 @@ fn resolve_dir(root: &Path, value: &str, default: &str) -> PathBuf {
 }
 
 fn parse_project_xml(root: &Path, raw: &str) -> Result<ProjectProperties> {
-    let source_lang = tag_text(raw, "source_lang").unwrap_or_else(|| "en".into());
-    let target_lang = tag_text(raw, "target_lang").unwrap_or_else(|| "fr".into());
-    let sentence_seg = tag_text(raw, "sentence_seg")
+    let raw = expand_dtd_entities(raw);
+    let source_lang = tag_text(&raw, "source_lang").unwrap_or_else(|| "en".into());
+    let target_lang = tag_text(&raw, "target_lang").unwrap_or_else(|| "fr".into());
+    let sentence_seg = tag_text(&raw, "sentence_seg")
         .map(|s| s == "true")
         .unwrap_or(true);
     let mut props = ProjectProperties::create(root.to_path_buf(), source_lang, target_lang, sentence_seg);
-    if let Some(v) = tag_text(raw, "source_dir") {
+    if let Some(v) = tag_text(&raw, "source_dir") {
         props.source_dir = resolve_dir(root, &v, DEFAULT_SOURCE);
     }
-    if let Some(v) = tag_text(raw, "target_dir") {
+    if let Some(v) = tag_text(&raw, "target_dir") {
         props.target_dir = resolve_dir(root, &v, DEFAULT_TARGET);
     }
-    if let Some(v) = tag_text(raw, "tm_dir") {
+    if let Some(v) = tag_text(&raw, "tm_dir") {
         props.tm_dir = resolve_dir(root, &v, DEFAULT_TM);
     }
-    if let Some(v) = tag_text(raw, "glossary_dir") {
+    if let Some(v) = tag_text(&raw, "glossary_dir") {
         props.glossary_dir = resolve_dir(root, &v, DEFAULT_GLOSSARY);
     }
-    if let Some(v) = tag_text(raw, "glossary_file") {
+    if let Some(v) = tag_text(&raw, "glossary_file") {
         props.glossary_file = if v == "__DEFAULT__" {
             props.glossary_dir.join(DEFAULT_W_GLOSSARY)
         } else {
-            resolve_dir(root, &v, DEFAULT_W_GLOSSARY)
+            let p = PathBuf::from(&v);
+            if p.is_absolute() {
+                p
+            } else if v.contains('/') || v.contains('\\') {
+                resolve_dir(root, &v, DEFAULT_W_GLOSSARY)
+            } else {
+                props.glossary_dir.join(p)
+            }
         };
     }
-    if let Some(v) = tag_text(raw, "dictionary_dir") {
+    if let Some(v) = tag_text(&raw, "dictionary_dir") {
         props.dictionary_dir = resolve_dir(root, &v, DEFAULT_DICT);
     }
-    if let Some(v) = tag_text(raw, "export_tm_dir") {
+    if let Some(v) = tag_text(&raw, "export_tm_dir") {
         props.export_tm_dir = resolve_dir(root, &v, "");
     }
-    if let Some(v) = tag_text(raw, "export_tm_levels") {
+    if let Some(v) = tag_text(&raw, "export_tm_levels") {
         props.export_tm_levels = v;
     }
-    if let Some(v) = tag_text(raw, "source_tok") {
+    if let Some(v) = tag_text(&raw, "source_tok") {
         props.source_tok = v;
     }
-    if let Some(v) = tag_text(raw, "target_tok") {
+    if let Some(v) = tag_text(&raw, "target_tok") {
         props.target_tok = v;
     }
-    if let Some(v) = tag_text(raw, "support_default_translations") {
+    if let Some(v) = tag_text(&raw, "support_default_translations") {
         props.support_default_translations = v == "true";
     }
-    if let Some(v) = tag_text(raw, "remove_tags") {
+    if let Some(v) = tag_text(&raw, "remove_tags") {
         props.remove_tags = v == "true";
     }
-    if let Some(v) = tag_text(raw, "external_command") {
+    if let Some(v) = tag_text(&raw, "external_command") {
         props.external_command = v;
     }
     let mut excludes = Vec::new();
-    let mut rest = raw;
+    let mut rest = raw.as_str();
     while let Some(s) = rest.find("<mask>") {
         rest = &rest[s + 6..];
         if let Some(e) = rest.find("</mask>") {
@@ -390,7 +406,7 @@ fn parse_project_xml(root: &Path, raw: &str) -> Result<ProjectProperties> {
         props.source_dir_excludes = excludes;
     }
     if raw.contains("<repository") {
-        let mut search = raw;
+        let mut search = raw.as_str();
         while let Some(start) = search.find("<repository") {
             let slice = &search[start..];
             let end = slice.find("</repository>").unwrap_or(slice.len());
@@ -464,6 +480,80 @@ fn attr(block: &str, name: &str) -> Option<String> {
     let s = block.find(&key)? + key.len();
     let e = block[s..].find('"')? + s;
     Some(block[s..e].to_string())
+}
+
+pub const DEFAULT_FOLDER_MARKER: &str = "__DEFAULT__";
+pub const MAX_PARENT_DIRECTORIES_ABS2REL: usize = 5;
+
+/// Java `ProjectFileStorage.getPathForStoring`.
+pub fn path_for_storing(root: &Path, absolute: &Path, default_name: Option<&str>) -> String {
+    if let Some(def) = default_name {
+        if !def.is_empty() && absolute == root.join(def) {
+            return DEFAULT_FOLDER_MARKER.to_string();
+        }
+        if def.is_empty() && absolute == root {
+            return DEFAULT_FOLDER_MARKER.to_string();
+        }
+    }
+    if let Some(rel) = relativize(root, absolute) {
+        let hops = rel.components().filter(|c| matches!(c, std::path::Component::ParentDir)).count();
+        if hops <= MAX_PARENT_DIRECTORIES_ABS2REL {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
+    }
+    absolute.to_string_lossy().replace('\\', "/")
+}
+
+fn relativize(root: &Path, target: &Path) -> Option<PathBuf> {
+    let root_c: Vec<_> = root.components().collect();
+    let target_c: Vec<_> = target.components().collect();
+    let mut i = 0;
+    while i < root_c.len() && i < target_c.len() && root_c[i] == target_c[i] {
+        i += 1;
+    }
+    if i == 0 && root_c.first() != target_c.first() {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for _ in i..root_c.len() {
+        out.push("..");
+    }
+    for c in &target_c[i..] {
+        out.push(c.as_os_str());
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    Some(out)
+}
+
+fn expand_dtd_entities(raw: &str) -> String {
+    let re = regex::Regex::new(r#"<!ENTITY\s+(\w+)\s+"([^"]*)""#).unwrap();
+    let mut ents: Vec<(String, String)> = re
+        .captures_iter(raw)
+        .map(|c| (c[1].to_string(), c[2].to_string()))
+        .collect();
+    for _ in 0..8 {
+        let mut changed = false;
+        let snapshot = ents.clone();
+        for (_, v) in ents.iter_mut() {
+            let next = snapshot.iter().fold(v.clone(), |acc, (k, ev)| {
+                acc.replace(&format!("&{k};"), ev)
+            });
+            if next != *v {
+                *v = next;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut out = raw.to_string();
+    for (k, v) in &ents {
+        out = out.replace(&format!("&{k};"), v);
+    }
+    out
 }
 
 #[cfg(test)]

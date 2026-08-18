@@ -1,5 +1,42 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.TagUtilTest#testPairedTag",
-  "method": "org.omegat.util.TagUtilTest#testPairedTag"
+  "cases": [
+    {
+      "tag": "<x0>",
+      "paired": "</x0>"
+    },
+    {
+      "tag": "<x10>",
+      "paired": "</x10>"
+    },
+    {
+      "tag": "</x0>",
+      "paired": "<x0>"
+    },
+    {
+      "tag": "<x0/>",
+      "paired": null
+    },
+    {
+      "tag": "<x>",
+      "paired": null
+    },
+    {
+      "tag": "<x/>",
+      "paired": null
+    },
+    {
+      "tag": "</x>",
+      "paired": null
+    },
+    {
+      "tag": "</x0/>",
+      "paired": null
+    },
+    {
+      "tag": "foo",
+      "paired": null
+    }
+  ]
 }

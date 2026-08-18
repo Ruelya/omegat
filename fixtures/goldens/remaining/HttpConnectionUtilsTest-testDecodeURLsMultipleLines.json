@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines",
-  "method": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines"
+  "method": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLsMultipleLines",
+  "lines": 2
 }

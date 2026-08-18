@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledString",
-  "method": "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledString"
+  "plain": "<html><p>source1 = translation1</p></html>",
+  "priority": "<html><p>source1 = <b>translation1</b></p></html>",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledString"
+  ]
 }

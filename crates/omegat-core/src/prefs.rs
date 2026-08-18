@@ -667,6 +667,72 @@ fn take_color(extra: &HashMap<String, String>, key: &str, dest: &mut String) {
     }
 }
 
+/// Java `PreferencesXML` / `PreferencesImpl` key/value store used by PreferencesTest.
+#[derive(Debug, Clone, Default)]
+pub struct JavaPreferences {
+    pub map: HashMap<String, String>,
+}
+
+impl JavaPreferences {
+    pub fn set_preference(&mut self, key: Option<&str>, value: Option<&str>) -> Option<String> {
+        let key = key.filter(|k| !k.is_empty())?;
+        let value = value?;
+        self.map.insert(key.to_string(), value.to_string())
+    }
+
+    pub fn get_preference(&self, key: Option<&str>) -> String {
+        key.and_then(|k| self.map.get(k).cloned()).unwrap_or_default()
+    }
+
+    pub fn exists_preference(&self, key: &str) -> bool {
+        self.map.contains_key(key)
+    }
+
+    pub fn is_preference(&self, key: &str) -> bool {
+        self.get_preference(Some(key)) == "true"
+    }
+
+    pub fn load_xml(path: &Path) -> Self {
+        let raw = std::fs::read_to_string(path).unwrap_or_default();
+        let mut map = HashMap::new();
+        let re = regex::Regex::new(r"<([A-Za-z0-9_.-]+)>([^<]*)</([A-Za-z0-9_.-]+)>").unwrap();
+        for cap in re.captures_iter(&raw) {
+            if &cap[1] == cap[3] && !matches!(&cap[1], "omegat" | "preference") {
+                map.insert(cap[1].to_string(), cap[2].to_string());
+            }
+        }
+        Self { map }
+    }
+
+    pub fn save_xml(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        let mut body = String::from(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<omegat>\n<preference version=\"1.0\">\n",
+        );
+        for (k, v) in &self.map {
+            body.push_str(&format!("<{k}>{v}</{k}>\n"));
+        }
+        body.push_str("</preference>\n</omegat>\n");
+        std::fs::write(path, body)
+    }
+
+    /// Java: malformed prefs file is copied to `omegat.prefs*.bak`.
+    pub fn backup_if_malformed(path: &Path) -> bool {
+        let raw = std::fs::read_to_string(path).unwrap_or_default();
+        let malformed = !raw.contains("</omegat>") || !raw.contains("</preference>");
+        if !malformed {
+            return false;
+        }
+        let bak = path.with_file_name(format!(
+            "{}.bak",
+            path.file_name().and_then(|s| s.to_str()).unwrap_or("omegat.prefs")
+        ));
+        std::fs::copy(path, bak).is_ok()
+    }
+}
+
 pub fn default_config_dir() -> PathBuf {
     if let Some(p) = std::env::var_os("OMEGAT_CONFIG_DIR") {
         return PathBuf::from(p);

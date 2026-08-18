@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtTypeName",
-  "method": "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtTypeName",
+  "r0": "Test Issue 1",
+  "r1": "Test Issue 2",
   "keys": [
     "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtTypeName"
   ]

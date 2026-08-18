@@ -1,5 +1,5 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetMorfologikDictionaryLanguages",
-  "method": "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetMorfologikDictionaryLanguages"
+  "language": "dummy"
 }

@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.dialogs.DialogsTest#testGoToSegmentDialog",
-  "method": "org.omegat.gui.dialogs.DialogsTest#testGoToSegmentDialog",
+  "window": "goto-segment",
+  "title": "Go to Segment",
+  "constructs": true,
   "keys": [
     "org.omegat.gui.dialogs.DialogsTest#testGoToSegmentDialog"
   ]

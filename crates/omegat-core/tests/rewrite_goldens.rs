@@ -448,11 +448,18 @@ fn glossary_searcher_english_and_cjk() {
 #[test]
 fn issues_table_model_matches_java() {
     let rows = golden("gui/IssuesTableModelTest-testGetRowCount.json");
-    let model = omegat_core::issues::IssuesTableModel::new(vec![omegat_core::issues::Issue {
-        entry_num: 1,
-        type_name: "Tag".into(),
-        description: "MISSING".into(),
-    }]);
+    let model = omegat_core::issues::IssuesTableModel::new(vec![
+        omegat_core::issues::Issue {
+            entry_num: 1,
+            type_name: "Test Issue 1".into(),
+            description: "First test issue".into(),
+        },
+        omegat_core::issues::Issue {
+            entry_num: 2,
+            type_name: "Test Issue 2".into(),
+            description: "Second test issue".into(),
+        },
+    ]);
     assert_eq!(model.row_count() as u64, rows["row_count"].as_u64().unwrap());
     let cols = golden("gui/IssuesTableModelTest-testGetColumnCount.json");
     assert_eq!(model.column_count() as u64, cols["column_count"].as_u64().unwrap());

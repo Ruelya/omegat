@@ -1,7 +1,13 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnName",
-  "method": "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnName",
+  "names": [
+    "Segment",
+    "",
+    "Type",
+    "Description",
+    ""
+  ],
   "keys": [
     "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnName"
   ]

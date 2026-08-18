@@ -1,5 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.ProjectFileStorageTest#testNearRelativePaths",
-  "method": "org.omegat.util.ProjectFileStorageTest#testNearRelativePaths"
+  "resolves_dotdot": true,
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testNearRelativePaths"
+  ]
 }

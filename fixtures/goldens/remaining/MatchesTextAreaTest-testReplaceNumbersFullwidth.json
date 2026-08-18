@@ -1,5 +1,36 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbersFullwidth",
-  "method": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbersFullwidth"
+  "cases": [
+    {
+      "source": "これは例文９です",
+      "src_match": "これは例文8です",
+      "trg_match": "This is a sample sentence 8",
+      "out": "This is a sample sentence 9"
+    },
+    {
+      "source": "chapter ５",
+      "src_match": "chapter ９",
+      "trg_match": "foo 9",
+      "out": "foo 5"
+    },
+    {
+      "source": "chapter 5",
+      "src_match": "chapter 9",
+      "trg_match": "第９章",
+      "out": "第５章"
+    },
+    {
+      "source": "第５０章",
+      "src_match": "第１２章",
+      "trg_match": "第１２章",
+      "out": "第５０章"
+    },
+    {
+      "source": "chapter 5",
+      "src_match": "chapter 1",
+      "trg_match": "foo 1",
+      "out": "foo 5"
+    }
+  ]
 }

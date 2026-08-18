@@ -1,5 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetDefaultDictionaryDir_ReturnsCorrectPath",
-  "method": "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetDefaultDictionaryDir_ReturnsCorrectPath"
+  "dir": "dictionary",
+  "keys": [
+    "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetDefaultDictionaryDir_ReturnsCorrectPath"
+  ]
 }

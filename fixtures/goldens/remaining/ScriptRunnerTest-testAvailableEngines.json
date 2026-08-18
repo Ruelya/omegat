@@ -1,5 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.scripting.ScriptRunnerTest#testAvailableEngines",
-  "method": "org.omegat.gui.scripting.ScriptRunnerTest#testAvailableEngines"
+  "method": "org.omegat.gui.scripting.ScriptRunnerTest#testAvailableEngines",
+  "javascript": true,
+  "groovy": true
 }

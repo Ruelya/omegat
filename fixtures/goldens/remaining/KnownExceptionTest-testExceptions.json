@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.KnownExceptionTest#testExceptions",
-  "method": "org.omegat.core.KnownExceptionTest#testExceptions"
+  "method": "org.omegat.core.KnownExceptionTest#testExceptions",
+  "wraps": true
 }

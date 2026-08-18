@@ -1,5 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SingleType",
-  "method": "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SingleType"
+  "count": 1,
+  "keys": [
+    "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SingleType"
+  ]
 }

@@ -1,5 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.DictionariesManagerTest#testFindWords",
-  "method": "org.omegat.core.dictionaries.DictionariesManagerTest#testFindWords"
+  "ignore": "testor",
+  "find1": "testudo",
+  "find2": "tete",
+  "count": 2
 }

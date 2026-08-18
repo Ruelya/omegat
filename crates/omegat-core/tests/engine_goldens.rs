@@ -125,18 +125,12 @@ fn glossary_tsv_and_query_match_java() {
         assert_eq!(got.comment, exp["comment"].as_str().unwrap_or(""));
     }
     let mut entries = parsed;
-    entries.push(omegat_core::glossary::GlossaryEntry {
-        source: "running".into(),
-        target: "courir".into(),
-        comment: "verb".into(),
-        priority: false,
-    });
-    entries.push(omegat_core::glossary::GlossaryEntry {
-        source: "Cat".into(),
-        target: "chat".into(),
-        comment: String::new(),
-        priority: false,
-    });
+    entries.push(omegat_core::glossary::GlossaryEntry::new(
+        "running", "courir", "verb",
+    ));
+    entries.push(omegat_core::glossary::GlossaryEntry::new(
+        "Cat", "chat", "",
+    ));
     for case in spec["cases"].as_array().unwrap() {
         let segment = case["segment"].as_str().unwrap();
         let ignore_case = case["ignore_case"].as_bool().unwrap();

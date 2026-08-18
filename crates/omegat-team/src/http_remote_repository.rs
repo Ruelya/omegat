@@ -80,3 +80,28 @@ fn file_url_path(url: &str) -> Option<PathBuf> {
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
     Some(PathBuf::from(rest))
 }
+
+/// Java `HTTPRemoteRepository.switchToVersion`: only `null` (latest) is supported.
+pub fn switch_to_version(version: Option<&str>) -> Result<()> {
+    if version.is_some() {
+        return Err(TeamError::Command("Not supported".into()));
+    }
+    Ok(())
+}
+
+/// Java retrieve on HTTP 304 leaves the existing file bytes unchanged.
+pub fn retrieve_skips_write(status: u16) -> bool {
+    status == 304
+}
+
+/// Apply retrieve: 304 keeps `existing`; otherwise write `body`.
+pub fn retrieve_with_status(status: u16, dest: &Path, existing: &str, body: &str) -> Result<()> {
+    if retrieve_skips_write(status) {
+        if !dest.exists() {
+            std::fs::write(dest, existing)?;
+        }
+        return Ok(());
+    }
+    std::fs::write(dest, body)?;
+    Ok(())
+}

@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherJapanese1",
-  "method": "testGlossarySearcherJapanese1",
+  "count": 1,
+  "source": "場所",
+  "target": "translation",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherJapanese1"
   ]

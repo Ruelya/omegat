@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider",
   "keys": [
     "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider"
-  ]
+  ],
+  "aggregates": true
 }

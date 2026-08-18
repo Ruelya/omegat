@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.TerminologyIssueProviderTest#testPartiallyEmptyTargetTermsReturnsTrue",
-  "method": "org.omegat.gui.issues.TerminologyIssueProviderTest#testPartiallyEmptyTargetTermsReturnsTrue",
+  "has_target": true,
   "keys": [
     "org.omegat.gui.issues.TerminologyIssueProviderTest#testPartiallyEmptyTargetTermsReturnsTrue"
   ]

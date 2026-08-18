@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.issues.IssueCheckerTest#testFilePatternFiltersEntries",
   "keys": [
     "org.omegat.gui.issues.IssueCheckerTest#testFilePatternFiltersEntries"
-  ]
+  ],
+  "filters": true
 }

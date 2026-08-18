@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.issues.SimpleIssueTest#testGetEntryNum",
   "keys": [
     "org.omegat.gui.issues.SimpleIssueTest#testGetEntryNum"
-  ]
+  ],
+  "entry_num": 1
 }

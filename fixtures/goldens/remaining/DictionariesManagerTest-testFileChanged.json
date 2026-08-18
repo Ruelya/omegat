@@ -1,5 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.DictionariesManagerTest#testFileChanged",
-  "method": "org.omegat.core.dictionaries.DictionariesManagerTest#testFileChanged"
+  "word": "testor",
+  "empty_before_load": true,
+  "empty_after_ignore": true
 }

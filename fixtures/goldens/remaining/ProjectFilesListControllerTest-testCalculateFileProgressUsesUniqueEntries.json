@@ -1,5 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCalculateFileProgressUsesUniqueEntries",
-  "method": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCalculateFileProgressUsesUniqueEntries"
+  "translated": 1,
+  "total": 2,
+  "text": "50.0%",
+  "keys": [
+    "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCalculateFileProgressUsesUniqueEntries"
+  ]
 }

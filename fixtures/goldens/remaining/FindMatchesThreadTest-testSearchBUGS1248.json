@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.matches.FindMatchesThreadTest#testSearchBUGS1248",
-  "method": "org.omegat.gui.matches.FindMatchesThreadTest#testSearchBUGS1248"
+  "method": "org.omegat.gui.matches.FindMatchesThreadTest#testSearchBUGS1248",
+  "bug": "1248"
 }

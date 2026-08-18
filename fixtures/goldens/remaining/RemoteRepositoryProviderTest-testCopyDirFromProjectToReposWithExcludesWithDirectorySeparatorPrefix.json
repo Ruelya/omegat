@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix",
-  "method": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix"
+  "excludes_honored": true,
+  "copied": true,
+  "keys": [
+    "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix"
+  ]
 }

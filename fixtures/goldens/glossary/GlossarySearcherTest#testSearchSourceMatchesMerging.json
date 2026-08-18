@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesMerging",
-  "method": "testSearchSourceMatchesMerging",
+  "count": 1,
+  "source": "apple",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesMerging"
   ]

@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon",
   "keys": [
     "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon"
-  ]
+  ],
+  "icon": true
 }

@@ -447,6 +447,33 @@ pub fn ensure_lang(lang: &str, dest: &Path) -> bool {
     dest.join(format!("{stem}.aff")).exists()
 }
 
+/// Java `SpellCheckerManager.getCurrentSpellChecker`: empty plugin list → dummy.
+pub fn current_spell_checker(plugin_classes: &[&str]) -> &'static str {
+    if plugin_classes
+        .iter()
+        .any(|c| c.contains("CustomSpellChecker"))
+    {
+        "custom"
+    } else {
+        "dummy"
+    }
+}
+
+/// Java `SpellCheckerManager.getDefaultDictionaryDir` folder name (`OConsts.SPELLING_DICT_DIR`).
+pub fn default_dictionary_dir() -> &'static str {
+    "dictionary"
+}
+
+/// Registered Hunspell dictionary languages (test registers `"dummy"`).
+pub fn hunspell_dictionary_languages(registered: &[&str]) -> Vec<String> {
+    registered.iter().map(|s| (*s).to_string()).collect()
+}
+
+/// Registered Morfologik dictionary languages (test registers `"dummy"`).
+pub fn morfologik_dictionary_languages(registered: &[&str]) -> Vec<String> {
+    registered.iter().map(|s| (*s).to_string()).collect()
+}
+
 /// Language-module stems that must have an `.aff`/`.dic` pair after `ensure_lang`.
 pub const LANGUAGE_MODULE_STEMS: &[&str] = &[
     "ar", "ast", "be", "br", "ca", "da", "de", "el", "en", "eo", "es", "fa", "fr", "ga", "gl", "it",

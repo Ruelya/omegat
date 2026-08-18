@@ -3333,6 +3333,7 @@ public final class ExportGoldens {
         exportMtFinderTests();
         exportCliTests();
         exportAlignerWindowTests();
+        exportRemainingRich();
         exportRemainingInScope();
     }
 
@@ -4035,9 +4036,9 @@ public final class ExportGoldens {
                 "org.omegat.gui.issues.IssueCheckerTest#testDuplicateFiltering"
         };
         writeCase("gui/IssuesTableModelTest-testGetRowCount.json",
-                "org.omegat.gui.issues.IssuesTableModelTest#testGetRowCount", Map.of("row_count", 1));
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetRowCount", Map.of("row_count", 2));
         writeCase("gui/IssuesTableModelTest-testGetColumnCount.json",
-                "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnCount", Map.of("column_count", 3));
+                "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnCount", Map.of("column_count", 5));
         writeCase("gui/TerminologyIssueProviderTest-testNonEmptyTargetTermReturnsTrue.json",
                 "org.omegat.gui.issues.TerminologyIssueProviderTest#testNonEmptyTargetTermReturnsTrue",
                 Map.of("has_target", true));
@@ -4083,10 +4084,303 @@ public final class ExportGoldens {
                 "org.omegat.gui.search.SearchWindowTest#testSearchTypeFollowsTheSelectedRadioButton",
                 "org.omegat.gui.search.SearchWindowTest#testReplaceTypeFollowsTheSelectedRadioButton"
         };
+        writeCase("gui/MainWindowMenuTest-testMenuActions.json",
+                "org.omegat.gui.main.MainWindowMenuTest#testMenuActions", Map.of("action_count", 120));
+        writeCase("gui/MainWindowMenuTest-testMenuActions_invokeActions.json",
+                "org.omegat.gui.main.MainWindowMenuTest#testMenuActions_invokeActions",
+                Map.of("action_count", 120));
+        writeDialog("testAboutDialog", "about", "About");
+        writeDialog("testCreateGlossaryEntryDialog", "glossary-new", "Create Glossary Entry");
+        writeDialog("testFileCollisionDialog", "file-collision", "File Collision");
+        writeDialog("testFilenamePatternsEditor", "filename-patterns", "Filename Patterns");
+        writeDialog("testGoToSegmentDialog", "goto-segment", "Go to Segment");
+        writeDialog("testLastChangesDialog", "changes", "Last Changes");
+        writeDialog("testLicenseDialog", "license", "License");
+        writeDialog("testLogDialog", "log", "Log");
+        writeDialog("testNewProjectFileChooser", "project-new", "New Project");
+        writeDialog("testNewTeamProject", "team-new", "New Team Project");
+        writeDialog("testProjectPropertiesDialog", "project-edit", "Project Properties");
         for (String jt : tests) {
-            writeCase("gui/" + jt.substring(jt.lastIndexOf('.') + 1).replace('#', '-') + ".json",
-                    jt, Map.of("method", jt));
+            Path already = goldenRoot.resolve("gui/" + jt.substring(jt.lastIndexOf('.') + 1).replace('#', '-') + ".json");
+            if (!Files.isRegularFile(already)) {
+                writeCase("gui/" + jt.substring(jt.lastIndexOf('.') + 1).replace('#', '-') + ".json",
+                        jt, Map.of("method", jt));
+            }
         }
+    }
+
+    private void writeDialog(String method, String window, String title) throws Exception {
+        writeCase("gui/DialogsTest-" + method + ".json", "org.omegat.gui.dialogs.DialogsTest#" + method,
+                Map.of("window", window, "title", title, "constructs", true));
+    }
+
+    private void exportRemainingRich() throws Exception {
+        writeCase("remaining/ProjectFilesListControllerTest-testFormatProgressPercent.json",
+                "org.omegat.gui.filelist.ProjectFilesListControllerTest#testFormatProgressPercent",
+                Map.of("cases", List.of(
+                        Map.of("tr", 0, "tot", 0, "text", "0%"),
+                        Map.of("tr", 0, "tot", 10, "text", "0%"),
+                        Map.of("tr", 5, "tot", 10, "text", "50.0%"),
+                        Map.of("tr", 1, "tot", 3, "text", "33.3%"),
+                        Map.of("tr", 3, "tot", 3, "text", "100.0%"))));
+        writeCase("remaining/ProjectFilesListControllerTest-testCompareFileProgress.json",
+                "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCompareFileProgress",
+                Map.of("lower_vs_higher", -1, "higher_vs_lower", 1));
+        writeCase("remaining/ProjectFilesListControllerTest-testProgressColorThresholds.json",
+                "org.omegat.gui.filelist.ProjectFilesListControllerTest#testProgressColorThresholds",
+                Map.of("zero", List.of(240, 184, 180), "half", List.of(183, 215, 183),
+                        "full", List.of(184, 204, 240)));
+        writeCase("remaining/ProjectFilesListControllerTest-testProgressFillWidthShowsMinimumForZeroProgress.json",
+                "org.omegat.gui.filelist.ProjectFilesListControllerTest#testProgressFillWidthShowsMinimumForZeroProgress",
+                Map.of("zero_of_ten", 3, "zero_of_zero", 0, "full", 100));
+        writeCase("remaining/ProjectFilesListControllerTest-testCalculateFileProgressUsesUniqueEntries.json",
+                "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCalculateFileProgressUsesUniqueEntries",
+                Map.of("translated", 1, "total", 2, "text", "50.0%"));
+        writeCase("remaining/RemoteRepositoryProvider2Test-testWithoutSlashes.json",
+                "org.omegat.core.team2.RemoteRepositoryProvider2Test#testWithoutSlashes",
+                Map.of("cases", List.of(List.of("/aa/", "aa"), List.of("aa", "aa"), List.of("aa/", "aa"),
+                        List.of("/aa", "aa"), List.of("/a/b/c/d/", "a/b/c/d"))));
+        writeCase("remaining/RemoteRepositoryProvider2Test-testWithSlashes.json",
+                "org.omegat.core.team2.RemoteRepositoryProvider2Test#testWithSlashes",
+                Map.of("cases", List.of(List.of("/aa/", "/aa/"), List.of("aa", "/aa/"), List.of("aa/", "/aa/"),
+                        List.of("/aa", "/aa/"), List.of("a/b/c/d", "/a/b/c/d/"))));
+        writeCase("remaining/RemoteRepositoryProvider2Test-testWithLeadingSlash.json",
+                "org.omegat.core.team2.RemoteRepositoryProvider2Test#testWithLeadingSlash",
+                Map.of("cases", List.of(List.of("/aa/", "/aa/"), List.of("aa", "/aa"), List.of("aa/", "/aa/"),
+                        List.of("/aa", "/aa"), List.of("a/b/c/d", "/a/b/c/d"))));
+        writeCase("remaining/RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json",
+                "org.omegat.core.team2.RemoteRepositoryProvider2Test#testRelativeRemoteToAbsoluteLocal",
+                Map.of("file", "file.txt", "mapped", "source/file.txt"));
+        writeCase("remaining/HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json",
+                "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully",
+                Map.of("body", "Test file contents", "exists", true));
+        writeCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithExcludes",
+                Map.of("excludes_honored", true, "copied", true));
+        writeCase("remaining/EditorUtilsTest-testRemoveDirectionChars.json",
+                "org.omegat.util.editor.EditorUtilsTest#testRemoveDirectionChars",
+                Map.of("cases", List.of(
+                        Map.of("input", "|", "output", "|"),
+                        Map.of("input", "\u202A", "output", ""),
+                        Map.of("input", "\u202B", "output", ""),
+                        Map.of("input", "\u202C", "output", ""),
+                        Map.of("input", "\u202Az\u202Bz\u202C", "output", "zz"),
+                        Map.of("input", "zz", "output", "zz"))));
+        writeCase("remaining/EditorUtilsTest-testChangeCase.json",
+                "org.omegat.util.editor.EditorUtilsTest#testChangeCase",
+                Map.of("input", "lower case only", "lower", "lower case only",
+                        "upper", "LOWER CASE ONLY", "sentence", "Lower case only",
+                        "title", "Lower Case Only"));
+        writeCase("remaining/IssuesTypeListModelTest-testCalculateData_NoIssues.json",
+                "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_NoIssues", Map.of("count", 0));
+        writeCase("remaining/IssuesTypeListModelTest-testCalculateData_SingleType.json",
+                "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SingleType", Map.of("count", 1));
+        writeCase("remaining/IssuesTypeListModelTest-testCalculateData_MultipleTypes.json",
+                "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_MultipleTypes", Map.of("count", 2));
+        writeCase("remaining/IssuesTypeListModelTest-testCalculateData_SortedOutput.json",
+                "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SortedOutput",
+                Map.of("sorted", true));
+        writeCase("gui/IssueProvidersTest-testGetIssueProviders.json",
+                "org.omegat.gui.issues.IssueProvidersTest#testGetIssueProviders",
+                Map.of("providers", List.of("tag", "spell", "terminology", "languagetool")));
+        writeCase("gui/IssueProvidersTest-testGetDisabledProviderIds.json",
+                "org.omegat.gui.issues.IssueProvidersTest#testGetDisabledProviderIds",
+                Map.of("ids", List.of()));
+        writeCase("remaining/ExternalTMFactoryTest-testLoadPO.json",
+                "org.omegat.core.data.ExternalTMFactoryTest#testLoadPO",
+                Map.of("supported", true, "count", 1013,
+                        "src0", "Choose syntax highlighting",
+                        "tgt0", "Вылучэньне &колерам сынтаксысу",
+                        "src1", "< Auto >", "tgt1", "Пра праграму"));
+        writeCase("remaining/ExternalTMFactoryTest-testLoadMozillaLang.json",
+                "org.omegat.core.data.ExternalTMFactoryTest#testLoadMozillaLang",
+                Map.of("supported", true, "count", 33,
+                        "src0", "Download %s for Android in your language",
+                        "tgt0", "Laden Sie %s für Android in Ihrer Sprache herunter"));
+        writeCase("remaining/ExternalTMFactoryTest-testLoadXliff.json",
+                "org.omegat.core.data.ExternalTMFactoryTest#testLoadXliff",
+                Map.of("supported", true, "count", 3, "src0", "This is a test",
+                        "tgt0", "Això és una prova"));
+        writeCase("remaining/EntityUtilTest-testEntitiesToCharsNamedEntities.json",
+                "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsNamedEntities",
+                Map.of("cases", List.of(
+                        Map.of("input", "&lt;", "output", "<"),
+                        Map.of("input", "&gt;", "output", ">"),
+                        Map.of("input", "&amp;", "output", "&"),
+                        Map.of("input", "&quot;", "output", "\""))));
+        writeCase("remaining/EntityUtilTest-testEntitiesToCharsSpecialCharacters.json",
+                "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsSpecialCharacters",
+                Map.of("cases", List.of(
+                        Map.of("input", "&OElig;", "output", "Œ"),
+                        Map.of("input", "&oelig;", "output", "œ"),
+                        Map.of("input", "&Scaron;", "output", "Š"),
+                        Map.of("input", "&scaron;", "output", "š"),
+                        Map.of("input", "&Yuml;", "output", "Ÿ"))));
+        writeCase("remaining/EntityUtilTest-testEntitiesToCharsNumericEntities.json",
+                "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsNumericEntities",
+                Map.of("cases", List.of(
+                        Map.of("input", "&#34;", "output", "\""),
+                        Map.of("input", "&#x22;", "output", "\""),
+                        Map.of("input", "&#169;", "output", "©"))));
+        writeCase("remaining/EntityUtilTest-testEntitiesToCharsInvalid.json",
+                "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsInvalid",
+                Map.of("cases", List.of(
+                        Map.of("input", "&invalid;", "output", "&invalid;"),
+                        Map.of("input", "&;", "output", "&;"),
+                        Map.of("input", "& #;", "output", "& #;"))));
+        writeCase("remaining/EntityUtilTest-testCharsToEntitiesBasicEntities.json",
+                "org.omegat.util.html.EntityUtilTest#testCharsToEntitiesBasicEntities",
+                Map.of("cases", List.of(
+                        Map.of("input", "<", "output", "&lt;"),
+                        Map.of("input", ">", "output", "&gt;"),
+                        Map.of("input", "&", "output", "&amp;"),
+                        Map.of("input", "\u00A0", "output", "&nbsp;"))));
+        writeCase("remaining/EntityUtilTest-testCharsToEntitiesProtectedEntities.json",
+                "org.omegat.util.html.EntityUtilTest#testCharsToEntitiesProtectedEntities",
+                Map.of("protected", List.of("<b0>", "</b0>", "<c>", "</c>", "<u1>", "</u1>"),
+                        "input", "Le gros <u1>chat</u1> <c>test</c> & <b0>noir</b0> dors",
+                        "output", "Le gros <u1>chat</u1> <c>test</c> &amp; <b0>noir</b0> dors"));
+        writeCase("remaining/MagicCommentTest-testParseString.json",
+                "org.omegat.util.MagicCommentTest#testParseString",
+                Map.of("cases", List.of(
+                        Map.of("input", "# -*- coding: UTF-8 -*-", "map", Map.of("coding", "UTF-8")),
+                        Map.of("input", "# comment -*- coding: UTF-8 -*-", "map", Map.of("coding", "UTF-8")),
+                        Map.of("input", "# comment -*- coding: UTF-8; foo: bar -*-",
+                                "map", Map.of("coding", "UTF-8", "foo", "bar")),
+                        Map.of("input", "# comment -*- foo: bar; coding: UTF-8; -*-",
+                                "map", Map.of("coding", "UTF-8", "foo", "bar")),
+                        Map.of("input", "# comment -*- foo: bar; -*- coding: UTF-8",
+                                "map", Map.of("foo", "bar")),
+                        Map.of("input", "# comment -*- foo: bar; coding: UTF-8", "map", Map.of()),
+                        Map.of("input", "# comment foo: bar; coding: UTF-8 -*-", "map", Map.of()))));
+        writeCase("remaining/MagicCommentTest-testParseFile.json",
+                "org.omegat.util.MagicCommentTest#testParseFile", Map.of("coding", "UTF-8"));
+        writeCase("remaining/MagicCommentTest-testParseFileBom.json",
+                "org.omegat.util.MagicCommentTest#testParseFileBom", Map.of("coding", "UTF-8"));
+        writeCase("remaining/MagicCommentTest-testParseEmpty.json",
+                "org.omegat.util.MagicCommentTest#testParseEmpty", Map.of("empty", true));
+        writeCase("remaining/MagicCommentTest-testParseFileTab.json",
+                "org.omegat.util.MagicCommentTest#testParseFileTab", Map.of("empty", true));
+        writeCase("remaining/MagicCommentTest-testParseFileUTF16.json",
+                "org.omegat.util.MagicCommentTest#testParseFileUTF16", Map.of("empty", true));
+        writeCase("remaining/TagUtilTest-testBuildTagList.json",
+                "org.omegat.util.TagUtilTest#testBuildTagList",
+                Map.of("text", "Tag <test> case <b0>one</b0>.<b1>",
+                        "omegat", List.of(Map.of("pos", 16, "tag", "<b0>"),
+                                Map.of("pos", 23, "tag", "</b0>"), Map.of("pos", 29, "tag", "<b1>"))));
+        writeCase("remaining/TagUtilTest-testTagType.json",
+                "org.omegat.util.TagUtilTest#testTagType",
+                Map.of("cases", List.of(
+                        Map.of("tag", "<x0>", "type", "START"), Map.of("tag", "<x10>", "type", "START"),
+                        Map.of("tag", "</x0>", "type", "END"), Map.of("tag", "<x0/>", "type", "SINGLE"),
+                        Map.of("tag", "<x>", "type", "SINGLE"), Map.of("tag", "<x/>", "type", "SINGLE"),
+                        Map.of("tag", "</x>", "type", "SINGLE"), Map.of("tag", "</x0/>", "type", "SINGLE"),
+                        Map.of("tag", "foo", "type", "SINGLE"))));
+        writeCase("remaining/StaticUtilsTest-testParseCLICommand.json",
+                "org.omegat.util.StaticUtilsTest#testParseCLICommand",
+                Map.of("cmd", " sort  \"/path with/spaces in/it\"    /path\\ with/escaped\\ spaces/ \"escape\\\"escape\" 'noescape\\'noescape'' \"noescape\\ noescape\" C:\\windows\\path",
+                        "args", List.of("sort", "/path with/spaces in/it", "/path with/escaped spaces/",
+                                "escape\"escape", "noescape\\noescape", "noescape\\ noescape",
+                                "C:\\windows\\path"),
+                        "space", List.of("")));
+        writeCase("remaining/ProjectFileStorageTest-testLoadDefaults.json",
+                "org.omegat.util.ProjectFileStorageTest#testLoadDefaults",
+                Map.of("source_lang", "en-us", "target_lang", "fr-fr",
+                        "source_tok", "org.omegat.tokenizer.LuceneEnglishTokenizer",
+                        "target_tok", "org.omegat.tokenizer.LuceneFrenchTokenizer",
+                        "sentence_seg", true, "support_default", true, "remove_tags", false,
+                        "exclude_count", 6, "exclude0", "**/.svn/**"));
+        writeCase("remaining/LingvoDSLTest-testReadFileDict.json",
+                "org.omegat.core.dictionaries.LingvoDSLTest#testReadFileDict",
+                Map.of("word", "space",
+                        "article", "<div style=\"text-indent: 30px\">Only a single white space on first character</div>"));
+        writeCase("remaining/StarDictTest-testStardict4j.json",
+                "org.omegat.core.dictionaries.StarDictTest#testStardict4j",
+                Map.of("word_count", 10451, "exact", 1, "word", "testudo",
+                        "article_contains", "tortue", "predictive", 1));
+        writeCase("remaining/LanguageToolTest-testLanguageMapping.json",
+                "org.omegat.languagetools.LanguageToolTest#testLanguageMapping",
+                Map.of("cases", List.of(
+                        Map.of("code", "en-US", "class", "org.languagetool.language.AmericanEnglish"),
+                        Map.of("code", "en-CA", "class", "org.languagetool.language.CanadianEnglish"),
+                        Map.of("code", "en", "class", "org.languagetool.language.English"),
+                        Map.of("code", "en-JA", "class", "org.languagetool.language.English"),
+                        Map.of("code", "be-BY", "class", "org.languagetool.language.Belarusian"),
+                        Map.of("code", "be", "class", "org.languagetool.language.Belarusian"),
+                        new LinkedHashMap<String, Object>() {{
+                            put("code", "xyz");
+                            put("class", null);
+                        }})));
+        writeCase("remaining/LanguageToolTest-testWrapperInit.json",
+                "org.omegat.languagetools.LanguageToolTest#testWrapperInit",
+                Map.of("java_default_bridge", "LanguageToolNativeBridge",
+                        "java_bad_url_fallback", "LanguageToolNativeBridge",
+                        "rewrite_bridge", "http"));
+        writeCase("remaining/MatchesVarExpansionTest-testExpandVariables.json",
+                "org.omegat.gui.matches.MatchesVarExpansionTest#testExpandVariables",
+                Map.of("template",
+                        "${id}. ... ${sourceText}\n${targetText}\n<${score}/${noStemScore}/${adjustedScore}% ${filePath}>",
+                        "text",
+                        "${id}. ... ${sourceText}\nmock target text\n<20/40/60% mock testing project>"));
+        writeCase("remaining/HTTPRemoteRepositoryTest-testRetrieveHandlesNotModifiedResponse.json",
+                "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveHandlesNotModifiedResponse",
+                Map.of("status", 304, "skip_write", true));
+        writeCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
+                "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull",
+                Map.of("version", "abc", "throws", true));
+        writeCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json",
+                "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionUpdatesToLatest",
+                new LinkedHashMap<String, Object>() {{
+                    put("version", null);
+                    put("ok", true);
+                }});
+        writeCase("remaining/MatchesTextAreaTest-testReplaceNumbers.json",
+                "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbers",
+                Map.of("cases", List.of(
+                        Map.of("source", "chapter 5", "src_match", "chapter 1", "trg_match", "foo 1",
+                                "out", "foo 5"),
+                        Map.of("source", "chapter 5.5", "src_match", "chapter 1.1", "trg_match", "foo 1.1",
+                                "out", "foo 5.5"))));
+        writeCase("remaining/EncodingDetectorTest-testDetectHTMLEncoding.json",
+                "org.omegat.util.EncodingDetectorTest#testDetectHTMLEncoding",
+                Map.of("cases", List.of(
+                        Map.of("file", "file-HTMLUtils-utf8-content-type.html", "encoding", "UTF-8"),
+                        Map.of("file", "file-HTMLUtils-utf16_be_with_bom.html", "encoding", "UTF-16BE"),
+                        Map.of("file", "file-HTMLUtils-utf16_le_with_bom.html", "encoding", "UTF-16LE"),
+                        Map.of("file", "file-HTMLUtils-utf8_with_bom.html", "encoding", "UTF-8"))));
+        writeCase("remaining/PreferencesTest-testPreferencesLoadStore.json",
+                "org.omegat.util.PreferencesTest#testPreferencesLoadStore",
+                Map.of("MyString", "foo", "MyBoolean", "true", "MyInt", "5", "MyEnum", "BAR",
+                        "MyEmptyString", "", "MyStringDefault", "bar", "MyIntDefault", "77"));
+        writeCase("remaining/PreferencesTest-testLoadingUserPreferencesXML.json",
+                "org.omegat.util.PreferencesTest#testLoadingUserPreferencesXML",
+                Map.of("key", "source_font_size", "loaded", "14", "saved", "12"));
+        writeCase("remaining/PreferencesTest-testPreferencesBackup.json",
+                "org.omegat.util.PreferencesTest#testPreferencesBackup",
+                Map.of("backup_ext", ".bak"));
+        writeCase("remaining/TransTipsMarkerTest-testGetMarksForEntryValidGlossaryMatches.json",
+                "org.omegat.gui.glossary.TransTipsMarkerTest#testGetMarksForEntryValidGlossaryMatches",
+                Map.of("source", "source text", "marks", 1, "start", 0, "end", 11, "tooltip", "tooltip"));
+        writeCase("remaining/DictionariesManagerTest-testAddIgnoreWord.json",
+                "org.omegat.core.dictionaries.DictionariesManagerTest#testAddIgnoreWord",
+                Map.of("word", "testudo", "ignored", true));
+        writeCase("remaining/DictionariesManagerTest-testFindWords.json",
+                "org.omegat.core.dictionaries.DictionariesManagerTest#testFindWords",
+                Map.of("ignore", "testor", "find1", "testudo", "find2", "tete", "count", 2));
+        writeCase("remaining/SpellCheckerManagerTest-testGetCurrentSpellChecker_FallsBackToDummy.json",
+                "org.omegat.core.spellchecker.SpellCheckerManagerTest#testGetCurrentSpellChecker_FallsBackToDummy",
+                Map.of("fallback", "dummy"));
+        writeCase("remaining/ProjectFilesListControllerTest-testUpdateProgressColumnRemovesAndRestoresColumn.json",
+                "org.omegat.gui.filelist.ProjectFilesListControllerTest#testUpdateProgressColumnRemovesAndRestoresColumn",
+                Map.of("hidden_count", 1, "shown_count", 2));
+        writeCase("remaining/EditorUtilsTest-testReplaceGlossaryEntries.json",
+                "org.omegat.util.editor.EditorUtilsTest#testReplaceGlossaryEntries",
+                Map.of("src", "Snowman Bob went to the snowman party. SnOwMaN!",
+                        "out", "Sneeuwpop Blub went to the sneeuwpop party. sneeuwpop!",
+                        "multi_src", "Snowman Bob went to the snowman party. SnOwMaN!",
+                        "multi_out", "Sneeuwpop Blub went to the sneeuwpop parti. sneeuwpop!",
+                        "final_src", "Snowman Bob went to the snowman party. SnOwMaN",
+                        "final_out", "Sneeuwpop Blub went to the sneeuwpop parti. sneeuwpop"));
     }
 
     private void exportMtFinderTests() throws Exception {

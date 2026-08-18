@@ -1,5 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.ProjectFileStorageTest#testSaveTeamProjectWithMapping",
-  "method": "org.omegat.util.ProjectFileStorageTest#testSaveTeamProjectWithMapping"
+  "max_abs2rel": 5,
+  "docs": "source",
+  "manual": "source/manual",
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testSaveTeamProjectWithMapping"
+  ]
 }

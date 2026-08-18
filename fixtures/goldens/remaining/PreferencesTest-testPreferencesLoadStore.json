@@ -1,5 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.PreferencesTest#testPreferencesLoadStore",
-  "method": "org.omegat.util.PreferencesTest#testPreferencesLoadStore"
+  "MyString": "foo",
+  "MyBoolean": "true",
+  "MyInt": "5",
+  "MyEnum": "BAR",
+  "MyEmptyString": "",
+  "MyStringDefault": "bar",
+  "MyIntDefault": "77"
 }

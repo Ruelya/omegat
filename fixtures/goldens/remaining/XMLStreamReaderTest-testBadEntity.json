@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.XMLStreamReaderTest#testBadEntity",
-  "method": "org.omegat.util.XMLStreamReaderTest#testBadEntity"
+  "method": "org.omegat.util.XMLStreamReaderTest#testBadEntity",
+  "rejects": true
 }

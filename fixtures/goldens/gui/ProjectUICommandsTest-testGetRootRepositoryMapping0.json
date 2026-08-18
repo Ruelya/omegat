@@ -4,5 +4,7 @@
   "method": "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMapping0",
   "keys": [
     "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMapping0"
-  ]
+  ],
+  "local": "/",
+  "repository": "/"
 }

@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.dialogs.DialogsTest#testProjectPropertiesDialog",
-  "method": "org.omegat.gui.dialogs.DialogsTest#testProjectPropertiesDialog",
+  "window": "project-edit",
+  "title": "Project Properties",
+  "constructs": true,
   "keys": [
     "org.omegat.gui.dialogs.DialogsTest#testProjectPropertiesDialog"
   ]

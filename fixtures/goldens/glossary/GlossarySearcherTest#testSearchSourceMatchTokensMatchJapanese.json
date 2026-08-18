@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchTokensMatchJapanese",
-  "method": "testSearchSourceMatchTokensMatchJapanese",
+  "token": "存在",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchTokensMatchJapanese"
   ]

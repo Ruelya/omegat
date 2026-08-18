@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.scripting.ScriptRunnerTest#testCompileScripts",
-  "method": "org.omegat.gui.scripting.ScriptRunnerTest#testCompileScripts"
+  "method": "org.omegat.gui.scripting.ScriptRunnerTest#testCompileScripts",
+  "compiles": true
 }

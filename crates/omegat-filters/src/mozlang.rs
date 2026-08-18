@@ -1,7 +1,6 @@
 //! Java `org.omegat.filters2.mozlang.MozillaLangFilter`.
 
-use crate::misc::seg;
-use crate::{ensure_parent, read_to_string, Filter, FilterContext, ParsedFile, Result};
+use crate::{ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile, Result};
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
@@ -72,7 +71,21 @@ fn process(raw: &str, translations: Option<&HashMap<String, String>>) -> Outcome
             State::WaitTarget => {
                 target.push_str(s);
                 let src = source.clone();
-                segments.push(seg(segments.len().to_string(), &src));
+                // Java: translation is null when source == target (untranslated).
+                let existing = if target.is_empty() || target == src {
+                    None
+                } else {
+                    Some(target.clone())
+                };
+                segments.push(ExtractedSegment {
+                    id: segments.len().to_string(),
+                    source: src.clone(),
+                    existing_translation: existing,
+                    note: None,
+                    comment: None,
+                    path: None,
+                    protected_parts: vec![],
+                });
                 let trans = match translations.and_then(|m| m.get(&src).cloned()) {
                     Some(t) if t == src => format!("{t} {{ok}}"),
                     Some(t) => t,

@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.statistics.StatisticsTest#testNumberOfWords",
-  "method": "org.omegat.core.statistics.StatisticsTest#testNumberOfWords"
+  "method": "org.omegat.core.statistics.StatisticsTest#testNumberOfWords",
+  "words": true
 }

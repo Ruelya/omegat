@@ -1,5 +1,17 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.html.EntityUtilTest#testCharsToEntitiesProtectedEntities",
-  "method": "org.omegat.util.html.EntityUtilTest#testCharsToEntitiesProtectedEntities"
+  "protected": [
+    "<b0>",
+    "</b0>",
+    "<c>",
+    "</c>",
+    "<u1>",
+    "</u1>"
+  ],
+  "input": "Le gros <u1>chat</u1> <c>test</c> & <b0>noir</b0> dors",
+  "output": "Le gros <u1>chat</u1> <c>test</c> &amp; <b0>noir</b0> dors",
+  "keys": [
+    "org.omegat.util.html.EntityUtilTest#testCharsToEntitiesProtectedEntities"
+  ]
 }

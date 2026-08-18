@@ -4,6 +4,32 @@ export function removeDirectionChars(s: string): string {
   return s.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "");
 }
 
+function matchCapitalization(src: string, dest: string): string {
+  if (!src || !dest) return dest;
+  if (src === src.toUpperCase() && /[A-Za-z]/.test(src)) return dest.toUpperCase();
+  if (src === src.toLowerCase()) return dest.toLowerCase();
+  const title = src[0] === src[0].toUpperCase() && src.slice(1) === src.slice(1).toLowerCase();
+  if (title) return dest.charAt(0).toUpperCase() + dest.slice(1).toLowerCase();
+  return dest.toLowerCase();
+}
+
+/** Java `EditorUtils.replaceGlossaryEntries`. Longest source first; match source capitalization. */
+export function replaceGlossaryEntries(
+  src: string | null,
+  entries: { source: string; target: string }[] | null,
+): string | null {
+  if (src == null) return null;
+  if (!src) return "";
+  if (!entries?.length) return src;
+  const sorted = [...entries].sort((a, b) => b.source.length - a.source.length);
+  let out = src;
+  for (const e of sorted) {
+    const re = new RegExp(e.source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    out = out.replace(re, (m) => matchCapitalization(m, e.target));
+  }
+  return out;
+}
+
 export function changeCase(s: string, mode: "upper" | "lower" | "title" | "sentence"): string {
   if (mode === "upper") return s.toUpperCase();
   if (mode === "lower") return s.toLowerCase();

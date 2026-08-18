@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleIndentStyles",
-  "method": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleIndentStyles"
+  "word": "abandon",
+  "article": "<div style=\"text-indent: 30px\"><strong>1.</strong> отказываться (<span style='font-style: italic'>от чего-л.</span>), прекращать (<span style='font-style: italic'>попытки и т. п.</span>)</div>\n<div style=\"text-indent: 30px\"><strong>2.</strong> покидать, оставлять</div>\n<div style=\"text-indent: 60px\">to abandon attempts</div>\n<div style=\"text-indent: 60px\">to abandon a claim</div>\n<div style=\"text-indent: 60px\">to abandon convertibility</div>\n<div style=\"text-indent: 60px\">to abandon the [gold] standard</div>\n<div style=\"text-indent: 60px\">to abandon price control</div>\n<div style=\"text-indent: 60px\">to abandon a right</div>",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleIndentStyles"
+  ]
 }

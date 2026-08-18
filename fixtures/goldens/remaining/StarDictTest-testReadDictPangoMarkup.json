@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.StarDictTest#testReadDictPangoMarkup",
-  "method": "org.omegat.core.dictionaries.StarDictTest#testReadDictPangoMarkup"
+  "word": "lookup",
+  "article": "<b>vyhledat</b> <small>[Zdeněk Brož]</small>",
+  "keys": [
+    "org.omegat.core.dictionaries.StarDictTest#testReadDictPangoMarkup"
+  ]
 }

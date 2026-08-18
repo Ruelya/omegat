@@ -1,5 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.JsonParserTest#testParseEmpty",
-  "method": "org.omegat.util.JsonParserTest#testParseEmpty"
+  "error": true,
+  "keys": [
+    "org.omegat.util.JsonParserTest#testParseEmpty"
+  ]
 }

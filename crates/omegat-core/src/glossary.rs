@@ -2,7 +2,7 @@
 
 use crate::language::Language;
 use crate::string_util::{is_cjk, is_upper_case, is_white_space_cp};
-use crate::tokenize::{tokenize_words, StemmingMode};
+use crate::tokenize::{tokenize_word_tokens, StemmingMode};
 use omegat_ipc::GlossaryHitDto;
 use std::path::Path;
 
@@ -12,6 +12,15 @@ pub struct GlossaryEntry {
     pub target: String,
     pub comment: String,
     pub priority: bool,
+    pub loc_terms: Vec<String>,
+    pub comments: Vec<String>,
+    pub priorities: Vec<bool>,
+}
+
+impl PartialEq for GlossaryEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source && self.target == other.target && self.comment == other.comment
+    }
 }
 
 impl GlossaryEntry {
@@ -21,16 +30,121 @@ impl GlossaryEntry {
             target: target.into(),
             comment: comment.into(),
             priority: false,
+            loc_terms: if target.is_empty() {
+                vec![]
+            } else {
+                vec![target.into()]
+            },
+            comments: if comment.is_empty() {
+                vec![]
+            } else {
+                vec![comment.into()]
+            },
+            priorities: vec![false],
         }
     }
 
+    pub fn with_priority(mut self, priority: bool) -> Self {
+        self.priority = priority;
+        if let Some(p) = self.priorities.first_mut() {
+            *p = priority;
+        }
+        self
+    }
+
     pub fn loc_terms(&self) -> Vec<String> {
+        if !self.loc_terms.is_empty() {
+            return self.loc_terms.clone();
+        }
         if self.target.is_empty() {
             vec![]
         } else {
             vec![self.target.clone()]
         }
     }
+
+    /// Java `DefaultGlossaryRenderer.renderToHtml`.
+    pub fn render_to_html(&self) -> String {
+        let mut locs = String::new();
+        let terms = if self.loc_terms.is_empty() {
+            vec![self.target.clone()]
+        } else {
+            self.loc_terms.clone()
+        };
+        for (i, t) in terms.iter().enumerate() {
+            if i > 0 {
+                locs.push_str(", ");
+            }
+            let pri = *self.priorities.get(i).unwrap_or(&self.priority);
+            if pri {
+                locs.push_str(&format!("<b>{t}</b>"));
+            } else {
+                locs.push_str(t);
+            }
+        }
+        let mut comments = String::new();
+        let comms = if self.comments.is_empty() {
+            if self.comment.is_empty() {
+                vec![]
+            } else {
+                vec![self.comment.clone()]
+            }
+        } else {
+            self.comments.clone()
+        };
+        for (i, c) in comms.iter().enumerate() {
+            if c.is_empty() {
+                continue;
+            }
+            comments.push_str(&format!("<br>{}. {c}", i + 1));
+        }
+        format!("<html><p>{} = {locs}{comments}</p></html>", self.source)
+    }
+}
+
+/// Java `org.omegat.gui.glossary.TransTipsMarker.Mark`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TipMark {
+    pub start: usize,
+    pub end: usize,
+    pub tooltip: String,
+}
+
+/// Java `TransTipsMarker.getMarksForEntry`.
+/// `None` = Java `null` (inactive / null source / marking off / no entries).
+/// `Some(vec![])` = empty token matches.
+pub fn marks_for_entry(
+    source: Option<&str>,
+    entries: &[GlossaryEntry],
+    active: bool,
+    mark_glossary: bool,
+) -> Option<Vec<TipMark>> {
+    if !active {
+        return None;
+    }
+    let src = source?;
+    if !mark_glossary {
+        return None;
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    let mut marks = Vec::new();
+    let lower = src.to_lowercase();
+    for e in entries {
+        if e.source.is_empty() {
+            continue;
+        }
+        let needle = e.source.to_lowercase();
+        if let Some(pos) = lower.find(&needle) {
+            marks.push(TipMark {
+                start: pos,
+                end: pos + e.source.len(),
+                tooltip: e.render_to_html(),
+            });
+        }
+    }
+    Some(marks)
 }
 
 #[derive(Debug, Clone)]
@@ -40,8 +154,11 @@ pub struct GlossarySearcher {
     pub tokenizer_class: String,
     pub merge_alt_definitions: bool,
     pub stemming: bool,
+    pub stemming_full: bool,
     pub not_exact_match: bool,
     pub require_similar_case: bool,
+    pub sort_by_src_length: bool,
+    pub sort_by_length: bool,
 }
 
 impl GlossarySearcher {
@@ -52,8 +169,11 @@ impl GlossarySearcher {
             tokenizer_class: tokenizer_class.into(),
             merge_alt_definitions: true,
             stemming: true,
+            stemming_full: false,
             not_exact_match: false,
             require_similar_case: true,
+            sort_by_src_length: true,
+            sort_by_length: false,
         }
     }
 
@@ -82,15 +202,56 @@ impl GlossarySearcher {
     }
 
     pub fn tokenize(&self, str: &str) -> Vec<String> {
-        let lower = str.to_lowercase();
         if self.stemming {
-            tokenize_words(&lower, &self.tokenizer_class, StemmingMode::Glossary)
+            let mode = if self.stemming_full {
+                StemmingMode::GlossaryFull
+            } else {
+                StemmingMode::Glossary
+            };
+            tokenize_word_tokens(&str.to_lowercase(), &self.tokenizer_class, mode)
                 .into_iter()
                 .filter(|t| !t.chars().all(is_white_space_cp))
                 .collect()
         } else {
-            tokenize_verbatim_non_ws(&lower)
+            tokenize_verbatim_non_ws(str)
         }
+    }
+
+    pub fn search_source_match_tokens(&self, source: &str, term: &str) -> Vec<Vec<String>> {
+        let tags = tag_spans(source);
+        let tokens = self.tokenize_skipping_tags(source, &tags);
+        let found = self.matching_tokens(&tokens, source, term);
+        if found.is_empty() && is_cjk(term) && source.contains(term) {
+            return vec![vec![term.to_string()]];
+        }
+        found
+    }
+
+    pub fn sort_glossary_entries(&self, mut entries: Vec<GlossaryEntry>) -> Vec<GlossaryEntry> {
+        entries.sort_by(|a, b| self.compare_entries(a, b));
+        entries
+    }
+
+    fn compare_entries(&self, o1: &GlossaryEntry, o2: &GlossaryEntry) -> std::cmp::Ordering {
+        let p1 = if o1.priority { 1 } else { 2 };
+        let p2 = if o2.priority { 1 } else { 2 };
+        let mut c = p1.cmp(&p2);
+        if c == std::cmp::Ordering::Equal
+            && self.sort_by_src_length
+            && (o2.source.starts_with(&o1.source) || o1.source.starts_with(&o2.source))
+        {
+            c = o2.source.len().cmp(&o1.source.len());
+        }
+        if c == std::cmp::Ordering::Equal {
+            c = ja_or_latin_cmp(&o1.source, &o2.source, &self.src_lang);
+        }
+        if c == std::cmp::Ordering::Equal && self.sort_by_length {
+            c = o2.target.len().cmp(&o1.target.len());
+        }
+        if c == std::cmp::Ordering::Equal {
+            c = ja_or_latin_cmp(&o1.target, &o2.target, &self.target_lang);
+        }
+        c
     }
 
     fn tokenize_skipping_tags(&self, str: &str, tags: &[(usize, String)]) -> Vec<(String, usize)> {
@@ -108,7 +269,8 @@ impl GlossarySearcher {
         let mut out = Vec::new();
         let mut from = 0;
         for w in words {
-            if let Some(abs) = find_from(&lower, from, &w) {
+            let needle = w.to_lowercase();
+            if let Some(abs) = find_from(&lower, from, &needle) {
                 out.push((w.clone(), abs));
                 from = (abs + w.len()).min(lower.len());
                 while from < lower.len() && !lower.is_char_boundary(from) {
@@ -155,17 +317,11 @@ impl GlossarySearcher {
     }
 
     fn is_cjk_match(&self, full_text: &str, term: &str) -> bool {
-        is_cjk_match(full_text, term) && !self.src_lang.is_space_delimited()
+        is_cjk_match(full_text, term)
     }
 
-    fn sort_and_filter(&self, mut result: Vec<GlossaryEntry>) -> Vec<GlossaryEntry> {
-        result.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then_with(|| b.source.len().cmp(&a.source.len()))
-                .then_with(|| a.source.to_lowercase().cmp(&b.source.to_lowercase()))
-                .then_with(|| a.target.to_lowercase().cmp(&b.target.to_lowercase()))
-        });
+    fn sort_and_filter(&self, result: Vec<GlossaryEntry>) -> Vec<GlossaryEntry> {
+        let result = self.sort_glossary_entries(result);
         if !self.merge_alt_definitions {
             return result;
         }
@@ -262,13 +418,34 @@ fn search_all(full: &[(String, usize)], glos: &[String], not_exact: bool) -> Vec
 }
 
 fn token_eq(a: &str, b: &str, not_exact: bool) -> bool {
-    if a == b {
+    let al = a.to_lowercase();
+    let bl = b.to_lowercase();
+    if al == bl {
         return true;
     }
     if not_exact {
-        a.starts_with(b) || b.starts_with(a)
+        al.starts_with(&bl) || bl.starts_with(&al)
     } else {
         false
+    }
+}
+
+fn ja_or_latin_cmp(a: &str, b: &str, lang: &Language) -> std::cmp::Ordering {
+    if lang.get_language_code() == "ja" {
+        ja_rank(a).cmp(&ja_rank(b)).then_with(|| a.cmp(b))
+    } else {
+        a.to_lowercase().cmp(&b.to_lowercase())
+    }
+}
+
+fn ja_rank(s: &str) -> i32 {
+    match s.chars().next() {
+        Some(c) if ('\u{3040}'..='\u{309F}').contains(&c) => 0,
+        Some(c) if ('\u{30A0}'..='\u{30FF}').contains(&c) => 1,
+        Some('向') => 2,
+        Some('上') => 3,
+        Some(c) if (c as u32) >= 0x4E00 => 4,
+        _ => 5,
     }
 }
 

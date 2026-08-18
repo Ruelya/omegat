@@ -1,5 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.TmxEscapingWriterTest#testNBH",
-  "method": "org.omegat.util.TmxEscapingWriterTest#testNBH"
+  "char": "‑",
+  "keys": [
+    "org.omegat.util.TmxEscapingWriterTest#testNBH"
+  ]
 }

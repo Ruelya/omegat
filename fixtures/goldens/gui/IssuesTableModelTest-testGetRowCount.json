@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testGetRowCount",
-  "row_count": 1,
+  "row_count": 2,
   "keys": [
     "org.omegat.gui.issues.IssuesTableModelTest#testGetRowCount"
   ]

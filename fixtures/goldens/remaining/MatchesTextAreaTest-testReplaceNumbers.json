@@ -1,5 +1,60 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbers",
-  "method": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbers"
+  "cases": [
+    {
+      "source": "chapter 5",
+      "src_match": "chapter 1",
+      "trg_match": "foo 1",
+      "out": "foo 5"
+    },
+    {
+      "source": "chapter 5.5",
+      "src_match": "chapter 1.1",
+      "trg_match": "foo 1.1",
+      "out": "foo 5.5"
+    },
+    {
+      "source": "hoge 9 fuga 8 piyo 7",
+      "src_match": "foo 1 bar 2 baz 3",
+      "trg_match": "bing 3 bang 2 bop 1",
+      "out": "bing 7 bang 8 bop 9"
+    },
+    {
+      "source": "Point C : Recommence les étapes 16 à 21 – pages 16 et 17",
+      "src_match": "Point B : Recommence les étapes 9 à 15 – page 14 et 15",
+      "trg_match": "Point B: Repeat steps 9 to 15 – pages 14 and 15",
+      "out": "Point B: Repeat steps 16 to 21 – pages 16 and 17"
+    },
+    {
+      "source": "hoge 9 fuga 8 piyo 7",
+      "src_match": "foo 1 bar 2 baz",
+      "trg_match": "bing 3 bang 2 bop 1",
+      "out": "bing 3 bang 2 bop 1"
+    },
+    {
+      "source": "hoge 9 fuga 8 piyo",
+      "src_match": "foo 1 bar 2 baz 3",
+      "trg_match": "bing 3 bang 2 bop 1",
+      "out": "bing 3 bang 2 bop 1"
+    },
+    {
+      "source": "hoge 9 fuga 8 piyo 7",
+      "src_match": "foo 1 bar 2 baz 3",
+      "trg_match": "bing 3 bang 2 bop",
+      "out": "bing 3 bang 2 bop"
+    },
+    {
+      "source": "hoge 9 fuga 8 piyo 7",
+      "src_match": "foo 1 bar 2 baz 3 3",
+      "trg_match": "bing 3 bang 2 bop 1",
+      "out": "bing 3 bang 2 bop 1"
+    },
+    {
+      "source": "hoge 9 fuga 8 piyo 7",
+      "src_match": "foo 1 bar 2 baz 33",
+      "trg_match": "bing 3 bang 2 bop 1",
+      "out": "bing 3 bang 2 bop 1"
+    }
+  ]
 }

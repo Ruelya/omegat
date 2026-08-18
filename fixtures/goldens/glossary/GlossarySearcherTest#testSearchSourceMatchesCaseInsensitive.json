@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesCaseInsensitive",
-  "method": "testSearchSourceMatchesCaseInsensitive",
+  "count": 1,
+  "source": "CaseInsensitive",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesCaseInsensitive"
   ]

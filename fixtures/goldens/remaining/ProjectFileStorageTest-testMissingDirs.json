@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.ProjectFileStorageTest#testMissingDirs",
-  "method": "org.omegat.util.ProjectFileStorageTest#testMissingDirs"
+  "source": "source",
+  "target": "target",
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testMissingDirs"
+  ]
 }

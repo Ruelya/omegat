@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.main.ProjectUICommandsTest#testSetRootRepositoryMapping0",
   "keys": [
     "org.omegat.gui.main.ProjectUICommandsTest#testSetRootRepositoryMapping0"
-  ]
+  ],
+  "sets": true
 }

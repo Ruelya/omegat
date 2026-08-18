@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn",
   "keys": [
     "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn"
-  ]
+  ],
+  "type": "svn"
 }

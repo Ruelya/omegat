@@ -1,5 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs",
-  "method": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs"
+  "method": "org.omegat.util.HttpConnectionUtilsTest#testDecodeURLs",
+  "encoded": "%20",
+  "decoded": " "
 }

@@ -1,5 +1,12 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.StarDictTest#testStardict4j",
-  "method": "org.omegat.core.dictionaries.StarDictTest#testStardict4j"
+  "word_count": 10451,
+  "exact": 1,
+  "word": "testudo",
+  "article_contains": "tortue",
+  "predictive": 1,
+  "keys": [
+    "org.omegat.core.dictionaries.StarDictTest#testStardict4j"
+  ]
 }

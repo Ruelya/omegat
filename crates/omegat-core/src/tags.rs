@@ -1,5 +1,92 @@
 use omegat_ipc::IssueDto;
 use regex::Regex;
+use once_cell::sync::Lazy;
+
+static OMEGAT_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"</?[a-zA-Z]+[0-9]+/?>").unwrap());
+static OMEGAT_TAG_DECOMPILE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"<(/?)([a-zA-Z]+)([0-9]+)(/?)>").unwrap());
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TagType {
+    Start,
+    End,
+    Single,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tag {
+    pub pos: usize,
+    pub tag: String,
+}
+
+impl Tag {
+    pub fn new(pos: usize, tag: impl Into<String>) -> Self {
+        Self {
+            pos,
+            tag: tag.into(),
+        }
+    }
+
+    /// Java `TagUtil.Tag.getType` via `PatternConsts.OMEGAT_TAG_DECOMPILE`.
+    pub fn tag_type(&self) -> TagType {
+        let Some(c) = OMEGAT_TAG_DECOMPILE.captures(&self.tag) else {
+            return TagType::Single;
+        };
+        let front = c.get(1).map(|m| m.as_str() == "/").unwrap_or(false);
+        let back = c.get(4).map(|m| m.as_str() == "/").unwrap_or(false);
+        if front && !back {
+            TagType::End
+        } else if !front && !back {
+            TagType::Start
+        } else {
+            TagType::Single
+        }
+    }
+
+    pub fn name(&self) -> String {
+        let Some(c) = OMEGAT_TAG_DECOMPILE.captures(&self.tag) else {
+            return self.tag.clone();
+        };
+        let front = c.get(1).map(|m| m.as_str() == "/").unwrap_or(false);
+        let back = c.get(4).map(|m| m.as_str() == "/").unwrap_or(false);
+        if front && back {
+            return self.tag.clone();
+        }
+        format!("{}{}", &c[2], &c[3])
+    }
+
+    pub fn paired_tag(&self) -> Option<String> {
+        match self.tag_type() {
+            TagType::Start => Some(format!("</{}>", self.name())),
+            TagType::End => Some(format!("<{}>", self.name())),
+            TagType::Single => None,
+        }
+    }
+}
+
+/// Java `TagUtil.buildTagList`.
+pub fn build_tag_list(str: &str, protected: &[&str]) -> Vec<Tag> {
+    let mut out = Vec::new();
+    if protected.is_empty() {
+        for m in OMEGAT_TAG.find_iter(str) {
+            out.push(Tag::new(m.start(), m.as_str()));
+        }
+        return out;
+    }
+    let mut from = 0;
+    for p in protected {
+        if p.is_empty() {
+            continue;
+        }
+        if let Some(rel) = str[from..].find(p) {
+            let pos = from + rel;
+            out.push(Tag::new(pos, *p));
+            from = pos + p.len();
+        }
+    }
+    out.sort_by_key(|t| t.pos);
+    out
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagErrorKind {

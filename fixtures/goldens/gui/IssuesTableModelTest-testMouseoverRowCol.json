@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testMouseoverRowCol",
-  "method": "org.omegat.gui.issues.IssuesTableModelTest#testMouseoverRowCol",
+  "row": 1,
+  "col": 2,
   "keys": [
     "org.omegat.gui.issues.IssuesTableModelTest#testMouseoverRowCol"
   ]

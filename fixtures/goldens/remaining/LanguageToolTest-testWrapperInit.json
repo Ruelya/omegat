@@ -1,5 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.languagetools.LanguageToolTest#testWrapperInit",
-  "method": "org.omegat.languagetools.LanguageToolTest#testWrapperInit"
+  "java_default_bridge": "LanguageToolNativeBridge",
+  "java_bad_url_fallback": "LanguageToolNativeBridge",
+  "rewrite_bridge": "http",
+  "keys": [
+    "org.omegat.languagetools.LanguageToolTest#testWrapperInit"
+  ]
 }

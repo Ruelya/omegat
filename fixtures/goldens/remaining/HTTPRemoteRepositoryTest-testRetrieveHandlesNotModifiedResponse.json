@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveHandlesNotModifiedResponse",
-  "method": "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveHandlesNotModifiedResponse"
+  "status": 304,
+  "skip_write": true,
+  "keys": [
+    "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveHandlesNotModifiedResponse"
+  ]
 }

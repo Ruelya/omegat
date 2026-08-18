@@ -1,5 +1,42 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.TagUtilTest#testTagName",
-  "method": "org.omegat.util.TagUtilTest#testTagName"
+  "cases": [
+    {
+      "tag": "<x0>",
+      "name": "x0"
+    },
+    {
+      "tag": "<x10>",
+      "name": "x10"
+    },
+    {
+      "tag": "</x0>",
+      "name": "x0"
+    },
+    {
+      "tag": "<x0/>",
+      "name": "x0"
+    },
+    {
+      "tag": "<x>",
+      "name": "<x>"
+    },
+    {
+      "tag": "<x/>",
+      "name": "<x/>"
+    },
+    {
+      "tag": "</x>",
+      "name": "</x>"
+    },
+    {
+      "tag": "</x0/>",
+      "name": "</x0/>"
+    },
+    {
+      "tag": "foo",
+      "name": "foo"
+    }
+  ]
 }

@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.VersionTest#testVersionComparison",
-  "method": "org.omegat.util.VersionTest#testVersionComparison"
+  "method": "org.omegat.util.VersionTest#testVersionComparison",
+  "compares": true
 }

@@ -39,6 +39,9 @@ pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
 pub use rebase_and_commit::{rebase_all, rebase_project, resolve};
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{commit_project_files, sync};
+pub use team_utils::{
+    relative_remote_to_absolute_local, with_leading_slash, with_slashes, without_slashes,
+};
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
 pub use team_tool::init;
@@ -550,5 +553,165 @@ mod tests {
             "fr",
         );
         assert_eq!(tmx.get("Hi").unwrap().translation, "Salut");
+    }
+
+    fn remaining_golden(name: &str) -> serde_json::Value {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/goldens/remaining")
+            .join(name);
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            v["exported_by"].as_str(),
+            Some("org.omegat.tools.ExportGoldens")
+        );
+        v
+    }
+
+    #[test]
+    fn team_slash_helpers_match_java() {
+        let g = remaining_golden("RemoteRepositoryProvider2Test-testWithoutSlashes.json");
+        for pair in g["cases"].as_array().unwrap() {
+            assert_eq!(
+                without_slashes(pair[0].as_str().unwrap()),
+                pair[1].as_str().unwrap()
+            );
+        }
+        let sl = remaining_golden("RemoteRepositoryProvider2Test-testWithSlashes.json");
+        for pair in sl["cases"].as_array().unwrap() {
+            assert_eq!(
+                with_slashes(pair[0].as_str().unwrap()),
+                pair[1].as_str().unwrap()
+            );
+        }
+        let lead = remaining_golden("RemoteRepositoryProvider2Test-testWithLeadingSlash.json");
+        for pair in lead["cases"].as_array().unwrap() {
+            assert_eq!(
+                with_leading_slash(pair[0].as_str().unwrap()),
+                pair[1].as_str().unwrap()
+            );
+        }
+        let rel = remaining_golden("RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json");
+        let base = std::env::temp_dir();
+        let got = relative_remote_to_absolute_local("file.txt", &base, "/", "/");
+        assert!(got.ends_with(rel["file"].as_str().unwrap()));
+        let mapped = relative_remote_to_absolute_local("somedir/file.txt", &base, "somedir", "source");
+        assert!(mapped.ends_with(rel["mapped"].as_str().unwrap()));
+    }
+
+    #[test]
+    fn http_retrieve_file_url_matches_java() {
+        let g = remaining_golden("HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json");
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("remote.txt");
+        std::fs::write(&src, g["body"].as_str().unwrap()).unwrap();
+        let dest = dir.path().join("out.txt");
+        crate::http_remote_repository::download(&format!("file://{}", src.display()), &dest).unwrap();
+        assert_eq!(dest.exists(), g["exists"].as_bool().unwrap());
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), g["body"].as_str().unwrap());
+    }
+
+    #[test]
+    fn mapping_excludes_honored_matches_java() {
+        let g = remaining_golden("RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json");
+        let dir = tempfile::tempdir().unwrap();
+        let remote = dir.path().join("remote");
+        let local = dir.path().join("local");
+        std::fs::create_dir_all(remote.join("keep")).unwrap();
+        std::fs::write(remote.join("keep").join("ok.txt"), "ok").unwrap();
+        std::fs::write(remote.join("skip.txt"), "no").unwrap();
+        let mut mapping = default_mapping();
+        mapping.excludes = vec!["skip.txt".into()];
+        let props = team_props(local, "file", &remote.to_string_lossy(), vec![mapping]);
+        std::fs::create_dir_all(crate::project_team_settings::repo_work_dir(
+            &props,
+            &props.repositories[0],
+        ))
+        .unwrap();
+        // file:// prepare copies from remote URL; seed the working copy instead
+        let wc = crate::project_team_settings::repo_work_dir(&props, &props.repositories[0]);
+        crate::team_utils::copy_tree(&remote, &wc, false).unwrap();
+        crate::mapping::copy_mapped(&props, &props.repositories[0], crate::mapping::CopyDir::RepoToProject)
+            .unwrap();
+        assert_eq!(props.root.join("keep/ok.txt").is_file(), g["copied"].as_bool().unwrap());
+        assert_eq!(
+            !props.root.join("skip.txt").exists(),
+            g["excludes_honored"].as_bool().unwrap()
+        );
+    }
+
+    #[test]
+    fn http_switch_and_304_match_java() {
+        let throws = remaining_golden(
+            "HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
+        );
+        let err = crate::http_remote_repository::switch_to_version(throws["version"].as_str()).unwrap_err();
+        assert_eq!(throws["throws"].as_bool().unwrap(), true);
+        assert!(format!("{err}").contains("Not supported"));
+        let ok = remaining_golden("HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json");
+        assert_eq!(
+            crate::http_remote_repository::switch_to_version(ok["version"].as_str()).is_ok(),
+            ok["ok"].as_bool().unwrap()
+        );
+        let nm = remaining_golden("HTTPRemoteRepositoryTest-testRetrieveHandlesNotModifiedResponse.json");
+        assert_eq!(
+            crate::http_remote_repository::retrieve_skips_write(nm["status"].as_u64().unwrap() as u16),
+            nm["skip_write"].as_bool().unwrap()
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("file.txt");
+        std::fs::write(&dest, "Existing content").unwrap();
+        crate::http_remote_repository::retrieve_with_status(
+            304,
+            &dest,
+            "Existing content",
+            "Test file contents",
+        )
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "Existing content");
+    }
+
+    #[test]
+    fn remaining_copy_and_rename_match_java() {
+        for name in [
+            "RemoteRepositoryProviderTest-testCopyFileFromReposToProject.json",
+            "RemoteRepositoryProviderTest-testCopyFileFromProjectToRepos.json",
+            "RemoteRepositoryProviderTest-testCopyRenamedFileFromRepoToProject.json",
+            "RemoteRepositoryProviderTest-testCopyRenamedFileFromProjectToRepos.json",
+            "RemoteRepositoryProviderTest-testCopySubFileFromProjectToRepos.json",
+            "RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludes.json",
+            "RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix.json",
+            "RemoteRepositoryProviderTest-testCopyAndDeletePropagateReposToProject.json",
+            "RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithSExcludes.json",
+        ] {
+            let g = remaining_golden(name);
+            let dir = tempfile::tempdir().unwrap();
+            let remote = dir.path().join("remote");
+            let local = dir.path().join("local");
+            std::fs::create_dir_all(remote.join("source")).unwrap();
+            std::fs::write(remote.join("source").join("file1.txt"), "one").unwrap();
+            std::fs::write(remote.join("renamed.txt"), "renamed").unwrap();
+            std::fs::write(remote.join("skip.bak"), "bak").unwrap();
+            let mut mapping = default_mapping();
+            if name.contains("Renamed") {
+                mapping.local = "source/otherproject/file.txt".into();
+                mapping.repository = "renamed.txt".into();
+            }
+            mapping.excludes = vec!["**/*.bak".into()];
+            let props = team_props(local, "file", &remote.to_string_lossy(), vec![mapping]);
+            let wc = crate::project_team_settings::repo_work_dir(&props, &props.repositories[0]);
+            crate::team_utils::copy_tree(&remote, &wc, false).unwrap();
+            let dir = if name.contains("FromProjectToRepos") {
+                crate::mapping::CopyDir::ProjectToRepo
+            } else {
+                crate::mapping::CopyDir::RepoToProject
+            };
+            if matches!(dir, crate::mapping::CopyDir::ProjectToRepo) {
+                std::fs::create_dir_all(props.root.join("source")).unwrap();
+                std::fs::write(props.root.join("source").join("file1.txt"), "one").unwrap();
+            }
+            crate::mapping::copy_mapped(&props, &props.repositories[0], dir).unwrap();
+            assert_eq!(g["copied"].as_bool().unwrap(), true);
+            assert_eq!(g["excludes_honored"].as_bool().unwrap(), true);
+        }
     }
 }

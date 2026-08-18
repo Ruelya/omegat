@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledStringMultipleComments",
-  "method": "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledStringMultipleComments"
+  "plain": "<html><p>source1 = translation1, translation2<br>1. comment1<br>2. comment2</p></html>",
+  "priority": "<html><p>source1 = <b>translation1</b>, translation2<br>1. comment1<br>2. comment2</p></html>",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledStringMultipleComments"
+  ]
 }

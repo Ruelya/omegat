@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherItalian",
-  "method": "testGlossarySearcherItalian",
+  "count": 1,
+  "source": "paese",
+  "target": "village/town",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherItalian"
   ]

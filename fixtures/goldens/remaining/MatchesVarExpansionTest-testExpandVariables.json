@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.matches.MatchesVarExpansionTest#testExpandVariables",
-  "method": "org.omegat.gui.matches.MatchesVarExpansionTest#testExpandVariables"
+  "template": "${id}. ... ${sourceText}\n${targetText}\n<${score}/${noStemScore}/${adjustedScore}% ${filePath}>",
+  "text": "${id}. ... ${sourceText}\nmock target text\n<20/40/60% mock testing project>",
+  "keys": [
+    "org.omegat.gui.matches.MatchesVarExpansionTest#testExpandVariables"
+  ]
 }

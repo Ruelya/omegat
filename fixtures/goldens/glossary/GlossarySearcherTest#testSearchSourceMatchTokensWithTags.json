@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchTokensWithTags",
-  "method": "testSearchSourceMatchTokensWithTags",
+  "token": "test",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchTokensWithTags"
   ]

@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.languagetools.FalseFriendsTest#testExecute",
-  "method": "org.omegat.languagetools.FalseFriendsTest#testExecute"
+  "method": "org.omegat.languagetools.FalseFriendsTest#testExecute",
+  "rules": true
 }

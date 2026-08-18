@@ -1,7 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testSearchTargetPartialMatch",
-  "method": "testSearchTargetPartialMatch",
+  "count": 0,
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testSearchTargetPartialMatch"
   ]

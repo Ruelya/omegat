@@ -358,15 +358,17 @@ pub fn glob_to_regex(text: &str, space_match_nbsp: bool) -> String {
     let mut out = String::new();
     for ch in text.chars() {
         match ch {
+            // Java `\\S` is `[^\t\n\x0B\f\r ]` — `\u00A0` is *not* whitespace.
+            // Rust `\\S` is Unicode and would reject the `a*b` vs `a\u00A0b` case.
             '*' => out.push_str(if space_match_nbsp {
-                r"[^\s\u{00A0}]*"
+                r"[^\t\n\x0B\f\r \u{00A0}]*"
             } else {
-                r"\S*"
+                r"[^\t\n\x0B\f\r ]*"
             }),
             '?' => out.push_str(if space_match_nbsp {
-                r"[^\s\u{00A0}]"
+                r"[^\t\n\x0B\f\r \u{00A0}]"
             } else {
-                r"\S"
+                r"[^\t\n\x0B\f\r ]"
             }),
             ' ' if space_match_nbsp => out.push_str("(?: |\u{00A0})"),
             c if r".+()[]{}|^$\\".contains(c) => {

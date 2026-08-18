@@ -1,5 +1,30 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbersWidthEdgeCases",
-  "method": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbersWidthEdgeCases"
+  "cases": [
+    {
+      "source": "x ９ y ８",
+      "src_match": "x ３ y ４",
+      "trg_match": "p 3 q 4",
+      "out": "p 9 q 8"
+    },
+    {
+      "source": "x ９ y ８",
+      "src_match": "x ３ y ４",
+      "trg_match": "p 3 q ４",
+      "out": "p 9 q ８"
+    },
+    {
+      "source": "x ５．５",
+      "src_match": "x １．１",
+      "trg_match": "foo 1.1",
+      "out": "foo 1.1"
+    },
+    {
+      "source": "x ٩",
+      "src_match": "x 8",
+      "trg_match": "foo 8",
+      "out": "foo ٩"
+    }
+  ]
 }

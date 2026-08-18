@@ -1,4 +1,22 @@
+use crate::language::Language;
 use omegat_ipc::IssueDto;
+
+/// Java `LanguageToolNativeBridge.getLTLanguage` class names.
+pub fn lt_language_class(code: &str) -> Option<&'static str> {
+    let lang = Language::new(Some(code));
+    match (lang.get_language_code(), lang.get_country_code()) {
+        ("en", "US") => Some("org.languagetool.language.AmericanEnglish"),
+        ("en", "CA") => Some("org.languagetool.language.CanadianEnglish"),
+        ("en", _) => Some("org.languagetool.language.English"),
+        ("be", _) => Some("org.languagetool.language.Belarusian"),
+        ("fr", _) => Some("org.languagetool.language.French"),
+        _ => None,
+    }
+}
+
+pub fn default_bridge_type() -> &'static str {
+    "http"
+}
 
 pub const UNCONFIGURED_MESSAGE: &str =
     "LanguageTool is not configured. Set languagetool_url to an HTTP v2/check endpoint. The embedded LT JAR is not used.";

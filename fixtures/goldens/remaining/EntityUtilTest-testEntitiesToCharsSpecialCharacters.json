@@ -1,5 +1,26 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsSpecialCharacters",
-  "method": "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsSpecialCharacters"
+  "cases": [
+    {
+      "input": "&OElig;",
+      "output": "Œ"
+    },
+    {
+      "input": "&oelig;",
+      "output": "œ"
+    },
+    {
+      "input": "&Scaron;",
+      "output": "Š"
+    },
+    {
+      "input": "&scaron;",
+      "output": "š"
+    },
+    {
+      "input": "&Yuml;",
+      "output": "Ÿ"
+    }
+  ]
 }

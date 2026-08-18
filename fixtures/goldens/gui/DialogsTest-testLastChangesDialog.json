@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.dialogs.DialogsTest#testLastChangesDialog",
-  "method": "org.omegat.gui.dialogs.DialogsTest#testLastChangesDialog",
+  "window": "changes",
+  "title": "Last Changes",
+  "constructs": true,
   "keys": [
     "org.omegat.gui.dialogs.DialogsTest#testLastChangesDialog"
   ]

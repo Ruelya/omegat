@@ -1,5 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.PreferencesTest#testLoadingUserPreferencesXML",
-  "method": "org.omegat.util.PreferencesTest#testLoadingUserPreferencesXML"
+  "key": "source_font_size",
+  "loaded": "14",
+  "saved": "12"
 }

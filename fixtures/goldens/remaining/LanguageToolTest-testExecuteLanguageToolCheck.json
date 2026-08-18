@@ -1,5 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.languagetools.LanguageToolTest#testExecuteLanguageToolCheck",
-  "method": "org.omegat.languagetools.LanguageToolTest#testExecuteLanguageToolCheck"
+  "lang": "be",
+  "text": "спраўдзім.",
+  "match_count": 1,
+  "rule": "PatternRule",
+  "keys": [
+    "org.omegat.languagetools.LanguageToolTest#testExecuteLanguageToolCheck"
+  ]
 }

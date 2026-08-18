@@ -8,6 +8,55 @@ pub fn strip_slash(s: &str) -> &str {
     s.trim_matches('/')
 }
 
+/// Java `RemoteRepositoryProvider.withoutSlashes`.
+pub fn without_slashes(s: &str) -> String {
+    strip_slash(s).to_string()
+}
+
+/// Java `RemoteRepositoryProvider.withSlashes`.
+pub fn with_slashes(s: &str) -> String {
+    format!("/{}/", strip_slash(s))
+}
+
+/// Java `RemoteRepositoryProvider.withLeadingSlash`.
+pub fn with_leading_slash(s: &str) -> String {
+    if s.starts_with('/') {
+        s.to_string()
+    } else {
+        format!("/{s}")
+    }
+}
+
+/// Java `RemoteRepositoryProvider.relativeRemoteToAbsoluteLocal`.
+pub fn relative_remote_to_absolute_local(
+    remote_file: &str,
+    local_base: &Path,
+    remote_prefix: &str,
+    local_prefix: &str,
+) -> PathBuf {
+    let remote = without_slashes(remote_file);
+    let rem_pref = without_slashes(remote_prefix);
+    let loc_pref = without_slashes(local_prefix);
+    let rel = if rem_pref.is_empty() {
+        remote
+    } else if let Some(rest) = remote.strip_prefix(&format!("{rem_pref}/")) {
+        rest.to_string()
+    } else if remote == rem_pref {
+        String::new()
+    } else {
+        remote
+    };
+    let mut dest = if loc_pref.is_empty() {
+        local_base.to_path_buf()
+    } else {
+        local_base.join(loc_pref)
+    };
+    if !rel.is_empty() {
+        dest = dest.join(rel);
+    }
+    dest
+}
+
 pub fn join_mapped(base: &Path, mapped: &str) -> PathBuf {
     let rel = strip_slash(mapped);
     if rel.is_empty() {

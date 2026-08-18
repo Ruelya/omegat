@@ -286,7 +286,10 @@ impl FilterRegistry {
             "sdlppx" | "sdlproj" => Some("sdlproject"),
             "xlf" | "xliff" => {
                 if let Ok(s) = read_to_string(path) {
-                    if s.contains("urn:oasis:names:tc:xliff:document:2.0") || s.contains("version=\"2.")
+                    // Do not treat `its:version="2.0"` as XLIFF 2 (see filters4-xliff1/en-ca.xlf).
+                    if s.contains("urn:oasis:names:tc:xliff:document:2.0")
+                        || s.contains("<xliff version=\"2.")
+                        || s.contains("<xliff version='2.")
                     {
                         Some("xliff2")
                     } else {

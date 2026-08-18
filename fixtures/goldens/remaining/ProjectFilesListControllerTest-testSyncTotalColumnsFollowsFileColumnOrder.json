@@ -1,5 +1,16 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testSyncTotalColumnsFollowsFileColumnOrder",
-  "method": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testSyncTotalColumnsFollowsFileColumnOrder"
+  "order": [
+    0,
+    5,
+    1,
+    2,
+    3,
+    4,
+    6
+  ],
+  "keys": [
+    "org.omegat.gui.filelist.ProjectFilesListControllerTest#testSyncTotalColumnsFollowsFileColumnOrder"
+  ]
 }

@@ -4,5 +4,6 @@
   "method": "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentPopulatesTextFields",
   "keys": [
     "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentPopulatesTextFields"
-  ]
+  ],
+  "fields": true
 }

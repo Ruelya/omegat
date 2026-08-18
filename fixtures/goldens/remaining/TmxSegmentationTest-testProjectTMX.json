@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.data.TmxSegmentationTest#testProjectTMX",
-  "method": "org.omegat.core.data.TmxSegmentationTest#testProjectTMX"
+  "method": "org.omegat.core.data.TmxSegmentationTest#testProjectTMX",
+  "resegments": true
 }

@@ -1,7 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.search.SearchWindowTest#testReplaceTypeFollowsTheSelectedRadioButton",
-  "method": "org.omegat.gui.search.SearchWindowTest#testReplaceTypeFollowsTheSelectedRadioButton",
+  "types": [
+    "exact",
+    "keyword",
+    "regex"
+  ],
   "keys": [
     "org.omegat.gui.search.SearchWindowTest#testReplaceTypeFollowsTheSelectedRadioButton"
   ]

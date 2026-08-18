@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testEntriesSortJA",
-  "method": "testEntriesSortJA",
+  "src0": "さくら",
+  "loc5": "up to",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testEntriesSortJA"
   ]

@@ -1,7 +1,8 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtDescription",
-  "method": "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtDescription",
+  "r0": "First test issue",
+  "r1": "Second test issue",
   "keys": [
     "org.omegat.gui.issues.IssuesTableModelTest#testGetValueAtDescription"
   ]

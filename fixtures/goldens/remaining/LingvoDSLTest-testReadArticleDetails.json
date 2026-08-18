@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleDetails",
-  "method": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleDetails"
+  "word": "clear",
+  "article": "<strong>1.</strong> [klıə] <span style='font-style: italic'><span style=\"color: green\">a</span></span> <div style=\"text-indent: 60px\">1. ясный, светлый </div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ day</span> - ясный день </span></div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ sky</span> - чистое /ясное, безоблачное/ небо </span></div>\n<div style=\"text-indent: 60px\">2. 1) чистый, прозрачный </div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ water of the lake</span> - чистая /прозрачная/ вода озера </span></div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ glass</span> - прозрачное стекло </span></div>\n<div style=\"text-indent: 60px\">2) зеркальный (<span style='font-style: italic'>о поверхности</span>) </div>\n<div style=\"text-indent: 60px\">3. отчётливый, ясный </div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ outline</span> - ясное /отчётливое/ очертание </span></div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ sight</span> - хорошее зрение </span></div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ reflection in the water</span> - ясное отражение в воде </span></div>\n<div style=\"text-indent: 90px\"><span class=\"details\"><span class=\"lang_en\">~ view</span> - хорошая видимость </span></div>",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleDetails"
+  ]
 }

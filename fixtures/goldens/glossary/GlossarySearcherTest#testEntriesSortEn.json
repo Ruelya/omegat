@@ -1,7 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testEntriesSortEn",
-  "method": "testEntriesSortEn",
+  "len0": "zzz",
+  "len1_src": "cat",
+  "len1_loc": "mikeneko",
+  "alpha1_loc": "catty",
   "keys": [
     "org.omegat.gui.glossary.GlossarySearcherTest#testEntriesSortEn"
   ]

@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully",
-  "method": "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully"
+  "body": "Test file contents",
+  "exists": true,
+  "keys": [
+    "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully"
+  ]
 }

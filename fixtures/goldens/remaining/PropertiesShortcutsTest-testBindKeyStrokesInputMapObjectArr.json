@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesInputMapObjectArr",
-  "method": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesInputMapObjectArr"
+  "method": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesInputMapObjectArr",
+  "inputmap": true
 }

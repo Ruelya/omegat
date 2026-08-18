@@ -1,5 +1,6 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItem",
-  "method": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItem"
+  "method": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItem",
+  "binds": true
 }

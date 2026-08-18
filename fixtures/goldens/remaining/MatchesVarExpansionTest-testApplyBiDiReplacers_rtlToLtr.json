@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.matches.MatchesVarExpansionTest#testApplyBiDiReplacers_rtlToLtr",
-  "method": "org.omegat.gui.matches.MatchesVarExpansionTest#testApplyBiDiReplacers_rtlToLtr"
+  "template": "${sourceText} and ${targetText}",
+  "text": "‫mock source text‬ and ‪mock target text‬",
+  "keys": [
+    "org.omegat.gui.matches.MatchesVarExpansionTest#testApplyBiDiReplacers_rtlToLtr"
+  ]
 }

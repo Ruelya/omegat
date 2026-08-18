@@ -1,5 +1,34 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.languagetools.LanguageToolTest#testLanguageMapping",
-  "method": "org.omegat.languagetools.LanguageToolTest#testLanguageMapping"
+  "cases": [
+    {
+      "code": "en-US",
+      "class": "org.languagetool.language.AmericanEnglish"
+    },
+    {
+      "code": "en-CA",
+      "class": "org.languagetool.language.CanadianEnglish"
+    },
+    {
+      "code": "en",
+      "class": "org.languagetool.language.English"
+    },
+    {
+      "code": "en-JA",
+      "class": "org.languagetool.language.English"
+    },
+    {
+      "code": "be-BY",
+      "class": "org.languagetool.language.Belarusian"
+    },
+    {
+      "code": "be",
+      "class": "org.languagetool.language.Belarusian"
+    },
+    {
+      "code": "xyz",
+      "class": null
+    }
+  ]
 }

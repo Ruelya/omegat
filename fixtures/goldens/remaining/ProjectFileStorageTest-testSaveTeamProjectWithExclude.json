@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.ProjectFileStorageTest#testSaveTeamProjectWithExclude",
-  "method": "org.omegat.util.ProjectFileStorageTest#testSaveTeamProjectWithExclude"
+  "exclude1": "exclude1",
+  "exclude2": "exclude2",
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testSaveTeamProjectWithExclude"
+  ]
 }

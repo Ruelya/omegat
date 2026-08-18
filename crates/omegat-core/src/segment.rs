@@ -155,22 +155,36 @@ pub fn split_sentences_lang(
     lang: &str,
     table: Option<&SrxTable>,
 ) -> Vec<String> {
+    segment_sentences_lang(text, enabled, lang, table)
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Java `Segmenter.segment`: trimmed sentences, **including** empty strings
+/// (a trailing `"Rains. "` keeps an empty last chunk that later gets glued).
+pub fn segment_sentences_lang(
+    text: &str,
+    enabled: bool,
+    lang: &str,
+    table: Option<&SrxTable>,
+) -> Vec<String> {
     if !enabled {
-        let t = text.trim();
-        if t.is_empty() {
-            return vec![];
-        }
-        return vec![text.to_string()];
+        return if text.is_empty() {
+            vec![]
+        } else {
+            vec![text.to_string()]
+        };
     }
     if let Some(t) = table {
-        return split_with_srx(text, t);
+        return segment_with_srx(text, t).sentences;
     }
     if let Ok(path) = std::env::var("OMEGAT_SRX") {
         if let Some(doc) = load_srx_file(Path::new(&path)) {
-            return split_with_srx(text, &table_for(&doc, lang));
+            return segment_with_srx(text, &table_for(&doc, lang)).sentences;
         }
     }
-    split_with_srx(text, &table_for(&DEFAULT_SRX, lang))
+    segment_with_srx(text, &table_for(&DEFAULT_SRX, lang)).sentences
 }
 
 /// Java `Language.isSpaceDelimited`: only zh / ja / bo are not.

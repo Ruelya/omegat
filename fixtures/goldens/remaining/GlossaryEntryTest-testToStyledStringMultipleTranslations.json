@@ -1,5 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledStringMultipleTranslations",
-  "method": "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledStringMultipleTranslations"
+  "plain": "<html><p>source1 = translation1, translation2</p></html>",
+  "priority": "<html><p>source1 = translation1, <b>translation2</b></p></html>",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryEntryTest#testToStyledStringMultipleTranslations"
+  ]
 }

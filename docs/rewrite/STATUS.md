@@ -70,9 +70,13 @@ TMXWriter / TagValidation method goldens exist. Rewrite-wave goldens now
 cover Searcher **34/34**, ProjectProperties **11/11**, TMXReader **9/9**,
 SRX **7/7**, SRXManager **8/8**, RealProject import **3/3**. `assert_eq`
 covers util + Searcher string/replace/checkEntry + TMX L1 + Properties +
-import. Remaining thin: `ExternalTMFactoryTest` / `ProjectFileStorageTest`
-still have method-only remaining stubs. `Searcher.java` **1133** vs
-`search.rs` still shorter.
+import. `ExternalTMFactoryTest` (TMX resegment / PO 1013 / Mozilla lang
+33 / XLIFF 3 / fuzzy TUV) and `ProjectFileStorageTest` (defaults,
+glossary paths, DTD entities, team XML, abs2rel) now `assert_eq` Java
+method results. Remaining util goldens (`EntityUtil` / `MagicComment` /
+`TagUtil` / `StaticUtils` / `EncodingDetector` / `Preferences` /
+`MatchesTextArea.substituteNumbers`) also `assert_eq`. `Searcher.java`
+**1133** vs `search.rs` still shorter.
 
 **P2 filters2:** `org.omegat.filters.*FilterTest` **150/150**.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
@@ -101,7 +105,10 @@ ca/es/fa/fr/ga/gl/pt/uk; `resources/languages/hunspell` for the rest).
 LibreOffice pairs are in-tree with `.dic` truncated to **2000** stems
 (see `resources/languages/SOURCES.md`). CI affix logic still uses
 `fixtures/spell/{hunspell,lucene,morfologik}`. Dictionary / LT Java tests
-have ExportGoldens JSON (many remaining stubs). P6 stays `parity_gap`
+have ExportGoldens JSON + `assert_eq` for LingvoDSL article HTML,
+StarDict idx/zip/pango, LanguageTool class mapping (rewrite bridge
+is HTTP; Java default remains Native), SpellChecker dummy fallback,
+and DictionariesManager ignore/`findWords`. P6 stays `parity_gap`
 for the 6 lists + 2000-stem truncation.
 
 **P7 editor:** **50/50** `gui.editor` Java `test*` goldens exist.
@@ -115,19 +122,29 @@ surface list, not a second editor.
 **P8 desktop:** 120 menu ids. Save / compile tests `assert_eq` the
 sidecar log `saved TMX …/omegat/project_save.tmx`, `compiled target`,
 and `document3.dirty === false`. Walkthrough uses the same Document3
-model. Java UI `*Test` goldens exist; several are still method stubs.
+model. Java UI `*Test` goldens exist; Dialogs window ids and the 120
+menu-action count `assert_eq` the ExportGoldens JSON (desktop maps
+`glossary-new` → `glossary-add`). File-list progress helpers and
+column-order numbers `assert_eq` the Java cases; Swing
+`TableColumnModel` itself stays a measured UI-toolkit gap.
+`EditorUtils.replaceGlossaryEntries` `assert_eq`s the Java snowman
+replacements.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
 live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
 `ExternalFinderTest` **5/5** goldens exist. GlossarySearcher control
-flow is ported; English / CJK / empty `assert_eq`; remaining 32-method
-set still has stubs.
+flow is ported. GlossarySearcher remaining methods (Italian
+`GLOSSARY_FULL` `paesi`/`paese`, CJK/Korean, merge, tags, sort EN/JA)
+`assert_eq` Java counts.
 
 **P10 team:** GIT product path is `git2`. SVN checkout/update/commit is
 **1 `#[ignore]`** (needs `svn` + `svnadmin` — reason stays). HTTP
 two-client rebase uses `assert_eq` on conflict `ours`/`theirs`.
-`RemoteRepositoryFactoryTest` detect-type **4/4** `assert_eq`. Other
-team2 provider tests still have remaining stubs.
+`RemoteRepositoryFactoryTest` detect-type **4/4** `assert_eq`.
+`RemoteRepositoryProvider2Test` slash / abs-local helpers and HTTP
+`file://` retrieve, 304 skip-write, `switchToVersion` (`null` ok /
+non-null `"Not supported"`), and remaining copy/rename mapping
+goldens `assert_eq` Java cases.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -287,7 +304,7 @@ are not a pinned aside). `RepositoriesMappingController` UI exists.
 green. `walkthrough.test.ts` `assert_eq`s TMX / compile / Document3 dirty for
 new → translate 3 (tags kept) → save → compile → replace → mark prefs
 still applied after `applyPrefs`. The P8 row is `parity_gap` (Java GUI
-`*Test` goldens exist; several remain method stubs).
+`*Test` goldens exist; Dialogs + 120-action count `assert_eq`).
 
 ## P9 notes
 
@@ -298,8 +315,9 @@ are keyboard-insertable. Recorded fixtures `assert_eq` the Java parse
 shapes; offline without a fixture is an error.
 `GlossaryAutoCompleterViewTest#testSuggestions` is an ExportGoldens JSON
 and `assert_eq`s payloads (including capitalization). The P9 row is
-`parity_gap` (recorded HTTP only; GlossarySearcher still has stub
-methods; MT manager / ExternalFinder goldens exist).
+`parity_gap` (recorded HTTP only; GlossarySearcher remaining methods
+now `assert_eq`; TransTips mark offsets `assert_eq`; MT manager /
+ExternalFinder goldens exist).
 
 ## P10 notes
 
@@ -311,7 +329,7 @@ ours/theirs/manual stay. HTTP two-client rebase `assert_eq`s conflict
 `ours`/`theirs`. SVN product path is the `svn` binary and the
 checkout/update/commit test is `#[ignore]`. Honesty git-command item is
 green. The P10 row stays `parity_gap` (SVN 1 ignore + reason; factory detect
-4/4; other team2 tests still have remaining stubs).
+4/4; slash/HTTP/exclude `assert_eq`; SVN 1 ignore remains).
 
 ## P11 notes
 

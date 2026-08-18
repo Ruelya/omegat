@@ -1,5 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.MixedEolHandlingReaderTest#testDetection",
-  "method": "org.omegat.util.MixedEolHandlingReaderTest#testDetection"
+  "method": "org.omegat.util.MixedEolHandlingReaderTest#testDetection",
+  "crlf": "CRLF",
+  "lf": "LF"
 }
