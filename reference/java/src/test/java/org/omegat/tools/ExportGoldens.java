@@ -1944,7 +1944,9 @@ public final class ExportGoldens {
         exportFilters3AllTests();
         exportFilters4();
         exportFilters4AllTests();
-        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html/filters3/filters4)");
+        exportEditorMarkerGoldens();
+        exportAlignerGoldens();
+        System.out.println("wrote honesty surfaces (dialect/IEditor/menu/prefs/filter_tests/html/filters3/filters4/editor/align)");
     }
 
     private Object[][] languageTokenizerFixtures() {
@@ -3246,6 +3248,33 @@ public final class ExportGoldens {
                 "org.omegat.filters.HTMLFilter2Test#testParseRegression", new HTMLFilter2(), empty, null, null);
 
         System.out.println("wrote filters2 per-method goldens");
+    }
+
+    private void exportEditorMarkerGoldens() throws Exception {
+        Map<String, Object> nbsp = new LinkedHashMap<>();
+        nbsp.put("exported_by", "org.omegat.tools.ExportGoldens");
+        nbsp.put("java_test", "org.omegat.gui.editor.mark.NBSPMarkerTest#testMarkerBothNoBreakSpaces");
+        nbsp.put("source", "a\u00a0b\u202fc");
+        nbsp.put("translation", "x\u202fy");
+        nbsp.put("marks", List.of(
+                Map.of("startOffset", 1, "endOffset", 2, "entryPart", "SOURCE"),
+                Map.of("startOffset", 3, "endOffset", 4, "entryPart", "SOURCE"),
+                Map.of("startOffset", 1, "endOffset", 2, "entryPart", "TRANSLATION")));
+        writeJson(goldenRoot.resolve("editor/NBSPMarkerTest#testMarkerBothNoBreakSpaces.json"), nbsp);
+    }
+
+    private void exportAlignerGoldens() throws Exception {
+        Map<String, Object> heap = new LinkedHashMap<>();
+        heap.put("exported_by", "org.omegat.tools.ExportGoldens");
+        heap.put("java_test", "org.omegat.gui.align.AlignerTest#testAlignerHeapMode");
+        heap.put("mode", "heapwise");
+        heap.put("pairs", List.of(
+                List.of("This is sentence one.", "これが1つ目のセンテンス。"),
+                List.of("Short sentence.", "短い文。"),
+                List.of("And then this is a very, very, very long sentence. Where shall it end?",
+                        "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"),
+                List.of("No one knows.", "誰も知らない。")));
+        writeJson(goldenRoot.resolve("align/AlignerTest#testAlignerHeapMode.json"), heap);
     }
 
     private void writeJson(Path path, Map<String, Object> data) throws Exception {

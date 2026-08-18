@@ -107,6 +107,32 @@ impl App {
                 Ok(json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}))
             }
             "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
+            "project.update" => {
+                let s = self.session_mut()?;
+                if let Some(sl) = params.get("source_lang").and_then(|v| v.as_str()) {
+                    s.props.source_lang = sl.to_string();
+                }
+                if let Some(tl) = params.get("target_lang").and_then(|v| v.as_str()) {
+                    s.props.target_lang = tl.to_string();
+                }
+                if let Some(seg) = params.get("sentence_segment").and_then(|v| v.as_bool()) {
+                    s.props.sentence_seg = seg;
+                }
+                s.props.write().map_err(core_err)?;
+                Ok(serde_json::to_value(s.props.to_dto()).unwrap())
+            }
+            "team.mapping" => {
+                let s = self.session_mut()?;
+                let repos = params
+                    .get("repositories")
+                    .cloned()
+                    .unwrap_or(Value::Array(vec![]));
+                let parsed: Vec<omegat_core::properties::RepositoryDef> =
+                    serde_json::from_value(repos).map_err(invalid)?;
+                s.props.repositories = parsed;
+                s.props.write().map_err(core_err)?;
+                Ok(json!({"ok": true, "repositories": s.props.to_dto().repositories}))
+            }
             "entry.list" => {
                 let s = self.session()?;
                 let list: Vec<EntryDto> = s.entries.iter().enumerate().map(|(i, e)| e.to_dto(i)).collect();
@@ -228,11 +254,50 @@ impl App {
                 Ok(json!({"ok": true}))
             }
             "aligner.configure" => {
+                if params.get("persist").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if let Some(algo) = params.get("algo").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_algorithm = algo.to_string();
+                    }
+                    if let Some(calc) = params.get("calculator").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_calculator = calc.to_string();
+                    }
+                    if let Some(counter) = params.get("counter").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_counter = counter.to_string();
+                    }
+                    if let Some(seg) = params.get("segment").and_then(|v| v.as_bool()) {
+                        self.prefs.aligner_segment = seg;
+                    }
+                    if let Some(rt) = params.get("remove_tags").and_then(|v| v.as_bool()) {
+                        self.prefs.aligner_remove_tags = rt;
+                    }
+                    if let Some(sl) = params.get("source_lang").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_source_lang = sl.to_string();
+                    }
+                    if let Some(tl) = params.get("target_lang").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_target_lang = tl.to_string();
+                    }
+                    if let Some(d) = params.get("source_dir").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_last_source_dir = d.to_string();
+                    }
+                    if let Some(d) = params.get("target_dir").and_then(|v| v.as_str()) {
+                        self.prefs.aligner_last_target_dir = d.to_string();
+                    }
+                    let _ = self.prefs.save();
+                }
                 Ok(json!({
                     "modes":["heapwise","parsewise","id"],
                     "algos":["viterbi","forward-backward"],
                     "counters":["char","word"],
-                    "calculators":["normal","poisson"]
+                    "calculators":["normal","poisson"],
+                    "algo": self.prefs.aligner_algorithm,
+                    "calculator": self.prefs.aligner_calculator,
+                    "counter": self.prefs.aligner_counter,
+                    "segment": self.prefs.aligner_segment,
+                    "remove_tags": self.prefs.aligner_remove_tags,
+                    "source_lang": self.prefs.aligner_source_lang,
+                    "target_lang": self.prefs.aligner_target_lang,
+                    "source_dir": self.prefs.aligner_last_source_dir,
+                    "target_dir": self.prefs.aligner_last_target_dir
                 }))
             }
             "stats.get" => Ok(serde_json::to_value(self.session()?.stats()).unwrap()),

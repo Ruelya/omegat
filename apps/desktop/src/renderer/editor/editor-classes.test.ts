@@ -60,7 +60,7 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(h.computeListData("mon")[0]?.payload).toBe("monde");
 
     const p = new HistoryPredictor();
-    p.train(["Hello world today"]);
+    p.train(["Hello world today", "Hello world tonight"]);
     expect(p.computeListData("Hello ").some((i) => i.payload === "world")).toBe(true);
 
     const t = new TagAutoCompleterView(["<x0/>", "<x1/>"]);

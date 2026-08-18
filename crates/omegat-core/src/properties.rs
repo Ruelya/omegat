@@ -237,6 +237,25 @@ impl ProjectProperties {
             support_default_translations: self.support_default_translations,
             remove_tags: self.remove_tags,
             has_repositories: !self.repositories.is_empty(),
+            repositories: self
+                .repositories
+                .iter()
+                .map(|r| omegat_ipc::RepositoryRowDto {
+                    repo_type: r.repo_type.clone(),
+                    url: r.url.clone(),
+                    branch: r.branch.clone(),
+                    mappings: r
+                        .mappings
+                        .iter()
+                        .map(|m| omegat_ipc::RepositoryMappingRowDto {
+                            local: m.local.clone(),
+                            repository: m.repository.clone(),
+                            includes: m.includes.clone(),
+                            excludes: m.excludes.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     }
 }

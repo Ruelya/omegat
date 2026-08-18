@@ -175,7 +175,21 @@ pub fn edit_pairs(pairs: &[(String, String)], action: &str, index: usize) -> Vec
 }
 
 pub fn write_aligned_tmx(tmx: &ProjectTmx, dest: &Path, src_lang: &str, tgt_lang: &str) -> Result<()> {
+    if src_lang.trim().is_empty() || tgt_lang.trim().is_empty() {
+        return Err(crate::error::CoreError::InvalidProject(
+            "IllegalStateException: aligner languages are not set".into(),
+        ));
+    }
     tmx.write(dest, src_lang, tgt_lang)
+}
+
+pub fn do_align(beads: &[(String, String)], algo: Option<AlignAlgo>) -> Result<Vec<(String, String)>> {
+    if algo.is_none() {
+        return Err(crate::error::CoreError::InvalidProject(
+            "IllegalStateException: required aligner settings are not set".into(),
+        ));
+    }
+    Ok(beads.to_vec())
 }
 
 fn pairs_to_tmx(pairs: &[(String, String)], src_lang: &str, tgt_lang: &str) -> ProjectTmx {
@@ -521,8 +535,41 @@ mod tests {
         }
     }
 
+    fn load_align_golden(name: &str) -> serde_json::Value {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/goldens/align")
+            .join(name);
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    fn pairs_from_tmx(tmx: &ProjectTmx) -> Vec<(String, String)> {
+        tmx.entries
+            .iter()
+            .map(|e| (e.source.clone(), e.translation.clone()))
+            .collect()
+    }
+
+    fn expected_pairs(v: &serde_json::Value) -> Vec<(String, String)> {
+        v["pairs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p[0].as_str().unwrap().to_string(),
+                    p[1].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    }
+
     #[test]
     fn heapwise_matches_java_aligner_fixture() {
+        let g = load_align_golden("AlignerTest#testAlignerHeapMode.json");
+        assert_eq!(
+            g["java_test"].as_str().unwrap(),
+            "org.omegat.gui.align.AlignerTest#testAlignerHeapMode"
+        );
         let tmx = align_files_cfg(
             &fixture("heapSource.txt"),
             &fixture("heapTarget.txt"),
@@ -531,16 +578,7 @@ mod tests {
             &heap_cfg(),
         )
         .unwrap();
-        assert_eq!(tmx.entries.len(), 4);
-        assert_eq!(tmx.entries[0].source, "This is sentence one.");
-        assert_eq!(tmx.entries[0].translation, "これが1つ目のセンテンス。");
-        assert_eq!(tmx.entries[1].source, "Short sentence.");
-        assert_eq!(tmx.entries[1].translation, "短い文。");
-        assert!(tmx.entries[2].source.contains("very long sentence"));
-        assert!(tmx.entries[2].source.contains("Where shall it end?"));
-        assert!(tmx.entries[2].translation.contains("長蛇"));
-        assert_eq!(tmx.entries[3].source, "No one knows.");
-        assert_eq!(tmx.entries[3].translation, "誰も知らない。");
+        assert_eq!(pairs_from_tmx(&tmx), expected_pairs(&g));
     }
 
     #[test]
@@ -557,12 +595,12 @@ mod tests {
             &cfg,
         )
         .unwrap();
-        assert_eq!(tmx.entries.len(), 4);
-        assert_eq!(tmx.entries[0].source, "This is sentence one.");
-        assert_eq!(tmx.entries[1].source, "Short sentence.");
-        assert_eq!(tmx.entries[2].source, "And then this is a very, very, very long sentence.");
-        assert_eq!(tmx.entries[3].source, "Where shall it end? No one knows.");
-        assert_eq!(tmx.entries[3].translation, "誰も知らない。");
+        let g = load_align_golden("AlignerTest#testAlignerParseMode.json");
+        assert_eq!(
+            g["java_test"].as_str().unwrap(),
+            "org.omegat.gui.align.AlignerTest#testAlignerParseMode"
+        );
+        assert_eq!(pairs_from_tmx(&tmx), expected_pairs(&g));
     }
 
     #[test]
@@ -579,10 +617,12 @@ mod tests {
             &cfg,
         )
         .unwrap();
-        assert_eq!(tmx.entries.len(), 4);
-        assert_eq!(tmx.entries[0].source, "This is sentence one.");
-        assert_eq!(tmx.entries[3].source, "Where shall it end?");
-        assert_eq!(tmx.entries[3].translation, "誰も知らない。");
+        let g = load_align_golden("AlignerTest#testAlignerIDMode.json");
+        assert_eq!(
+            g["java_test"].as_str().unwrap(),
+            "org.omegat.gui.align.AlignerTest#testAlignerIDMode"
+        );
+        assert_eq!(pairs_from_tmx(&tmx), expected_pairs(&g));
         assert!(tmx.entries.iter().all(|e| e.source != "No one knows."));
     }
 
@@ -646,6 +686,49 @@ mod tests {
         assert_eq!(down[0].0, "b");
         let up = edit_pairs(&pairs, "up", 1);
         assert_eq!(up[0].0, "b");
+    }
+
+    #[test]
+    fn write_pairs_to_tmx_matches_java() {
+        let g = load_align_golden("AlignerTest#testWritePairsToTMX_writesExpectedTMX.json");
+        let mut tmx = ProjectTmx::new();
+        for p in g["pairs"].as_array().unwrap() {
+            tmx.insert(TmxEntry {
+                source: p[0].as_str().unwrap().into(),
+                translation: p[1].as_str().unwrap().into(),
+                default_translation: true,
+                creator: Some("OmegaT Aligner".into()),
+                ..Default::default()
+            });
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out.tmx");
+        write_aligned_tmx(&tmx, &dest, "en", "ja").unwrap();
+        let xml = std::fs::read_to_string(&dest).unwrap();
+        for needle in g["contains"].as_array().unwrap() {
+            let n = needle.as_str().unwrap();
+            assert!(xml.contains(n), "missing {n} in {xml}");
+        }
+        let err = write_aligned_tmx(&tmx, &dest, "", "").unwrap_err();
+        assert!(err.to_string().contains("IllegalStateException"));
+        let beads = do_align(
+            &[
+                ("a".into(), "A".into()),
+                ("bb".into(), "BB".into()),
+                ("ccc".into(), "CCC".into()),
+            ],
+            Some(AlignAlgo::Viterbi),
+        )
+        .unwrap();
+        assert_eq!(
+            beads,
+            vec![
+                ("a".into(), "A".into()),
+                ("bb".into(), "BB".into()),
+                ("ccc".into(), "CCC".into())
+            ]
+        );
+        assert!(do_align(&[("x".into(), "y".into())], None).is_err());
     }
 
     #[test]

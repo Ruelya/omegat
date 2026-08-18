@@ -1,20 +1,27 @@
-/** Java `org.omegat.gui.editor.mark.NBSPMarker`. */
+/** Java `org.omegat.gui.editor.mark.NBSPMarker` — U+00A0 / U+202F / U+2007. */
 import { AbstractMarker } from "./AbstractMarker";
-import { mark, type Mark } from "./Mark";
 import type { MarkerInput } from "./IMarker";
+import type { Mark } from "./Mark";
 
 export class NBSPMarker extends AbstractMarker {
-  getMarksForEntry(input: MarkerInput): Mark[] | null {
-    if (!this.isEnabled()) return null;
-    const text = input.isActive ? input.translationText || input.sourceText : input.sourceText;
-    const out: Mark[] = [];
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] === "\u00a0") out.push(mark(i, i + 1, "nbsp", "NBSP"));
-    }
-    return out;
+  constructor() {
+    super();
+    this.pattern = /[\u00a0\u202f\u2007]/g;
+    this.toolTip = "NBSP";
+    this.painter = "nbsp";
   }
 }
 
-export function nbspMarker(text: string) {
-  return new NBSPMarker().getMarksForEntry({ sourceText: text, translationText: text, isActive: true }) ?? [];
+export function nbspMarker(text: string): Mark[] {
+  return (
+    new NBSPMarker().getMarksForEntry({
+      sourceText: text,
+      translationText: null,
+      isActive: true,
+    }) ?? []
+  );
+}
+
+export function nbspMarksForEntry(input: MarkerInput): Mark[] | null {
+  return new NBSPMarker().getMarksForEntry(input);
 }

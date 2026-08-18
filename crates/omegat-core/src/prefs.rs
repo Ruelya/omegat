@@ -51,6 +51,15 @@ fn default_color() -> String {
 fn default_script_slots() -> Vec<String> {
     vec![String::new(); 12]
 }
+fn default_aligner_algo() -> String {
+    "viterbi".into()
+}
+fn default_aligner_calc() -> String {
+    "normal".into()
+}
+fn default_aligner_counter() -> String {
+    "word".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ColorPrefs {
@@ -362,6 +371,24 @@ pub struct Preferences {
     /// Typed Java `*Controller` preference keys (not the load-only `extra` bag).
     #[serde(default)]
     pub controller_keys: HashMap<String, String>,
+    #[serde(default = "default_aligner_algo")]
+    pub aligner_algorithm: String,
+    #[serde(default = "default_aligner_calc")]
+    pub aligner_calculator: String,
+    #[serde(default = "default_aligner_counter")]
+    pub aligner_counter: String,
+    #[serde(default = "default_true")]
+    pub aligner_segment: bool,
+    #[serde(default)]
+    pub aligner_remove_tags: bool,
+    #[serde(default)]
+    pub aligner_source_lang: String,
+    #[serde(default)]
+    pub aligner_target_lang: String,
+    #[serde(default)]
+    pub aligner_last_source_dir: String,
+    #[serde(default)]
+    pub aligner_last_target_dir: String,
     /// Load-only bag from pre-G5 files. Never written back.
     #[serde(default, skip_serializing)]
     pub extra: HashMap<String, String>,
@@ -427,6 +454,15 @@ impl Preferences {
             docking_layout: DockingLayoutPrefs::default(),
             search_window: SearchWindowPrefs::default(),
             controller_keys: HashMap::new(),
+            aligner_algorithm: default_aligner_algo(),
+            aligner_calculator: default_aligner_calc(),
+            aligner_counter: default_aligner_counter(),
+            aligner_segment: true,
+            aligner_remove_tags: false,
+            aligner_source_lang: String::new(),
+            aligner_target_lang: String::new(),
+            aligner_last_source_dir: String::new(),
+            aligner_last_target_dir: String::new(),
             extra: HashMap::new(),
         };
         p.normalize();
@@ -677,5 +713,42 @@ mod tests {
         let raw = std::fs::read_to_string(p.path()).unwrap();
         assert!(!raw.contains("\"extra\""));
         assert!(raw.contains("\"tag_validation\": \"abort\""));
+    }
+
+    #[test]
+    fn aligner_settings_round_trip_matches_java_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut p = Preferences::default_in(dir.path().to_path_buf());
+        assert_eq!(p.aligner_algorithm, "viterbi");
+        assert_eq!(p.aligner_calculator, "normal");
+        assert_eq!(p.aligner_counter, "word");
+        assert!(p.aligner_segment);
+        assert!(!p.aligner_remove_tags);
+        p.aligner_algorithm = "forward-backward".into();
+        p.aligner_calculator = "poisson".into();
+        p.aligner_counter = "char".into();
+        p.aligner_segment = false;
+        p.aligner_remove_tags = true;
+        p.aligner_source_lang = "fr-FR".into();
+        p.aligner_target_lang = "de".into();
+        p.aligner_last_source_dir = "tmp/foo".into();
+        p.save().unwrap();
+        let loaded = Preferences::load_or_default(dir.path());
+        assert_eq!(loaded.aligner_algorithm, "forward-backward");
+        assert_eq!(loaded.aligner_calculator, "poisson");
+        assert_eq!(loaded.aligner_counter, "char");
+        assert!(!loaded.aligner_segment);
+        assert!(loaded.aligner_remove_tags);
+        assert_eq!(loaded.aligner_source_lang, "fr-FR");
+        assert_eq!(loaded.aligner_target_lang, "de");
+        assert_eq!(loaded.aligner_last_source_dir, "tmp/foo");
+        let invalid = "not a code";
+        let fallback = if invalid.chars().all(|c| c.is_ascii_alphabetic() || c == '-') {
+            invalid
+        } else {
+            "eo"
+        };
+        assert_eq!(fallback, "eo");
+    }
     }
 }

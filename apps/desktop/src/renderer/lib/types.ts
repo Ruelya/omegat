@@ -80,6 +80,21 @@ export type ProjectPropsDto = {
   support_default_translations?: boolean;
   remove_tags?: boolean;
   has_repositories: boolean;
+  repositories?: RepositoryRow[];
+};
+
+export type RepositoryMappingRow = {
+  local: string;
+  repository: string;
+  includes: string[];
+  excludes: string[];
+};
+
+export type RepositoryRow = {
+  repo_type: string;
+  url: string;
+  branch?: string | null;
+  mappings: RepositoryMappingRow[];
 };
 export type IssueDto = { kind: string; index: number; file: string; message: string; severity: string };
 export type SearchHitDto = {

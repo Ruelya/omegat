@@ -123,33 +123,124 @@ export function TeamWindow() {
   );
 }
 
+type MappingRow = {
+  repo_type: string;
+  url: string;
+  branch: string;
+  local: string;
+  repository: string;
+  includes: string;
+  excludes: string;
+};
+
 export function MappingWindow() {
   const props = useApp((s) => s.props);
-  const [include, setInclude] = useState("/**");
-  const [exclude, setExclude] = useState("omegat/**");
-  const [url, setUrl] = useState(props?.root || "");
+  const [rows, setRows] = useState<MappingRow[]>(() => {
+    const repos = props?.repositories ?? [];
+    if (!repos.length) {
+      return [
+        {
+          repo_type: "git",
+          url: props?.root || "",
+          branch: "main",
+          local: "/",
+          repository: "/",
+          includes: "/**",
+          excludes: "omegat/**",
+        },
+      ];
+    }
+    return repos.flatMap((r) =>
+      (r.mappings.length ? r.mappings : [{ local: "/", repository: "/", includes: [], excludes: [] }]).map((m) => ({
+        repo_type: r.repo_type,
+        url: r.url,
+        branch: r.branch ?? "",
+        local: m.local,
+        repository: m.repository,
+        includes: m.includes.join(","),
+        excludes: m.excludes.join(","),
+      })),
+    );
+  });
+  function update(i: number, patch: Partial<MappingRow>) {
+    setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  }
   return (
     <Modal id="mapping" title={t("team")} wide>
       <div className="form">
         <p>RepositoriesMappingController</p>
-        <label>
-          {t("accessRoot")}
-          <input value={url} onChange={(e) => setUrl(e.target.value)} />
-        </label>
-        <label>
-          include
-          <input value={include} onChange={(e) => setInclude(e.target.value)} />
-        </label>
-        <label>
-          exclude
-          <input value={exclude} onChange={(e) => setExclude(e.target.value)} />
-        </label>
+        <table className="stats">
+          <thead>
+            <tr>
+              <th>type</th>
+              <th>url</th>
+              <th>branch</th>
+              <th>local</th>
+              <th>repository</th>
+              <th>include</th>
+              <th>exclude</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td>
+                  <select value={r.repo_type} onChange={(e) => update(i, { repo_type: e.target.value })}>
+                    <option value="git">git</option>
+                    <option value="svn">svn</option>
+                    <option value="http">http</option>
+                    <option value="file">file</option>
+                  </select>
+                </td>
+                <td><input value={r.url} onChange={(e) => update(i, { url: e.target.value })} /></td>
+                <td><input value={r.branch} onChange={(e) => update(i, { branch: e.target.value })} /></td>
+                <td><input value={r.local} onChange={(e) => update(i, { local: e.target.value })} /></td>
+                <td><input value={r.repository} onChange={(e) => update(i, { repository: e.target.value })} /></td>
+                <td><input value={r.includes} onChange={(e) => update(i, { includes: e.target.value })} /></td>
+                <td><input value={r.excludes} onChange={(e) => update(i, { excludes: e.target.value })} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <div className="btn-row">
+          <button
+            type="button"
+            onClick={() =>
+              setRows([
+                ...rows,
+                { repo_type: "git", url: "", branch: "", local: "/", repository: "/", includes: "/**", excludes: "" },
+              ])
+            }
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              const dir = await window.omegat?.pickDir();
+              if (dir && rows[0]) update(0, { url: dir });
+            }}
+          >
+            {t("accessRoot")}
+          </button>
           <button
             type="button"
             className="primary"
             onClick={() => {
-              void window.omegat?.rpc("team.mapping", { url, include, exclude });
+              const repositories = rows.map((r) => ({
+                repo_type: r.repo_type,
+                url: r.url,
+                branch: r.branch || null,
+                mappings: [
+                  {
+                    local: r.local,
+                    repository: r.repository,
+                    includes: r.includes.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
+                    excludes: r.excludes.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
+                  },
+                ],
+              }));
+              void window.omegat?.rpc("team.mapping", { repositories });
               useApp.getState().openWindow("mapping", false);
             }}
           >
@@ -333,28 +424,39 @@ export function ProjectEditWindow() {
 export function FinderWindow() {
   const prefs = useApp((s) => s.prefs);
   const patch = useApp((s) => s.patchPrefs);
-  const [xml, setXml] = useState(prefs?.finder_xml || "<finder/>");
-  const [url, setUrl] = useState("https://www.google.com/search?q={selection}");
+  const [xml, setXml] = useState(prefs?.finder_xml || "<items><item><name>Wiktionary</name><url>https://en.wiktionary.org/wiki/{selection}</url><scope>selection</scope></item></items>");
+  const [urls, setUrls] = useState<string[]>([]);
   return (
     <Modal id="finder" title={t("finder")}>
       <div className="form">
-        <label>
-          URL
-          <input value={url} onChange={(e) => setUrl(e.target.value)} />
-        </label>
-        <textarea rows={6} value={xml} onChange={(e) => setXml(e.target.value)} />
+        <textarea rows={8} value={xml} onChange={(e) => setXml(e.target.value)} />
         <div className="btn-row">
           <button type="button" className="primary" onClick={() => void patch({ finder_xml: xml })}>{t("save")}</button>
           <button
             type="button"
-            onClick={() => {
-              const sel = useApp.getState().draft || useApp.getState().entries[useApp.getState().index]?.source || "";
-              void window.omegat?.openExternal(url.replace("{selection}", encodeURIComponent(sel)));
+            onClick={async () => {
+              const st = useApp.getState();
+              const e = st.entries[st.index];
+              const sel = st.selectedText || st.draft || e?.source || "";
+              const r = (await window.omegat?.rpc("finder.run", {
+                xml,
+                selection: sel,
+                source: e?.source ?? sel,
+                target: st.draft || e?.translation || "",
+              })) as { urls?: string[]; commands?: string[] };
+              const next = r?.urls ?? [];
+              setUrls(next);
+              for (const u of next) {
+                await window.omegat?.openExternal(u);
+              }
             }}
           >
             {t("run")}
           </button>
         </div>
+        {urls.map((u) => (
+          <div key={u} className="meta">{u}</div>
+        ))}
       </div>
     </Modal>
   );

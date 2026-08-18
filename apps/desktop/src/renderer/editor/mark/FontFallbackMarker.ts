@@ -6,7 +6,7 @@ import type { MarkerInput } from "./IMarker";
 export class FontFallbackMarker extends AbstractMarker {
   getMarksForEntry(input: MarkerInput): Mark[] | null {
     if (!this.isEnabled()) return null;
-    const text = input.translationText || input.sourceText;
+    const text = input.translationText ?? input.sourceText;
     const out: Mark[] = [];
     for (let i = 0; i < text.length; i++) {
       const u = text.charCodeAt(i);

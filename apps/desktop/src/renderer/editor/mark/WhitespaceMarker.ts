@@ -5,20 +5,30 @@ import type { MarkerInput } from "./IMarker";
 
 export class WhitespaceMarker extends AbstractMarker {
   getMarksForEntry(input: MarkerInput): Mark[] | null {
-    if (!this.isEnabled() || !input.sourceText) return null;
-    const text = input.isActive || !input.translationText ? input.sourceText : input.translationText;
-    const source = input.isActive || !input.translationText;
+    if (!this.isEnabled() || input.sourceText == null) return null;
     const out: Mark[] = [];
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i]!;
-      if (ch === " ") out.push(mark(i, i + 1, "·", "SPACE", source));
-      else if (ch === "\t") out.push(mark(i, i + 1, "»", "TAB", source));
-      else if (ch === "\n") out.push(mark(i, i + 1, "¶", "LF", source));
-    }
+    const markSource = input.isActive || input.displaySource || input.translationText == null;
+    if (markSource) collectWs(input.sourceText, true, out);
+    if (input.translationText != null) collectWs(input.translationText, false, out);
     return out;
   }
 }
 
-export function whitespaceMarker(text: string) {
-  return new WhitespaceMarker().getMarksForEntry({ sourceText: text, translationText: text, isActive: true }) ?? [];
+function collectWs(text: string, source: boolean, out: Mark[]): void {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === " ") out.push(mark(i, i + 1, "·", undefined, source));
+    else if (ch === "\t") out.push(mark(i, i + 1, "»", "Tab", source));
+    else if (ch === "\n") out.push(mark(i, i + 1, "¶", "LF", source));
+  }
+}
+
+export function whitespaceMarker(text: string): Mark[] {
+  return (
+    new WhitespaceMarker().getMarksForEntry({
+      sourceText: text,
+      translationText: null,
+      isActive: true,
+    }) ?? []
+  );
 }

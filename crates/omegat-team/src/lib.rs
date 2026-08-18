@@ -472,10 +472,42 @@ mod tests {
     }
 
     #[test]
+    fn http_two_clients_rebase_remote_tmx() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote = dir.path().join("mem.tmx");
+        write_tmx(&remote, &[("Hi", "Bonjour"), ("Bye", "Au revoir")]);
+        let url = format!("file://{}", remote.display());
+        let mapping = vec![RepositoryMapping {
+            local: "omegat/project_save.tmx".into(),
+            repository: "project_save.tmx".into(),
+            includes: vec![],
+            excludes: vec![],
+        }];
+        let a = team_props(dir.path().join("a"), "http", &url, mapping.clone());
+        let b = team_props(dir.path().join("b"), "http", &url, mapping);
+        write_tmx(&a.save_tmx_path(), &[("Hi", "Salut")]);
+        write_tmx(&b.save_tmx_path(), &[("Bye", "Ciao")]);
+        let err_a = sync(&a).unwrap_err();
+        assert!(matches!(err_a, TeamError::Conflict(_)), "{err_a:?}");
+        let ca = list_conflicts(&a);
+        assert_eq!(ca.len(), 1);
+        assert_eq!(ca[0].source, "Hi");
+        assert_eq!(ca[0].ours, "Salut");
+        assert_eq!(ca[0].theirs, "Bonjour");
+        let err_b = sync(&b).unwrap_err();
+        assert!(matches!(err_b, TeamError::Conflict(_)), "{err_b:?}");
+        let cb = list_conflicts(&b);
+        assert_eq!(cb.len(), 1);
+        assert_eq!(cb[0].source, "Bye");
+        assert_eq!(cb[0].ours, "Ciao");
+        assert_eq!(cb[0].theirs, "Au revoir");
+    }
+
+    #[test]
+    #[ignore = "requires svn + svnadmin (STATUS: SVN product path is the svn binary)"]
     fn svn_checkout_update_commit() {
         if !which("svn") || !which("svnadmin") {
-            eprintln!("skip svn_checkout_update_commit: svn/svnadmin not installed");
-            return;
+            panic!("svn/svnadmin not installed");
         }
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("svnrepo");

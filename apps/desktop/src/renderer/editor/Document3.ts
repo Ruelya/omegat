@@ -10,6 +10,12 @@ export type Document3State = {
   dirty: boolean;
   tagsAtomic: boolean;
   spans: StyledSpan[];
+  fullText: string;
+  translationStart: number;
+  translationEnd: number;
+  editMode: boolean;
+  trustedChangesInProgress: boolean;
+  textBeingComposed: boolean;
 };
 
 export function createDocument3(source = "", translation = ""): Document3State {
@@ -21,6 +27,12 @@ export function createDocument3(source = "", translation = ""): Document3State {
     dirty: false,
     tagsAtomic: true,
     spans: [],
+    fullText: translation,
+    translationStart: 0,
+    translationEnd: translation.length,
+    editMode: true,
+    trustedChangesInProgress: false,
+    textBeingComposed: false,
   };
 }
 
@@ -30,8 +42,19 @@ export function replaceEditText(doc: Document3State, text: string): Document3Sta
 
 export function insertText(doc: Document3State, text: string, at?: number): Document3State {
   const pos = at ?? doc.activeEnd;
+  if (doc.tagsAtomic && isInsideTag(doc.translation, pos)) return doc;
   const translation = doc.translation.slice(0, pos) + text + doc.translation.slice(pos);
   return { ...doc, translation, activeStart: pos, activeEnd: pos + text.length, dirty: true };
+}
+
+const TAG = /<\/?[A-Za-z][\w:-]*\d*\/?>/g;
+
+function isInsideTag(text: string, offset: number): boolean {
+  for (const m of text.matchAll(TAG)) {
+    const s = m.index ?? 0;
+    if (offset > s && offset < s + m[0].length) return true;
+  }
+  return false;
 }
 
 export function commitAndDeactivate(doc: Document3State): Document3State {

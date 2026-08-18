@@ -273,18 +273,22 @@ def check_menus() -> None:
     java = data.get("actions") or data.get("methods") or []
     actions_ts = ROOT / "apps/desktop/src/renderer/menus/actions.ts"
     text = actions_ts.read_text(encoding="utf-8") if actions_ts.is_file() else ""
-    listed = re.findall(r'"([a-z0-9.-]+)"', text.split("SCRIPT_SLOT_ACTIONS")[0] if "SCRIPT_SLOT_ACTIONS" in text else text)
-    # observable-behavior tests: must not be only "switch has this case"
+    listed = re.findall(
+        r'"([a-z][a-z0-9.-]+)"',
+        text.split("SCRIPT_SLOT_ACTIONS")[0] if "SCRIPT_SLOT_ACTIONS" in text else text,
+    )
     test = ROOT / "apps/desktop/src/renderer/menus/actions.test.ts"
     test_src = test.read_text(encoding="utf-8") if test.is_file() else ""
     only_presence = "toHaveLength(120)" in test_src and "observable" not in test_src.lower()
+    missing_obs = [a for a in listed if a not in test_src]
     gap = []
     if len(java) < 120:
         gap.append(f"Java export has {len(java)} ActionPerformed (need 120)")
     if only_presence:
         gap.append("menu tests assert case presence, not observable behavior")
+    if missing_obs:
+        gap.append(f"{len(missing_obs)} desktop actions lack observable tests: {missing_obs[:8]}")
     note(not gap, "120 menu actions wired to observable behavior" + ("" if not gap else " (" + "; ".join(gap) + ")"))
-    _ = listed  # reserved for later exact-id mapping
 
 
 def check_locales() -> None:

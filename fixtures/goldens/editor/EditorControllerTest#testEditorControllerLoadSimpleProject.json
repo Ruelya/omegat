@@ -1,0 +1,8 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorControllerTest#testEditorControllerLoadSimpleProject",
+  "current_file": "source.txt",
+  "current_entry_number": 1,
+  "translation_start": 31,
+  "translation_end": 31,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

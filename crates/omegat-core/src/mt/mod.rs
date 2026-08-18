@@ -314,7 +314,14 @@ mod tests {
             let recorded = dir.join(engine).join("recorded.json");
             assert!(recorded.exists() || dir.join(format!("{engine}.json")).exists(), "{engine}");
             let r = translate(engine, "Hello", "en", "fr", &cache).unwrap();
-            assert!(!r.text.is_empty(), "{engine}");
+            let expected = match engine {
+                "google" => "Hola",
+                "ibmwatson" | "apertium" | "yandex" => "Bonjour",
+                "mymemory" | "mymemory-human" => "Bonjour le monde",
+                "belazar" => "Прывітанне",
+                _ => "",
+            };
+            assert_eq!(r.text, expected, "{engine}");
         }
         std::env::remove_var("OMEGAT_MT_FIXTURE_DIR");
     }

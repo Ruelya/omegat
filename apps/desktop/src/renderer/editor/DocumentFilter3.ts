@@ -1,4 +1,42 @@
-/** Java `org.omegat.gui.editor.DocumentFilter3` — tag atoms are not split. */
+/** Java `org.omegat.gui.editor.DocumentFilter3` — edits stay inside the translation range. */
+
+export type FilterDocument = {
+  text: string;
+  editMode: boolean;
+  trustedChangesInProgress: boolean;
+  translationStart: number;
+  translationEnd: number;
+  textBeingComposed: boolean;
+  allowTagEditing: boolean;
+};
+
+export type FilterAttrs = { composed?: boolean } | null;
+
+export type FilterResult = { applied: boolean; doc: FilterDocument };
+
+export function createFilterDocument(text: string, translationStart: number, translationEnd: number): FilterDocument {
+  return {
+    text,
+    editMode: true,
+    trustedChangesInProgress: false,
+    translationStart,
+    translationEnd,
+    textBeingComposed: false,
+    allowTagEditing: true,
+  };
+}
+
+export function isOffsetOutsideTranslationBounds(doc: FilterDocument, offset: number, length: number): boolean {
+  return offset < doc.translationStart || offset + length > doc.translationEnd;
+}
+
+export function isPossible(doc: FilterDocument, offset: number, length: number): boolean {
+  if (doc.trustedChangesInProgress) return true;
+  if (!doc.editMode || isOffsetOutsideTranslationBounds(doc, offset, length)) return false;
+  if (!doc.allowTagEditing && isInsideTag(doc.text, offset)) return false;
+  return true;
+}
+
 const TAG = /<\/?[A-Za-z][\w:-]*\d*\/?>/g;
 
 export function isInsideTag(text: string, offset: number): boolean {
@@ -11,4 +49,32 @@ export function isInsideTag(text: string, offset: number): boolean {
 
 export function allowInsert(text: string, offset: number): boolean {
   return !isInsideTag(text, offset);
+}
+
+export function replace(
+  doc: FilterDocument,
+  offset: number,
+  length: number,
+  text: string,
+  attrs: FilterAttrs = null,
+): FilterResult {
+  let next = doc;
+  if (attrs?.composed) next = { ...next, textBeingComposed: true };
+  if (!isPossible(next, offset, length)) return { applied: false, doc: next };
+  const written = next.text.slice(0, offset) + text + next.text.slice(offset + length);
+  const delta = text.length - length;
+  return {
+    applied: true,
+    doc: {
+      ...next,
+      text: written,
+      translationEnd: next.translationEnd + delta,
+    },
+  };
+}
+
+export class DocumentFilter3 {
+  replace(doc: FilterDocument, offset: number, length: number, text: string, attrs: FilterAttrs = null): FilterResult {
+    return replace(doc, offset, length, text, attrs);
+  }
 }

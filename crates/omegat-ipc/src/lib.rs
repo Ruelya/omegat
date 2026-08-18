@@ -162,6 +162,27 @@ pub struct ProjectPropsDto {
     pub support_default_translations: bool,
     pub remove_tags: bool,
     pub has_repositories: bool,
+    #[serde(default)]
+    pub repositories: Vec<RepositoryRowDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RepositoryMappingRowDto {
+    pub local: String,
+    pub repository: String,
+    #[serde(default)]
+    pub includes: Vec<String>,
+    #[serde(default)]
+    pub excludes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RepositoryRowDto {
+    pub repo_type: String,
+    pub url: String,
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub mappings: Vec<RepositoryMappingRowDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

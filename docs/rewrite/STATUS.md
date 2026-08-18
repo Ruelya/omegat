@@ -26,12 +26,12 @@ exported and `assert_eq` green, plus the matching honesty item.
 | filters4: ZIP / XLIFF / SDL / Office node write-back | P4 | parity |
 | Tokenizers: named Lucene Analyzer pipelines | P5 | parity |
 | Spell / dictionaries / LanguageTool | P6 | parity_gap |
-| Editor: 63 `gui/editor` classes + Marker goldens | P7 | parity |
-| Desktop: 120 menus, 25 controllers, 9 docks | P8 | parity |
-| 7 MT engines, External Finder, autocompleter | P9 | parity |
-| team2: 23 classes; GIT via `git2` | P10 | parity |
-| Aligner, Boa `IEditor` surface, Wiki / MED / CLI | P11 | parity |
-| 41 locales, packages, plugin ABI, manual | P12 | parity |
+| Editor: 63 `gui/editor` classes + Marker goldens | P7 | parity_gap |
+| Desktop: 120 menus, 25 controllers, 9 docks | P8 | parity_gap |
+| 7 MT engines, External Finder, autocompleter | P9 | parity_gap |
+| team2: 23 classes; GIT via `git2` | P10 | parity_gap |
+| Aligner, Boa `IEditor` surface, Wiki / MED / CLI | P11 | parity_gap |
+| 41 locales, packages, plugin ABI, manual | P12 | parity_gap |
 
 ## Remaining measured gap
 
@@ -40,6 +40,27 @@ exported and `assert_eq` green, plus the matching honesty item.
   (ar, ast, be, br, da, de, el, en, eo, it, ja, km, nl, pl, ro, ru, sk,
   sl, sv, ta, tl, zh). CI uses the small `fixtures/spell` aff/dic files
   (not 30 product dictionaries).
+- **P7 editor**: 63 TS files exist. Java `*Test` methods under
+  `gui/editor` now have ExportGoldens-shaped JSON (markers, predictor,
+  completer, EditorUtils, DocumentFilter3, SegmentExportImport,
+  EditorController). `EditorControllerTest` translation range **31/31**
+  is the Java fixture number for source `XXX` / empty translation, not a
+  full Swing `insertString` port. `DocumentFilter3` models `isPossible`
+  without `FilterBypass`.
+- **P8 desktop**: 120 menu ids have observable-behavior tests in
+  `actions.test.ts`. Keyboard walkthrough of new→translate 3→save→compile
+  is not an automated `assert_eq` of a Java GUI log.
+- **P9 MT / Finder**: 7 recorded fixtures `assert_eq` expected
+  translations. No Java completer exporter goldens.
+- **P10 team**: GIT product path is `git2`. SVN checkout/update/commit is
+  `#[ignore]` (needs `svn` + `svnadmin`). HTTP two-client rebase uses
+  `assert_eq` on conflict `ours`/`theirs`.
+- **P11 align**: HEAPWISE / PARSEWISE / ID goldens are the Java pair
+  lists. HMM must `assert_eq` those pairs; until that test is green this
+  row stays `parity_gap`.
+- **P12 ship**: Bundle locales leftover_eq_en = **0** (brand `OmegaT`
+  only). Packaged manuals are `en` + `zh-CN` + Java HTML pointer, not 41
+  languages. Packages are unsigned.
 
 Rebuilt defects (honesty green; do not regress):
 
@@ -157,12 +178,15 @@ The P6 STATUS row is `parity_gap` (22 language-modules without aff/dic).
 ## P7 notes
 
 `gui/editor` 63 Java classes each have a TS file. `Document3` holds the
-active translation range, dirty flag, tag atoms, and styled spans.
-`IEditor` implements the exported method set (gap empty vs
-`ieditor_methods.json`). Each Marker computes intervals; goldens
-`assert_eq` NBSP / whitespace / bidi / protected-tag ranges. Autocompleter
-views: Glossary / Autotext / CharTable / HistoryCompleter /
-HistoryPredictor (next-word) / Tag. Honesty IEditor / marker items are green.
+active translation range, dirty flag, tag atoms, styled spans, edit/trusted
+flags, and chrome `translationStart`/`translationEnd`. `DocumentFilter3`
+rejects edits outside the translation range unless trusted. `IEditor`
+implements the exported method set (gap empty vs `ieditor_methods.json`).
+Each Java marker/predictor/completer/`EditorUtils`/`DocumentFilter3`/
+`SegmentExportImport`/`EditorController` `*Test` method has an
+ExportGoldens-shaped JSON and a TS `assert_eq`. Autocompleter views:
+Glossary / Autotext / CharTable / HistoryCompleter / HistoryPredictor
+(next-word) / Tag. The P7 row stays `parity_gap` (Swing chrome / FilterBypass).
 
 ## P8 notes
 
@@ -172,7 +196,8 @@ team flow; `edit.pdf` inserts U+202C). 25 preference controllers have
 pages; Java keys are typed `controller_keys` (save still drops `extra`).
 `SegmentationCustomizer` is a rule table. Nine docks are splitters (Dict/MT
 are not a pinned aside). `RepositoriesMappingController` UI exists.
-`className="placeholder"` is gone. Honesty menu / placeholder items are green.
+`className="placeholder"` is gone. Honesty menu / placeholder items are
+green. The P8 row stays `parity_gap` (no Java GUI walkthrough log).
 
 ## P9 notes
 
@@ -180,7 +205,8 @@ Seven MT connectors use recorded HTTP under `fixtures/mt/<engine>/`.
 Offline without a fixture fails and does not block the editor. External
 Finder GUI edits XML and `finder.run` opens the URL. Five completer views
 are keyboard-insertable. Recorded fixtures `assert_eq` the Java parse
-shapes; offline without a fixture is an error.
+shapes; offline without a fixture is an error. The P9 row stays
+`parity_gap` (no Java completer exporter).
 
 ## P10 notes
 
@@ -188,24 +214,30 @@ shapes; offline without a fixture is an error.
 + credential callback). `Command::new("git")` remains only in `lib.rs`
 tests that seed a bare repo. Mapping include/exclude UI is
 `RepositoriesMappingController`. TMX and glossary rebase plus Keep
-ours/theirs/manual stay. Honesty git-command item is green.
+ours/theirs/manual stay. HTTP two-client rebase `assert_eq`s conflict
+`ours`/`theirs`. SVN product path is the `svn` binary and the
+checkout/update/commit test is `#[ignore]`. Honesty git-command item is
+green. The P10 row stays `parity_gap` (SVN ignored).
 
 ## P11 notes
 
 Aligner: HEAPWISE / PARSEWISE / ID; Viterbi ≠ Forward-Backward; CHAR/WORD
-and Poisson vs Normal. Boa `editor` bindings cover the IEditor method set.
-Wiki MediaWiki XML → source; MED unzip; CLI leftover flags remain in
-`--help`. No `fallback_eval`. Boa IEditor method-set test is green.
+and Poisson vs Normal. Goldens are the Java pair lists (heap pair 3 is
+the long EN sentence merged with “Where shall it end?”). Boa `editor`
+bindings cover the IEditor method set. Wiki MediaWiki XML → source; MED
+unzip; CLI leftover flags remain in `--help`. No `fallback_eval`. The P11
+row stays `parity_gap` until heap/parse/id `assert_eq` is green.
 
 ## P12 notes
 
 41 locale JSON files share the `en.json` keyset. Honesty leftover count is
-0 (values still equal to English are only the brand `OmegaT`).
-electron-builder targets Linux deb/rpm/tar, Windows nsis, macOS dmg
-(unsigned; see `PACKAGING.md`). Plugin ABI is `omegat_plugin_register`
-(`PLUGIN_ABI.md`). `tools/honesty/P12_GATES_GREEN` records that the
-structural gates were green when this table dropped its last `scaffold`
-row. P6 remains `parity_gap` (22 missing affix pairs).
+0 (values still equal to English are only the brand `OmegaT`). Literal
+`\\uXXXX` leftovers from the Bundle remapper are decoded. electron-builder
+targets Linux deb/rpm/tar, Windows nsis, macOS dmg (unsigned; see
+`PACKAGING.md`). Plugin ABI is `omegat_plugin_register` (`PLUGIN_ABI.md`).
+Packaged manuals are `docs/manual/en.md` + `zh-CN.md` + Java HTML pointer
+(not 41 languages). The P12 row stays `parity_gap` for that manual set
+and unsigned packages. P6 remains `parity_gap` (22 missing affix pairs).
 
 ## Intentional non-goals (must still have a full replacement)
 
