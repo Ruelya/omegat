@@ -1,0 +1,7 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorProjectReloadLeakTest#closedProjectsMustBecomeUnreachableWithEditorAttached",
+  "cycles": 3,
+  "document_after_close": null,
+  "entry_count_after_close": 0,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

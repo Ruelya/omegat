@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testGetUniqueNames",
+  "names": [
+    "foo.txt",
+    "foo/bar.txt",
+    "bar/bar.txt"
+  ],
+  "keys": [
+    "org.omegat.util.FileUtilTest#testGetUniqueNames"
+  ]
+}

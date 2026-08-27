@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.matches.MatchesTextAreaTest#testReplaceNumbersJapaneseTokenizer",
+  "source": "これは例文９です",
+  "src_match": "これは例文8です",
+  "trg_match": "This is a sample sentence 8",
+  "out": "This is a sample sentence 9"
+}
