@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **56518** lines; `apps/desktop/src`
-  TS/TSX/CSS **16081** lines (**~46%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **16081**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **6685**
+- Rewrite Rust: `crates/**/*.rs` **56750** lines; `apps/desktop/src`
+  TS/TSX/CSS **16639** lines (**~46%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **16639**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **7134**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -58,14 +58,20 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **4 passed**, native plugin RPC **1 passed**,
-and desktop **19 files / 111 tests passed** after a clean TypeScript check.
+**4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
+native plugin RPC/fault isolation **1 passed**, and desktop **19 files / 115
+tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
 Linux packaged aligner E2E now passes with XTEST pointer input through the
 native application menu, renderer drag events, stationary edge autoscroll, and
 the sidecar-backed drop result.
+The real Linux unpacked native Marker E2E builds the release sidecar and
+example cdylib, loads that plugin through the packaged Electron application,
+renders its exact tooltip, deliberately aborts one callback worker, then
+strictly verifies that the same sidecar and renderer remain responsive and a
+later Marker callback still succeeds.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
 `test*` (`util/` `search/` `engine/` `glossary/` `gui/` `mt/` `finder/`
@@ -269,8 +275,17 @@ the original dirty document active instead of discarding it.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
-original relative selection on undo. Desktop verification is now **19 files /
-111 tests**, including exact success and
+original relative selection on undo. Arbitrary `ProtectedPart` intervals now
+snap hit-tested carets, expand selection/replacement/IME ranges atomically,
+delete as one unit, and include the same adjacent BiDi controls as Java's
+double-click selection. Marker hit-testing collects overlapping, entry-part
+scoped tooltips and emits Java-shaped HTML. Electron file drops pass real
+native paths through preload/main-process inspection: an `omegat.project`
+opens its project root, while ordinary files import only into an already-open
+project. Successful leave commits invoke the sidecar issue product path,
+retain issues scoped to the old file, and reveal the issue window without
+discarding a successful commit if checking fails. Desktop verification is now
+**19 files / 115 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -301,7 +316,12 @@ renderer registers each callback as an asynchronous provider, maps strict
 UTF-16 output into `Document3`, unloads it with the React lifecycle, and
 discards StrictMode-era discovery responses. The real example cdylib is built
 and loaded in tests; exact sidecar and renderer assertions cover emoji
-offsets, plugin metadata, tooltip/color, complete EntryKey, and unload.
+offsets, plugin metadata, tooltip/color, complete EntryKey, and unload. Native
+Marker callbacks now run in five-second, short-lived sidecar worker processes;
+an abort, signal exit, timeout, or malformed worker result becomes an error for
+that `markers.query` only. Unit/RPC tests and the real Linux packaged Electron
+E2E prove the long-running sidecar and renderer survive an actual callback
+`abort` and can execute a subsequent callback.
 `FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.
@@ -659,7 +679,9 @@ are exported; Wiki/MED have API fixtures).
 targets Linux deb/rpm/tar, Windows nsis, macOS dmg (unsigned; see
 `PACKAGING.md`). Plugin ABI is `omegat_plugin_register` (`PLUGIN_ABI.md`);
 its executable Marker callback is loaded by the sidecar and registered in the
-React editor, not merely listed in a manifest.
+React editor, not merely listed in a manifest. A real `linux-unpacked`
+application now proves packaged native Marker loading, tooltip rendering, and
+callback-crash isolation; this is not a Windows/macOS package claim.
 Packaged manuals are one markdown file per UI locale under `docs/manual/`
 plus `java-html.md`. `ar.recent` and other leftover English menu phrases
 are taken from `Bundle_*.properties`. Packages stay unsigned
