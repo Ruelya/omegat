@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TMXReaderTest#testGetTuvByLang",
+  "zz": "null",
+  "fr_ca": "FR-CA",
+  "en": "EN-GB",
+  "be": "be",
+  "keys": [
+    "org.omegat.util.TMXReaderTest#testGetTuvByLang"
+  ]
+}

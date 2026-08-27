@@ -1,0 +1,15 @@
+{
+  "id": "sdlproject",
+  "fixture": "sdl/simple.sdlproj",
+  "java_test": "org.omegat.filters dialect/table for sdlproject",
+  "options": {},
+  "sources": [
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Hello",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

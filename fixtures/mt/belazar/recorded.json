@@ -1,0 +1,7 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "http://www.belazar.by/translate?text=Hello&sl=en&tl=be"
+  },
+  "response": { "text": "Прывітанне" }
+}

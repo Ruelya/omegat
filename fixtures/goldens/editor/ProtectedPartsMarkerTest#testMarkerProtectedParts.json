@@ -1,0 +1,21 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.ProtectedPartsMarkerTest#testMarkerProtectedParts",
+  "source": "source %s text.",
+  "translation": null,
+  "is_active": true,
+  "protected_parts": [
+    {
+      "text": "%s",
+      "tooltip": "%s"
+    }
+  ],
+  "marks": [
+    {
+      "startOffset": 7,
+      "endOffset": 9,
+      "toolTipText": "%s",
+      "entryPart": "SOURCE"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

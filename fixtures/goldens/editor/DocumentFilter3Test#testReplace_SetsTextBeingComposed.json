@@ -1,0 +1,13 @@
+{
+  "java_test": "org.omegat.gui.editor.DocumentFilter3Test#testReplace_SetsTextBeingComposed",
+  "edit_mode": true,
+  "translation_start": 0,
+  "translation_end": 10,
+  "offset": 0,
+  "length": 1,
+  "text": "composed text",
+  "composed": true,
+  "applied": true,
+  "text_being_composed": true,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

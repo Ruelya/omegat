@@ -1,0 +1,26 @@
+{
+  "id": "mozftl",
+  "fixture": "MozillaFTL/MozillaFTLFilter.ftl",
+  "java_test": "org.omegat.filters.MozillaFTLFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "Sync",
+    "\n    See <a data-l10n-name=\"logging\">HTTP Logging</a>\n    for instructions on how to use this tool.",
+    "When using Group Policy, this policy can only be set at the computer level.",
+    "\n    { $total ->\n        [one] { $total } star\n       *[other] { $total } stars\n    }",
+    "\n  { $total ->\n      [one] { $total } user\n     *[other] { $total } users\n  }",
+    "\n    { PLATFORM() ->\n        [macos] Show in Finder\n        [windows] Open Folder\n       *[other] Open Directory\n    }"
+  ],
+  "ids": [
+    "-sync-brand-short-name",
+    "log-tutorial",
+    "gpo-machine-only.title",
+    "cfr-doorhanger-extension-rating.tooltiptext",
+    "cfr-doorhanger-extension-total-users",
+    "profiles-opendir"
+  ],
+  "empty_write_text": "# This Source Code Form is subject to the terms of the Mozilla Public\n# License, v. 2.0. If a copy of the MPL was not distributed with this\n# file, You can obtain one at http://mozilla.org/MPL/2.0/.\n\n-sync-brand-short-name = Sync\nlog-tutorial =\n    See <a data-l10n-name=\"logging\">HTTP Logging</a>\n    for instructions on how to use this tool.\n\n# 'gpo-machine-only' policies are related to the Group Policy features\ngpo-machine-only =\n  .title = When using Group Policy, this policy can only be set at the computer level.\n\n# Variables:\n#   $total (Number) - The rating of the add-on from 1 to 5\ncfr-doorhanger-extension-rating =\n  .tooltiptext =\n    { $total ->\n        [one] { $total } star\n       *[other] { $total } stars\n    }\n\n# Variables:\n#   $total (Number) - The total number of users using the add-on\ncfr-doorhanger-extension-total-users =\n  { $total ->\n      [one] { $total } user\n     *[other] { $total } users\n  }\n\nprofiles-opendir = \n    { PLATFORM() ->\n        [macos] Show in Finder\n        [windows] Open Folder\n       *[other] Open Directory\n    }\n\n"
+}
