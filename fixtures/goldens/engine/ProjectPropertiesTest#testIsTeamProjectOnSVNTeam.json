@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ProjectPropertiesTest#testIsTeamProjectOnSVNTeam",
+  "team": true,
+  "type": "svn",
+  "keys": [
+    "org.omegat.core.data.ProjectPropertiesTest#testIsTeamProjectOnSVNTeam"
+  ]
+}

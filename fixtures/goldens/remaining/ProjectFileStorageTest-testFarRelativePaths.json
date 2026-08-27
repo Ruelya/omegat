@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.ProjectFileStorageTest#testFarRelativePaths",
+  "becomes_absolute": true,
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testFarRelativePaths"
+  ]
+}

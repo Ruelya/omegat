@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags",
+  "project_locking": false,
+  "location_save": false,
+  "no_team": true,
+  "argv": [
+    "--disable-project-locking",
+    "--disable-location-save",
+    "--no-team"
+  ]
+}

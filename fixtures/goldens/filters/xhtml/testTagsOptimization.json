@@ -1,0 +1,22 @@
+{
+  "id": "xhtml",
+  "fixture": "xhtml/file-XHTMLFilter-tags-optimization.html",
+  "java_test": "org.omegat.filters.XHTMLFilterTest#testTagsOptimization",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "remove_tags": true,
+  "sources": [
+    "en",
+    "en",
+    "<c0>This</c0> is <i1>first</i1> line."
+  ],
+  "sources_remove_tags_false": [
+    "en",
+    "en",
+    "<i0/><b1><c2>This</c2> is <i3>first</i3> line.</b1>"
+  ]
+}
