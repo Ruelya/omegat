@@ -282,6 +282,11 @@ declare global {
   interface Window {
     omegat: {
       rpc: (method: string, params?: unknown) => Promise<unknown>;
+      startup?: () => Promise<{
+        project: string | null;
+        configDir: string;
+        scriptsDir: string | null;
+      }>;
       pickDir: () => Promise<string | null>;
       pickFile: () => Promise<string | null>;
       pickFiles?: () => Promise<string[] | null>;

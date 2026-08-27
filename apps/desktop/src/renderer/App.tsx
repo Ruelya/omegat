@@ -33,9 +33,14 @@ export function App() {
   useMenuBindings();
 
   useEffect(() => {
-    void app.loadVersion();
-    void app.loadPrefs();
-    if (app.firstRun) app.openWindow("tip");
+    void (async () => {
+      await Promise.all([app.loadVersion(), app.loadPrefs()]);
+      const startup = await window.omegat?.startup?.();
+      if (startup?.project) {
+        await app.open(startup.project);
+      }
+      if (useApp.getState().firstRun) app.openWindow("tip");
+    })();
   }, []);
 
   useEffect(() => {

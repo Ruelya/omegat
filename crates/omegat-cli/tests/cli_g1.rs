@@ -30,6 +30,7 @@ fn golden_argv(value: &Value) -> Vec<String> {
 fn run_argv(args: &[String]) -> std::process::Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_omegat"))
         .args(args)
+        .env("OMEGAT_LAUNCH_DRY_RUN", "1")
         .output()
         .unwrap()
 }
@@ -160,4 +161,75 @@ fn java_restart_and_common_argv_reach_the_real_parser() {
             .is_some(),
         absent["present"].as_bool().unwrap()
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn start_launches_desktop_with_config_project_and_scripts_context() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = std::env::temp_dir().join(format!("omegat-cli-launch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(&temp).unwrap();
+    let config = temp.join("config");
+    let scripts = temp.join("named-scripts");
+    let project = temp.join("project");
+    let capture = temp.join("launch.txt");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
+    let properties = temp.join("omegat.properties");
+    std::fs::write(
+        &properties,
+        format!(
+            "user.language=pt\nuser.country=BR\nscripts_dir={}\n",
+            scripts.display()
+        ),
+    )
+    .unwrap();
+    let launcher = temp.join("desktop-launcher");
+    std::fs::write(
+        &launcher,
+        "#!/bin/sh\nprintf '%s\\n%s\\n%s\\n%s\\n' \"$OMEGAT_CONFIG_DIR\" \"$OMEGAT_PROJECT\" \"$OMEGAT_SCRIPTS_DIR\" \"$OMEGAT_LOCALE\" > \"$OMEGAT_CAPTURE\"\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&launcher).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&launcher, permissions).unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_omegat"))
+        .args([
+            "--config-dir",
+            config.to_str().unwrap(),
+            "--config-file",
+            properties.to_str().unwrap(),
+            "start",
+            project.to_str().unwrap(),
+            "--quiet",
+        ])
+        .env("OMEGAT_DESKTOP_BIN", &launcher)
+        .env("OMEGAT_CAPTURE", &capture)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for _ in 0..100 {
+        if capture.is_file() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read_to_string(capture).unwrap(),
+        format!(
+            "{}\n{}\n{}\npt-BR\n",
+            config.display(),
+            project.display(),
+            scripts.display(),
+        )
+    );
+    let _ = std::fs::remove_dir_all(temp);
 }

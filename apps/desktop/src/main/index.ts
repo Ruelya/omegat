@@ -15,6 +15,10 @@ const pending = new Map<number, Pending>();
 let nextId = 1;
 let buf = "";
 
+if (process.env.OMEGAT_CONFIG_DIR) {
+  app.setPath("userData", process.env.OMEGAT_CONFIG_DIR);
+}
+
 function sidecarName(): string {
   return process.platform === "win32" ? "omegat-sidecar.exe" : "omegat-sidecar";
 }
@@ -112,6 +116,11 @@ function applyMenuLocale(locale: string) {
 app.whenReady().then(() => {
   startSidecar();
   ipcMain.handle("rpc", (_e, method: string, params: unknown) => rpc(method, params));
+  ipcMain.handle("startup-context", () => ({
+    project: process.env.OMEGAT_PROJECT || null,
+    configDir: process.env.OMEGAT_CONFIG_DIR || app.getPath("userData"),
+    scriptsDir: process.env.OMEGAT_SCRIPTS_DIR || null,
+  }));
   ipcMain.handle("pick-dir", async () => {
     const r = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
     return r.canceled ? null : r.filePaths[0];
@@ -151,7 +160,7 @@ app.whenReady().then(() => {
   ipcMain.handle("menu-locale", (_e, locale: string) => {
     applyMenuLocale(typeof locale === "string" ? locale : "en");
   });
-  setLocale(detectLocale(app.getLocale()));
+  setLocale(detectLocale(process.env.OMEGAT_LOCALE || app.getLocale()));
   createWindow();
 });
 

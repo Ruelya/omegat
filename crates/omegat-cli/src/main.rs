@@ -5,7 +5,8 @@ use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_ipc::SearchParams;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Parser, Debug)]
 #[command(name = "omegat", version = omegat_ipc::APP_VERSION, about = "OmegaT computer-assisted translation")]
@@ -189,13 +190,15 @@ fn main() -> Result<()> {
         .as_ref()
         .filter(|dir| !dir.as_os_str().is_empty())
     {
-        std::env::set_var("OMEGAT_CONFIG_DIR", dir);
+        std::env::set_var("OMEGAT_CONFIG_DIR", expand_cli_path(dir));
     }
     if let Some(f) = &cli.config_file {
-        std::env::set_var("OMEGAT_CONFIG_FILE", f);
+        let path = expand_cli_path(f);
+        std::env::set_var("OMEGAT_CONFIG_FILE", &path);
+        apply_config_file(&path)?;
     }
     if let Some(b) = &cli.resource_bundle {
-        std::env::set_var("OMEGAT_RESOURCE_BUNDLE", b);
+        std::env::set_var("OMEGAT_RESOURCE_BUNDLE", expand_cli_path(b));
     }
     if cli.disable_location_save {
         std::env::set_var("OMEGAT_DISABLE_LOCATION_SAVE", "1");
@@ -253,16 +256,7 @@ fn main() -> Result<()> {
             if let Some(value) = alternate_filename_to {
                 std::env::set_var("OMEGAT_ALTERNATE_FILENAME_TO", value);
             }
-            if !quiet {
-                println!(
-                    "OmegaT {} rewrite — launch the Electron app (apps/desktop) or use `omegat translate`.",
-                    omegat_ipc::APP_VERSION
-                );
-            }
-            if let Some(p) = project.or(cli.project) {
-                println!("Project: {}", p.display());
-            }
-            Ok(())
+            launch_desktop(project.or(cli.project), quiet)
         }
         Commands::Translate {
             project,
@@ -426,6 +420,138 @@ fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn expand_cli_path(path: &Path) -> PathBuf {
+    PathBuf::from(omegat_core::file_util::expand_tilde_home_dir(
+        &path.to_string_lossy(),
+    ))
+}
+
+/// Apply Java `.properties` startup values that must exist before Electron
+/// starts. The full path remains in `OMEGAT_CONFIG_FILE` for diagnostics.
+fn apply_config_file(path: &Path) -> Result<()> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let mut language = None;
+    let mut country = None;
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=').or_else(|| line.split_once(':')) else {
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        match key {
+            "user.language" => language = Some(value.to_string()),
+            "user.country" => country = Some(value.to_string()),
+            "scripts_dir" if !value.is_empty() => {
+                std::env::set_var(
+                    "OMEGAT_SCRIPTS_DIR",
+                    omegat_core::file_util::expand_tilde_home_dir(value),
+                );
+            }
+            _ => {}
+        }
+    }
+    if let Some(mut locale) = language {
+        if let Some(country) = country.filter(|value| !value.is_empty()) {
+            locale.push('-');
+            locale.push_str(&country);
+        }
+        std::env::set_var("OMEGAT_LOCALE", locale);
+    }
+    Ok(())
+}
+
+fn effective_scripts_dir(config_dir: &Path, prefs: &Preferences) -> Result<PathBuf> {
+    let configured = std::env::var_os("OMEGAT_SCRIPTS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(&prefs.script_dir));
+    let configured = if configured.is_absolute() {
+        configured
+    } else {
+        config_dir.join(configured)
+    };
+    if let Some(valid) = omegat_core::cli_params::resolve_scripts_folder(Some(&configured)) {
+        return Ok(valid);
+    }
+    let default = omegat_core::cli_params::default_user_scripts_dir(config_dir);
+    std::fs::create_dir_all(&default)?;
+    Ok(default)
+}
+
+fn desktop_command() -> Result<(PathBuf, Vec<OsString>)> {
+    if let Some(bin) = std::env::var_os("OMEGAT_DESKTOP_BIN") {
+        return Ok((PathBuf::from(bin), Vec::new()));
+    }
+
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(parent) = current.parent() {
+            let names: &[&str] = if cfg!(windows) {
+                &["OmegaT.exe", "omegat-desktop.exe"]
+            } else {
+                &["OmegaT", "omegat-desktop"]
+            };
+            for name in names {
+                let candidate = parent.join(name);
+                if candidate.is_file() && candidate != current {
+                    return Ok((candidate, Vec::new()));
+                }
+            }
+        }
+    }
+
+    let desktop = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/desktop");
+    let electron = desktop.join(if cfg!(windows) {
+        "node_modules/.bin/electron.cmd"
+    } else {
+        "node_modules/.bin/electron"
+    });
+    if electron.is_file() {
+        return Ok((electron, vec![desktop.into_os_string()]));
+    }
+    Err(anyhow!(
+        "Electron launcher not found; set OMEGAT_DESKTOP_BIN or install apps/desktop dependencies"
+    ))
+}
+
+fn launch_desktop(project: Option<PathBuf>, quiet: bool) -> Result<()> {
+    let config_dir = default_config_dir();
+    let prefs = Preferences::load_or_default(&config_dir);
+    let scripts_dir = effective_scripts_dir(&config_dir, &prefs)?;
+    std::env::set_var("OMEGAT_CONFIG_DIR", &config_dir);
+    std::env::set_var("OMEGAT_SCRIPTS_DIR", &scripts_dir);
+    if let Some(project) = &project {
+        std::env::set_var("OMEGAT_PROJECT", project);
+    } else {
+        std::env::remove_var("OMEGAT_PROJECT");
+    }
+
+    if !quiet {
+        println!(
+            "OmegaT {} rewrite — launching Electron desktop.",
+            omegat_ipc::APP_VERSION
+        );
+    }
+    if let Some(project) = &project {
+        println!("Project: {}", project.display());
+    }
+    if std::env::var_os("OMEGAT_LAUNCH_DRY_RUN").is_some() {
+        return Ok(());
+    }
+
+    let (bin, args) = desktop_command()?;
+    Command::new(bin)
+        .args(args)
+        .env("OMEGAT_CONFIG_DIR", config_dir)
+        .env("OMEGAT_SCRIPTS_DIR", scripts_dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(Into::into)
 }
 
 fn normalize_empty_config_dir(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {

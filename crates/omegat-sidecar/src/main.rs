@@ -17,7 +17,20 @@ struct App {
 
 impl App {
     fn new() -> Self {
-        let prefs = Preferences::load_or_default(&default_config_dir());
+        let config_dir = default_config_dir();
+        let mut prefs = Preferences::load_or_default(&config_dir);
+        let scripts = std::env::var_os("OMEGAT_SCRIPTS_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(&prefs.script_dir));
+        let scripts = if scripts.is_absolute() {
+            scripts
+        } else {
+            config_dir.join(scripts)
+        };
+        let scripts = omegat_core::cli_params::resolve_scripts_folder(Some(&scripts))
+            .unwrap_or_else(|| omegat_core::cli_params::default_user_scripts_dir(&config_dir));
+        let _ = std::fs::create_dir_all(&scripts);
+        prefs.script_dir = scripts.to_string_lossy().into_owned();
         let mut plugins = PluginRegistry::new();
         plugins.load_default_dirs(&prefs.config_dir);
         Self {

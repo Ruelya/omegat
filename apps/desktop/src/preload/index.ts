@@ -2,6 +2,12 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("omegat", {
   rpc: (method: string, params?: unknown) => ipcRenderer.invoke("rpc", method, params ?? {}),
+  startup: () =>
+    ipcRenderer.invoke("startup-context") as Promise<{
+      project: string | null;
+      configDir: string;
+      scriptsDir: string | null;
+    }>,
   pickDir: () => ipcRenderer.invoke("pick-dir") as Promise<string | null>,
   pickFile: () => ipcRenderer.invoke("pick-file") as Promise<string | null>,
   pickFiles: () => ipcRenderer.invoke("pick-files") as Promise<string[] | null>,
