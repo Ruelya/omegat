@@ -74,7 +74,8 @@ pub fn compile_file_mask(mask: &str) -> String {
 }
 
 pub fn file_mask_matches(pattern: &str, path: &str) -> bool {
-    let re = Regex::new(&format!("^{}$", compile_file_mask(pattern))).unwrap_or_else(|_| Regex::new("$^").unwrap());
+    let re = Regex::new(&format!("^{}$", compile_file_mask(pattern)))
+        .unwrap_or_else(|_| Regex::new("$^").unwrap());
     re.is_match(path)
 }
 
@@ -99,7 +100,11 @@ pub fn normalize_no_end_separator(path: &str) -> Option<String> {
         parts.push(seg);
     }
     if parts.is_empty() {
-        return if absolute { Some("/".into()) } else { Some(String::new()) };
+        return if absolute {
+            Some("/".into())
+        } else {
+            Some(String::new())
+        };
     }
     let mut out = parts.join("/");
     if absolute {
@@ -167,7 +172,10 @@ pub fn get_eol_file(path: &Path) -> Option<String> {
 }
 
 pub fn get_backup_filename(original: &Path, last_modified_millis: i64) -> String {
-    let name = original.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let name = original
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
     let secs = last_modified_millis / 1000;
     let dt = chrono_like(secs);
     format!("{name}.{dt}.bak")
@@ -208,9 +216,9 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
 pub fn compute_relative_path(root: &Path, file: &Path) -> std::io::Result<String> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let file = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
-    let rel = file.strip_prefix(&root).map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "not under root")
-    })?;
+    let rel = file
+        .strip_prefix(&root)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "not under root"))?;
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
@@ -236,8 +244,25 @@ pub fn build_file_list(root: &Path, recursive: bool) -> std::io::Result<Vec<Path
     Ok(out)
 }
 
-/// Java `FileUtil.copyFilesTo` (replace-all when `overwrite` is true).
-pub fn copy_files_to(target: &Path, sources: &[PathBuf], overwrite: bool) -> std::io::Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyCollision {
+    Keep,
+    Replace,
+    Cancel,
+}
+
+/// Java `FileUtil.copyFilesTo`, including its preflight collision callback.
+///
+/// Decisions are collected before any copy starts, so cancellation leaves the
+/// destination untouched.
+pub fn copy_files_to_with<F>(
+    target: &Path,
+    sources: &[PathBuf],
+    mut collision: F,
+) -> std::io::Result<()>
+where
+    F: FnMut(&Path, usize, usize) -> CopyCollision,
+{
     if target.is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -245,20 +270,51 @@ pub fn copy_files_to(target: &Path, sources: &[PathBuf], overwrite: bool) -> std
         ));
     }
     std::fs::create_dir_all(target)?;
+    let mut collisions = Vec::new();
     for src in sources {
         let name = src.file_name().unwrap_or_default();
         let dest = target.join(name);
-        copy_one(src, &dest, overwrite)?;
+        if dest.exists() {
+            collisions.push((src, dest));
+        } else {
+            copy_one(src, &dest, true)?;
+        }
+    }
+
+    let total = collisions.len();
+    let mut replace = Vec::with_capacity(total);
+    for (index, (src, dest)) in collisions.iter().enumerate() {
+        let decision = collision(dest, index, total);
+        if decision == CopyCollision::Cancel {
+            return Ok(());
+        }
+        if decision == CopyCollision::Replace {
+            replace.push((*src, dest));
+        }
+    }
+    for (src, dest) in replace {
+        copy_one(src, dest, true)?;
     }
     Ok(())
 }
 
-fn copy_one(src: &Path, dest: &Path, overwrite: bool) -> std::io::Result<()> {
+/// Replace-all/keep-all convenience wrapper for non-interactive callers.
+pub fn copy_files_to(target: &Path, sources: &[PathBuf], overwrite: bool) -> std::io::Result<()> {
+    copy_files_to_with(target, sources, |_, _, _| {
+        if overwrite {
+            CopyCollision::Replace
+        } else {
+            CopyCollision::Keep
+        }
+    })
+}
+
+fn copy_one(src: &Path, dest: &Path, replace: bool) -> std::io::Result<()> {
     if src.is_dir() {
-        if dest.exists() && !overwrite {
+        if dest.exists() && !replace {
             return Ok(());
         }
-        if dest.exists() && overwrite {
+        if dest.exists() && replace {
             delete_tree(dest)?;
         }
         std::fs::create_dir_all(dest)?;
@@ -268,7 +324,7 @@ fn copy_one(src: &Path, dest: &Path, overwrite: bool) -> std::io::Result<()> {
         }
         return Ok(());
     }
-    if dest.exists() && !overwrite {
+    if dest.exists() && !replace {
         return Ok(());
     }
     if let Some(p) = dest.parent() {
@@ -316,15 +372,28 @@ mod tests {
     #[test]
     fn unique_names_match_java() {
         assert_eq!(
-            get_unique_names(&["/foo/foo.txt".into(), "/foo/bar.txt".into(), "/bar/baz.txt".into()]),
+            get_unique_names(&[
+                "/foo/foo.txt".into(),
+                "/foo/bar.txt".into(),
+                "/bar/baz.txt".into()
+            ]),
             vec!["foo.txt", "bar.txt", "baz.txt"]
         );
         assert_eq!(
-            get_unique_names(&["/foo/foo.txt".into(), "/foo/bar.txt".into(), "/bar/bar.txt".into()]),
+            get_unique_names(&[
+                "/foo/foo.txt".into(),
+                "/foo/bar.txt".into(),
+                "/bar/bar.txt".into()
+            ]),
             vec!["foo.txt", "foo/bar.txt", "bar/bar.txt"]
         );
         assert_eq!(
-            get_unique_names(&["foo/".into(), "bar/boo/../baz".into(), "/buz/baz".into(), "/baz//baz".into()]),
+            get_unique_names(&[
+                "foo/".into(),
+                "bar/boo/../baz".into(),
+                "/buz/baz".into(),
+                "/baz//baz".into()
+            ]),
             vec!["foo", "bar/baz", "buz/baz", "baz/baz"]
         );
         assert_eq!(
@@ -335,7 +404,10 @@ mod tests {
 
     #[test]
     fn compile_mask_java_sample() {
-        assert_eq!(compile_file_mask("Ab1-&*/**"), r"(?:|.*/)Ab1\-\&[^/]*(?:|/.*)");
+        assert_eq!(
+            compile_file_mask("Ab1-&*/**"),
+            r"(?:|.*/)Ab1\-\&[^/]*(?:|/.*)"
+        );
         assert!(file_mask_matches("*.txt", "/foo.txt"));
         assert!(file_mask_matches("*.txt", "/bar/foo.txt"));
         assert!(!file_mask_matches("*.txt", "/foo.txty"));

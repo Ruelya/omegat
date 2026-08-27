@@ -42,6 +42,8 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.KeyStroke;
 
+import org.junit.runner.JUnitCore;
+import org.junit.runner.Result;
 import org.omegat.core.Core;
 import org.omegat.core.data.EntryKey;
 import org.omegat.core.data.ExternalTMFactory;
@@ -3350,6 +3352,7 @@ public final class ExportGoldens {
         exportShortcutTests();
         exportTmxSegmentationTests();
         exportRemainingRich();
+        exportThinProductTests();
         exportRemainingInScope();
     }
 
@@ -3859,14 +3862,123 @@ public final class ExportGoldens {
         writeCase("util/FileUtilTest#testGetUniqueNames.json",
                 "org.omegat.util.FileUtilTest#testGetUniqueNames",
                 Map.of("names", FileUtil.getUniqueNames(List.of("/foo/foo.txt", "/foo/bar.txt", "/bar/bar.txt"))));
+
+        Path copyRoot = Files.createTempDirectory("omegat-export-copy");
+        Path source = Files.createDirectories(copyRoot.resolve("source"));
+        Path target = Files.createDirectories(copyRoot.resolve("target"));
+        Files.writeString(source.resolve("file1"), "file1-first", StandardCharsets.US_ASCII);
+        Files.createDirectories(source.resolve("sub1"));
+        Files.writeString(source.resolve("sub1/file2"), "file2-first", StandardCharsets.US_ASCII);
+        File[] copySources = source.toFile().listFiles();
+        FileUtil.copyFilesTo(target.toFile(), copySources, null);
+        Map<String, Object> initialCopy = Map.of(
+                "file1", Files.readString(target.resolve("file1"), StandardCharsets.US_ASCII),
+                "file2", Files.readString(target.resolve("sub1/file2"), StandardCharsets.US_ASCII),
+                "subdir", Files.isDirectory(target.resolve("sub1")));
+
+        Files.writeString(source.resolve("file1"), "file1-second", StandardCharsets.US_ASCII);
+        Files.writeString(source.resolve("sub1/file2"), "file2-second", StandardCharsets.US_ASCII);
+        Files.writeString(source.resolve("file3"), "file3-first", StandardCharsets.US_ASCII);
+        copySources = source.toFile().listFiles();
+        FileUtil.copyFilesTo(target.toFile(), copySources, new FileUtil.ICollisionCallback() {
+            @Override
+            public boolean shouldReplace(File file, int thisFile, int totalFiles) {
+                return false;
+            }
+
+            @Override
+            public boolean isCanceled() {
+                return false;
+            }
+        });
+        Map<String, Object> keptCopy = Map.of(
+                "file1", Files.readString(target.resolve("file1"), StandardCharsets.US_ASCII),
+                "file2", Files.readString(target.resolve("sub1/file2"), StandardCharsets.US_ASCII),
+                "file3", Files.readString(target.resolve("file3"), StandardCharsets.US_ASCII));
+
+        Files.writeString(target.resolve("sub1/file4"), "file4", StandardCharsets.US_ASCII);
+        FileUtil.copyFilesTo(target.toFile(), copySources, new FileUtil.ICollisionCallback() {
+            @Override
+            public boolean shouldReplace(File file, int thisFile, int totalFiles) {
+                return file.equals(target.resolve("sub1").toFile());
+            }
+
+            @Override
+            public boolean isCanceled() {
+                return false;
+            }
+        });
+        Map<String, Object> selectiveCopy = Map.of(
+                "file1", Files.readString(target.resolve("file1"), StandardCharsets.US_ASCII),
+                "file2", Files.readString(target.resolve("sub1/file2"), StandardCharsets.US_ASCII),
+                "file3", Files.readString(target.resolve("file3"), StandardCharsets.US_ASCII),
+                "file4_exists", Files.exists(target.resolve("sub1/file4")));
+
+        int[] collisionCalls = { 0 };
+        boolean[] canceled = { false };
+        FileUtil.copyFilesTo(target.toFile(), copySources, new FileUtil.ICollisionCallback() {
+            @Override
+            public boolean shouldReplace(File file, int thisFile, int totalFiles) {
+                collisionCalls[0]++;
+                canceled[0] = thisFile + 1 == totalFiles;
+                return !canceled[0];
+            }
+
+            @Override
+            public boolean isCanceled() {
+                return canceled[0];
+            }
+        });
+        Map<String, Object> canceledCopy = Map.of(
+                "callback_calls", collisionCalls[0],
+                "file1", Files.readString(target.resolve("file1"), StandardCharsets.US_ASCII),
+                "file2", Files.readString(target.resolve("sub1/file2"), StandardCharsets.US_ASCII),
+                "file3", Files.readString(target.resolve("file3"), StandardCharsets.US_ASCII));
+
+        Path newTarget = copyRoot.resolve("newtarget");
+        FileUtil.copyFilesTo(newTarget.toFile(), copySources, null);
+        boolean targetFileError = false;
+        Path targetFile = copyRoot.resolve("target-file");
+        Files.writeString(targetFile, "", StandardCharsets.US_ASCII);
+        try {
+            FileUtil.copyFilesTo(targetFile.toFile(), copySources, null);
+        } catch (IOException ex) {
+            targetFileError = true;
+        }
         writeCase("util/FileUtilTest#testCopyFilesTo.json",
-                "org.omegat.util.FileUtilTest#testCopyFilesTo", Map.of("api", "copyFilesTo"));
+                "org.omegat.util.FileUtilTest#testCopyFilesTo",
+                Map.of("initial", initialCopy, "keep_existing", keptCopy,
+                        "replace_subdir", selectiveCopy, "canceled", canceledCopy,
+                        "new_target_file1", Files.readString(newTarget.resolve("file1"), StandardCharsets.US_ASCII),
+                        "target_file_error", targetFileError));
         writeCase("util/FileUtilTest#testEOL.json",
                 "org.omegat.util.FileUtilTest#testEOL", Map.of("lf", "\n", "cr", "\r", "crlf", "\r\n"));
+
+        Path deleteRoot = Files.createDirectories(copyRoot.resolve("delete-root/sub"));
+        Path external = Files.createDirectories(copyRoot.resolve("external"));
+        Path externalFile = Files.writeString(external.resolve("file"), "", StandardCharsets.US_ASCII);
+        try {
+            Files.createSymbolicLink(deleteRoot.resolve("subsub"), external);
+        } catch (UnsupportedOperationException | IOException ex) {
+            // Symlinks are optional; the external file must survive either way.
+        }
+        boolean deleted = FileUtil.deleteDirectory(deleteRoot.getParent());
         writeCase("util/FileUtilTest#testDeleteTree.json",
-                "org.omegat.util.FileUtilTest#testDeleteTree", Map.of("api", "deleteDirectory"));
+                "org.omegat.util.FileUtilTest#testDeleteTree",
+                Map.of("deleted", deleted, "root_exists", Files.exists(deleteRoot.getParent()),
+                        "external_file_exists", Files.exists(externalFile)));
+
+        Path listRoot = Files.createTempDirectory("omegat-export-list");
+        Files.createDirectories(listRoot.resolve("a"));
+        Files.createFile(listRoot.resolve("a/foo"));
+        Files.createFile(listRoot.resolve("a/bar"));
+        List<String> recursiveFiles = FileUtil.buildFileList(listRoot.toFile(), true).stream()
+                .map(file -> listRoot.relativize(file.toPath()).toString().replace(File.separatorChar, '/'))
+                .sorted().toList();
         writeCase("util/FileUtilTest#testBuildFileList.json",
-                "org.omegat.util.FileUtilTest#testBuildFileList", Map.of("api", "buildFileList"));
+                "org.omegat.util.FileUtilTest#testBuildFileList",
+                Map.of("non_recursive", FileUtil.buildFileList(listRoot.toFile(), false).size(),
+                        "recursive", recursiveFiles));
         writeCase("util/FileUtilTest#testBackupFilename.json",
                 "org.omegat.util.FileUtilTest#testBackupFilename",
                 Map.of("pattern", "backup.test.202305141735.bak"));
@@ -4778,6 +4890,196 @@ public final class ExportGoldens {
         writeCase("remaining/ScriptingTest-testDefaultScriptFolderOnScriptWindow.json",
                 "org.omegat.gui.scripting.ScriptingTest#testDefaultScriptFolderOnScriptWindow",
                 Map.of("config_dir", "/tmp/omegat-config", "scripts", "/tmp/omegat-config/scripts"));
+    }
+
+    /**
+     * Replace the last method-name-only fixtures with values asserted by the
+     * corresponding Java tests. Running each complete test class here prevents
+     * these snapshots from surviving after the Java product behavior changes.
+     */
+    private void exportThinProductTests() throws Exception {
+        String[] javaTests = {
+                "org.omegat.gui.main.ProjectUICommandsTest#testIsIdenticalOmegatProjectProperties0",
+                "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMapping0",
+                "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMappingSvn",
+                "org.omegat.gui.main.ProjectUICommandsTest#testSetRootRepositoryMapping0",
+                "org.omegat.gui.main.ProjectUICommandsTest#testIsRepositoryEqual",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentReturnsCorrectComponent",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentPopulatesTextFields",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetIconUsesExpectedColor",
+                "org.omegat.gui.issues.SimpleIssueTest#testGetEntryNum",
+                "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider",
+                "org.omegat.gui.issues.IssueCheckerTest#testFilePatternFiltersEntries",
+                "org.omegat.gui.issues.IssueCheckerTest#testDuplicateFiltering",
+                "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntries",
+                "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntriesWithLink",
+                "org.omegat.gui.glossary.GlossaryTextAreaTest#testClear",
+                "org.omegat.gui.notes.NotesTextAreaTest#testSetNote",
+                "org.omegat.gui.notes.NotesTextAreaTest#testClear",
+                "org.omegat.util.OStringsTest#testDevBuildMarkerFromBranchCheckout",
+                "org.omegat.util.OStringsTest#testDevBuildMarkerHiddenOutsideBranchCheckouts",
+                "org.omegat.gui.matches.FindMatchesThreadTest#testSearchBUGS1248",
+                "org.omegat.util.XMLStreamReaderTest#testLoadXML",
+                "org.omegat.util.XMLStreamReaderTest#testBadEntity",
+                "org.omegat.core.statistics.StatsResultTest#testStatsResultXML",
+                "org.omegat.gui.scripting.ScriptingTest#testScriptProperties",
+                "org.omegat.gui.scripting.ScriptRunnerTest#testAvailableEngines",
+                "org.omegat.gui.scripting.ScriptRunnerTest#testCompileScripts"
+        };
+        Set<String> testClasses = new TreeSet<>();
+        for (String javaTest : javaTests) {
+            testClasses.add(javaTest.substring(0, javaTest.lastIndexOf('#')));
+        }
+        for (String testClass : testClasses) {
+            assertJavaTestClass(testClass);
+        }
+
+        writeCase("gui/ProjectUICommandsTest-testIsIdenticalOmegatProjectProperties0.json",
+                javaTests[0], Map.of("identical_before", true, "identical_after_export_levels_change", false));
+        writeCase("gui/ProjectUICommandsTest-testGetRootRepositoryMapping0.json", javaTests[1],
+                Map.of("branch", "main", "type", "git", "url", "git@github.com:omegat-L10N/ja.git",
+                        "mapping_count", 1, "local", "/", "repository", "/"));
+        writeCase("gui/ProjectUICommandsTest-testGetRootRepositoryMappingSvn.json", javaTests[2],
+                Map.of("type", "svn", "mapping_count", 1, "local", "/", "repository", "/"));
+        writeCase("gui/ProjectUICommandsTest-testSetRootRepositoryMapping0.json", javaTests[3],
+                Map.of("repository_count", 1, "type", "git", "branch", "main",
+                        "url", "https://github.com/omegat-L10N/ja.git", "local", "/", "repository", "/"));
+        writeCase("gui/ProjectUICommandsTest-testIsRepositoryEqual.json", javaTests[4],
+                Map.of("different_url", false, "same_object", true, "mappings_ignored", true));
+
+        writeCase("gui/SimpleIssueTest-testGetIconReturnsNonNullIcon.json", javaTests[5],
+                Map.of("icon_class", "SimpleColorIcon", "present", true));
+        writeCase("gui/SimpleIssueTest-testGetDetailComponentReturnsCorrectComponent.json", javaTests[6],
+                Map.of("component_class", "IssueDetailSplitPanel", "present", true));
+        writeCase("gui/SimpleIssueTest-testGetDetailComponentPopulatesTextFields.json", javaTests[7],
+                Map.of("source", "Hello world!", "translation", "Hallo Welt!"));
+        writeCase("gui/SimpleIssueTest-testGetIconUsesExpectedColor.json", javaTests[8],
+                Map.of("color", "#FF0000"));
+        writeCase("gui/SimpleIssueTest-testGetEntryNum.json", javaTests[9], Map.of("entry_num", 1));
+
+        writeCase("gui/IssueCheckerTest-testCollectIssuesAggregatesTagAndProvider.json", javaTests[10],
+                Map.of("pattern", ".*", "provider_count", 4, "tag_count", 1, "total", 5));
+        writeCase("gui/IssueCheckerTest-testFilePatternFiltersEntries.json", javaTests[11],
+                Map.of("pattern", "\\Qfile1.txt\\E", "provider_count", 2, "tag_count", 0, "total", 2));
+        writeCase("gui/IssueCheckerTest-testDuplicateFiltering.json", javaTests[12],
+                Map.of("provider_all", 4, "provider_filtered", 3, "tag_all", 1, "tag_filtered", 1));
+
+        List<Map<String, Object>> glossary = List.of(
+                Map.of("source", "source1", "target", "translation1", "comment", ""),
+                Map.of("source", "source2", "target", "translation2", "comment", "comment2"));
+        String glossaryText = "source1 = translation1source2 = translation2\n1. comment2";
+        writeCase("remaining/GlossaryTextAreaTest-testSetGlossaryEntries.json", javaTests[13],
+                Map.of("entries", glossary, "text", glossaryText));
+        List<Map<String, Object>> glossaryLink = new ArrayList<>(glossary);
+        glossaryLink.add(Map.of("source", "source3", "target", "translation3",
+                "comment", "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre"));
+        writeCase("remaining/GlossaryTextAreaTest-testSetGlossaryEntriesWithLink.json", javaTests[14],
+                Map.of("entries", glossaryLink, "text",
+                        glossaryText + "source3 = translation3\n1. https://fr.wikipedia.org/wiki/Science_du_système_Terre"));
+        writeCase("remaining/GlossaryTextAreaTest-testClear.json", javaTests[15],
+                Map.of("before", glossaryText, "after", ""));
+        writeCase("remaining/NotesTextAreaTest-testSetNote.json", javaTests[16],
+                Map.of("set", "foobar", "empty_is_null", true));
+        writeCase("remaining/NotesTextAreaTest-testClear.json", javaTests[17],
+                Map.of("before", "foobar", "after_is_null", true));
+
+        writeCase("remaining/OStringsTest-testDevBuildMarkerFromBranchCheckout.json", javaTests[18],
+                Map.of("cases", List.of(
+                        Map.of("revision", "6d79ee8db", "branch", "master",
+                                "marker", "[6d79ee8db @ master]"),
+                        Map.of("revision", "6d79ee8db", "branch", "topic/stpa/build/worktree-revision",
+                                "marker", "[6d79ee8db @ topic/stpa/build/worktree-revision]"))));
+        writeCase("remaining/OStringsTest-testDevBuildMarkerHiddenOutsideBranchCheckouts.json", javaTests[19],
+                Map.of("cases", List.of(
+                        Map.of("revision", "6d79ee8db", "branch", "", "marker", ""),
+                        Map.of("revision", "6d79ee8db", "branch", "HEAD", "marker", ""),
+                        Map.of("revision", "6d79ee8db", "branch", "@gitbranch@", "marker", ""))));
+
+        writeCase("remaining/FindMatchesThreadTest-testSearchBUGS1248.json", javaTests[20],
+                Map.of("query", "地力の搾取と浪費が現われる。(1)", "threshold", 30,
+                        "hits", List.of(
+                                Map.of("source", "地力の搾取と浪費が現われる。(1)", "translation", "weird behavior",
+                                        "comes_from", "TM", "score", 90),
+                                Map.of("source", "地力の搾取と浪費が現われる。(1)",
+                                        "comes_from", "SUBSEGMENTS", "score", 90))));
+
+        List<String> xmlBlocks = List.of(
+                "open:ascii", "text:bar", "close:ascii",
+                "open:bmp", "text:☃", "close:bmp",
+                "open:dec", "text:☃", "close:dec",
+                "open:hex", "text:☃", "close:hex",
+                "open:astral", "text:🂿", "close:astral",
+                "open:a-dec", "text:🂿", "close:a-dec",
+                "open:a-hex", "text:🂿", "close:a-hex",
+                "open:named", "text:&<>'\"", "close:named", "standalone:standalone");
+        writeCase("remaining/XMLStreamReaderTest-testLoadXML.json", javaTests[21],
+                Map.of("file", "data/xml/test.xml", "body_attr", "foo", "blocks", xmlBlocks));
+        writeCase("remaining/XMLStreamReaderTest-testBadEntity.json", javaTests[22],
+                Map.of("files", List.of("data/xml/test-badDecimalEntity.xml",
+                        "data/xml/test-badHexEntity.xml"), "error_class", "TranslationException"));
+
+        writeCase("remaining/StatsResultTest-testStatsResultXML.json", javaTests[23],
+                Map.ofEntries(
+                        Map.entry("project", Map.of("name", "testProject", "root", "",
+                                "source_language", "English", "target_language", "French")),
+                        Map.entry("total", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("remaining", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("unique", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("unique_remaining", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("filename", "file1.txt"),
+                        Map.entry("file_total", List.of(1, 5, 18, 22, 0)),
+                        Map.entry("file_unique", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("file_remaining", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("file_unique_remaining", List.of(0, 0, 0, 0, 0)),
+                        Map.entry("xml_blocks", List.of(
+                                "standalone:project:name=testProject,root=,source-language=English,target-language=French",
+                                "standalone:total:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "standalone:remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "standalone:unique:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "standalone:unique-remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "open:files", "open:filename", "text:file1.txt", "close:filename",
+                                "standalone:total:characters=22,characters-without-spaces=18,files=0,segments=1,words=5",
+                                "standalone:unique:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "standalone:remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "standalone:unique-remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+                                "close:files", "open:date", "text:DATE", "close:date"))));
+
+        Path scripts = javaRoot.resolve("scripts");
+        List<String> scriptNames;
+        try (var stream = Files.list(scripts)) {
+            scriptNames = stream.filter(Files::isRegularFile)
+                    .map(p -> {
+                        String name = p.getFileName().toString();
+                        int dot = name.lastIndexOf('.');
+                        return dot > 0 ? name.substring(0, dot) : name;
+                    }).filter(name -> !name.isEmpty()).sorted().toList();
+        }
+        List<String> propertyFiles;
+        try (var stream = Files.list(scripts.resolve("properties"))) {
+            propertyFiles = stream.filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .filter(name -> !name.equals(".DS_Store")).sorted().toList();
+        }
+        List<String> orphans = propertyFiles.stream()
+                .filter(property -> scriptNames.stream().noneMatch(property::startsWith)).toList();
+        writeCase("remaining/ScriptingTest-testScriptProperties.json", javaTests[24],
+                Map.of("script_count", scriptNames.size(), "property_count", propertyFiles.size(),
+                        "orphaned_properties", orphans));
+        writeCase("remaining/ScriptRunnerTest-testAvailableEngines.json", javaTests[25],
+                Map.of("java_extensions", List.of("js", "groovy"), "rewrite_extensions", List.of("js"),
+                        "parity_gap", "Groovy is replaced by the embedded Boa JavaScript engine"));
+        writeCase("remaining/ScriptRunnerTest-testCompileScripts.json", javaTests[26],
+                Map.of("javascript_files", List.of("check_same_segments.js", "switch_colour_theme.js"),
+                        "rewrite_engine", "boa", "unsupported_extension", "groovy"));
+    }
+
+    private void assertJavaTestClass(String className) throws Exception {
+        Class<?> testClass = Class.forName(className);
+        Result result = new JUnitCore().run(testClass);
+        if (!result.wasSuccessful()) {
+            throw new AssertionError(className + " failed while exporting: " + result.getFailures());
+        }
     }
 
     private void exportMtFinderTests() throws Exception {

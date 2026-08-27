@@ -38,9 +38,7 @@ static OMEGAT_TAG: once_cell::sync::Lazy<regex::Regex> =
 pub fn number_of_words(text: &str) -> usize {
     crate::tokenize::engine::word_iterator_surfaces(text)
         .into_iter()
-        .filter(|s| {
-            !OMEGAT_TAG.is_match(s.text) && s.text.chars().any(|c| c.is_alphanumeric())
-        })
+        .filter(|s| !OMEGAT_TAG.is_match(s.text) && s.text.chars().any(|c| c.is_alphanumeric()))
         .count()
 }
 
@@ -99,10 +97,12 @@ pub fn compute_with_memory(
         target_chars += e.translation.chars().count();
         add_count(&mut total, w, nosp, chars);
 
-        let fd = per_file.entry(e.file.clone()).or_insert_with(|| FileStatDto {
-            filename: e.file.clone(),
-            ..Default::default()
-        });
+        let fd = per_file
+            .entry(e.file.clone())
+            .or_insert_with(|| FileStatDto {
+                filename: e.file.clone(),
+                ..Default::default()
+            });
         add_count(&mut fd.total, w, nosp, chars);
 
         let first_unique = unique_src.insert(e.source.clone());
@@ -215,7 +215,12 @@ impl MatchRow {
 }
 
 /// Java `CalcMatchStatistics.calcTotal` bins (no per-file other-file row).
-pub fn calc_match_bins(sources: &[String], translated: &[bool], memory: &[TmxEntry], lang: &str) -> Vec<MatchRow> {
+pub fn calc_match_bins(
+    sources: &[String],
+    translated: &[bool],
+    memory: &[TmxEntry],
+    lang: &str,
+) -> Vec<MatchRow> {
     calc_match_bins_ex(
         sources,
         translated,
@@ -255,7 +260,15 @@ pub fn calc_match_bins_ex(
         rows[7].add(w, nosp, chars);
     }
     for (src, w, nosp, chars) in pending {
-        let best = calc_max_similarity(&src, memory, extra, files, tokenizer, source_lang, target_lang);
+        let best = calc_max_similarity(
+            &src,
+            memory,
+            extra,
+            files,
+            tokenizer,
+            source_lang,
+            target_lang,
+        );
         let idx = match bin_for_percent(best) {
             "exact" => 1,
             "fuzzy_95" => 2,
@@ -410,7 +423,10 @@ pub fn render_xml(stats: &StatsDto) -> String {
     write_count(&mut out, "unique-remaining", &stats.unique_remaining);
     out.push_str("  <files>\n");
     for f in &stats.file_stats {
-        out.push_str(&format!("    <file filename=\"{}\">\n", xml_esc(&f.filename)));
+        out.push_str(&format!(
+            "    <file filename=\"{}\">\n",
+            xml_esc(&f.filename)
+        ));
         write_count(&mut out, "total", &f.total);
         write_count(&mut out, "remaining", &f.remaining);
         write_count(&mut out, "unique", &f.unique);
@@ -418,6 +434,68 @@ pub fn render_xml(stats: &StatsDto) -> String {
         out.push_str("    </file>\n");
     }
     out.push_str("  </files>\n</omegat-stats>\n");
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatsResultMetadata {
+    pub project_name: String,
+    pub project_root: String,
+    pub source_language: String,
+    pub target_language: String,
+}
+
+/// Java `StatisticsXmlWriter` schema, with an explicit date so callers and
+/// golden tests do not depend on wall-clock time.
+pub fn render_stats_result_xml(
+    stats: &StatsDto,
+    metadata: &StatsResultMetadata,
+    date: &str,
+) -> String {
+    fn attrs(count: &StatCountDto) -> String {
+        format!(
+            "segments=\"{}\" words=\"{}\" characters-without-spaces=\"{}\" characters=\"{}\" files=\"{}\"",
+            count.segments,
+            count.words,
+            count.characters_without_spaces,
+            count.characters,
+            count.files
+        )
+    }
+
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<omegat-stats>\n");
+    out.push_str(&format!(
+        "  <project name=\"{}\" root=\"{}\" source-language=\"{}\" target-language=\"{}\"/>\n",
+        xml_esc(&metadata.project_name),
+        xml_esc(&metadata.project_root),
+        xml_esc(&metadata.source_language),
+        xml_esc(&metadata.target_language)
+    ));
+    out.push_str(&format!("  <total {}/>\n", attrs(&stats.total)));
+    out.push_str(&format!("  <remaining {}/>\n", attrs(&stats.remaining)));
+    out.push_str(&format!("  <unique {}/>\n", attrs(&stats.unique)));
+    out.push_str(&format!(
+        "  <unique-remaining {}/>\n",
+        attrs(&stats.unique_remaining)
+    ));
+    out.push_str("  <files>\n");
+    for file in &stats.file_stats {
+        out.push_str(&format!(
+            "    <filename>{}</filename>\n",
+            xml_text_esc(&file.filename)
+        ));
+        out.push_str(&format!("    <total {}/>\n", attrs(&file.total)));
+        out.push_str(&format!("    <unique {}/>\n", attrs(&file.unique)));
+        out.push_str(&format!("    <remaining {}/>\n", attrs(&file.remaining)));
+        out.push_str(&format!(
+            "    <unique-remaining {}/>\n",
+            attrs(&file.unique_remaining)
+        ));
+    }
+    out.push_str(&format!(
+        "  </files>\n  <date>{}</date>\n</omegat-stats>\n",
+        xml_text_esc(date)
+    ));
     out
 }
 
@@ -433,6 +511,10 @@ fn xml_esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('"', "&quot;")
+}
+
+fn xml_text_esc(s: &str) -> String {
+    xml_esc(s).replace('>', "&gt;")
 }
 
 #[cfg(test)]

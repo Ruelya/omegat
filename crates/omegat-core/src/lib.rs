@@ -30,6 +30,7 @@ pub mod matches_text;
 pub mod matching;
 pub mod mixed_eol;
 pub mod mt;
+pub mod ostrings;
 pub mod pattern_consts;
 pub mod prefs;
 pub mod properties;
@@ -50,6 +51,7 @@ pub mod tmx;
 pub mod tokenize;
 pub mod version;
 pub mod wiki;
+pub mod xml_stream;
 
 pub use error::{CoreError, Result};
 pub use prefs::Preferences;

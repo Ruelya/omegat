@@ -1,9 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon",
-  "method": "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon",
+  "icon_class": "SimpleColorIcon",
+  "present": true,
   "keys": [
     "org.omegat.gui.issues.SimpleIssueTest#testGetIconReturnsNonNullIcon"
-  ],
-  "icon": true
+  ]
 }

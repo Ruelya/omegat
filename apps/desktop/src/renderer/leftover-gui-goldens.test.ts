@@ -4,6 +4,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { JAVA_MENU_ACTIONS } from "./menus/actions";
 import { changeCase, removeDirectionChars, replaceGlossaryEntries } from "./editor/EditorUtils";
+import { NotesDocument, renderGlossaryText } from "./lib/dock-models";
+import {
+  projectPropertiesIdentical,
+  repositoryEquals,
+  rootRepositoryMapping,
+  setRootRepositoryMapping,
+} from "./lib/project-ui";
 import { SEARCH_EXPRESSION_TYPES } from "./search/SearchWindow";
 import {
   bindInputShortcuts,
@@ -87,6 +94,107 @@ describe("leftover GUI Java *Test goldens", () => {
     const multi = [{ source: "snowman party", target: "sneeuwpop parti" }, ...entries];
     expect(replaceGlossaryEntries(g.multi_src, multi)).toBe(g.multi_out);
     expect(replaceGlossaryEntries(g.final_src, multi)).toBe(g.final_out);
+  });
+
+  it("GlossaryTextAreaTest and NotesTextAreaTest use dock product models", () => {
+    const set = load("remaining/GlossaryTextAreaTest-testSetGlossaryEntries.json");
+    expect(renderGlossaryText(set.entries)).toBe(set.text);
+    const linked = load("remaining/GlossaryTextAreaTest-testSetGlossaryEntriesWithLink.json");
+    expect(renderGlossaryText(linked.entries)).toBe(linked.text);
+    const clear = load("remaining/GlossaryTextAreaTest-testClear.json");
+    expect(renderGlossaryText(set.entries)).toBe(clear.before);
+    expect(renderGlossaryText([])).toBe(clear.after);
+
+    const notes = new NotesDocument();
+    const note = load("remaining/NotesTextAreaTest-testSetNote.json");
+    notes.set(note.set);
+    expect(notes.get()).toBe(note.set);
+    notes.set("");
+    expect(notes.get() === null).toBe(note.empty_is_null);
+    const noteClear = load("remaining/NotesTextAreaTest-testClear.json");
+    notes.set(noteClear.before);
+    notes.clear();
+    expect(notes.get() === null).toBe(noteClear.after_is_null);
+  });
+
+  it("ProjectUICommandsTest calls repository editor product helpers", () => {
+    const root = {
+      repo_type: "git",
+      url: "git@github.com:omegat-L10N/ja.git",
+      branch: "main",
+      mappings: [{ local: "/", repository: "/", includes: [], excludes: [] }],
+    };
+    const props = {
+      root: "/tmp/project",
+      source_lang: "en",
+      target_lang: "ja",
+      sentence_seg: true,
+      export_tm_levels: "omegat level1 level2",
+      has_repositories: true,
+      repositories: [root],
+    };
+    const same = structuredClone(props);
+    const identity = load("gui/ProjectUICommandsTest-testIsIdenticalOmegatProjectProperties0.json");
+    expect(projectPropertiesIdentical(props, same)).toBe(identity.identical_before);
+    same.export_tm_levels = "";
+    expect(projectPropertiesIdentical(props, same)).toBe(identity.identical_after_export_levels_change);
+
+    const found = rootRepositoryMapping([root]);
+    const get = load("gui/ProjectUICommandsTest-testGetRootRepositoryMapping0.json");
+    expect({
+      branch: found?.branch,
+      type: found?.repo_type,
+      url: found?.url,
+      mapping_count: found?.mappings.length,
+      local: found?.mappings[0]?.local,
+      repository: found?.mappings[0]?.repository,
+    }).toEqual({
+      branch: get.branch,
+      type: get.type,
+      url: get.url,
+      mapping_count: get.mapping_count,
+      local: get.local,
+      repository: get.repository,
+    });
+
+    const svn = { ...root, repo_type: "svn" };
+    const svnGolden = load("gui/ProjectUICommandsTest-testGetRootRepositoryMappingSvn.json");
+    const svnRoot = rootRepositoryMapping([svn]);
+    expect({
+      type: svnRoot?.repo_type,
+      mapping_count: svnRoot?.mappings.length,
+      local: svnRoot?.mappings[0]?.local,
+      repository: svnRoot?.mappings[0]?.repository,
+    }).toEqual({
+      type: svnGolden.type,
+      mapping_count: svnGolden.mapping_count,
+      local: svnGolden.local,
+      repository: svnGolden.repository,
+    });
+
+    const replacement = { ...root, url: "https://github.com/omegat-L10N/ja.git" };
+    const updated = setRootRepositoryMapping([root], replacement);
+    const set = load("gui/ProjectUICommandsTest-testSetRootRepositoryMapping0.json");
+    expect({
+      repository_count: updated.length,
+      type: updated[0]?.repo_type,
+      branch: updated[0]?.branch,
+      url: updated[0]?.url,
+      local: updated[0]?.mappings[0]?.local,
+      repository: updated[0]?.mappings[0]?.repository,
+    }).toEqual({
+      repository_count: set.repository_count,
+      type: set.type,
+      branch: set.branch,
+      url: set.url,
+      local: set.local,
+      repository: set.repository,
+    });
+
+    const equality = load("gui/ProjectUICommandsTest-testIsRepositoryEqual.json");
+    expect(repositoryEquals(root, replacement)).toBe(equality.different_url);
+    expect(repositoryEquals(root, root)).toBe(equality.same_object);
+    expect(repositoryEquals(root, { ...root, mappings: [] })).toBe(equality.mappings_ignored);
   });
 });
 

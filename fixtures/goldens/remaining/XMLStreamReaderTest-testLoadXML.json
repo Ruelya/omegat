@@ -1,6 +1,20 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.XMLStreamReaderTest#testLoadXML",
-  "method": "org.omegat.util.XMLStreamReaderTest#testLoadXML",
-  "loads": true
+  "file": "data/xml/test.xml",
+  "body_attr": "foo",
+  "blocks": [
+    "open:ascii", "text:bar", "close:ascii",
+    "open:bmp", "text:☃", "close:bmp",
+    "open:dec", "text:☃", "close:dec",
+    "open:hex", "text:☃", "close:hex",
+    "open:astral", "text:🂿", "close:astral",
+    "open:a-dec", "text:🂿", "close:a-dec",
+    "open:a-hex", "text:🂿", "close:a-hex",
+    "open:named", "text:&<>'\"", "close:named",
+    "standalone:standalone"
+  ],
+  "keys": [
+    "org.omegat.util.XMLStreamReaderTest#testLoadXML"
+  ]
 }

@@ -1,6 +1,17 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntriesWithLink",
-  "method": "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntriesWithLink",
-  "link": true
+  "entries": [
+    {"source": "source1", "target": "translation1", "comment": ""},
+    {"source": "source2", "target": "translation2", "comment": "comment2"},
+    {
+      "source": "source3",
+      "target": "translation3",
+      "comment": "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre"
+    }
+  ],
+  "text": "source1 = translation1source2 = translation2\n1. comment2source3 = translation3\n1. https://fr.wikipedia.org/wiki/Science_du_système_Terre",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntriesWithLink"
+  ]
 }

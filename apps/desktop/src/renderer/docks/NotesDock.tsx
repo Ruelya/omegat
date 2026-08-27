@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { noteText } from "../lib/dock-models";
 import { useApp } from "../store/app";
 import { DockFrame } from "./DockFrame";
 
@@ -11,7 +12,7 @@ export function NotesDock() {
       <textarea
         autoFocus={focus === "notes"}
         value={note}
-        onChange={(e) => setNote(e.target.value)}
+        onChange={(e) => setNote(noteText(e.target.value) ?? "")}
         rows={6}
       />
     </DockFrame>

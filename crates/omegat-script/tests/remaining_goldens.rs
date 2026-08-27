@@ -1,4 +1,7 @@
-use omegat_script::{parse_script_metadata, ScriptError, ScriptItem};
+use omegat_script::{
+    available_script_extensions, compile_installed_scripts, parse_script_metadata,
+    scan_script_catalog, unsupported_java_extensions, ScriptError, ScriptItem,
+};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -63,5 +66,59 @@ fn script_item_java_methods_match_exported_results() {
     assert_eq!(
         matches!(io_error, ScriptError::Io(_)),
         io["io_error"].as_bool().unwrap()
+    );
+}
+
+#[test]
+fn script_runner_and_catalog_goldens_call_product_paths() {
+    let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/java/scripts");
+    let properties = golden("ScriptingTest-testScriptProperties.json");
+    let catalog = scan_script_catalog(&scripts).unwrap();
+    assert_eq!(
+        catalog.scripts.len() as u64,
+        properties["script_count"].as_u64().unwrap()
+    );
+    assert_eq!(
+        catalog.property_files.len() as u64,
+        properties["property_count"].as_u64().unwrap()
+    );
+    assert_eq!(
+        catalog.orphaned_properties,
+        properties["orphaned_properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    );
+
+    let engines = golden("ScriptRunnerTest-testAvailableEngines.json");
+    assert_eq!(
+        available_script_extensions(),
+        engines["rewrite_extensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        unsupported_java_extensions(),
+        vec![engines["java_extensions"][1].as_str().unwrap()]
+    );
+
+    let compile = golden("ScriptRunnerTest-testCompileScripts.json");
+    assert_eq!(
+        compile_installed_scripts(&scripts).unwrap(),
+        compile["javascript_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        unsupported_java_extensions(),
+        vec![compile["unsupported_extension"].as_str().unwrap()]
     );
 }

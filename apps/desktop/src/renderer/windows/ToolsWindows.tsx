@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { t } from "../i18n";
+import {
+  repositoriesFromEditorRows,
+  repositoryEditorRows,
+  type RepositoryEditorRow,
+} from "../lib/project-ui";
 import type { FilterOptionsDto } from "../lib/types";
 import { useApp } from "../store/app";
 import { Modal } from "./Modal";
@@ -123,46 +128,12 @@ export function TeamWindow() {
   );
 }
 
-type MappingRow = {
-  repo_type: string;
-  url: string;
-  branch: string;
-  local: string;
-  repository: string;
-  includes: string;
-  excludes: string;
-};
-
 export function MappingWindow() {
   const props = useApp((s) => s.props);
-  const [rows, setRows] = useState<MappingRow[]>(() => {
-    const repos = props?.repositories ?? [];
-    if (!repos.length) {
-      return [
-        {
-          repo_type: "git",
-          url: props?.root || "",
-          branch: "main",
-          local: "/",
-          repository: "/",
-          includes: "/**",
-          excludes: "omegat/**",
-        },
-      ];
-    }
-    return repos.flatMap((r) =>
-      (r.mappings.length ? r.mappings : [{ local: "/", repository: "/", includes: [], excludes: [] }]).map((m) => ({
-        repo_type: r.repo_type,
-        url: r.url,
-        branch: r.branch ?? "",
-        local: m.local,
-        repository: m.repository,
-        includes: m.includes.join(","),
-        excludes: m.excludes.join(","),
-      })),
-    );
-  });
-  function update(i: number, patch: Partial<MappingRow>) {
+  const [rows, setRows] = useState<RepositoryEditorRow[]>(() =>
+    repositoryEditorRows(props?.repositories ?? [], props?.root ?? ""),
+  );
+  function update(i: number, patch: Partial<RepositoryEditorRow>) {
     setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
   return (
@@ -227,19 +198,7 @@ export function MappingWindow() {
             type="button"
             className="primary"
             onClick={() => {
-              const repositories = rows.map((r) => ({
-                repo_type: r.repo_type,
-                url: r.url,
-                branch: r.branch || null,
-                mappings: [
-                  {
-                    local: r.local,
-                    repository: r.repository,
-                    includes: r.includes.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
-                    excludes: r.excludes.split(/[,;]/).map((s) => s.trim()).filter(Boolean),
-                  },
-                ],
-              }));
+              const repositories = repositoriesFromEditorRows(rows);
               void window.omegat?.rpc("team.mapping", { repositories });
               useApp.getState().openWindow("mapping", false);
             }}

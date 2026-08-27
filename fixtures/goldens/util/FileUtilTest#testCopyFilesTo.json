@@ -1,7 +1,30 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.FileUtilTest#testCopyFilesTo",
-  "api": "copyFilesTo",
+  "initial": {
+    "file1": "file1-first",
+    "file2": "file2-first",
+    "subdir": true
+  },
+  "keep_existing": {
+    "file1": "file1-first",
+    "file2": "file2-first",
+    "file3": "file3-first"
+  },
+  "replace_subdir": {
+    "file1": "file1-first",
+    "file2": "file2-second",
+    "file3": "file3-first",
+    "file4_exists": false
+  },
+  "canceled": {
+    "callback_calls": 3,
+    "file1": "file1-first",
+    "file2": "file2-second",
+    "file3": "file3-first"
+  },
+  "new_target_file1": "file1-second",
+  "target_file_error": true,
   "keys": [
     "org.omegat.util.FileUtilTest#testCopyFilesTo"
   ]

@@ -1,7 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.FileUtilTest#testDeleteTree",
-  "api": "deleteDirectory",
+  "deleted": true,
+  "root_exists": false,
+  "external_file_exists": true,
   "keys": [
     "org.omegat.util.FileUtilTest#testDeleteTree"
   ]

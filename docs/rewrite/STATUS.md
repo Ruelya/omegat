@@ -43,9 +43,9 @@ Adversarial audit **2026-08-18** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite: `crates/` **36537** lines + `apps/desktop/src` **9469** lines (**~29%**)
-- Java GUI: **297** files / **61510** lines vs desktop renderer **9469**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **2916**
+- Rewrite: `crates/` **45114** lines + `apps/desktop/src` **10204** lines (**~35%**)
+- Java GUI: **297** files / **61510** lines vs desktop renderer **9785**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **3281**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **818** (includes
   API-less product-class fixtures)
@@ -86,6 +86,11 @@ AlignSettings persist / CalcStandardStatistics PO table /
 Latex `parseBracedCommand` / XML CJK path / Scripting #775.
 `TmxSegmentationTest` project and external loaders now export and
 `assert_eq` both resegmented source/translation pairs (2/2 methods).
+`OStringsTest` **2/2**, deprecated `XMLStreamReaderTest` **2/2**,
+`StatsResultTest` **1/1**, and `FindMatchesThreadTest` BUGS1248 now export
+computed payloads and call dedicated Rust product APIs with strict equality.
+`FileUtilTest` copy collision preflight/cancel, recursive listing, and
+symlink-safe deletion replaced the last three API-name-only fixtures.
 
 **P2 filters2:** `org.omegat.filters.*FilterTest` **150/150**.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
@@ -142,6 +147,10 @@ replacements.
 Swing `KeyStroke`, recursive menu, and input-map results; the desktop
 shortcut product path parses/merges/binds those values and native menu
 accelerators pass through the same normalizer.
+`ProjectUICommandsTest` **5/5**, `SimpleIssueTest` **5/5**,
+`IssueCheckerTest` **3/3**, `GlossaryTextAreaTest` **3/3**, and
+`NotesTextAreaTest` **2/2** now use toolkit-independent Rust/desktop product
+models and strict Java-exported values.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
 live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
@@ -165,9 +174,13 @@ ops golden is exported. CLI Main / Legacy / CommandCommon goldens exist.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
-corresponding product API for strict equality. The latest thin-fixture
-inventory moved from **28 remaining + 13 gui** `method` rows to
-**14 remaining + 13 gui**; those rows remain work, not parity.
+corresponding product API for strict equality. `ScriptingTest` script/property
+catalog and `ScriptRunnerTest` engine/compile cases now call the Boa-backed
+product path while recording Groovy as a `parity_gap`. The latest per-method
+thin-fixture inventory moved from **28 remaining + 13 gui + 3 util**
+`method`/`api`/`computes` rows to **0** (the `engine/filter_tests.json`
+inventory schema still has an `api` field and is not a method placeholder).
+This closes fixture thinness only; product rows remain `parity_gap`.
 
 **P12 ship:** same-key leftover count is 0 (brand `OmegaT` may equal
 English). Cross-key leftover English phrases: **260** (e.g.

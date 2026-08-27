@@ -1,9 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentReturnsCorrectComponent",
-  "method": "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentReturnsCorrectComponent",
+  "component_class": "IssueDetailSplitPanel",
+  "present": true,
   "keys": [
     "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentReturnsCorrectComponent"
-  ],
-  "detail": true
+  ]
 }

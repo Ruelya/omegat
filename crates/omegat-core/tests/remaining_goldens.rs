@@ -1,9 +1,14 @@
 //! assert_eq against remaining ExportGoldens JSON (Java *Test method results).
 
 use omegat_core::glossary::{GlossaryEntry, GlossarySearcher};
+use omegat_core::issues::{
+    collect_project_issues, ProjectIssueEntry, ProjectIssueKind, SimpleIssue,
+};
 use omegat_core::matches_var;
 use omegat_core::properties::ProjectProperties;
 use omegat_core::tags::{self, Tag, TagType};
+use omegat_core::xml_stream::close_block;
+use omegat_ipc::{FileStatDto, StatCountDto};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -1652,10 +1657,18 @@ fn file_util_build_copy_delete_match_java() {
     std::fs::write(dir.path().join("a/foo"), b"").unwrap();
     std::fs::write(dir.path().join("a/bar"), b"").unwrap();
     let flat = omegat_core::file_util::build_file_list(dir.path(), false).unwrap();
-    assert!(flat.is_empty(), "{}", build["api"]);
+    assert_eq!(flat.len() as u64, build["non_recursive"].as_u64().unwrap());
     let rec = omegat_core::file_util::build_file_list(dir.path(), true).unwrap();
-    assert_eq!(rec.len(), 2);
-    assert!(rec[0].file_name().unwrap() == "bar");
+    let relative: Vec<String> = rec
+        .iter()
+        .map(|path| {
+            path.strip_prefix(dir.path())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert_eq!(relative, strs(&build["recursive"]));
 
     let copy = golden("util/FileUtilTest#testCopyFilesTo.json");
     let src = dir.path().join("source");
@@ -1664,11 +1677,318 @@ fn file_util_build_copy_delete_match_java() {
     std::fs::write(src.join("file1"), "file1-first").unwrap();
     std::fs::write(src.join("sub1/file2"), "file2-first").unwrap();
     let sources: Vec<_> = std::fs::read_dir(&src).unwrap().map(|e| e.unwrap().path()).collect();
-    omegat_core::file_util::copy_files_to(&dst, &sources, true).unwrap();
-    assert_eq!(std::fs::read_to_string(dst.join("file1")).unwrap(), "file1-first");
-    assert!(dst.join("sub1").is_dir(), "{}", copy["api"]);
+    omegat_core::file_util::copy_files_to(&dst, &sources, false).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dst.join("file1")).unwrap(),
+        copy["initial"]["file1"].as_str().unwrap()
+    );
+    assert_eq!(
+        std::fs::read_to_string(dst.join("sub1/file2")).unwrap(),
+        copy["initial"]["file2"].as_str().unwrap()
+    );
+    assert_eq!(dst.join("sub1").is_dir(), copy["initial"]["subdir"].as_bool().unwrap());
+
+    std::fs::write(src.join("file1"), "file1-second").unwrap();
+    std::fs::write(src.join("sub1/file2"), "file2-second").unwrap();
+    std::fs::write(src.join("file3"), "file3-first").unwrap();
+    let sources: Vec<_> = std::fs::read_dir(&src).unwrap().map(|e| e.unwrap().path()).collect();
+    omegat_core::file_util::copy_files_to(&dst, &sources, false).unwrap();
+    for (path, key) in [("file1", "file1"), ("sub1/file2", "file2"), ("file3", "file3")] {
+        assert_eq!(
+            std::fs::read_to_string(dst.join(path)).unwrap(),
+            copy["keep_existing"][key].as_str().unwrap()
+        );
+    }
+
+    std::fs::write(dst.join("sub1/file4"), "file4").unwrap();
+    omegat_core::file_util::copy_files_to_with(&dst, &sources, |target, _, _| {
+        if target.file_name().is_some_and(|name| name == "sub1") {
+            omegat_core::file_util::CopyCollision::Replace
+        } else {
+            omegat_core::file_util::CopyCollision::Keep
+        }
+    })
+    .unwrap();
+    for (path, key) in [("file1", "file1"), ("sub1/file2", "file2"), ("file3", "file3")] {
+        assert_eq!(
+            std::fs::read_to_string(dst.join(path)).unwrap(),
+            copy["replace_subdir"][key].as_str().unwrap()
+        );
+    }
+    assert_eq!(
+        dst.join("sub1/file4").exists(),
+        copy["replace_subdir"]["file4_exists"].as_bool().unwrap()
+    );
+
+    let mut callback_calls = 0usize;
+    omegat_core::file_util::copy_files_to_with(&dst, &sources, |_, index, total| {
+        callback_calls += 1;
+        if index + 1 == total {
+            omegat_core::file_util::CopyCollision::Cancel
+        } else {
+            omegat_core::file_util::CopyCollision::Replace
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        callback_calls as u64,
+        copy["canceled"]["callback_calls"].as_u64().unwrap()
+    );
+    for (path, key) in [("file1", "file1"), ("sub1/file2", "file2"), ("file3", "file3")] {
+        assert_eq!(
+            std::fs::read_to_string(dst.join(path)).unwrap(),
+            copy["canceled"][key].as_str().unwrap()
+        );
+    }
+
+    let new_target = dir.path().join("newtarget");
+    omegat_core::file_util::copy_files_to(&new_target, &sources, false).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(new_target.join("file1")).unwrap(),
+        copy["new_target_file1"].as_str().unwrap()
+    );
+    let target_file = dir.path().join("target-file");
+    std::fs::write(&target_file, "").unwrap();
+    assert_eq!(
+        omegat_core::file_util::copy_files_to(&target_file, &sources, false).is_err(),
+        copy["target_file_error"].as_bool().unwrap()
+    );
 
     let del = golden("util/FileUtilTest#testDeleteTree.json");
-    omegat_core::file_util::delete_tree(&dst).unwrap();
-    assert!(!dst.exists(), "{}", del["api"]);
+    let root = dir.path().join("delete-root");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    std::fs::write(external.join("file"), "").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&external, root.join("sub/subsub")).unwrap();
+    let deleted = omegat_core::file_util::delete_tree(&root).is_ok();
+    assert_eq!(deleted, del["deleted"].as_bool().unwrap());
+    assert_eq!(root.exists(), del["root_exists"].as_bool().unwrap());
+    assert_eq!(
+        external.join("file").exists(),
+        del["external_file_exists"].as_bool().unwrap()
+    );
+}
+
+#[test]
+fn simple_issue_and_issue_checker_goldens_call_product_models() {
+    let issue = SimpleIssue::new(1, "Hello world!", "Hallo Welt!", "#FF0000");
+    let icon_present = golden("gui/SimpleIssueTest-testGetIconReturnsNonNullIcon.json");
+    let icon = issue.icon();
+    assert_eq!(icon.class_name(), icon_present["icon_class"].as_str().unwrap());
+    assert_eq!(true, icon_present["present"].as_bool().unwrap());
+
+    let detail_present =
+        golden("gui/SimpleIssueTest-testGetDetailComponentReturnsCorrectComponent.json");
+    let detail = issue.detail_component();
+    assert_eq!(
+        detail.class_name(),
+        detail_present["component_class"].as_str().unwrap()
+    );
+    assert_eq!(true, detail_present["present"].as_bool().unwrap());
+    let detail_text =
+        golden("gui/SimpleIssueTest-testGetDetailComponentPopulatesTextFields.json");
+    assert_eq!(detail.first_text, detail_text["source"].as_str().unwrap());
+    assert_eq!(detail.last_text, detail_text["translation"].as_str().unwrap());
+    let color = golden("gui/SimpleIssueTest-testGetIconUsesExpectedColor.json");
+    assert_eq!(icon.color, color["color"].as_str().unwrap());
+    let entry = golden("gui/SimpleIssueTest-testGetEntryNum.json");
+    assert_eq!(issue.entry_num() as u64, entry["entry_num"].as_u64().unwrap());
+
+    let entries = vec![
+        ProjectIssueEntry {
+            file: "file1.txt".into(),
+            entry_num: 1,
+            source: "HELLO".into(),
+            translation: "Bonjour".into(),
+            duplicate: false,
+        },
+        ProjectIssueEntry {
+            file: "file1.txt".into(),
+            entry_num: 2,
+            source: "WORLD".into(),
+            translation: "Monde".into(),
+            duplicate: false,
+        },
+        ProjectIssueEntry {
+            file: "file2.txt".into(),
+            entry_num: 3,
+            source: "DUP".into(),
+            translation: "Dup1".into(),
+            duplicate: false,
+        },
+        ProjectIssueEntry {
+            file: "file2.txt".into(),
+            entry_num: 4,
+            source: "DUP".into(),
+            translation: "Dup2".into(),
+            duplicate: true,
+        },
+    ];
+    let counts = |issues: &[omegat_core::issues::ProjectIssue]| {
+        (
+            issues
+                .iter()
+                .filter(|item| item.kind == ProjectIssueKind::Provider)
+                .count() as u64,
+            issues
+                .iter()
+                .filter(|item| item.kind == ProjectIssueKind::Tag)
+                .count() as u64,
+        )
+    };
+    let all = golden("gui/IssueCheckerTest-testCollectIssuesAggregatesTagAndProvider.json");
+    let all_issues = collect_project_issues(
+        &entries,
+        all["pattern"].as_str().unwrap(),
+        false,
+        Some("file2.txt"),
+    )
+    .unwrap();
+    let (providers, tags) = counts(&all_issues);
+    assert_eq!(providers, all["provider_count"].as_u64().unwrap());
+    assert_eq!(tags, all["tag_count"].as_u64().unwrap());
+    assert_eq!(all_issues.len() as u64, all["total"].as_u64().unwrap());
+
+    let file = golden("gui/IssueCheckerTest-testFilePatternFiltersEntries.json");
+    let file_issues = collect_project_issues(
+        &entries,
+        file["pattern"].as_str().unwrap(),
+        false,
+        Some("file2.txt"),
+    )
+    .unwrap();
+    let (providers, tags) = counts(&file_issues);
+    assert_eq!(providers, file["provider_count"].as_u64().unwrap());
+    assert_eq!(tags, file["tag_count"].as_u64().unwrap());
+    assert_eq!(file_issues.len() as u64, file["total"].as_u64().unwrap());
+
+    let duplicates = golden("gui/IssueCheckerTest-testDuplicateFiltering.json");
+    let unfiltered = collect_project_issues(&entries, ".*", false, Some("file2.txt")).unwrap();
+    let filtered = collect_project_issues(&entries, ".*", true, Some("file2.txt")).unwrap();
+    let (provider_all, tag_all) = counts(&unfiltered);
+    let (provider_filtered, tag_filtered) = counts(&filtered);
+    assert_eq!(provider_all, duplicates["provider_all"].as_u64().unwrap());
+    assert_eq!(
+        provider_filtered,
+        duplicates["provider_filtered"].as_u64().unwrap()
+    );
+    assert_eq!(tag_all, duplicates["tag_all"].as_u64().unwrap());
+    assert_eq!(tag_filtered, duplicates["tag_filtered"].as_u64().unwrap());
+}
+
+#[test]
+fn ostrings_xml_stream_and_stats_result_match_java_goldens() {
+    for name in [
+        "remaining/OStringsTest-testDevBuildMarkerFromBranchCheckout.json",
+        "remaining/OStringsTest-testDevBuildMarkerHiddenOutsideBranchCheckouts.json",
+    ] {
+        let data = golden(name);
+        for case in data["cases"].as_array().unwrap() {
+            assert_eq!(
+                omegat_core::ostrings::dev_build_marker(
+                    case["revision"].as_str().unwrap(),
+                    case["branch"].as_str().unwrap()
+                ),
+                case["marker"].as_str().unwrap()
+            );
+        }
+    }
+
+    let xml_golden = golden("remaining/XMLStreamReaderTest-testLoadXML.json");
+    let xml = std::fs::read_to_string(java_res(xml_golden["file"].as_str().unwrap())).unwrap();
+    let body = close_block(&xml, "body").unwrap();
+    assert_eq!(
+        body.attributes.get("attr").map(String::as_str),
+        xml_golden["body_attr"].as_str()
+    );
+    let blocks: Vec<String> = body.blocks.iter().map(|block| block.descriptor()).collect();
+    assert_eq!(blocks, strs(&xml_golden["blocks"]));
+
+    let bad = golden("remaining/XMLStreamReaderTest-testBadEntity.json");
+    let bad_results: Vec<bool> = bad["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| {
+            let xml = std::fs::read_to_string(java_res(file.as_str().unwrap())).unwrap();
+            close_block(&xml, "body").is_err()
+        })
+        .collect();
+    assert_eq!(bad_results, vec![true, true]);
+    assert_eq!(bad["error_class"].as_str().unwrap(), "TranslationException");
+
+    let stats_golden = golden("remaining/StatsResultTest-testStatsResultXML.json");
+    let to_count = |value: &Value| {
+        let values = value.as_array().unwrap();
+        StatCountDto {
+            segments: values[0].as_u64().unwrap() as usize,
+            words: values[1].as_u64().unwrap() as usize,
+            characters_without_spaces: values[2].as_u64().unwrap() as usize,
+            characters: values[3].as_u64().unwrap() as usize,
+            files: values[4].as_u64().unwrap() as usize,
+        }
+    };
+    let mut stats = omegat_core::stats::compute(&[], "English", "French");
+    stats.total = to_count(&stats_golden["total"]);
+    stats.remaining = to_count(&stats_golden["remaining"]);
+    stats.unique = to_count(&stats_golden["unique"]);
+    stats.unique_remaining = to_count(&stats_golden["unique_remaining"]);
+    stats.file_stats.push(FileStatDto {
+        filename: stats_golden["filename"].as_str().unwrap().into(),
+        total: to_count(&stats_golden["file_total"]),
+        unique: to_count(&stats_golden["file_unique"]),
+        remaining: to_count(&stats_golden["file_remaining"]),
+        unique_remaining: to_count(&stats_golden["file_unique_remaining"]),
+    });
+    let project = &stats_golden["project"];
+    let rendered = omegat_core::stats::render_stats_result_xml(
+        &stats,
+        &omegat_core::stats::StatsResultMetadata {
+            project_name: project["name"].as_str().unwrap().into(),
+            project_root: project["root"].as_str().unwrap().into(),
+            source_language: project["source_language"].as_str().unwrap().into(),
+            target_language: project["target_language"].as_str().unwrap().into(),
+        },
+        "DATE",
+    );
+    let document = close_block(&rendered, "omegat-stats").unwrap();
+    let blocks: Vec<String> = document.blocks.iter().map(|block| block.descriptor()).collect();
+    assert_eq!(blocks, strs(&stats_golden["xml_blocks"]));
+}
+
+#[test]
+fn find_matches_thread_regression_calls_find_matches_product_path() {
+    let data = golden("remaining/FindMatchesThreadTest-testSearchBUGS1248.json");
+    let path = java_res("data/tmx/penalty-010/segment_1.tmx");
+    let entries = omegat_core::external_tm::load(&path, "ja", "fr", false);
+    let extra: Vec<_> = entries
+        .into_iter()
+        .map(|entry| (entry, "penalty-010/segment_1.tmx".to_string()))
+        .collect();
+    let hits = omegat_core::find_matches::search(omegat_core::find_matches::SearchRequest {
+        query: data["query"].as_str().unwrap(),
+        memory: &[],
+        extra: &extra,
+        files: &[],
+        tokenizer: "org.omegat.tokenizer.LuceneCJKTokenizer",
+        source_lang: "ja",
+        target_lang: "fr",
+        threshold: data["threshold"].as_i64().unwrap() as i32,
+        limit: omegat_core::consts::MAX_NEAR_STRINGS,
+        search_exactly_the_same: false,
+        run_separate_segment_match: true,
+        foreign_penalty: omegat_core::find_matches::PENALTY_FOR_FOREIGN_MATCHES_DEFAULT,
+    });
+    let expected = data["hits"].as_array().unwrap();
+    assert_eq!(hits.len(), expected.len());
+    for (actual, expected) in hits.iter().zip(expected) {
+        assert_eq!(actual.source, expected["source"].as_str().unwrap());
+        assert_eq!(actual.comes_from, expected["comes_from"].as_str().unwrap());
+        assert_eq!(actual.score as i64, expected["score"].as_i64().unwrap());
+        if let Some(translation) = expected["translation"].as_str() {
+            assert_eq!(actual.translation, translation);
+        }
+    }
 }

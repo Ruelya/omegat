@@ -3,7 +3,7 @@ use crate::error::{CoreError, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositoryMapping {
     pub local: String,
     pub repository: String,
@@ -11,7 +11,7 @@ pub struct RepositoryMapping {
     pub excludes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepositoryDef {
     pub repo_type: String,
     pub url: String,
@@ -19,7 +19,7 @@ pub struct RepositoryDef {
     pub mappings: Vec<RepositoryMapping>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectProperties {
     pub root: PathBuf,
     pub source_dir: PathBuf,
@@ -43,8 +43,86 @@ pub struct ProjectProperties {
     pub raw_unknown: String,
 }
 
+/// Java `ProjectUICommands.getRootRepositoryMapping`.
+pub fn root_repository_mapping(repositories: &[RepositoryDef]) -> Option<&RepositoryDef> {
+    repositories.iter().find(|repository| {
+        repository
+            .mappings
+            .first()
+            .is_some_and(|mapping| mapping.local == "/" && mapping.repository == "/")
+    })
+}
+
+/// Java `ProjectUICommands.setRootRepositoryMapping`.
+///
+/// Only connection identity is replaced; the existing root mapping stays.
+pub fn set_root_repository_mapping(
+    repositories: &mut [RepositoryDef],
+    replacement: &RepositoryDef,
+) -> bool {
+    let Some(root) = repositories.iter_mut().find(|repository| {
+        repository
+            .mappings
+            .first()
+            .is_some_and(|mapping| mapping.local == "/" && mapping.repository == "/")
+    }) else {
+        return false;
+    };
+    root.repo_type.clone_from(&replacement.repo_type);
+    root.url.clone_from(&replacement.url);
+    root.branch.clone_from(&replacement.branch);
+    true
+}
+
+/// Java `ProjectUICommands.isRepositoryEquals` intentionally ignores mappings.
+pub fn repository_equals(a: &RepositoryDef, b: &RepositoryDef) -> bool {
+    a.repo_type == b.repo_type && a.url == b.url && a.branch == b.branch
+}
+
+/// Compare the persisted fields considered by
+/// `ProjectUICommands.isIdenticalOmegatProjectProperties`.
+pub fn project_properties_identical(a: &ProjectProperties, b: &ProjectProperties) -> bool {
+    let repositories_equal = a.repositories.len() == b.repositories.len()
+        && a.repositories
+            .iter()
+            .zip(&b.repositories)
+            .all(|(left, right)| {
+                repository_equals(left, right)
+                    && left.mappings.len() == right.mappings.len()
+                    && left
+                        .mappings
+                        .iter()
+                        .zip(&right.mappings)
+                        .all(|(lm, rm)| lm.local == rm.local && lm.repository == rm.repository)
+            });
+    repositories_equal
+        && a.source_dir_excludes == b.source_dir_excludes
+        && a.sentence_seg == b.sentence_seg
+        && a.support_default_translations == b.support_default_translations
+        && a.remove_tags == b.remove_tags
+        && a.source_lang == b.source_lang
+        && a.target_lang == b.target_lang
+        && a.source_tok == b.source_tok
+        && a.target_tok == b.target_tok
+        && a.export_tm_levels == b.export_tm_levels
+        && a.external_command == b.external_command
+        && a.root == b.root
+        && a.source_dir == b.source_dir
+        && a.target_dir == b.target_dir
+        && a.glossary_dir == b.glossary_dir
+        && a.glossary_file == b.glossary_file
+        && a.tm_dir == b.tm_dir
+        && a.export_tm_dir == b.export_tm_dir
+        && a.dictionary_dir == b.dictionary_dir
+}
+
 impl ProjectProperties {
-    pub fn create(root: PathBuf, source_lang: String, target_lang: String, sentence_seg: bool) -> Self {
+    pub fn create(
+        root: PathBuf,
+        source_lang: String,
+        target_lang: String,
+        sentence_seg: bool,
+    ) -> Self {
         let source_dir = root.join(DEFAULT_SOURCE);
         let target_dir = root.join(DEFAULT_TARGET);
         let glossary_dir = root.join(DEFAULT_GLOSSARY);
@@ -340,7 +418,8 @@ fn parse_project_xml(root: &Path, raw: &str) -> Result<ProjectProperties> {
     let sentence_seg = tag_text(&raw, "sentence_seg")
         .map(|s| s == "true")
         .unwrap_or(true);
-    let mut props = ProjectProperties::create(root.to_path_buf(), source_lang, target_lang, sentence_seg);
+    let mut props =
+        ProjectProperties::create(root.to_path_buf(), source_lang, target_lang, sentence_seg);
     if let Some(v) = tag_text(&raw, "source_dir") {
         props.source_dir = resolve_dir(root, &v, DEFAULT_SOURCE);
     }
@@ -496,7 +575,10 @@ pub fn path_for_storing(root: &Path, absolute: &Path, default_name: Option<&str>
         }
     }
     if let Some(rel) = relativize(root, absolute) {
-        let hops = rel.components().filter(|c| matches!(c, std::path::Component::ParentDir)).count();
+        let hops = rel
+            .components()
+            .filter(|c| matches!(c, std::path::Component::ParentDir))
+            .count();
         if hops <= MAX_PARENT_DIRECTORIES_ABS2REL {
             return rel.to_string_lossy().replace('\\', "/");
         }
@@ -537,9 +619,9 @@ fn expand_dtd_entities(raw: &str) -> String {
         let mut changed = false;
         let snapshot = ents.clone();
         for (_, v) in ents.iter_mut() {
-            let next = snapshot.iter().fold(v.clone(), |acc, (k, ev)| {
-                acc.replace(&format!("&{k};"), ev)
-            });
+            let next = snapshot
+                .iter()
+                .fold(v.clone(), |acc, (k, ev)| acc.replace(&format!("&{k};"), ev));
             if next != *v {
                 *v = next;
                 changed = true;
@@ -590,12 +672,14 @@ mod tests {
         assert_eq!(props.repositories[0].mappings[0].excludes, vec!["**/*.bak"]);
         assert_eq!(props.repositories[0].mappings[1].repository, "src/");
         assert!(props.is_team_project());
-        let mut levels = ProjectProperties::create(PathBuf::from("/tmp/l"), "en".into(), "fr".into(), false);
+        let mut levels =
+            ProjectProperties::create(PathBuf::from("/tmp/l"), "en".into(), "fr".into(), false);
         levels.set_export_tm_levels_list(&["level2", "omegat"]);
         assert_eq!(levels.export_tm_level_list(), vec!["omegat", "level2"]);
         levels.set_export_tm_levels_list(&["foo"]);
         assert!(levels.export_tm_level_list().is_empty());
-        let mut not_team = ProjectProperties::create(PathBuf::from("/tmp/n"), "en".into(), "fr".into(), false);
+        let mut not_team =
+            ProjectProperties::create(PathBuf::from("/tmp/n"), "en".into(), "fr".into(), false);
         not_team.repositories.push(RepositoryDef {
             repo_type: "git".into(),
             url: "https://example.com/p.git".into(),
@@ -612,7 +696,8 @@ mod tests {
 
     #[test]
     fn write_roundtrips_mapping_includes() {
-        let mut props = ProjectProperties::create(PathBuf::from("/tmp/p"), "en".into(), "fr".into(), true);
+        let mut props =
+            ProjectProperties::create(PathBuf::from("/tmp/p"), "en".into(), "fr".into(), true);
         props.repositories.push(RepositoryDef {
             repo_type: "http".into(),
             url: "https://example.com/mem.tmx".into(),

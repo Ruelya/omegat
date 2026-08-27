@@ -1,9 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider",
-  "method": "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider",
+  "pattern": ".*",
+  "provider_count": 4,
+  "tag_count": 1,
+  "total": 5,
   "keys": [
     "org.omegat.gui.issues.IssueCheckerTest#testCollectIssuesAggregatesTagAndProvider"
-  ],
-  "aggregates": true
+  ]
 }

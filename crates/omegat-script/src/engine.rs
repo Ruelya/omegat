@@ -136,6 +136,16 @@ pub fn eval(source: &str, state: &mut ScriptState) -> Result<String, ScriptError
     js_result_string(&result, &mut context)
 }
 
+/// Parse JavaScript without running its body.
+pub fn compile(source: &str) -> Result<(), ScriptError> {
+    let mut context = Context::default();
+    let wrapped = format!("function __omegat_compile_only__() {{\n{source}\n}}");
+    context
+        .eval(Source::from_bytes(wrapped.as_bytes()))
+        .map(|_| ())
+        .map_err(|e| ScriptError::Engine(e.to_string()))
+}
+
 fn js_to_std_string(value: &JsValue, context: &mut Context) -> Result<String, ScriptError> {
     if let Some(s) = value.as_string() {
         return Ok(s.to_std_string_escaped());

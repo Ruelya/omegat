@@ -1,6 +1,12 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntries",
-  "method": "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntries",
-  "sets": true
+  "entries": [
+    {"source": "source1", "target": "translation1", "comment": ""},
+    {"source": "source2", "target": "translation2", "comment": "comment2"}
+  ],
+  "text": "source1 = translation1source2 = translation2\n1. comment2",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryTextAreaTest#testSetGlossaryEntries"
+  ]
 }

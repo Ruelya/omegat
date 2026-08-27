@@ -1,6 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.OStringsTest#testDevBuildMarkerHiddenOutsideBranchCheckouts",
-  "method": "org.omegat.util.OStringsTest#testDevBuildMarkerHiddenOutsideBranchCheckouts",
-  "hidden": true
+  "cases": [
+    {"revision": "6d79ee8db", "branch": "", "marker": ""},
+    {"revision": "6d79ee8db", "branch": "HEAD", "marker": ""},
+    {"revision": "6d79ee8db", "branch": "@gitbranch@", "marker": ""}
+  ]
 }

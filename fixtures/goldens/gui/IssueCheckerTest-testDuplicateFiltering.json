@@ -1,9 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.issues.IssueCheckerTest#testDuplicateFiltering",
-  "method": "org.omegat.gui.issues.IssueCheckerTest#testDuplicateFiltering",
+  "provider_all": 4,
+  "provider_filtered": 3,
+  "tag_all": 1,
+  "tag_filtered": 1,
   "keys": [
     "org.omegat.gui.issues.IssueCheckerTest#testDuplicateFiltering"
-  ],
-  "dedup": true
+  ]
 }

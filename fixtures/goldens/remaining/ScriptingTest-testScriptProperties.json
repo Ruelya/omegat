@@ -1,7 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.scripting.ScriptingTest#testScriptProperties",
-  "method": "org.omegat.gui.scripting.ScriptingTest#testScriptProperties",
-  "name": true,
-  "description": true
+  "script_count": 30,
+  "property_count": 212,
+  "orphaned_properties": [],
+  "keys": [
+    "org.omegat.gui.scripting.ScriptingTest#testScriptProperties"
+  ]
 }

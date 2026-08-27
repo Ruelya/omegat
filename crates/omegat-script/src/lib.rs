@@ -103,10 +103,11 @@ pub fn parse_script_metadata(source: &str) -> Option<ScriptMetadata> {
     let name_marker = first.find(":name")?;
     let name_equals = first[name_marker + 5..].find('=')? + name_marker + 5;
     let description_marker = first[name_equals + 1..].find(":description")? + name_equals + 1;
-    let description_equals =
-        first[description_marker + 12..].find('=')? + description_marker + 12;
+    let description_equals = first[description_marker + 12..].find('=')? + description_marker + 12;
     Some(ScriptMetadata {
-        name: first[name_equals + 1..description_marker].trim().to_string(),
+        name: first[name_equals + 1..description_marker]
+            .trim()
+            .to_string(),
         description: first[description_equals + 1..].trim().to_string(),
     })
 }
@@ -116,6 +117,88 @@ fn normalize_script_text(raw: &str) -> String {
         .unwrap_or(raw)
         .replace("\r\n", "\n")
         .replace('\r', "\n")
+}
+
+/// Boa is the executable replacement engine. Groovy remains a measured
+/// compatibility gap and is never silently evaluated as JavaScript.
+pub fn available_script_extensions() -> Vec<&'static str> {
+    vec!["js"]
+}
+
+pub fn unsupported_java_extensions() -> Vec<&'static str> {
+    vec!["groovy"]
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptCatalog {
+    pub scripts: Vec<String>,
+    pub property_files: Vec<String>,
+    pub orphaned_properties: Vec<String>,
+}
+
+/// Inspect the installed script directory and correlate localized property
+/// bundles with their source scripts, as Java `ScriptingTest` does.
+pub fn scan_script_catalog(root: &Path) -> Result<ScriptCatalog, ScriptError> {
+    let mut scripts = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let stem = Path::new(&name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if !stem.is_empty() {
+                scripts.push(stem.to_string());
+            }
+        }
+    }
+    scripts.sort();
+    scripts.dedup();
+
+    let properties = root.join("properties");
+    let mut property_files = Vec::new();
+    if properties.is_dir() {
+        for entry in std::fs::read_dir(properties)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() && entry.file_name() != ".DS_Store" {
+                property_files.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    property_files.sort();
+    let orphaned_properties = property_files
+        .iter()
+        .filter(|property| !scripts.iter().any(|script| property.starts_with(script)))
+        .cloned()
+        .collect();
+    Ok(ScriptCatalog {
+        scripts,
+        property_files,
+        orphaned_properties,
+    })
+}
+
+/// Syntax-check every installed JavaScript source and return the exact files
+/// checked. Unsupported language files are reported by
+/// `unsupported_java_extensions`, not accepted as successful compiles.
+pub fn compile_installed_scripts(root: &Path) -> Result<Vec<String>, ScriptError> {
+    let mut compiled = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("js") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path)?;
+        engine::compile(&source)?;
+        compiled.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    compiled.sort();
+    Ok(compiled)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,7 +463,11 @@ mod tests {
     fn eval_js_arithmetic_is_real_engine() {
         let out = run_source("1 + 2", &serde_json::json!({})).unwrap();
         assert_eq!(out, "3");
-        let out = run_source("(function () { return 10 + 20; })()", &serde_json::json!({})).unwrap();
+        let out = run_source(
+            "(function () { return 10 + 20; })()",
+            &serde_json::json!({}),
+        )
+        .unwrap();
         assert_eq!(out, "30");
     }
 
@@ -448,7 +535,8 @@ mod tests {
             std::fs::write(p.join("hook.js"), "console.println('e')").unwrap();
         }
         let mut state = ScriptState::default();
-        let logs = run_event_dir_state(dir.path(), ScriptEvent::EntryActivated, &mut state).unwrap();
+        let logs =
+            run_event_dir_state(dir.path(), ScriptEvent::EntryActivated, &mut state).unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(state.console, vec!["e".to_string()]);
         assert_eq!(ScriptEvent::all().len(), 6);
