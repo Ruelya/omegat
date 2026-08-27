@@ -1,0 +1,28 @@
+{
+  "id": "ilias",
+  "fixture": "ilias/ILIASFilter.lang",
+  "java_test": "org.omegat.filters.ILIASFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "Good line",
+    "Another good line with HTML <br/> entity",
+    "The text may include : too",
+    "The text may include # as well",
+    "The text may include  #:# or ",
+    "have it at the end #:#",
+    "#:#"
+  ],
+  "ids": [
+    "acc#:#acc_access_key",
+    "exc#:#exc_assignment_type",
+    "module_1#:#var_1",
+    "module_1#:#var_2",
+    "module_1#:#var_3",
+    "module_1#:#var_3",
+    "module_1#:#var_4"
+  ],
+  "empty_write_text": "/* Copyright (c) 1998-2014 ILIAS open source eLearning e.V., Extended GPL, see docs/LICENSE */\n/**\n* ILIAS language file\n*\n* @module\t\tlanguage file English\n* @modulegroup\tlanguage\n* @author \t\tMatthias Kunkel <mkunkel@me.com>\n* @version\t\t$Id$\n*/\n// The language file starts beyond the HTML-comment below. DO NOT modify this line!\n// To edit your language file with a spreadsheet (i.e. Excel or StarCalc) remove all lines\n// from the first line to the HTML-comment. After editing paste the lines in place again.\n// NOTICE: Character coding of all ILIAS lang files is UTF-8! Please set your editor\n// to the corresponding mode!\n// Language file names refer to ISO 639, see: http://www.oasis-open.org/cover/iso639a.html\n// the next line is blank intentionally for the filter testing\n\n<!-- language file start -->\nacc#:#acc_access_key#:#Good line\nexc#:#exc_assignment_type#:#Another good line with HTML <br/> entity\nmodule_1#:#var_1#:#The text may include : too\nmodule_1#:#var_2#:#The text may include # as well\nmodule_1#:#var_3#:#The text may include  #:# or \nmodule_1#:#var_3#:#have it at the end #:#\nmodule_1#:#var_4#:##:#\n#:#bad_line_1#:#The module name is missing\nbad_line_2#:##:#The variable name is missing\nbad_line_3m#:#bad_line_3v#:#\n#:##:#Both module and variable are missing\n#:##:#\n\n\n"
+}

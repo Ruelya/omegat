@@ -1,0 +1,25 @@
+{
+  "java_test": "org.omegat.gui.align.AlignerTest#testAlignerIDMode",
+  "mode": "id",
+  "source": "fixtures/align/idSource.properties",
+  "target": "fixtures/align/idTarget.properties",
+  "pairs": [
+    [
+      "This is sentence one.",
+      "これが1つ目のセンテンス。"
+    ],
+    [
+      "Short sentence.",
+      "短い文。"
+    ],
+    [
+      "And then this is a very, very, very long sentence.",
+      "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"
+    ],
+    [
+      "Where shall it end?",
+      "誰も知らない。"
+    ]
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

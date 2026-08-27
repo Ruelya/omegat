@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid",
+  "stored": "not a code",
+  "fallback": "eo",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
