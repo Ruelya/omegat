@@ -691,7 +691,13 @@ try {
       source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
       whitespace: Boolean(document.querySelector(".mark-ws")),
     })`);
-    if (ready.surface && ready.source === "Editor input <x0/> selection source.") return ready;
+    if (
+      ready.surface
+      && ready.source === "Editor input <x0/> selection source."
+      && ready.whitespace
+    ) {
+      return ready;
+    }
     throw new Error(JSON.stringify(ready));
   });
 
