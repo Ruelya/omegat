@@ -1524,7 +1524,7 @@ try {
   assert(orderedDecoy, "decoy duplicate disappeared after remote ordering");
   assert.equal(orderedWanted.index, duplicateSetup.wanted.index + 2);
   assert.equal(orderedDecoy.index, duplicateSetup.decoy.index + 2);
-  assert.equal(orderedDecoy.translation, "");
+  assert.equal(orderedDecoy.translation, secondConflictOurs);
   const teamOrderingTrace = await client.evaluate(
     `window.__omegatRpcOperationTrace`,
   );
