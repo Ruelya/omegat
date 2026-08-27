@@ -1877,10 +1877,9 @@ try {
     ]),
     "recovered refresh did not rebind unresolved conflicts by complete key",
   );
-  assert.equal(
-    await pathExists(refreshJournal),
-    false,
-    "completed sidecar-recovered fingerprint batch stayed pending",
+  await waitFor(
+    "completed sidecar-recovered fingerprint journal removal",
+    async () => await pathExists(refreshJournal) ? undefined : true,
   );
   const sidecarFingerprintRecovery = {
     progress: sidecarRestartProgress,
