@@ -32,7 +32,9 @@ mod tmx_rebase;
 mod user_pass_dialog;
 
 pub use error::{Conflict, SyncReport, TeamError};
-pub use mapping::default_mapping;
+pub use mapping::{
+    copy_mapped, copy_mapped_from_worktree, default_mapping, glob_match, CopyDir,
+};
 pub use passphrase_dialog::Passphrase;
 pub use prepared_file_info::PreparedFileInfo;
 pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
@@ -593,9 +595,19 @@ mod tests {
         let rel = remaining_golden("RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json");
         let base = std::env::temp_dir();
         let got = relative_remote_to_absolute_local("file.txt", &base, "/", "/");
-        assert!(got.ends_with(rel["file"].as_str().unwrap()));
+        assert_eq!(
+            got.strip_prefix(&base).unwrap().to_string_lossy().replace('\\', "/"),
+            rel["file"].as_str().unwrap()
+        );
         let mapped = relative_remote_to_absolute_local("somedir/file.txt", &base, "somedir", "source");
-        assert!(mapped.ends_with(rel["mapped"].as_str().unwrap()));
+        assert_eq!(
+            mapped
+                .strip_prefix(&base)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
+            rel["mapped"].as_str().unwrap()
+        );
     }
 
     #[test]
@@ -611,42 +623,16 @@ mod tests {
     }
 
     #[test]
-    fn mapping_excludes_honored_matches_java() {
-        let g = remaining_golden("RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json");
-        let dir = tempfile::tempdir().unwrap();
-        let remote = dir.path().join("remote");
-        let local = dir.path().join("local");
-        std::fs::create_dir_all(remote.join("keep")).unwrap();
-        std::fs::write(remote.join("keep").join("ok.txt"), "ok").unwrap();
-        std::fs::write(remote.join("skip.txt"), "no").unwrap();
-        let mut mapping = default_mapping();
-        mapping.excludes = vec!["skip.txt".into()];
-        let props = team_props(local, "file", &remote.to_string_lossy(), vec![mapping]);
-        std::fs::create_dir_all(crate::project_team_settings::repo_work_dir(
-            &props,
-            &props.repositories[0],
-        ))
-        .unwrap();
-        // file:// prepare copies from remote URL; seed the working copy instead
-        let wc = crate::project_team_settings::repo_work_dir(&props, &props.repositories[0]);
-        crate::team_utils::copy_tree(&remote, &wc, false).unwrap();
-        crate::mapping::copy_mapped(&props, &props.repositories[0], crate::mapping::CopyDir::RepoToProject)
-            .unwrap();
-        assert_eq!(props.root.join("keep/ok.txt").is_file(), g["copied"].as_bool().unwrap());
-        assert_eq!(
-            !props.root.join("skip.txt").exists(),
-            g["excludes_honored"].as_bool().unwrap()
-        );
-    }
-
-    #[test]
     fn http_switch_and_304_match_java() {
         let throws = remaining_golden(
             "HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
         );
         let err = crate::http_remote_repository::switch_to_version(throws["version"].as_str()).unwrap_err();
         assert_eq!(throws["throws"].as_bool().unwrap(), true);
-        assert!(format!("{err}").contains("Not supported"));
+        let TeamError::Command(message) = err else {
+            panic!("expected command error");
+        };
+        assert_eq!(message, throws["message"].as_str().unwrap());
         let ok = remaining_golden("HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json");
         assert_eq!(
             crate::http_remote_repository::switch_to_version(ok["version"].as_str()).is_ok(),
@@ -681,7 +667,6 @@ mod tests {
             "RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludes.json",
             "RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix.json",
             "RemoteRepositoryProviderTest-testCopyAndDeletePropagateReposToProject.json",
-            "RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithSExcludes.json",
         ] {
             let g = remaining_golden(name);
             let dir = tempfile::tempdir().unwrap();

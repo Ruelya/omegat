@@ -1,8 +1,9 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull",
-  "version": "abc",
+  "version": "1.0",
   "throws": true,
+  "message": "Not supported",
   "keys": [
     "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull"
   ]

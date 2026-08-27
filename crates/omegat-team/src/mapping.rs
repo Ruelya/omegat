@@ -5,7 +5,7 @@ use crate::project_team_settings::repo_work_dir;
 use crate::team_utils::{join_mapped, join_rel, rel_unix, strip_slash};
 use omegat_core::properties::{ProjectProperties, RepositoryDef, RepositoryMapping};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyDir {
     RepoToProject,
     ProjectToRepo,
@@ -49,19 +49,20 @@ pub fn mapping_allows(rel: &str, mapping: &RepositoryMapping) -> bool {
 }
 
 pub fn glob_match(pat: &str, path: &str) -> bool {
-    let pat = strip_slash(pat);
+    let anchored = pat.starts_with('/') || pat.starts_with('\\');
+    let pat = pat.trim_matches(['/', '\\']);
     let path = strip_slash(path);
-    if let Ok(g) = globset::Glob::new(pat) {
-        if g.compile_matcher().is_match(path) {
-            return true;
-        }
+    let matches = |pattern: &str| {
+        globset::GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+            .is_ok_and(|glob| glob.compile_matcher().is_match(path))
+    };
+    if matches(pat) {
+        return true;
     }
-    if !pat.starts_with("**") {
-        if let Ok(g) = globset::Glob::new(&format!("**/{pat}")) {
-            if g.compile_matcher().is_match(path) {
-                return true;
-            }
-        }
+    if !anchored && !pat.starts_with("**") && matches(&format!("**/{pat}")) {
+        return true;
     }
     path == pat
 }
@@ -94,15 +95,34 @@ pub fn skip_copy(props: &ProjectProperties, rel: &str, dir: CopyDir) -> bool {
     false
 }
 
-pub fn copy_mapped(props: &ProjectProperties, repo: &RepositoryDef, dir: CopyDir) -> Result<()> {
+pub fn copy_mapped(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+) -> Result<Vec<String>> {
     let wc = repo_work_dir(props, repo);
+    copy_mapped_from_worktree(props, repo, &wc, dir)
+}
+
+/// Execute repository mappings against an already prepared worktree.
+///
+/// The returned paths are relative to the destination root. Keeping the
+/// operation observable makes the same product path useful to sync/commit and
+/// to callers that need Java `RemoteRepositoryProvider`-style copy reporting.
+pub fn copy_mapped_from_worktree(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+) -> Result<Vec<String>> {
+    let mut copied = Vec::new();
     if !wc.exists() {
-        return Ok(());
+        return Ok(copied);
     }
     for mapping in effective_mappings(repo) {
         let (from_root, from_rel, to_root, to_rel) = match dir {
-            CopyDir::RepoToProject => (&wc, &mapping.repository, &props.root, &mapping.local),
-            CopyDir::ProjectToRepo => (&props.root, &mapping.local, &wc, &mapping.repository),
+            CopyDir::RepoToProject => (wc, &mapping.repository, &props.root, &mapping.local),
+            CopyDir::ProjectToRepo => (&props.root, &mapping.local, wc, &mapping.repository),
         };
         let from = join_mapped(from_root, from_rel);
         let to = join_mapped(to_root, to_rel);
@@ -114,6 +134,7 @@ pub fn copy_mapped(props: &ProjectProperties, repo: &RepositoryDef, dir: CopyDir
                     std::fs::create_dir_all(p)?;
                 }
                 std::fs::copy(&from, &to)?;
+                copied.push(rel_unix(&to, to_root));
             }
             continue;
         }
@@ -141,8 +162,9 @@ pub fn copy_mapped(props: &ProjectProperties, repo: &RepositoryDef, dir: CopyDir
             if let Some(p) = dest.parent() {
                 std::fs::create_dir_all(p)?;
             }
-            std::fs::copy(ent.path(), dest)?;
+            std::fs::copy(ent.path(), &dest)?;
+            copied.push(rel_unix(&dest, to_root));
         }
     }
-    Ok(())
+    Ok(copied)
 }
