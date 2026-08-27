@@ -34,7 +34,7 @@ impl XmlDialect for ResXDialect {
             n.eq_ignore_ascii_case("type")
                 || n.eq_ignore_ascii_case("mimetype")
                 || (n.eq_ignore_ascii_case("name")
-                    && (v.starts_with("&gt;") || v.ends_with("FieldName")))
+                    && (v.starts_with("&gt;") || v.starts_with('>') || v.ends_with("FieldName")))
         })
     }
 }

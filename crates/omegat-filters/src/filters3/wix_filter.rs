@@ -19,9 +19,10 @@ struct WixHooks {
 
 impl FilterHooks for WixHooks {
     fn tag_start(&mut self, _path: &str, attrs: &[(String, String)]) {
-        if let Some((_, v)) = attrs.iter().find(|(n, _)| n == "Id") {
-            self.id = Some(v.clone());
-        }
+        self.id = attrs
+            .iter()
+            .find(|(n, _)| n == "Id")
+            .map(|(_, v)| v.clone());
     }
     fn tag_end(&mut self, _path: &str) {}
     fn comment(&mut self, _comment: &str) {}
@@ -34,7 +35,10 @@ impl FilterHooks for WixHooks {
             return String::new();
         }
         if self.collect {
-            let id = self.id.clone().unwrap_or_else(|| self.segments.len().to_string());
+            let id = self
+                .id
+                .clone()
+                .unwrap_or_else(|| self.segments.len().to_string());
             self.segments.push(ExtractedSegment {
                 id: id.clone(),
                 source: entry.to_string(),
@@ -46,10 +50,10 @@ impl FilterHooks for WixHooks {
             });
             entry.to_string()
         } else {
-            self.translations
-                .get(entry)
-                .cloned()
-                .or_else(|| self.id.as_ref().and_then(|id| self.translations.get(id).cloned()))
+            self.id
+                .as_ref()
+                .and_then(|id| self.translations.get(id).cloned())
+                .or_else(|| self.translations.get(entry).cloned())
                 .unwrap_or_else(|| entry.to_string())
         }
     }

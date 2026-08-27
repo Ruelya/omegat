@@ -105,9 +105,7 @@ impl DefaultHooks {
 
     fn lookup(&self, source: &str, id: &str) -> String {
         if let Some(translation) = self.translations.get(id) {
-            if !translation.is_empty() {
-                return translation.clone();
-            }
+            return translation.clone();
         }
         self.translations
             .get(source)

@@ -70,10 +70,10 @@ impl FilterHooks for ResxHooks {
             self.entry_text = Some(entry.to_string());
             entry.to_string()
         } else {
-            self.translations
-                .get(entry)
-                .cloned()
-                .or_else(|| self.id.as_ref().and_then(|id| self.translations.get(id).cloned()))
+            self.id
+                .as_ref()
+                .and_then(|id| self.translations.get(id).cloned())
+                .or_else(|| self.translations.get(entry).cloned())
                 .unwrap_or_else(|| entry.to_string())
         }
     }

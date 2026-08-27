@@ -1312,19 +1312,13 @@ fn android_comments_intact_resources_and_empty_plural_write_back_by_named_id() {
                 "count/other",
                 "<x0>%d</x0> items",
                 None,
-                vec![
-                    ("<x0>", r#"<xliff:g id="count">"#),
-                    ("</x0>", "</xliff:g>"),
-                ],
+                vec![("<x0>", r#"<xliff:g id="count">"#), ("</x0>", "</xliff:g>"),],
             ),
         ]
     );
 
     let translations = HashMap::from([
-        (
-            "count/other".into(),
-            "<x0>%d</x0> éléments".into(),
-        ),
+        ("count/other".into(), "<x0>%d</x0> éléments".into()),
         ("count/one".into(), String::new()),
         ("title".into(), "N'arrêtez <b0>jamais</b0>".into()),
         ("locked".into(), "Must not be written".into()),
@@ -1387,11 +1381,7 @@ fn android_comments_intact_resources_and_empty_plural_write_back_by_named_id() {
         plural_items,
         vec![
             (Some("one"), None, String::new()),
-            (
-                Some("other"),
-                None,
-                "%d éléments".to_string(),
-            ),
+            (Some("other"), None, "%d éléments".to_string(),),
         ]
     );
 
@@ -1405,6 +1395,341 @@ fn android_comments_intact_resources_and_empty_plural_write_back_by_named_id() {
         vec![
             ("title", "N'arrêtez <b0>jamais</b0>"),
             ("count/other", "<x0>%d</x0> éléments"),
+        ]
+    );
+}
+
+#[test]
+fn resx_named_entries_override_source_fallback_and_keep_non_string_data_intact() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("duplicate-values.resx");
+    let output = temp.path().join("translated-duplicate-values.resx");
+    std::fs::write(
+        &source,
+        r#"<root><data name="first" xml:space="preserve"><value>Same</value><comment>First note</comment></data><data name="second"><value>Same</value><comment>Second note</comment></data><data name="&gt;generated"><value>Generated value</value></data><data name="Bitmap" type="System.Drawing.Bitmap"><value>image.png</value></data><data name="Payload" mimetype="application/x-test"><value>binary payload</value></data><data name="TitleFieldName"><value>Field metadata</value></data></root>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.for_path(&source).unwrap();
+    assert_eq!(filter.id(), "resx");
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (
+                segment.id.as_str(),
+                segment.source.as_str(),
+                segment.note.as_deref(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("first", "Same", Some("First note")),
+            ("second", "Same", Some("Second note")),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("Same".into(), "Wrong source fallback".into()),
+        ("second".into(), "Deuxième".into()),
+        ("first".into(), "Premier".into()),
+        (">generated".into(), "Must stay generated".into()),
+        ("Bitmap".into(), "Must stay bitmap".into()),
+        ("Payload".into(), "Must stay payload".into()),
+        ("TitleFieldName".into(), "Must stay metadata".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (
+                segment.id.as_str(),
+                segment.source.as_str(),
+                segment.note.as_deref(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("first", "Premier", Some("First note")),
+            ("second", "Deuxième", Some("Second note")),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let rows = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "data")
+        .map(|data| {
+            let value = data
+                .children()
+                .find(|node| node.tag_name().name() == "value")
+                .and_then(|node| node.text());
+            let comment = data
+                .children()
+                .find(|node| node.tag_name().name() == "comment")
+                .and_then(|node| node.text());
+            (
+                data.attribute("name"),
+                data.attribute("type"),
+                data.attribute("mimetype"),
+                value,
+                comment,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                Some("first"),
+                None,
+                None,
+                Some("Premier"),
+                Some("First note"),
+            ),
+            (
+                Some("second"),
+                None,
+                None,
+                Some("Deuxième"),
+                Some("Second note"),
+            ),
+            (
+                Some(">generated"),
+                None,
+                None,
+                Some("Generated value"),
+                None,
+            ),
+            (
+                Some("Bitmap"),
+                Some("System.Drawing.Bitmap"),
+                None,
+                Some("image.png"),
+                None,
+            ),
+            (
+                Some("Payload"),
+                None,
+                Some("application/x-test"),
+                Some("binary payload"),
+                None,
+            ),
+            (
+                Some("TitleFieldName"),
+                None,
+                None,
+                Some("Field metadata"),
+                None,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn wix_duplicate_sources_write_back_by_string_id_not_source_key() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("duplicate-values.wxl");
+    let output = temp.path().join("translated-duplicate-values.wxl");
+    std::fs::write(
+        &source,
+        r#"<WixLocalization Culture="en-us" xmlns="http://schemas.microsoft.com/wix/2006/localization"><String Id="first">Same</String><String Id="second">Same</String><String Id="untouched">Keep [ProductName]</String></WixLocalization>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.for_path(&source).unwrap();
+    assert_eq!(filter.id(), "wix");
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("first", "Same"),
+            ("second", "Same"),
+            ("untouched", "Keep [ProductName]"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("Same".into(), "Wrong source fallback".into()),
+        ("second".into(), "Deuxième".into()),
+        ("first".into(), "Premier".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("first", "Premier"),
+            ("second", "Deuxième"),
+            ("untouched", "Keep [ProductName]"),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    assert_eq!(
+        document
+            .descendants()
+            .filter(|node| node.tag_name().name() == "String")
+            .map(|node| (node.attribute("Id"), node.text()))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some("first"), Some("Premier")),
+            (Some("second"), Some("Deuxième")),
+            (Some("untouched"), Some("Keep [ProductName]")),
+        ]
+    );
+}
+
+#[test]
+fn txml_occurrence_ids_write_duplicate_targets_and_explicit_empty_translation() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("duplicate-targets.txml");
+    let output = temp.path().join("translated-duplicate-targets.txml");
+    std::fs::write(
+        &source,
+        r#"<txml><translatable><source>Source one</source><target>Same <ut id="one">&lt;one&gt;</ut> target</target></translatable><translatable><source>Source two</source><target>Same <ut id="two">&lt;two&gt;</ut> target</target></translatable><translatable><source>Source three</source><target>Clear me</target></translatable><skeleton><target>Skeleton target</target></skeleton><revisions><target>Revision target</target></revisions></txml>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.for_path(&source).unwrap();
+    assert_eq!(filter.id(), "txml");
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| {
+                (
+                    segment.id.as_str(),
+                    segment.source.as_str(),
+                    segment
+                        .protected_parts
+                        .iter()
+                        .map(|part| (part.text.as_str(), part.details.as_str()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "0",
+                "Same <u0/> target",
+                vec![("<u0/>", r#"<ut id="one">&lt;one&gt;</ut>"#)],
+            ),
+            (
+                "1",
+                "Same <u0/> target",
+                vec![("<u0/>", r#"<ut id="two">&lt;two&gt;</ut>"#)],
+            ),
+            ("2", "Clear me", vec![]),
+        ]
+    );
+
+    let translations = HashMap::from([
+        (
+            "Same <u0/> target".into(),
+            "Wrong source fallback <u0/>".into(),
+        ),
+        ("1".into(), "Deuxième <u0/> traduit".into()),
+        ("2".into(), String::new()),
+        ("0".into(), "Premier <u0/> traduit".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "Premier <u0/> traduit"),
+            ("1", "Deuxième <u0/> traduit"),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let targets = document
+        .descendants()
+        .filter(|node| {
+            node.tag_name().name() == "target"
+                && node
+                    .parent()
+                    .is_some_and(|parent| parent.tag_name().name() == "translatable")
+        })
+        .map(|target| {
+            (
+                target
+                    .children()
+                    .filter(|node| node.is_element())
+                    .map(|node| node.tag_name().name())
+                    .collect::<Vec<_>>(),
+                target
+                    .descendants()
+                    .filter(|node| node.is_text())
+                    .filter_map(|node| node.text())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        targets,
+        vec![
+            (vec!["ut"], vec!["Premier ", "<one>", " traduit"],),
+            (vec!["ut"], vec!["Deuxième ", "<two>", " traduit"],),
+            (vec![], vec![]),
+        ]
+    );
+    assert_eq!(
+        document
+            .descendants()
+            .filter(|node| {
+                node.tag_name().name() == "source"
+                    || node.tag_name().name() == "skeleton"
+                    || node.tag_name().name() == "revisions"
+            })
+            .map(|node| {
+                (
+                    node.tag_name().name(),
+                    node.descendants()
+                        .filter(|descendant| descendant.is_text())
+                        .filter_map(|descendant| descendant.text())
+                        .collect::<String>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            ("source", "Source one".to_string()),
+            ("source", "Source two".to_string()),
+            ("source", "Source three".to_string()),
+            ("skeleton", "Skeleton target".to_string()),
+            ("revisions", "Revision target".to_string()),
         ]
     );
 }
