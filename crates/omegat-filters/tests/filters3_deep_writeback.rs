@@ -123,6 +123,107 @@ fn openxml_deep_writeback_targets_a_namespaced_part_occurrence() {
 }
 
 #[test]
+fn openxml_hidden_text_external_link_and_intact_fallback_write_independently() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("dialect-options.docx");
+    let output = temp.path().join("translated-dialect-options.docx");
+    let document = r#"<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body><w:p><w:instrText>Hidden field</w:instrText></w:p><w:p><mc:Fallback><w:r><w:t>Fallback text</w:t></w:r></mc:Fallback></w:p></w:body></w:document>"#;
+    let relationships = r#"<Relationships><Relationship Id="external" TargetMode="External" Target="https://example.test/original?a=1&amp;b=2"/><Relationship Id="internal" Target="media/image.png"/></Relationships>"#;
+    write_zip(
+        &source,
+        &[
+            ("word/document.xml", document),
+            ("word/_rels/document.xml.rels", relationships),
+        ],
+    );
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("openxml").unwrap();
+    let mut context = FilterContext::default();
+    context
+        .options
+        .insert("translateHiddenText".into(), "true".into());
+    context
+        .options
+        .insert("translateSlideLinks".into(), "true".into());
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("word/document.xml#0", "Hidden field"),
+            (
+                "word/_rels/document.xml.rels#0",
+                "https://example.test/original?a=1&b=2",
+            ),
+        ]
+    );
+
+    let translations = HashMap::from([
+        (
+            "word/_rels/document.xml.rels#0".into(),
+            "https://example.test/traduit?a=3&b=4".into(),
+        ),
+        ("word/document.xml#0".into(), "Champ masqué".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("word/document.xml#0", "Champ masqué"),
+            (
+                "word/_rels/document.xml.rels#0",
+                "https://example.test/traduit?a=3&b=4",
+            ),
+        ]
+    );
+
+    let rewritten_document = read_part(&output, "word/document.xml");
+    let document = roxmltree::Document::parse(&rewritten_document).unwrap();
+    assert_eq!(
+        document
+            .descendants()
+            .find(|node| node.tag_name().name() == "instrText")
+            .and_then(|node| node.text()),
+        Some("Champ masqué")
+    );
+    assert_eq!(
+        document
+            .descendants()
+            .find(|node| node.tag_name().name() == "t")
+            .and_then(|node| node.text()),
+        Some("Fallback text")
+    );
+    let rewritten_relationships = read_part(&output, "word/_rels/document.xml.rels");
+    let relationships = roxmltree::Document::parse(&rewritten_relationships).unwrap();
+    let targets: Vec<_> = relationships
+        .descendants()
+        .filter(|node| node.tag_name().name() == "Relationship")
+        .map(|node| (node.attribute("Id").unwrap(), node.attribute("Target").unwrap()))
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            (
+                "external",
+                "https://example.test/traduit?a=3&b=4",
+            ),
+            ("internal", "media/image.png"),
+        ]
+    );
+}
+
+#[test]
 fn opendoc_deep_writeback_distinguishes_content_meta_and_intact_styles() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("deep.odt");
@@ -390,7 +491,7 @@ fn xliff_nested_sub_writeback_preserves_depth_with_out_of_order_translations() {
     let output = temp.path().join("translated.xlf");
     std::fs::write(
         &source,
-        r#"<xliff version="1.2"><file><body><trans-unit id="unit"><source>Source</source><target state="new">Before <sub>Outer <sub>Inner</sub> tail</sub> after</target></trans-unit></body></file></xliff>"#,
+        r#"<xliff version="1.2"><file><body><trans-unit id="unit"><source>Source</source><target state="new">Before <sub>Outer <bpt id="1">&lt;b&gt;</bpt>bold<ept id="1">&lt;/b&gt;</ept> tail</sub> after</target></trans-unit></body></file></xliff>"#,
     )
     .unwrap();
 
@@ -402,15 +503,20 @@ fn xliff_nested_sub_writeback_preserves_depth_with_out_of_order_translations() {
         parsed
             .segments
             .iter()
-            .map(|segment| segment.source.as_str())
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
             .collect::<Vec<_>>(),
-        vec!["Inner", "Outer <s0/> tail", "Before <s0/> after",]
+        vec![
+            ("unit#0", "Outer <b0>bold</b0> tail"),
+            ("unit#1", "Before <s0/> after"),
+        ]
     );
 
     let translations = HashMap::from([
-        ("Before <s0/> after".into(), "Avant <s0/> après".into()),
-        ("Inner".into(), "Intérieur".into()),
-        ("Outer <s0/> tail".into(), "Extérieur <s0/> fin".into()),
+        ("unit#1".into(), "Avant <s0/> après".into()),
+        (
+            "unit#0".into(),
+            "Extérieur <b0>gras</b0> fin".into(),
+        ),
     ]);
     filter
         .write(&source, &output, &translations, &context)
@@ -420,9 +526,12 @@ fn xliff_nested_sub_writeback_preserves_depth_with_out_of_order_translations() {
         reparsed
             .segments
             .iter()
-            .map(|segment| segment.source.as_str())
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
             .collect::<Vec<_>>(),
-        vec!["Intérieur", "Extérieur <s0/> fin", "Avant <s0/> après",]
+        vec![
+            ("unit#0", "Extérieur <b0>gras</b0> fin"),
+            ("unit#1", "Avant <s0/> après"),
+        ]
     );
     let rewritten = std::fs::read_to_string(&output).unwrap();
     let document = roxmltree::Document::parse(&rewritten).unwrap();
@@ -435,10 +544,33 @@ fn xliff_nested_sub_writeback_preserves_depth_with_out_of_order_translations() {
         .descendants()
         .filter(|node| node.tag_name().name() == "sub")
         .collect();
-    assert_eq!(subs.len(), 2);
+    assert_eq!(subs.len(), 1);
+    assert_eq!(
+        target
+            .descendants()
+            .filter(|node| node.tag_name().name() == "bpt")
+            .count(),
+        1
+    );
+    assert_eq!(
+        target
+            .descendants()
+            .filter(|node| node.tag_name().name() == "ept")
+            .count(),
+        1
+    );
     assert_eq!(
         element_names_and_text(&rewritten).1,
-        vec!["Source", "Avant", "Extérieur", "Intérieur", "fin", "après",]
+        vec![
+            "Source",
+            "Avant",
+            "Extérieur",
+            "<b>",
+            "gras",
+            "</b>",
+            "fin",
+            "après",
+        ]
     );
 }
 

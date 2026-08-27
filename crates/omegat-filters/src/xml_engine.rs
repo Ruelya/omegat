@@ -685,9 +685,21 @@ fn recover_tags(
     source: &[Element],
     first_good: i32,
     last_good: i32,
-    _protected: &[ProtectedPart],
+    protected: &[ProtectedPart],
 ) -> Vec<Element> {
     let mut out = Vec::new();
+    let mut protected_elements = Vec::new();
+    let mut used = Vec::new();
+    if first_good >= 0 && last_good >= first_good {
+        for part in protected {
+            if let Some(index) = (first_good as usize..=last_good as usize).find(|index| {
+                !used.contains(index) && source[*index].to_original() == part.details
+            }) {
+                used.push(index);
+                protected_elements.push((part.text.clone(), source[index].clone()));
+            }
+        }
+    }
     let mut pos = 0usize;
     let bytes = translation.as_bytes();
     while pos < translation.len() {
@@ -702,8 +714,19 @@ fn recover_tags(
             if let Some(end_rel) = translation[start..].find('>') {
                 let tag_s = &translation[start..start + end_rel + 1];
                 let mut found = false;
+                if let Some(index) = protected_elements
+                    .iter()
+                    .position(|(shortcut, _)| shortcut == tag_s)
+                {
+                    let (_, element) = protected_elements.remove(index);
+                    out.push(element);
+                    found = true;
+                }
                 if first_good >= 0 && last_good >= first_good {
                     for j in first_good as usize..=last_good as usize {
+                        if found {
+                            break;
+                        }
                         if let Some(long) = source[j].as_tag() {
                             if long.to_shortcut() == tag_s {
                                 out.push(source[j].clone());

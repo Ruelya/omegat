@@ -19,6 +19,8 @@ struct XliffHooks {
     ignored: bool,
     entry_text: Vec<String>,
     alt_ids: HashSet<String>,
+    next_unit_id: usize,
+    entry_ordinal: usize,
 }
 
 impl FilterHooks for XliffHooks {
@@ -28,7 +30,15 @@ impl FilterHooks for XliffHooks {
                 .iter()
                 .find(|(n, _)| n == "resname")
                 .map(|(_, v)| v.clone());
-            self.id = attrs.iter().find(|(n, _)| n == "id").map(|(_, v)| v.clone());
+            self.id = Some(
+                attrs
+                    .iter()
+                    .find(|(n, _)| n == "id")
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(|| self.next_unit_id.to_string()),
+            );
+            self.next_unit_id += 1;
+            self.entry_ordinal = 0;
         }
         if path == "/xliff/file/header" {
             self.ignored = true;
@@ -38,11 +48,17 @@ impl FilterHooks for XliffHooks {
     fn tag_end(&mut self, path: &str) {
         if path.ends_with("trans-unit") {
             if self.collect {
-                for src in self.entry_text.drain(..) {
-                    let id = self
-                        .id
-                        .clone()
-                        .unwrap_or_else(|| self.segments.len().to_string());
+                let entry_count = self.entry_text.len();
+                let base_id = self
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| self.segments.len().to_string());
+                for (ordinal, src) in self.entry_text.drain(..).enumerate() {
+                    let id = if entry_count > 1 {
+                        format!("{base_id}#{ordinal}")
+                    } else {
+                        base_id.clone()
+                    };
                     self.segments.push(ExtractedSegment {
                         id,
                         source: src,
@@ -57,6 +73,7 @@ impl FilterHooks for XliffHooks {
             self.id = None;
             self.resname = None;
             self.entry_text.clear();
+            self.entry_ordinal = 0;
         }
         if path == "/xliff/file/header" {
             self.ignored = false;
@@ -80,10 +97,18 @@ impl FilterHooks for XliffHooks {
             self.entry_text.push(entry.to_string());
             entry.to_string()
         } else {
+            let ordinal = self.entry_ordinal;
+            self.entry_ordinal += 1;
+            let base_id = self.id.as_deref().unwrap_or("0");
             self.translations
-                .get(entry)
+                .get(&format!("{base_id}#{ordinal}"))
                 .cloned()
-                .or_else(|| self.id.as_ref().and_then(|id| self.translations.get(id).cloned()))
+                .or_else(|| {
+                    (ordinal == 0)
+                        .then(|| self.translations.get(base_id).cloned())
+                        .flatten()
+                })
+                .or_else(|| self.translations.get(entry).cloned())
                 .unwrap_or_else(|| entry.to_string())
         }
     }
@@ -110,6 +135,8 @@ impl Filter for XliffFilter {
             ignored: false,
             entry_text: Vec::new(),
             alt_ids: HashSet::new(),
+            next_unit_id: 0,
+            entry_ordinal: 0,
         };
         parse_xml_cfg(path, &dialect, &mut hooks, engine_config(ctx))?;
         Ok(ParsedFile {
@@ -134,6 +161,8 @@ impl Filter for XliffFilter {
             ignored: false,
             entry_text: Vec::new(),
             alt_ids: HashSet::new(),
+            next_unit_id: 0,
+            entry_ordinal: 0,
         };
         write_xml_cfg(source_path, dest_path, &dialect, &mut hooks, engine_config(ctx))
     }
