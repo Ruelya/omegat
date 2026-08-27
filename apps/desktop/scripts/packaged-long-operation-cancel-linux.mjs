@@ -24,6 +24,7 @@ const executable =
 const sidecar =
   process.env.OMEGAT_SIDECAR
   ?? resolve(desktopDir, "..", "..", "target", "release", "omegat-sidecar");
+const keepWorkDir = process.env.OMEGAT_KEEP_E2E_WORKDIR === "1";
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
 async function waitFor(label, check, timeoutMs = WAIT_MS) {
@@ -1747,5 +1748,9 @@ try {
   client?.close();
   await terminate(application);
   await terminate(xvfb.child);
-  await rm(workDir, { recursive: true, force: true });
+  if (keepWorkDir) {
+    process.stderr.write(`Retained packaged E2E work directory: ${workDir}\n`);
+  } else {
+    await rm(workDir, { recursive: true, force: true });
+  }
 }
