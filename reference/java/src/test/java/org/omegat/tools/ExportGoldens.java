@@ -281,6 +281,10 @@ public final class ExportGoldens {
             System.out.println("ExportGoldens wrote engine goldens to " + goldenRoot);
         } else {
             exporter.run();
+            // Some JUnit classes exercised by exportRewriteWaves tear down the
+            // process-wide FilterMaster. Honesty exports parse HTML afterward,
+            // so restore the same default state established at startup.
+            Core.setFilterMaster(new FilterMaster(FilterMaster.createDefaultFiltersConfig()));
             exporter.exportHonesty();
         }
     }
@@ -3423,7 +3427,7 @@ public final class ExportGoldens {
 
     private void exportTeamMappingTests() throws Exception {
         assertJavaTestClass("org.omegat.core.team2.RemoteRepositoryProviderTest");
-        writeCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json",
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json",
                 "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithExcludes",
                 Map.of("excludes", List.of("**/*.bak", "*.png", "subdir/3.jpg"),
                         "copied", List.of(
@@ -3432,7 +3436,7 @@ public final class ExportGoldens {
                                 "source/file1.txt",
                                 "source/otherproject/otherprojectfile.txt",
                                 "source/subdir/file2.txt")));
-        writeCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithSExcludes.json",
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithSExcludes.json",
                 "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithSExcludes",
                 Map.of("excludes", List.of("**/*.bak", "/*.png", "/subdir/3.jpg"),
                         "copied", List.of(
@@ -3695,6 +3699,14 @@ public final class ExportGoldens {
                 && !json.containsKey("controllers") && !json.containsKey("dialects")) {
             json.put("keys", List.of(javaTest));
         }
+        writeJson(goldenRoot.resolve(rel), json);
+    }
+
+    private void writeStrictCase(String rel, String javaTest, Map<String, Object> productResult) throws Exception {
+        Map<String, Object> json = new LinkedHashMap<>();
+        json.put("exported_by", EXPORTED_BY);
+        json.put("java_test", javaTest);
+        json.putAll(productResult);
         writeJson(goldenRoot.resolve(rel), json);
     }
 
@@ -4778,7 +4790,7 @@ public final class ExportGoldens {
         writeCase("remaining/HTTPRemoteRepositoryTest-testRetrieveHandlesNotModifiedResponse.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveHandlesNotModifiedResponse",
                 Map.of("status", 304, "skip_write", true));
-        writeCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
+        writeStrictCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull",
                 Map.of("version", "1.0", "throws", true, "message", "Not supported"));
         writeCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json",
@@ -5247,7 +5259,7 @@ public final class ExportGoldens {
         writeCase("cli/MainTest#testConstructCommandParamsProjectAfterOptions.json",
                 "org.omegat.MainTest#testConstructCommandParamsProjectAfterOptions",
                 Map.of("config_dir", "/tmp/omegat-conf", "project", "/tmp/project"));
-        writeCase("cli/CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions.json",
+        writeStrictCase("cli/CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions",
                 Map.of("project_locking", false, "location_save", false, "no_team", true,
                         "tokenizer_source", "org.omegat.tokenizer.LuceneEnglishTokenizer",
@@ -5255,29 +5267,29 @@ public final class ExportGoldens {
                         "argv", List.of("start", "--no-project-locking", "--no-location-save", "--no-team",
                                 "--ITokenizer", "org.omegat.tokenizer.LuceneEnglishTokenizer",
                                 "--ITokenizerTarget", "org.omegat.tokenizer.LuceneGermanTokenizer")));
-        writeCase("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json",
+        writeStrictCase("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault",
                 Map.of("no_team", false, "argv", List.of("start", "--team")));
-        writeCase("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json",
+        writeStrictCase("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched",
                 Map.of("project_locking", true, "location_save", true, "no_team", false,
                         "argv", List.of("start")));
-        writeCase("cli/LegacyParametersTest#testInitializeAppliesConfigDir.json",
+        writeStrictCase("cli/LegacyParametersTest#testInitializeAppliesConfigDir.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir",
                 Map.of("config_dir", "/tmp/omegat-conf",
                         "argv", List.of("--config-dir", "/tmp/omegat-conf")));
-        writeCase("cli/LegacyParametersTest#testInitializeExpandsTilde.json",
+        writeStrictCase("cli/LegacyParametersTest#testInitializeExpandsTilde.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde",
                 Map.of("input", "~/omegat-conf", "home_relative", "omegat-conf",
                         "argv", List.of("--config-dir=~/omegat-conf")));
-        writeCase("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json",
+        writeStrictCase("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeWithoutConfigDir",
                 Map.of("present", false, "argv", List.of()));
-        writeCase("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json",
+        writeStrictCase("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags",
                 Map.of("project_locking", false, "location_save", false, "no_team", true,
                         "argv", List.of("--disable-project-locking", "--disable-location-save", "--no-team")));
-        writeCase("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json",
+        writeStrictCase("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle",
                 Map.of("file", "/tmp/Bundle.properties", "key", "TF_MENU_FILE",
                         "value", "Bundle from the command line",
@@ -5437,32 +5449,32 @@ public final class ExportGoldens {
         writeCase("align/AlignerWindowTest#testMergeSplitMove.json",
                 "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
                 Map.of("ops", List.of("merge", "split", "move-up", "move-down")));
-        writeCase("align/AlignSettingsPersistenceTest#testRoundTrip.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testRoundTrip.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testRoundTrip",
                 Map.of("algorithm", "forward-backward", "calculator", "poisson",
                         "counter", "char", "segment", false, "remove_tags", true));
-        writeCase("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored",
                 Map.of("algorithm", "viterbi", "calculator", "normal",
                         "counter", "word", "segment", true, "remove_tags", false));
-        writeCase("align/AlignSettingsPersistenceTest#testStoredValuesRestored.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testStoredValuesRestored.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testStoredValuesRestored",
                 Map.of("algorithm", "forward-backward", "segment", false, "calculator", "normal"));
-        writeCase("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored",
                 Map.of("fallback", "eo"));
-        writeCase("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid",
                 Map.of("stored", "not a code", "fallback", "eo"));
-        writeCase("align/AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults",
                 Map.of("mode", "heapwise", "non_empty", true));
         Map<String, Object> inputDirs = new LinkedHashMap<>();
         inputDirs.put("source_dir", "tmp/foo");
         inputDirs.put("target_dir", null);
-        writeCase("align/AlignSettingsPersistenceTest#testInputDirRoundTrip.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testInputDirRoundTrip.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testInputDirRoundTrip", inputDirs);
-        writeCase("align/AlignSettingsPersistenceTest#testLanguageRoundTrip.json",
+        writeStrictCase("align/AlignSettingsPersistenceTest#testLanguageRoundTrip.json",
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageRoundTrip",
                 Map.of("source_lang", "fr-FR", "target_lang", "de"));
     }
