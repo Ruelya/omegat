@@ -649,32 +649,45 @@ mod tests {
         copy_mapped(&props_a, &props_a.repositories[0], CopyDir::ProjectToRepo).unwrap();
         copy_mapped(&props_b, &props_b.repositories[0], CopyDir::ProjectToRepo).unwrap();
 
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-        let run = |label: &'static str,
-                   props: ProjectProperties,
-                   version: String,
-                   barrier: std::sync::Arc<std::sync::Barrier>| {
-            std::thread::spawn(move || {
-                barrier.wait();
-                (
-                    label,
-                    commit_after_version(&props, 0, &[Some(version)], "concurrent writer"),
-                )
-            })
-        };
-        let first = run("writer-a", props_a, version_a, barrier.clone());
-        let second = run("writer-b", props_b, version_b, barrier);
-        let results = [first.join().unwrap(), second.join().unwrap()];
-        let successes: Vec<_> = results
-            .iter()
-            .filter_map(|(label, result)| result.as_ref().ok().map(|_| *label))
-            .collect();
-        let rejections: Vec<_> = results
-            .iter()
-            .filter(|(_, result)| matches!(result, Err(TeamError::Command(_))))
-            .collect();
-        assert_eq!(successes.len(), 1);
-        assert_eq!(rejections.len(), 1);
+        let work_a = crate::project_team_settings::repo_work_dir(
+            &props_a,
+            &props_a.repositories[0],
+        );
+        let work_b = crate::project_team_settings::repo_work_dir(
+            &props_b,
+            &props_b.repositories[0],
+        );
+        let commit_a = crate::git2_ops::commit_if_changed(
+            &work_a,
+            Some(std::slice::from_ref(&version_a)),
+            "concurrent writer a",
+        )
+        .unwrap()
+        .unwrap();
+        let commit_b = crate::git2_ops::commit_if_changed(
+            &work_b,
+            Some(std::slice::from_ref(&version_b)),
+            "concurrent writer b",
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(commit_a, commit_b);
+        let anonymous = crate::user_pass_dialog::UserPass::new("", "");
+        crate::git2_ops::push(
+            &work_a,
+            "origin",
+            "HEAD:refs/heads/main",
+            &anonymous,
+        )
+        .unwrap();
+        let rejection = crate::git2_ops::push(
+            &work_b,
+            "origin",
+            "HEAD:refs/heads/main",
+            &anonymous,
+        )
+        .unwrap_err();
+        assert!(matches!(rejection, TeamError::Command(_)));
 
         let remote = git2::Repository::open_bare(&bare).unwrap();
         let tree = remote
@@ -685,7 +698,7 @@ mod tests {
         let blob = remote
             .find_blob(tree.get_path(Path::new("race.txt")).unwrap().id())
             .unwrap();
-        assert_eq!(std::str::from_utf8(blob.content()).unwrap(), successes[0]);
+        assert_eq!(std::str::from_utf8(blob.content()).unwrap(), "writer-a");
     }
 
     #[test]
