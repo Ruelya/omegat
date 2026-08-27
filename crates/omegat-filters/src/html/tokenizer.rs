@@ -637,13 +637,7 @@ mod tests {
             tokenize_with_protected(raw, true, |node| node.attr("class") == Some("notrans"));
         assert_eq!(
             nodes.iter().map(Node::to_html).collect::<Vec<_>>(),
-            vec![
-                "<ul>",
-                r#"<li class="notrans">one"#,
-                "<li>",
-                "two",
-                "</ul>",
-            ]
+            vec!["<ul>", r#"<li class="notrans">one"#, "<li>", "two", "</ul>",]
         );
     }
 
