@@ -266,10 +266,13 @@ fn opendoc_attributes_and_out_of_turn_notes_write_by_unique_id() {
         link.attribute(("urn:xlink", "href")),
         Some("Translated link")
     );
-    let note_text = document
+    let note_body = document
         .descendants()
         .find(|node| node.tag_name().name() == "note-body")
-        .unwrap()
-        .text();
-    assert_eq!(note_text, Some("Translated note"));
+        .unwrap();
+    let note_paragraph = note_body
+        .children()
+        .find(|node| node.tag_name().name() == "p")
+        .unwrap();
+    assert_eq!(note_paragraph.text(), Some("Translated note"));
 }
