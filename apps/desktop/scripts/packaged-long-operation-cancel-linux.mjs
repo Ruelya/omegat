@@ -1596,7 +1596,10 @@ try {
   }
   await xdotool(xvfb.display, ["key", "Return"]);
   await waitFor("packaged decoy alternative committed", async () => {
-    const entries = await client.evaluate(`window.omegat.rpc("entry.list", {})`);
+    const entries = await client.evaluate(
+      `window.omegat.rpc("entry.list", {})`,
+      true,
+    );
     const decoy = entries.find((entry) =>
       JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
     );
