@@ -340,23 +340,36 @@ try {
   assert.equal(initial.scrollTop, 0);
   assert.equal(initial.sourceText, sourceLines[0]);
 
-  const mouse = (type, x, y, extra = {}) =>
-    client.command("Input.dispatchMouseEvent", {
-      type,
-      x,
-      y,
-      button: "left",
-      ...extra,
-    });
-  await mouse("mouseMoved", initial.startX, initial.startY);
-  await mouse("mousePressed", initial.startX, initial.startY, {
-    clickCount: 1,
-    buttons: 1,
-  });
-  await mouse("mouseMoved", initial.startX + 12, initial.startY + 6, {
-    buttons: 1,
-  });
-  await mouse("mouseMoved", initial.edgeX, initial.edgeY, { buttons: 1 });
+  const pageMetrics = await client.evaluate(`({
+    outerWidth: window.outerWidth,
+    outerHeight: window.outerHeight,
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+  })`);
+  const contentLeft =
+    windowX + Math.max(0, (pageMetrics.outerWidth - pageMetrics.innerWidth) / 2);
+  const contentTop =
+    windowY + Math.max(0, pageMetrics.outerHeight - pageMetrics.innerHeight);
+  const startScreenX = Math.round(contentLeft + initial.startX);
+  const startScreenY = Math.round(contentTop + initial.startY);
+  const edgeScreenX = Math.round(contentLeft + initial.edgeX);
+  const edgeScreenY = Math.round(contentTop + initial.edgeY);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(startScreenX),
+    String(startScreenY),
+    "mousedown",
+    "1",
+    "mousemove_relative",
+    "--sync",
+    "12",
+    "6",
+    "mousemove",
+    "--sync",
+    String(edgeScreenX),
+    String(edgeScreenY),
+  ]);
 
   const hovered = await waitFor("stationary pointer drag autoscroll", async () => {
     const state = await client.evaluate(`(() => {
@@ -386,7 +399,7 @@ try {
     );
     return active === "align-drop-bottom-source" ? true : undefined;
   });
-  await mouse("mouseReleased", initial.edgeX, initial.edgeY, { clickCount: 1 });
+  await xdotool(xvfb.display, ["mouseup", "1"]);
 
   const dropped = await waitFor("sidecar-backed drop result", async () => {
     const state = await client.evaluate(`(() => {
@@ -417,7 +430,7 @@ try {
       initialScrollTop: initial.scrollTop,
       hoveredScrollTop: hovered.scrollTop,
       activeDescendant: hovered.activeDescendant,
-      pointerInput: "Input.dispatchMouseEvent",
+      pointerInput: "XTEST",
       movedSource: {
         from: 0,
         to: dropped.rowCount - 1,
