@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDocument3 } from "../editor/Document3";
 import { marksFromPrefs, prefsFromMarks } from "../lib/editor-doc";
 import { defaultPreferences } from "../lib/preferences";
 import { toSearchParams } from "../lib/search-params";
@@ -189,6 +190,107 @@ describe("app store", () => {
     useApp.setState({ index: 2 });
     await useApp.getState().jump("auto", undefined, -1);
     expect(useApp.getState().index).toBe(1);
+  });
+
+  it("commits the live Document3 before cyclic filtered navigation", async () => {
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.set") {
+        const input = params as {
+          index: number;
+          translation: string;
+          note: string;
+          default_translation: boolean;
+        };
+        const entry = useApp.getState().entries[input.index]!;
+        return {
+          ...entry,
+          translation: input.translation,
+          note: input.note,
+          translated: true,
+          default_translation: input.default_translation,
+          revision: entry.revision + 1,
+        };
+      }
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+        || method === "dict.query"
+        || method === "completer.query"
+      ) {
+        return [];
+      }
+      return {};
+    });
+    useApp.setState({
+      entries: [
+        { ...sampleEntry, index: 0, source: "one" },
+        { ...sampleEntry, index: 1, source: "two", translated: true, translation: "deux" },
+        { ...sampleEntry, index: 2, source: "three" },
+      ],
+      index: 0,
+      draft: "",
+      note: "",
+      document3: createDocument3("one", ""),
+      filterUntranslated: true,
+    });
+    useApp.getState().setDraft("未提交");
+
+    await useApp.getState().jump("prev");
+
+    const write = rpc.mock.calls.find(([method]) => method === "entry.set");
+    expect(write).toEqual([
+      "entry.set",
+      {
+        index: 0,
+        translation: "未提交",
+        note: "",
+        revision: 1,
+        default_translation: true,
+      },
+    ]);
+    expect({
+      active: useApp.getState().index,
+      committed: useApp.getState().entries[0]!.translation,
+      draft: useApp.getState().draft,
+      source: useApp.getState().document3.source,
+    }).toEqual({
+      active: 2,
+      committed: "未提交",
+      draft: "",
+      source: "three",
+    });
+  });
+
+  it("keeps an uncommitted draft active when navigation persistence fails", async () => {
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "entry.set") throw new Error("optimistic revision conflict");
+      return [];
+    });
+    useApp.setState({
+      entries: [
+        { ...sampleEntry, index: 0, source: "one" },
+        { ...sampleEntry, index: 1, source: "two" },
+      ],
+      index: 0,
+      draft: "",
+      note: "",
+      document3: createDocument3("one", ""),
+    });
+    useApp.getState().setDraft("不要丢失");
+
+    await expect(useApp.getState().jump("next")).rejects.toThrow("optimistic revision conflict");
+    expect({
+      active: useApp.getState().index,
+      draft: useApp.getState().draft,
+      translation: useApp.getState().document3.translation,
+      dirty: useApp.getState().document3.dirty,
+    }).toEqual({
+      active: 0,
+      draft: "不要丢失",
+      translation: "不要丢失",
+      dirty: true,
+    });
   });
 
   it("dispatches the remaining Java menu actions", async () => {

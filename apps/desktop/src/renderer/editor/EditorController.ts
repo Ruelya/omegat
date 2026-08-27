@@ -24,6 +24,8 @@ export type LoadedEntry = {
   isAlt?: boolean;
   fromAuto?: boolean;
   fromMt?: boolean;
+  translated?: boolean;
+  linked?: "xICE" | "x100PC" | "xAUTO" | "xENFORCED";
   protectedParts?: ProtectedPart[];
 };
 
@@ -55,11 +57,37 @@ export type EditorCaretPosition = {
   selectionEnd?: number;
 };
 
+type EditorUndoState = {
+  translation: string;
+  caret: EditorCaretPosition;
+};
+
+/**
+ * Find the next matching entry with Java's project-wide wraparound behavior.
+ * The current entry is considered last, after every other entry was checked.
+ */
+export function findCyclicEntryIndex<T>(
+  entries: readonly T[],
+  currentIndex: number,
+  direction: -1 | 1,
+  allowed: (entry: T, index: number) => boolean = () => true,
+  matches: (entry: T, index: number) => boolean = () => true,
+): number | null {
+  if (entries.length === 0) return null;
+  const origin = Math.max(0, Math.min(currentIndex, entries.length - 1));
+  for (let distance = 1; distance <= entries.length; distance += 1) {
+    const index = (origin + direction * distance + entries.length * 2) % entries.length;
+    const entry = entries[index]!;
+    if (allowed(entry, index) && matches(entry, index)) return index;
+  }
+  return null;
+}
+
 export class EditorController {
   readonly editor = IEditor;
   readonly textArea = new EditorTextArea3();
   readonly markers = new MarkerController();
-  readonly undo = new TranslationUndoManager();
+  readonly undo = new TranslationUndoManager<EditorUndoState>();
   readonly history = new SegmentHistory();
   displayedFileIndex = 0;
   previousDisplayedFileIndex = 0;
@@ -82,11 +110,13 @@ export class EditorController {
   }
 
   replaceEditText(text: string): void {
-    this.undo.remember(this.getCurrentTranslation());
     if (!this.document) {
       this.editor.replaceEditText(text);
       return;
     }
+    this.adoptLiveDocument();
+    if (text === this.getCurrentTranslation()) return;
+    this.undo.remember(this.currentUndoState());
     this.document = replaceDocumentText(this.document, text);
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
@@ -94,14 +124,16 @@ export class EditorController {
   }
 
   insertText(text: string): void {
-    this.undo.remember(this.getCurrentTranslation());
     if (!this.document) {
       this.editor.insertText(text);
       return;
     }
+    this.adoptLiveDocument();
     this.textArea.setDocument(this.document, true);
     this.textArea.clampSelectionToTranslation();
+    const before = this.currentUndoState();
     if (!this.textArea.replaceSelection(text)) return;
+    this.undo.remember(before);
     this.document = this.textArea.getOmDocument();
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
@@ -113,9 +145,20 @@ export class EditorController {
       await this.editor.commitAndDeactivate();
       return;
     }
-    this.syncActiveEntry();
-    this.document = commitDocument(this.document);
-    this.textArea.setDocument(this.document);
+    this.commitCurrentDocument(true);
+  }
+
+  /**
+   * Commit without changing entries and restore the relative caret, matching
+   * Java's deactivate/activate cycle.
+   */
+  commitAndLeave(): void {
+    if (!this.document || this.displayedEntryIndex < 0) return;
+    this.adoptLiveDocument();
+    const position = this.getCurrentPositionInEntryTranslation();
+    const index = this.displayedEntryIndex;
+    this.commitCurrentDocument(true);
+    this.openEntry(index, false, { position });
   }
 
   isOrientationAllLtr(): boolean {
@@ -191,6 +234,9 @@ export class EditorController {
   }
 
   loadProject(entries: LoadedEntry[], preferredEntryNumber = 1): void {
+    this.commitCurrentDocument(true);
+    this.document = null;
+    this.displayedEntryIndex = -1;
     this.entries = entries.map((entry) => ({ ...entry }));
     this.markers.invalidate();
     this.markerSnapshot = null;
@@ -250,6 +296,7 @@ export class EditorController {
   }
 
   loadEmptyProject(): void {
+    this.commitCurrentDocument(true);
     this.entries = [];
     this.visibleEntryIndices = [];
     this.document = null;
@@ -281,16 +328,24 @@ export class EditorController {
     ]);
   }
 
-  activateEntry(index: number, recordHistory = true): void {
+  activateEntry(
+    index: number,
+    recordHistory = true,
+    position: EditorCaretPosition = { position: 0 },
+  ): void {
     const e = this.entries[index];
-    if (!e || !this.entriesFilter.allowed(e)) {
-      this.document = null;
-      this.currentFile = null;
-      this.currentEntryNumber = 0;
-      this.displayedEntryIndex = -1;
-      return;
-    }
-    this.syncActiveEntry();
+    if (!e || !this.entriesFilter.allowed(e)) return;
+    this.commitCurrentDocument(true);
+    this.openEntry(index, recordHistory, position);
+  }
+
+  private openEntry(
+    index: number,
+    recordHistory: boolean,
+    position: EditorCaretPosition,
+  ): void {
+    const e = this.entries[index];
+    if (!e || !this.entriesFilter.allowed(e)) return;
     const files = [...new Set(this.entries.map((entry) => entry.file))];
     this.previousDisplayedFileIndex = this.displayedFileIndex;
     this.displayedFileIndex = Math.max(0, files.indexOf(e.file));
@@ -300,6 +355,7 @@ export class EditorController {
     this.document = buildActiveDocument(this.currentEntryNumber, e.source, e.translation);
     this.refreshCurrentMarkers();
     this.textArea.setDocument(this.document);
+    this.setCaretPosition(position);
     this.undo.undoStack = [];
     this.undo.redoStack = [];
     this.loadWindowAround(index);
@@ -311,14 +367,23 @@ export class EditorController {
   gotoEntry(entryNumber: number): boolean {
     const index = entryNumber - 1;
     if (!this.visibleEntryIndices.includes(index)) return false;
-    if (index === this.displayedEntryIndex) return false;
+    const changed = index !== this.displayedEntryIndex;
     this.activateEntry(index);
-    return true;
+    return changed;
   }
 
-  gotoFile(file: string): boolean {
-    const index = this.visibleEntryIndices.find((candidate) => this.entries[candidate]?.file === file);
-    return index === undefined ? false : this.gotoEntry(index + 1);
+  gotoFile(file: string | number): boolean {
+    const files = [...new Set(this.entries.map((entry) => entry.file))];
+    const fileName = typeof file === "number" ? files[file] : file;
+    if (fileName === undefined) {
+      if (typeof file === "number") throw new RangeError("file index out of bounds");
+      return false;
+    }
+    const index = this.visibleEntryIndices.find((candidate) => this.entries[candidate]?.file === fileName);
+    if (index === undefined) return false;
+    const changed = index !== this.displayedEntryIndex;
+    this.activateEntry(index);
+    return changed;
   }
 
   nextEntry(): boolean {
@@ -327,6 +392,42 @@ export class EditorController {
 
   prevEntry(): boolean {
     return this.moveVisible(-1);
+  }
+
+  nextUntranslatedEntry(): boolean {
+    return this.moveMatching(1, (entry) => !(entry.translated ?? entry.translation.length > 0));
+  }
+
+  nextTranslatedEntry(): boolean {
+    return this.moveMatching(1, (entry) => entry.translated ?? entry.translation.length > 0);
+  }
+
+  nextUniqueEntry(): boolean {
+    return this.moveMatching(1, (entry) => entry.unique !== false);
+  }
+
+  nextEntryWithNote(): boolean {
+    return this.moveMatching(1, (entry) => Boolean(entry.note));
+  }
+
+  prevEntryWithNote(): boolean {
+    return this.moveMatching(-1, (entry) => Boolean(entry.note));
+  }
+
+  nextXAutoEntry(): boolean {
+    return this.moveMatching(1, (entry) => entry.linked === "xAUTO" || entry.fromAuto === true);
+  }
+
+  prevXAutoEntry(): boolean {
+    return this.moveMatching(-1, (entry) => entry.linked === "xAUTO" || entry.fromAuto === true);
+  }
+
+  nextXEnforcedEntry(): boolean {
+    return this.moveMatching(1, (entry) => entry.linked === "xENFORCED");
+  }
+
+  prevXEnforcedEntry(): boolean {
+    return this.moveMatching(-1, (entry) => entry.linked === "xENFORCED");
   }
 
   gotoHistoryBack(): boolean {
@@ -344,23 +445,32 @@ export class EditorController {
   }
 
   undoEdit(): string {
-    const next = this.undo.undo(this.getCurrentTranslation());
-    if (next !== this.getCurrentTranslation()) this.replaceWithoutHistory(next);
-    return next;
+    if (!this.document) return this.getCurrentTranslation();
+    this.adoptLiveDocument();
+    const current = this.currentUndoState();
+    const next = this.undo.undo(current);
+    if (next !== current) this.replaceWithoutHistory(next);
+    return next.translation;
   }
 
   redoEdit(): string {
-    const next = this.undo.redo(this.getCurrentTranslation());
-    if (next !== this.getCurrentTranslation()) this.replaceWithoutHistory(next);
-    return next;
+    if (!this.document) return this.getCurrentTranslation();
+    this.adoptLiveDocument();
+    const current = this.currentUndoState();
+    const next = this.undo.redo(current);
+    if (next !== current) this.replaceWithoutHistory(next);
+    return next.translation;
   }
 
   setFilter(filter: IEditorFilter): void {
+    this.adoptLiveDocument();
+    this.syncActiveEntry();
     this.entriesFilter = filter;
     this.rebuildVisibleEntries();
     if (this.displayedEntryIndex >= 0 && !this.visibleEntryIndices.includes(this.displayedEntryIndex)) {
       const next = this.visibleEntryIndices[0];
       if (next === undefined) {
+        this.commitCurrentDocument(true);
         this.document = null;
         this.currentFile = null;
         this.currentEntryNumber = 0;
@@ -476,12 +586,26 @@ export class EditorController {
   }
 
   private moveVisible(delta: -1 | 1): boolean {
-    const visiblePosition = this.visibleEntryIndices.indexOf(this.displayedEntryIndex);
-    if (visiblePosition < 0) return false;
-    const target = this.visibleEntryIndices[visiblePosition + delta];
-    if (target === undefined) return false;
+    return this.moveMatching(delta, () => true);
+  }
+
+  private moveMatching(
+    direction: -1 | 1,
+    matches: (entry: LoadedEntry, index: number) => boolean,
+  ): boolean {
+    if (this.displayedEntryIndex < 0) return false;
+    const visible = new Set(this.visibleEntryIndices);
+    const target = findCyclicEntryIndex(
+      this.entries,
+      this.displayedEntryIndex,
+      direction,
+      (_entry, index) => visible.has(index),
+      matches,
+    );
+    if (target === null) return false;
+    const changed = target !== this.displayedEntryIndex;
     this.activateEntry(target);
-    return true;
+    return changed;
   }
 
   private rebuildVisibleEntries(): void {
@@ -503,15 +627,46 @@ export class EditorController {
     this.lastLoaded = this.visibleEntryIndices[last]!;
   }
 
-  private replaceWithoutHistory(text: string): void {
+  private replaceWithoutHistory(state: EditorUndoState): void {
     if (!this.document) {
-      this.editor.replaceEditText(text);
+      this.editor.replaceEditText(state.translation);
       return;
     }
-    this.document = replaceDocumentText(this.document, text);
+    this.document = replaceDocumentText(this.document, state.translation);
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
     this.textArea.setDocument(this.document);
+    this.setCaretPosition(state.caret);
+  }
+
+  /**
+   * Pull direct textarea/IME edits into the controller before a navigation or
+   * commit can replace the active Document3.
+   */
+  private adoptLiveDocument(): void {
+    if (!this.document) return;
+    const live = this.textArea.getOmDocument();
+    if (live.source !== this.document.source) return;
+    if (this.textArea.isComposing()) this.textArea.commitComposition();
+    this.document = this.textArea.getOmDocument();
+  }
+
+  private currentUndoState(): EditorUndoState {
+    return {
+      translation: this.getCurrentTranslation(),
+      caret: this.getCurrentPositionInEntryTranslationInEditor(),
+    };
+  }
+
+  private commitCurrentDocument(deactivate: boolean): void {
+    if (!this.document || this.displayedEntryIndex < 0) return;
+    this.adoptLiveDocument();
+    this.syncActiveEntry();
+    if (!deactivate || !this.document.editMode) return;
+    this.document = commitDocument(this.document);
+    this.textArea.setDocument(this.document, true);
+    this.undo.undoStack = [];
+    this.undo.redoStack = [];
   }
 
   private syncActiveEntry(): void {
@@ -528,6 +683,7 @@ export class EditorController {
       isAlt: entry.isAlt,
       fromAuto: entry.fromAuto,
       fromMt: entry.fromMt,
+      linked: entry.linked,
       protectedParts: entry.protectedParts,
     };
   }

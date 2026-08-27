@@ -348,6 +348,109 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.getCurrentTranslation()).toBe("un");
   });
 
+  it("EditorController commits live edits and applies cyclic Java navigation state", () => {
+    const controller = new EditorController();
+    controller.loadProject([
+      { file: "a.txt", source: "one", translation: "alpha", unique: true },
+      {
+        file: "a.txt",
+        source: "two",
+        translation: "beta",
+        note: "review",
+        unique: true,
+        linked: "xAUTO",
+      },
+      {
+        file: "b.txt",
+        source: "three",
+        translation: "",
+        unique: false,
+        linked: "xENFORCED",
+      },
+      { file: "b.txt", source: "four", translation: "delta", unique: true },
+    ]);
+
+    const live = controller.textArea;
+    live.setCaretPosition(live.getOmDocument().translationEnd);
+    expect(live.beginComposition()).toBe(true);
+    expect(live.updateComposition("未提交")).toBe(true);
+    expect(controller.nextEntry()).toBe(true);
+    expect({
+      saved: controller.entries[0]!.translation,
+      active: controller.getCurrentEntryNumber(),
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      composing: live.isComposing(),
+    }).toEqual({
+      saved: "alpha未提交",
+      active: 2,
+      caret: { position: 0 },
+      composing: false,
+    });
+
+    expect(controller.gotoEntry(1)).toBe(true);
+    controller.setCaretPosition({ position: 3 });
+    controller.commitAndLeave();
+    expect({
+      active: controller.getCurrentEntryNumber(),
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      editMode: controller.getOmDocument()!.editMode,
+      dirty: controller.getOmDocument()!.dirty,
+    }).toEqual({
+      active: 1,
+      caret: { position: 3 },
+      editMode: true,
+      dirty: false,
+    });
+
+    expect(controller.prevEntry()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(4);
+    expect(controller.nextTranslatedEntry()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(1);
+    expect(controller.nextEntryWithNote()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(2);
+    expect(controller.nextXEnforcedEntry()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(3);
+    expect(controller.prevXAutoEntry()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(2);
+    expect(controller.nextUniqueEntry()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(4);
+    expect(controller.nextUntranslatedEntry()).toBe(true);
+    expect(controller.getCurrentEntryNumber()).toBe(3);
+  });
+
+  it("EditorController undo restores selection and marker intervals together", () => {
+    const controller = new EditorController();
+    controller.loadProject([
+      { file: "editor.txt", source: "source", translation: "a\u00a0b" },
+    ]);
+    controller.setCaretPosition({ selectionStart: 1, selectionEnd: 2 });
+    expect(controller.markerSnapshot!.marks.some((mark) => mark.painter === "nbsp")).toBe(true);
+
+    controller.insertText(" ");
+    expect({
+      translation: controller.getCurrentTranslation(),
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      nbsp: controller.markerSnapshot!.marks.some((mark) => mark.painter === "nbsp"),
+    }).toEqual({
+      translation: "a b",
+      caret: { position: 2 },
+      nbsp: false,
+    });
+
+    expect(controller.undoEdit()).toBe("a\u00a0b");
+    expect({
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      selected: controller.getSelectedText(),
+      nbsp: controller.markerSnapshot!.marks.some((mark) => mark.painter === "nbsp"),
+    }).toEqual({
+      caret: { selectionStart: 1, selectionEnd: 2 },
+      selected: "\u00a0",
+      nbsp: true,
+    });
+    expect(controller.redoEdit()).toBe("a b");
+    expect(controller.getCurrentPositionInEntryTranslationInEditor()).toEqual({ position: 2 });
+  });
+
   it("EditorController pages visible segments and refreshes marker spans", () => {
     const controller = new EditorController();
     controller.setPageRadius(1);

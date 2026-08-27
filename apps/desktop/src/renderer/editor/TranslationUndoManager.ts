@@ -1,18 +1,18 @@
 /** Java `org.omegat.gui.editor.TranslationUndoManager`. */
-export class TranslationUndoManager {
-  undoStack: string[] = [];
-  redoStack: string[] = [];
-  remember(text: string) {
-    this.undoStack.push(text);
+export class TranslationUndoManager<T = string> {
+  undoStack: T[] = [];
+  redoStack: T[] = [];
+  remember(state: T) {
+    this.undoStack.push(state);
     this.redoStack = [];
   }
-  undo(current: string): string {
+  undo(current: T): T {
     const prev = this.undoStack.pop();
     if (prev === undefined) return current;
     this.redoStack.push(current);
     return prev;
   }
-  redo(current: string): string {
+  redo(current: T): T {
     const next = this.redoStack.pop();
     if (next === undefined) return current;
     this.undoStack.push(current);

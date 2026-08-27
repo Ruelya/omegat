@@ -112,6 +112,7 @@ export type AppState = {
   select: (index: number, recordHistory?: boolean) => Promise<void>;
   setDraft: (v: string) => void;
   setNote: (v: string) => void;
+  commitCurrent: (opts?: { default_translation?: boolean }) => Promise<EntryDto | null>;
   commit: (opts?: { default_translation?: boolean }) => Promise<void>;
   save: () => Promise<void>;
   compile: (file?: string) => Promise<void>;
@@ -303,17 +304,25 @@ export const useApp = create<AppState>((set, get) => ({
     get().logLine("reloaded project");
   },
   select: async (index, recordHistory = true) => {
-    const { entries, index: prev, navBack, insert_best } = {
-      entries: get().entries,
-      index: get().index,
-      navBack: get().navBack,
-      insert_best: get().prefs?.insert_best_match ?? true,
-    };
+    const before = get();
+    const previousEntry = before.entries[before.index];
+    if (
+      previousEntry
+      && (before.draft !== previousEntry.translation || before.note !== previousEntry.note)
+    ) {
+      // A failed optimistic write rejects the navigation and leaves the live
+      // Document3 untouched instead of silently replacing the user's draft.
+      await get().commitCurrent();
+    }
+    const {
+      entries,
+      index: prev,
+      navBack,
+      prefs,
+    } = get();
+    const insert_best = prefs?.insert_best_match ?? true;
     const e = entries[index];
     if (!e) return;
-    if (recordHistory && prev !== index) {
-      set({ navBack: [...navBack, prev], navForward: [] });
-    }
     const matches = await rpc<MatchDto[]>("matches.query", { index });
     const glossary = await rpc<GlossaryHitDto[]>("glossary.query", { index });
     const issues = await rpc<IssueDto[]>("issues.list");
@@ -350,6 +359,9 @@ export const useApp = create<AppState>((set, get) => ({
       history: { undo: [], redo: [] },
       selectedMatch: 0,
       status: `${e.file} #${index + 1}`,
+      ...(recordHistory && prev !== index
+        ? { navBack: [...navBack, prev], navForward: [] }
+        : {}),
     });
   },
   queryMt: async (engine = "mymemory") => {
@@ -624,10 +636,10 @@ export const useApp = create<AppState>((set, get) => ({
     get().setDraft("");
     await get().commit();
   },
-  commit: async (opts) => {
+  commitCurrent: async (opts) => {
     const { index, entries, draft, note } = get();
     const e = entries[index];
-    if (!e) return;
+    if (!e) return null;
     const updated = await rpc<EntryDto>("entry.set", {
       index,
       translation: draft,
@@ -636,8 +648,17 @@ export const useApp = create<AppState>((set, get) => ({
       default_translation: opts?.default_translation ?? true,
     });
     const next = entries.map((x, i) => (i === index ? updated : x));
-    set({ entries: next });
-    const ni = Math.min(index + 1, next.length - 1);
+    set({
+      entries: next,
+      document3: { ...get().document3, dirty: false },
+    });
+    return updated;
+  },
+  commit: async (opts) => {
+    const updated = await get().commitCurrent(opts);
+    if (!updated) return;
+    const { index, entries } = get();
+    const ni = Math.min(index + 1, entries.length - 1);
     await get().select(ni);
   },
   save: async () => {
@@ -661,43 +682,53 @@ export const useApp = create<AppState>((set, get) => ({
   },
   jump: async (kind, n, dir = 1) => {
     const { entries, index } = get();
-    const visible = get().filterUntranslated ? entries.filter((e) => !e.translated) : entries;
-    const findFrom = (start: number, pred: (e: EntryDto) => boolean, step: 1 | -1) => {
-      for (let i = start; i >= 0 && i < entries.length; i += step) {
-        if (pred(entries[i]!)) return i;
+    if (entries.length === 0) return;
+    const allowed = (entry: EntryDto) => !get().filterUntranslated || !entry.translated;
+    const findCyclic = (pred: (entry: EntryDto) => boolean, step: 1 | -1) => {
+      for (let distance = 1; distance <= entries.length; distance += 1) {
+        const candidate = (index + step * distance + entries.length * 2) % entries.length;
+        const entry = entries[candidate]!;
+        if (allowed(entry) && pred(entry)) return candidate;
       }
       return -1;
     };
-    const start = dir === 1 ? index + 1 : index - 1;
-    let next = index;
-    if (kind === "next") next = Math.min(index + 1, entries.length - 1);
-    else if (kind === "prev") next = Math.max(0, index - 1);
-    else if (kind === "number" && n != null) next = Math.max(0, Math.min(entries.length - 1, n - 1));
-    else if (kind === "untranslated") next = findFrom(start, (e) => !e.translated, dir);
-    else if (kind === "translated") next = findFrom(start, (e) => e.translated, dir);
+    let next = -1;
+    if (kind === "next") next = findCyclic(() => true, 1);
+    else if (kind === "prev") next = findCyclic(() => true, -1);
+    else if (kind === "number" && n != null) {
+      const candidate = Math.max(0, Math.min(entries.length - 1, n - 1));
+      if (allowed(entries[candidate]!)) next = candidate;
+    } else if (kind === "untranslated") next = findCyclic((e) => !e.translated, dir);
+    else if (kind === "translated") next = findCyclic((e) => e.translated, dir);
     else if (kind === "unique") {
       const counts = new Map<string, number>();
       entries.forEach((e) => counts.set(e.source, (counts.get(e.source) ?? 0) + 1));
-      next = findFrom(start, (e) => (counts.get(e.source) ?? 0) === 1, dir);
-    } else if (kind === "note") next = findFrom(start, (e) => Boolean(e.note), dir);
-    else if (kind === "auto") next = findFrom(start, (e) => e.properties.some(([k, v]) => k === "tm" && v === "auto"), dir);
-    else if (kind === "enforce") next = findFrom(start, (e) => e.properties.some(([k, v]) => k === "tm" && v === "enforce"), dir);
-    if (next < 0 && visible[0]) next = visible[0].index;
+      next = findCyclic((e) => (counts.get(e.source) ?? 0) === 1, dir);
+    } else if (kind === "note") next = findCyclic((e) => Boolean(e.note), dir);
+    else if (kind === "auto") {
+      next = findCyclic((e) => e.properties.some(([k, v]) => k === "tm" && v === "auto"), dir);
+    } else if (kind === "enforce") {
+      next = findCyclic((e) => e.properties.some(([k, v]) => k === "tm" && v === "enforce"), dir);
+    }
     if (next >= 0) await get().select(next);
   },
   historyBack: async () => {
     const back = get().navBack;
     const prev = back[back.length - 1];
     if (prev === undefined) return;
-    set({ navBack: back.slice(0, -1), navForward: [...get().navForward, get().index] });
+    const current = get().index;
+    const forward = get().navForward;
     await get().select(prev, false);
+    set({ navBack: back.slice(0, -1), navForward: [...forward, current] });
   },
   historyForward: async () => {
     const fwd = get().navForward;
     const next = fwd[fwd.length - 1];
     if (next === undefined) return;
-    set({ navForward: fwd.slice(0, -1), navBack: [...get().navBack, get().index] });
+    const current = get().index;
+    const back = get().navBack;
     await get().select(next, false);
+    set({ navForward: fwd.slice(0, -1), navBack: [...back, current] });
   },
   toggleMark: async (key) => {
     if (key === "modification") return;
