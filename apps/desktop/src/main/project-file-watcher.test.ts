@@ -135,6 +135,47 @@ describe("ProjectFileWatcher", () => {
     watcher.close();
   });
 
+  it("preserves delayed self-write suppression across same-root generation changes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omegat-watch-rebind-"));
+    roots.push(root);
+    mkdirSync(join(root, "source"), { recursive: true });
+    mkdirSync(join(root, "omegat"), { recursive: true });
+    const listeners = new Map<string, (event: "change", filename: string) => void>();
+    const publish = vi.fn();
+    const watcher = new ProjectFileWatcher(
+      publish,
+      0,
+      (path, listener) => {
+        listeners.set(resolve(path), listener);
+        return { close: () => undefined };
+      },
+    );
+
+    watcher.watch(root, 40);
+    const endWrite = watcher.beginWriteSource("project.save");
+    const saveTmx = join(root, "omegat", "project_save.tmx");
+    writeFileSync(saveTmx, "sidecar save");
+    listeners.get(resolve(root, "omegat"))?.("change", "project_save.tmx");
+    endWrite();
+
+    watcher.watch(root, 41);
+    listeners.get(resolve(root, "omegat"))?.("change", "project_save.tmx");
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 5));
+    expect(publish).not.toHaveBeenCalled();
+
+    const source = join(root, "source", "external.txt");
+    writeFileSync(source, "external");
+    listeners.get(resolve(root, "source"))?.("change", "external.txt");
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 5));
+    expect(publish).toHaveBeenCalledWith({
+      root: resolve(root),
+      generation: 41,
+      paths: [resolve(source)],
+      sources: ["native"],
+    });
+    watcher.close();
+  });
+
   it("suppresses delayed real fs echoes but publishes the next external write", async () => {
     const root = mkdtempSync(join(tmpdir(), "omegat-watch-real-write-"));
     roots.push(root);

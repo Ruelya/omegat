@@ -111,8 +111,18 @@ export class ProjectFileWatcher {
   ) {}
 
   watch(root: string, generation = this.generation + 1): number {
+    const nextRoot = resolve(root);
+    if (this.root === nextRoot) {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      this.changed.clear();
+      this.sources.clear();
+      this.generation = generation;
+      this.refreshDirectoryWatches();
+      return this.generation;
+    }
     this.close();
-    this.root = resolve(root);
+    this.root = nextRoot;
     this.generation = generation;
     this.refreshDirectoryWatches();
     return this.generation;

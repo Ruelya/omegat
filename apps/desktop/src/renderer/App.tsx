@@ -58,10 +58,11 @@ export function App() {
     } else {
       void window.omegat?.unwatchProject?.();
     }
-    return () => {
-      if (root) void window.omegat?.unwatchProject?.();
-    };
   }, [app.props?.root, app.projectEvent.projectGeneration]);
+
+  useEffect(() => () => {
+    void window.omegat?.unwatchProject?.();
+  }, []);
 
   useEffect(() => {
     const seconds = app.prefs?.autosave_seconds ?? 0;
