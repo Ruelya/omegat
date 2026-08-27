@@ -9,18 +9,29 @@ use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::{team_enabled, SyncReport};
 use omegat_core::properties::ProjectProperties;
+use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
+#[cfg(test)]
+static CRASH_AFTER_PUBLISH_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
 
 #[cfg(test)]
 pub(crate) fn fail_next_commit_for(repository_index: usize) {
     FAIL_COMMIT_REPOSITORY.store(repository_index, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn crash_after_publish_for(repository_index: usize) {
+    CRASH_AFTER_PUBLISH_REPOSITORY.store(repository_index, Ordering::SeqCst);
 }
 
 fn commit_repository(
@@ -51,11 +62,13 @@ fn commit_repository(
     )
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct FileRemoteSnapshot {
     repository_index: usize,
     source: PathBuf,
     backup: PathBuf,
     is_file: bool,
+    existed: bool,
 }
 
 struct SyncSnapshot {
@@ -67,12 +80,7 @@ struct SyncSnapshot {
 }
 
 impl SyncSnapshot {
-    fn capture(props: &ProjectProperties) -> Result<Self> {
-        let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let base = std::env::temp_dir().join(format!(
-            "omegat-team-sync-{}-{sequence}",
-            std::process::id()
-        ));
+    fn capture(props: &ProjectProperties, base: PathBuf) -> Result<Self> {
         if base.exists() {
             std::fs::remove_dir_all(&base)?;
         }
@@ -92,17 +100,15 @@ impl SyncSnapshot {
                 continue;
             }
             let source = PathBuf::from(&repo.url);
-            if !source.exists() {
-                continue;
-            }
             let backup = base.join("file-remotes").join(repository_index.to_string());
+            let existed = source.exists();
             let is_file = source.is_file();
-            if is_file {
+            if existed && is_file {
                 if let Some(parent) = backup.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
                 std::fs::copy(&source, &backup)?;
-            } else {
+            } else if existed {
                 crate::team_utils::copy_tree(&source, &backup, false)?;
             }
             file_remotes.push(FileRemoteSnapshot {
@@ -110,9 +116,50 @@ impl SyncSnapshot {
                 source,
                 backup,
                 is_file,
+                existed,
             });
         }
 
+        Ok(Self {
+            base,
+            project,
+            prep,
+            prep_existed,
+            file_remotes,
+        })
+    }
+
+    fn open(
+        props: &ProjectProperties,
+        base: PathBuf,
+        prep_existed: bool,
+        file_remotes: Vec<FileRemoteSnapshot>,
+    ) -> Result<Self> {
+        let project = base.join("project");
+        if !project.is_dir() {
+            return Err(TeamError::Command(format!(
+                "team transaction snapshot is missing at {}",
+                project.display()
+            )));
+        }
+        let prep = base.join("prep");
+        for snapshot in &file_remotes {
+            let repo = props
+                .repositories
+                .get(snapshot.repository_index)
+                .ok_or_else(|| {
+                    TeamError::Command(format!(
+                        "team transaction repository {} is no longer configured",
+                        snapshot.repository_index
+                    ))
+                })?;
+            if repo.repo_type != "file" || Path::new(&repo.url) != snapshot.source {
+                return Err(TeamError::Command(format!(
+                    "team transaction repository {} changed configuration",
+                    snapshot.repository_index
+                )));
+            }
+        }
         Ok(Self {
             base,
             project,
@@ -150,6 +197,9 @@ impl SyncSnapshot {
             return Ok(());
         };
         remove_path(&snapshot.source)?;
+        if !snapshot.existed {
+            return Ok(());
+        }
         if snapshot.is_file {
             if let Some(parent) = snapshot.source.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -162,10 +212,123 @@ impl SyncSnapshot {
     }
 }
 
-impl Drop for SyncSnapshot {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.base);
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct SyncTransaction {
+    format: u8,
+    id: String,
+    operation: String,
+    phase: String,
+    snapshot: PathBuf,
+    prep_existed: bool,
+    file_remotes: Vec<FileRemoteSnapshot>,
+    repository_count: usize,
+    rollback_versions: Vec<Option<String>>,
+    commit_started: Vec<usize>,
+    published: Vec<usize>,
+    updated_unix_ms: u128,
+}
+
+impl SyncTransaction {
+    fn begin(props: &ProjectProperties, operation: &str) -> Result<(Self, SyncSnapshot)> {
+        let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
+        let snapshot_path = transaction_dir(props).join(format!("{id}.snapshot"));
+        let snapshot = SyncSnapshot::capture(props, snapshot_path.clone())?;
+        let mut transaction = Self {
+            format: 1,
+            id,
+            operation: operation.into(),
+            phase: "captured".into(),
+            snapshot: snapshot_path,
+            prep_existed: snapshot.prep_existed,
+            file_remotes: snapshot.file_remotes.clone(),
+            repository_count: props.repositories.len(),
+            rollback_versions: vec![None; props.repositories.len()],
+            commit_started: Vec::new(),
+            published: Vec::new(),
+            updated_unix_ms: unix_ms(),
+        };
+        transaction.persist(props)?;
+        Ok((transaction, snapshot))
     }
+
+    fn persist(&mut self, props: &ProjectProperties) -> Result<()> {
+        self.updated_unix_ms = unix_ms();
+        let dir = transaction_dir(props);
+        std::fs::create_dir_all(&dir)?;
+        let active = dir.join("active.json");
+        let temporary = dir.join(format!(".active-{}.tmp", self.id));
+        let json = serde_json::to_vec_pretty(self)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        {
+            let mut file = std::fs::File::create(&temporary)?;
+            file.write_all(&json)?;
+            file.sync_all()?;
+        }
+        let previous = dir.join(".active.previous.json");
+        remove_path(&previous)?;
+        if active.exists() {
+            std::fs::rename(&active, &previous)?;
+        }
+        if let Err(error) = std::fs::rename(&temporary, &active) {
+            if previous.exists() {
+                let _ = std::fs::rename(&previous, &active);
+            }
+            return Err(error.into());
+        }
+        remove_path(&previous)?;
+        let mut history = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("history.ndjson"))?;
+        serde_json::to_writer(&mut history, self)
+            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+        history.write_all(b"\n")?;
+        history.sync_all()?;
+        Ok(())
+    }
+
+    fn finish(mut self, props: &ProjectProperties, phase: &str) -> Result<()> {
+        self.phase = phase.into();
+        self.persist(props)?;
+        remove_path(&transaction_dir(props).join("active.json"))?;
+        remove_path(&transaction_dir(props).join(".active.previous.json"))?;
+        remove_path(&self.snapshot)?;
+        Ok(())
+    }
+
+    fn load(props: &ProjectProperties) -> Result<Option<Self>> {
+        let dir = transaction_dir(props);
+        let active = dir.join("active.json");
+        let previous = dir.join(".active.previous.json");
+        let path = if active.is_file() {
+            active
+        } else if previous.is_file() {
+            previous
+        } else {
+            return Ok(None);
+        };
+        let transaction: Self = serde_json::from_str(&std::fs::read_to_string(&path)?)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        if transaction.format != 1 {
+            return Err(TeamError::Command(format!(
+                "unsupported team transaction format {}",
+                transaction.format
+            )));
+        }
+        Ok(Some(transaction))
+    }
+}
+
+fn unix_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn transaction_dir(props: &ProjectProperties) -> PathBuf {
+    props.root.join(".repositories").join("transactions")
 }
 
 fn remove_path(path: &Path) -> Result<()> {
@@ -182,9 +345,10 @@ fn rollback_repositories(
     snapshot: &SyncSnapshot,
     rollback_versions: &[Option<String>],
     published: &[usize],
-    commit_started: &[usize],
+    _commit_started: &[usize],
 ) -> Vec<String> {
     let mut failures = Vec::new();
+    let mut restored = Vec::new();
     for &index in published.iter().rev() {
         let repo = &props.repositories[index];
         let rollback = match repo.repo_type.as_str() {
@@ -198,12 +362,14 @@ fn rollback_repositories(
         };
         if let Err(error) = rollback {
             failures.push(format!("repository {index}: {error}"));
+        } else {
+            restored.push(index);
         }
     }
-    for &index in commit_started
-        .iter()
-        .filter(|index| !published.contains(index))
-    {
+    for index in (0..props.repositories.len()).rev() {
+        if restored.contains(&index) {
+            continue;
+        }
         let repo = &props.repositories[index];
         let rollback = match repo.repo_type.as_str() {
             "git" => rollback_versions[index]
@@ -221,11 +387,62 @@ fn rollback_repositories(
     failures
 }
 
+/// Recover a persisted multi-repository transaction left by a terminated
+/// process before allowing another team operation to mutate the project.
+pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
+    let Some(mut transaction) = SyncTransaction::load(props)? else {
+        return Ok(false);
+    };
+    if transaction.repository_count != props.repositories.len()
+        || transaction.rollback_versions.len() != props.repositories.len()
+    {
+        return Err(TeamError::Command(format!(
+            "team transaction {} expected {} repositories, found {}",
+            transaction.id,
+            transaction.repository_count,
+            props.repositories.len()
+        )));
+    }
+    let snapshot = SyncSnapshot::open(
+        props,
+        transaction.snapshot.clone(),
+        transaction.prep_existed,
+        transaction.file_remotes.clone(),
+    )?;
+    transaction.phase = "recovering".into();
+    transaction.persist(props)?;
+    let mut failures = rollback_repositories(
+        props,
+        &snapshot,
+        &transaction.rollback_versions,
+        &transaction.published,
+        &transaction.commit_started,
+    );
+    if let Err(error) = snapshot.restore_project_and_prep(props) {
+        failures.push(format!("project: {error}"));
+    }
+    if failures.is_empty() {
+        transaction.finish(props, "recovered")?;
+        return Ok(true);
+    }
+    transaction.phase = "recovery-failed".into();
+    let _ = transaction.persist(props);
+    Err(TeamError::Command(format!(
+        "team transaction recovery failed: {}",
+        failures.join(" | ")
+    )))
+}
+
 pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
+    let recovered = recover_interrupted_sync(props)?;
     if !team_enabled() {
         return Ok(SyncReport {
             action: "skipped".into(),
-            message: "--no-team".into(),
+            message: if recovered {
+                "recovered interrupted transaction; --no-team".into()
+            } else {
+                "--no-team".into()
+            },
             conflicts: vec![],
         });
     }
@@ -240,13 +457,15 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
         return Ok(report);
     }
 
-    let snapshot = SyncSnapshot::capture(props)?;
+    let (mut journal, snapshot) = SyncTransaction::begin(props, "sync")?;
     let mut observed = vec![None; props.repositories.len()];
     let mut rollback_versions = vec![None; props.repositories.len()];
     let mut published = Vec::new();
     let mut commit_started = Vec::new();
     let mut pending_conflicts = None;
     let transaction = (|| -> Result<()> {
+        journal.phase = "preparing".into();
+        journal.persist(props)?;
         std::fs::create_dir_all(prep_dir(props))?;
         for repo in &props.repositories {
             remote_repository_factory::prepare(props, repo)?;
@@ -267,10 +486,17 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
                 props, repo,
             )?);
         }
+        journal.rollback_versions.clone_from(&rollback_versions);
+        journal.phase = "prepared".into();
+        journal.persist(props)?;
+        journal.phase = "copying-remote".into();
+        journal.persist(props)?;
         for (repo, deleted) in props.repositories.iter().zip(&deleted) {
             copy_mapped(props, repo, CopyDir::RepoToProject)?;
             propagate_deleted(props, repo, deleted)?;
         }
+        journal.phase = "rebasing".into();
+        journal.persist(props)?;
         let conflicts = rebase_all(props)?;
         if !conflicts.is_empty() {
             pending_conflicts = Some(conflicts.clone());
@@ -282,14 +508,31 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
                     .join(" | "),
             ));
         }
+        journal.phase = "staging".into();
+        journal.persist(props)?;
         for repo in &props.repositories {
             copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
         }
+        journal.phase = "publishing".into();
+        journal.persist(props)?;
         for index in 0..props.repositories.len() {
             commit_started.push(index);
+            journal.commit_started.clone_from(&commit_started);
+            journal.persist(props)?;
             commit_repository(props, index, &[observed[index].clone()], "OmegaT team sync")?;
             published.push(index);
+            journal.published.clone_from(&published);
+            journal.persist(props)?;
+            #[cfg(test)]
+            if CRASH_AFTER_PUBLISH_REPOSITORY
+                .compare_exchange(index, usize::MAX, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                std::process::abort();
+            }
         }
+        journal.phase = "saving-bases".into();
+        journal.persist(props)?;
         save_bases(props)?;
         save_conflicts(props, &[])?;
         clear_resolved(props);
@@ -313,23 +556,33 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             }
         }
         if rollback_failures.is_empty() {
+            journal.finish(props, "rolled-back")?;
             return Err(error);
         }
+        journal.phase = "rollback-failed".into();
+        let _ = journal.persist(props);
         return Err(TeamError::Command(format!(
             "{error}; rollback failed: {}",
             rollback_failures.join(" | ")
         )));
     }
 
+    journal.finish(props, "committed")?;
     for repo in &props.repositories {
         report
             .message
             .push_str(&format!("synced {}; ", repo.repo_type));
     }
+    if recovered {
+        report
+            .message
+            .push_str("recovered interrupted transaction; ");
+    }
     Ok(report)
 }
 
 pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<SyncReport> {
+    let recovered = recover_interrupted_sync(props)?;
     let label = match which {
         "source" | "target" => which,
         _ => {
@@ -347,22 +600,31 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
         return Err(TeamError::Command(format!("{label} directory missing")));
     }
     if !props.repositories.is_empty() {
-        let snapshot = SyncSnapshot::capture(props)?;
+        let (mut journal, snapshot) = SyncTransaction::begin(props, &format!("commit-{label}"))?;
         let mut rollback_versions = vec![None; props.repositories.len()];
         let mut published = Vec::new();
         let mut commit_started = Vec::new();
         let transaction = (|| -> Result<()> {
+            journal.phase = "observing".into();
+            journal.persist(props)?;
             for (index, repo) in props.repositories.iter().enumerate() {
                 if repo.repo_type == "git" {
                     rollback_versions[index] =
                         remote_repository_factory::file_version(props, repo, "")?;
                 }
             }
+            journal.rollback_versions.clone_from(&rollback_versions);
+            journal.phase = "staging".into();
+            journal.persist(props)?;
             for repo in &props.repositories {
                 copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
             }
+            journal.phase = "publishing".into();
+            journal.persist(props)?;
             for index in 0..props.repositories.len() {
                 commit_started.push(index);
+                journal.commit_started.clone_from(&commit_started);
+                journal.persist(props)?;
                 commit_repository(
                     props,
                     index,
@@ -370,6 +632,8 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
                     &format!("OmegaT commit {label} files"),
                 )?;
                 published.push(index);
+                journal.published.clone_from(&published);
+                journal.persist(props)?;
             }
             Ok(())
         })();
@@ -385,13 +649,17 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
             if rollback_failures.is_empty() {
+                journal.finish(props, "rolled-back")?;
                 return Err(error);
             }
+            journal.phase = "rollback-failed".into();
+            let _ = journal.persist(props);
             return Err(TeamError::Command(format!(
                 "{error}; rollback failed: {}",
                 rollback_failures.join(" | ")
             )));
         }
+        journal.finish(props, "committed")?;
     } else if props.root.join(".git").exists() {
         crate::git2_ops::add_all(&props.root)?;
         crate::git_remote_repository2::commit(
@@ -401,7 +669,15 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
     }
     Ok(SyncReport {
         action: format!("commit-{label}"),
-        message: format!("committed {label} under {}", dir.display()),
+        message: format!(
+            "committed {label} under {}{}",
+            dir.display(),
+            if recovered {
+                "; recovered interrupted transaction"
+            } else {
+                ""
+            }
+        ),
         conflicts: vec![],
     })
 }

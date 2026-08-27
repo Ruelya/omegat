@@ -41,7 +41,8 @@ pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
 pub use rebase_and_commit::{rebase_all, rebase_project, resolve};
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    commit_after_version, commit_project_files, get_version, switch_to_version, sync,
+    commit_after_version, commit_project_files, get_version, recover_interrupted_sync,
+    switch_to_version, sync,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -613,6 +614,166 @@ mod tests {
             .peel_to_tree()
             .unwrap();
         assert!(second_tree.get_path(Path::new("second.txt")).is_err());
+    }
+
+    #[test]
+    fn concurrent_git_writers_get_a_real_non_fast_forward_rejection() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("remote.git");
+        seed_bare(&bare, &dir.path().join("seed"));
+        let mapping = vec![RepositoryMapping {
+            local: "source/race.txt".into(),
+            repository: "race.txt".into(),
+            includes: vec![],
+            excludes: vec![],
+        }];
+        let props_a = team_props(
+            dir.path().join("writer-a"),
+            "git",
+            &bare.to_string_lossy(),
+            mapping.clone(),
+        );
+        let props_b = team_props(
+            dir.path().join("writer-b"),
+            "git",
+            &bare.to_string_lossy(),
+            mapping,
+        );
+        crate::remote_repository_factory::prepare(&props_a, &props_a.repositories[0]).unwrap();
+        crate::remote_repository_factory::prepare(&props_b, &props_b.repositories[0]).unwrap();
+        let version_a = get_version(&props_a, 0, "").unwrap().unwrap();
+        let version_b = get_version(&props_b, 0, "").unwrap().unwrap();
+        assert_eq!(version_a, version_b);
+        std::fs::write(props_a.source_dir.join("race.txt"), "writer-a").unwrap();
+        std::fs::write(props_b.source_dir.join("race.txt"), "writer-b").unwrap();
+        copy_mapped(&props_a, &props_a.repositories[0], CopyDir::ProjectToRepo).unwrap();
+        copy_mapped(&props_b, &props_b.repositories[0], CopyDir::ProjectToRepo).unwrap();
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let run = |label: &'static str,
+                   props: ProjectProperties,
+                   version: String,
+                   barrier: std::sync::Arc<std::sync::Barrier>| {
+            std::thread::spawn(move || {
+                barrier.wait();
+                (
+                    label,
+                    commit_after_version(&props, 0, &[Some(version)], "concurrent writer"),
+                )
+            })
+        };
+        let first = run("writer-a", props_a, version_a, barrier.clone());
+        let second = run("writer-b", props_b, version_b, barrier);
+        let results = [first.join().unwrap(), second.join().unwrap()];
+        let successes: Vec<_> = results
+            .iter()
+            .filter_map(|(label, result)| result.as_ref().ok().map(|_| *label))
+            .collect();
+        let rejections: Vec<_> = results
+            .iter()
+            .filter(|(_, result)| matches!(result, Err(TeamError::Command(_))))
+            .collect();
+        assert_eq!(successes.len(), 1);
+        assert_eq!(rejections.len(), 1);
+
+        let remote = git2::Repository::open_bare(&bare).unwrap();
+        let tree = remote
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_tree()
+            .unwrap();
+        let blob = remote
+            .find_blob(tree.get_path(Path::new("race.txt")).unwrap().id())
+            .unwrap();
+        assert_eq!(std::str::from_utf8(blob.content()).unwrap(), successes[0]);
+    }
+
+    #[test]
+    fn interrupted_sync_is_recovered_from_persistent_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare_a = dir.path().join("remote-a.git");
+        let bare_b = dir.path().join("remote-b.git");
+        seed_bare(&bare_a, &dir.path().join("seed-a"));
+        seed_bare(&bare_b, &dir.path().join("seed-b"));
+        let mut props = team_props(
+            dir.path().join("project"),
+            "git",
+            &bare_a.to_string_lossy(),
+            vec![RepositoryMapping {
+                local: "source/first.txt".into(),
+                repository: "first.txt".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        );
+        props.repositories.push(RepositoryDef {
+            repo_type: "git".into(),
+            url: bare_b.to_string_lossy().into_owned(),
+            branch: Some("main".into()),
+            mappings: vec![RepositoryMapping {
+                local: "source/second.txt".into(),
+                repository: "second.txt".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        });
+        props.write().unwrap();
+        std::fs::write(props.source_dir.join("first.txt"), "local first").unwrap();
+        std::fs::write(props.source_dir.join("second.txt"), "local second").unwrap();
+
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::team_sync_crash_worker", "--nocapture"])
+            .env("OMEGAT_TEAM_CRASH_PROJECT", &props.root)
+            .status()
+            .unwrap();
+        assert_eq!(status.success(), false);
+        let active = props.root.join(".repositories/transactions/active.json");
+        assert_eq!(active.is_file(), true);
+
+        assert_eq!(recover_interrupted_sync(&props).unwrap(), true);
+        assert_eq!(active.exists(), false);
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("first.txt")).unwrap(),
+            "local first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("second.txt")).unwrap(),
+            "local second"
+        );
+        for (bare, path) in [(&bare_a, "first.txt"), (&bare_b, "second.txt")] {
+            let repo = git2::Repository::open_bare(bare).unwrap();
+            let tree = repo
+                .find_reference("refs/heads/main")
+                .unwrap()
+                .peel_to_tree()
+                .unwrap();
+            assert_eq!(tree.get_path(Path::new(path)).is_err(), true);
+        }
+        let history =
+            std::fs::read_to_string(props.root.join(".repositories/transactions/history.ndjson"))
+                .unwrap();
+        let rows: Vec<serde_json::Value> = history
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.last().unwrap()["phase"], "recovered");
+        assert_eq!(
+            rows.iter()
+                .any(|row| row["phase"] == "publishing"
+                    && row["published"] == serde_json::json!([0])),
+            true
+        );
+    }
+
+    #[test]
+    fn team_sync_crash_worker() {
+        let Ok(root) = std::env::var("OMEGAT_TEAM_CRASH_PROJECT") else {
+            return;
+        };
+        let props = ProjectProperties::load(Path::new(&root)).unwrap();
+        crate::remote_repository_provider::crash_after_publish_for(0);
+        sync(&props).unwrap();
+        panic!("crash injection did not terminate the worker");
     }
 
     #[test]
