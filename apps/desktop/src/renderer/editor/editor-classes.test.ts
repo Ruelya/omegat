@@ -644,8 +644,12 @@ describe("Document3 / IEditor / completer classes", () => {
       { kind: "project", root: "/tmp/project" },
       false,
       {
-        openProject: (root) => actions.push(`open:${root}`),
-        importFiles: (paths) => actions.push(`import:${paths.join(",")}`),
+        openProject: (root) => {
+          actions.push(`open:${root}`);
+        },
+        importFiles: (paths) => {
+          actions.push(`import:${paths.join(",")}`);
+        },
       },
     )).toEqual({
       accepted: true,
@@ -656,8 +660,12 @@ describe("Document3 / IEditor / completer classes", () => {
       { kind: "files", paths: ["/tmp/a.txt", "/tmp/b.po"] },
       true,
       {
-        openProject: (root) => actions.push(`open:${root}`),
-        importFiles: (paths) => actions.push(`import:${paths.join(",")}`),
+        openProject: (root) => {
+          actions.push(`open:${root}`);
+        },
+        importFiles: (paths) => {
+          actions.push(`import:${paths.join(",")}`);
+        },
       },
     )).toEqual({
       accepted: true,
