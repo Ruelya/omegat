@@ -323,8 +323,13 @@ try {
       const rows = document.querySelectorAll("tr[data-align-row]");
       const first = document.querySelector("#align-cell-0-source");
       if (!viewport || rows.length !== 80 || !first) return null;
+      // The aligner form is taller than the modal's own scrollport. Reveal
+      // the complete inner row viewport before mapping DOM points to XTEST;
+      // otherwise its lower edge can exist below the physical Xvfb screen.
+      viewport.scrollIntoView({ block: "end" });
       const start = first.getBoundingClientRect();
       const edge = viewport.getBoundingClientRect();
+      if (edge.top < 0 || edge.bottom > window.innerHeight) return null;
       return {
         rowCount: rows.length,
         sourceText: first.textContent,
