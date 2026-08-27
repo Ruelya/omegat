@@ -502,7 +502,8 @@ try {
         drag: window.__omegatE2eMouseDrag,
       };
     })()`);
-    return state.text === "alpha" && state.drag.sequence.length === 3 ? state : undefined;
+    if (state.text === "alpha" && state.drag.sequence.length === 3) return state;
+    throw new Error(JSON.stringify(state));
   });
   assert.deepEqual(selected, {
     text: "alpha",
