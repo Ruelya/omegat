@@ -410,7 +410,6 @@ try {
   await sleep(150);
   await xdotool(xvfb.display, [
     "mousemove_relative",
-    "--sync",
     "24",
     "8",
   ]);
@@ -432,6 +431,19 @@ try {
     await xdotool(xvfb.display, ["mousemove", String(x), String(y)]);
     await sleep(25);
   }
+  await sleep(500);
+  const afterMotion = await client.evaluate(`(() => {
+    const viewport = document.querySelector(".align-table-scroll");
+    return {
+      events: window.__omegatE2eDragEvents.slice(-20),
+      pointer: window.__omegatE2ePointer,
+      scrollTop: viewport?.scrollTop ?? 0,
+    };
+  })()`);
+  assert(
+    afterMotion.events.some((event) => event.type === "dragover"),
+    `Native drag never reached the viewport: ${JSON.stringify(afterMotion)}`,
+  );
 
   const hovered = await waitFor("stationary pointer drag autoscroll", async () => {
     const state = await client.evaluate(`(() => {
