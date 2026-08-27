@@ -59,6 +59,10 @@ pub type Result<T> = std::result::Result<T, FilterError>;
 pub struct FilterContext {
     pub source_lang: String,
     pub target_lang: String,
+    /// Java `FilterContext.getInEncoding`; `None` lets variable filters sniff.
+    pub in_encoding: Option<String>,
+    /// Java `FilterContext.getOutEncoding`; `None` preserves the detected input encoding.
+    pub out_encoding: Option<String>,
     /// Java `FilterMaster` / `Filters.removeTags` (XSD default true).
     pub remove_tags: bool,
     /// Java `Filters.removeSpacesNonseg` (XSD default true).
@@ -72,6 +76,8 @@ impl Default for FilterContext {
         Self {
             source_lang: String::new(),
             target_lang: String::new(),
+            in_encoding: None,
+            out_encoding: None,
             remove_tags: true,
             remove_spaces_nonseg: true,
             options: HashMap::new(),

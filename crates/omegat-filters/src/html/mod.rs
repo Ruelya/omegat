@@ -43,7 +43,10 @@ fn declared_html_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
     })
 }
 
-fn decode_html_bytes(bytes: &[u8]) -> DecodedHtml {
+fn decode_html_bytes_with_fallback(
+    bytes: &[u8],
+    fallback: Option<&str>,
+) -> DecodedHtml {
     let (encoding, bom, payload) = if bytes.starts_with(UTF8_BOM) {
         (encoding_rs::UTF_8, UTF8_BOM, &bytes[UTF8_BOM.len()..])
     } else if bytes.starts_with(UTF16LE_BOM) {
@@ -59,13 +62,15 @@ fn decode_html_bytes(bytes: &[u8]) -> DecodedHtml {
             &bytes[UTF16BE_BOM.len()..],
         )
     } else {
-        let encoding = declared_html_encoding(bytes).unwrap_or_else(|| {
-            if std::str::from_utf8(bytes).is_ok() {
-                encoding_rs::UTF_8
-            } else {
-                encoding_rs::WINDOWS_1252
-            }
-        });
+        let encoding = declared_html_encoding(bytes)
+            .or_else(|| fallback.and_then(|label| Encoding::for_label(label.as_bytes())))
+            .unwrap_or_else(|| {
+                if std::str::from_utf8(bytes).is_ok() {
+                    encoding_rs::UTF_8
+                } else {
+                    encoding_rs::WINDOWS_1252
+                }
+            });
         (encoding, &[][..], bytes)
     };
     let (text, _, _) = encoding.decode(payload);
@@ -76,25 +81,32 @@ fn decode_html_bytes(bytes: &[u8]) -> DecodedHtml {
     }
 }
 
-fn read_html(path: &Path) -> Result<DecodedHtml> {
-    Ok(decode_html_bytes(&std::fs::read(path)?))
+fn decode_html_bytes(bytes: &[u8]) -> DecodedHtml {
+    decode_html_bytes_with_fallback(bytes, None)
 }
 
-fn encode_html(text: &str, source: &DecodedHtml) -> Vec<u8> {
-    let body = if source.encoding == encoding_rs::UTF_16LE {
+fn read_html(path: &Path, fallback: Option<&str>) -> Result<DecodedHtml> {
+    Ok(decode_html_bytes_with_fallback(
+        &std::fs::read(path)?,
+        fallback,
+    ))
+}
+
+fn encode_html(text: &str, encoding: &'static Encoding, bom: &[u8]) -> Vec<u8> {
+    let body = if encoding == encoding_rs::UTF_16LE {
         text.encode_utf16()
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>()
-    } else if source.encoding == encoding_rs::UTF_16BE {
+    } else if encoding == encoding_rs::UTF_16BE {
         text.encode_utf16()
             .flat_map(u16::to_be_bytes)
             .collect::<Vec<_>>()
     } else {
-        let (bytes, _, _) = source.encoding.encode(text);
+        let (bytes, _, _) = encoding.encode(text);
         bytes.into_owned()
     };
-    let mut encoded = Vec::with_capacity(source.bom.len() + body.len());
-    encoded.extend_from_slice(source.bom);
+    let mut encoded = Vec::with_capacity(bom.len() + body.len());
+    encoded.extend_from_slice(bom);
     encoded.extend_from_slice(&body);
     encoded
 }
@@ -112,7 +124,7 @@ impl Filter for HtmlFilter {
         &["*.html", "*.htm", "*.xhtml", "*.xht"]
     }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
-        let source = read_html(path)?;
+        let source = read_html(path, ctx.in_encoding.as_deref())?;
         Ok(filter_visitor::process_html_with_encoding(
             &source.text,
             ctx,
@@ -129,17 +141,27 @@ impl Filter for HtmlFilter {
         translations: &HashMap<String, String>,
         ctx: &FilterContext,
     ) -> Result<()> {
-        let source = read_html(source_path)?;
+        let source = read_html(source_path, ctx.in_encoding.as_deref())?;
+        let target_encoding = ctx
+            .out_encoding
+            .as_deref()
+            .and_then(|label| Encoding::for_label(label.as_bytes()))
+            .unwrap_or(source.encoding);
+        let target_bom = if ctx.out_encoding.is_none() {
+            source.bom
+        } else {
+            &[]
+        };
         let out = filter_visitor::process_html_with_encoding(
             &source.text,
             ctx,
             VisitorKind::Html,
             Some(translations),
-            source.encoding.name(),
+            target_encoding.name(),
         )
         .written;
         ensure_parent(dest_path)?;
-        std::fs::write(dest_path, encode_html(&out, &source))?;
+        std::fs::write(dest_path, encode_html(&out, target_encoding, target_bom))?;
         Ok(())
     }
 }
@@ -261,6 +283,29 @@ mod tests {
         assert_eq!(
             decoded.text,
             r#"<html><head><meta charset="windows-1252"></head><body><p>été</p></body></html>"#
+        );
+    }
+
+    #[test]
+    fn html_filter_explicit_target_encoding_overrides_detected_source() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("legacy.html");
+        let target = dir.path().join("utf8.html");
+        let html = r#"<html><head><meta charset="windows-1252"></head><body><p>café</p></body></html>"#;
+        let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode(html);
+        std::fs::write(&source, bytes.as_ref()).unwrap();
+        let mut ctx = FilterContext::default();
+        ctx.out_encoding = Some("UTF-8".into());
+        ctx.options
+            .insert("rewriteEncoding".into(), "ALWAYS".into());
+
+        HtmlFilter
+            .write(&source, &target, &HashMap::new(), &ctx)
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            r#"<html><head><meta charset="UTF-8"></head><body><p>café</p></body></html>"#
         );
     }
 }

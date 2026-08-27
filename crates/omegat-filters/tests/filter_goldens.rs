@@ -54,6 +54,11 @@ fn ctx_from(spec: &Value) -> FilterContext {
     if let Some(s) = spec["target_lang"].as_str() {
         ctx.target_lang = s.to_string();
     }
+    // Java's default HTML filter instance writes UTF-8 unless the target
+    // encoding is explicitly set to auto. Goldens exercise that default.
+    if spec["id"].as_str() == Some("html") {
+        ctx.out_encoding = Some("UTF-8".to_string());
+    }
     if let Some(map) = spec["options"].as_object() {
         for (k, v) in map {
             ctx.options.insert(
