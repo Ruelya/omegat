@@ -1,6 +1,10 @@
 use crate::session::Entry;
 use omegat_ipc::{SearchHitDto, SearchParams};
 use regex::Regex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -632,6 +636,124 @@ pub enum SearchOrigin {
     Text { preamble: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchSourceKind {
+    ProjectFile,
+    ExternalTranslationMemory,
+    Glossary,
+    TextFile,
+}
+
+/// One independently traversed project-search source.
+///
+/// Java's `Searcher` walks project files, external TMs, glossaries and loose
+/// text in separate phases. Keeping these batches intact preserves origin
+/// labels and provides cancellation/progress boundaries without requiring the
+/// caller to flatten every source into one synthetic entry list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchSource {
+    pub kind: SearchSourceKind,
+    pub label: String,
+    pub entries: Vec<ProjectSearchEntry>,
+}
+
+impl SearchSource {
+    pub fn project_file(label: impl Into<String>, entries: Vec<ProjectSearchEntry>) -> Self {
+        Self {
+            kind: SearchSourceKind::ProjectFile,
+            label: label.into(),
+            entries,
+        }
+    }
+
+    pub fn external_tm(label: impl Into<String>, entries: Vec<ProjectSearchEntry>) -> Self {
+        Self {
+            kind: SearchSourceKind::ExternalTranslationMemory,
+            label: label.into(),
+            entries,
+        }
+    }
+
+    pub fn glossary(label: impl Into<String>, entries: Vec<ProjectSearchEntry>) -> Self {
+        Self {
+            kind: SearchSourceKind::Glossary,
+            label: label.into(),
+            entries,
+        }
+    }
+
+    pub fn text_file(label: impl Into<String>, entries: Vec<ProjectSearchEntry>) -> Self {
+        Self {
+            kind: SearchSourceKind::TextFile,
+            label: label.into(),
+            entries,
+        }
+    }
+
+    fn materialize_entry(
+        &self,
+        entry: &ProjectSearchEntry,
+        source_entry_index: usize,
+    ) -> ProjectSearchEntry {
+        let mut entry = entry.clone();
+        entry.origin = match self.kind {
+            SearchSourceKind::ProjectFile => SearchOrigin::Project {
+                entry_number: match entry.origin {
+                    SearchOrigin::Project { entry_number, .. } if entry_number > 0 => entry_number,
+                    _ => source_entry_index + 1,
+                },
+                file: self.label.clone(),
+            },
+            SearchSourceKind::ExternalTranslationMemory => SearchOrigin::TranslationMemory {
+                preamble: self.label.clone(),
+            },
+            SearchSourceKind::Glossary => SearchOrigin::Glossary {
+                preamble: self.label.clone(),
+            },
+            SearchSourceKind::TextFile => SearchOrigin::Text {
+                preamble: self.label.clone(),
+            },
+        };
+        entry
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl SearchCancellation {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    pub fn reset(&self) {
+        self.cancelled.store(false, Ordering::Release);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchProgress {
+    pub sources_total: usize,
+    pub sources_visited: usize,
+    pub entries_visited: usize,
+    pub results_found: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchRunOutcome {
+    pub completed: bool,
+    pub cancelled: bool,
+    pub sources_visited: usize,
+    pub entries_visited: usize,
+    pub results_found: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSearchEntry {
     pub source: String,
@@ -732,6 +854,7 @@ impl std::error::Error for SearchNotCompleted {}
 pub struct Searcher {
     expression: SearchExpression,
     entries: Vec<ProjectSearchEntry>,
+    sources: Vec<SearchSource>,
     results: Vec<SearchResult>,
     found_matches: Vec<SearchMatch>,
     completed: bool,
@@ -743,6 +866,7 @@ impl Searcher {
         Self {
             expression,
             entries: Vec::new(),
+            sources: Vec::new(),
             results: Vec::new(),
             found_matches: Vec::new(),
             completed: false,
@@ -756,6 +880,12 @@ impl Searcher {
         searcher
     }
 
+    pub fn with_sources(expression: SearchExpression, sources: Vec<SearchSource>) -> Self {
+        let mut searcher = Self::new(expression);
+        searcher.sources = sources;
+        searcher
+    }
+
     pub fn get_expression(&self) -> &SearchExpression {
         &self.expression
     }
@@ -766,12 +896,26 @@ impl Searcher {
 
     pub fn set_entries(&mut self, entries: Vec<ProjectSearchEntry>) {
         self.entries = entries;
+        self.sources.clear();
         self.completed = false;
     }
 
     pub fn entries_mut(&mut self) -> &mut Vec<ProjectSearchEntry> {
+        self.sources.clear();
         self.completed = false;
         &mut self.entries
+    }
+
+    pub fn set_sources(&mut self, sources: Vec<SearchSource>) {
+        self.sources = sources;
+        self.entries.clear();
+        self.completed = false;
+    }
+
+    pub fn sources_mut(&mut self) -> &mut Vec<SearchSource> {
+        self.entries.clear();
+        self.completed = false;
+        &mut self.sources
     }
 
     pub fn is_search_completed(&self) -> bool {
@@ -790,6 +934,10 @@ impl Searcher {
             .ok_or(SearchNotCompleted)
     }
 
+    pub fn get_partial_results(&self) -> &[SearchResult] {
+        &self.results
+    }
+
     pub fn search_string(&mut self, text: Option<&str>, collapse_results: bool) -> bool {
         self.found_matches = find_matches(
             text,
@@ -801,60 +949,114 @@ impl Searcher {
     }
 
     pub fn run(&mut self) {
-        use std::collections::HashMap;
+        let cancellation = SearchCancellation::default();
+        self.run_cancellable(&cancellation, |_| {});
+    }
 
+    pub fn run_cancellable(
+        &mut self,
+        cancellation: &SearchCancellation,
+        mut on_progress: impl FnMut(SearchProgress),
+    ) -> SearchRunOutcome {
         self.completed = false;
         self.results.clear();
         self.found_matches.clear();
-        let mut deduplicated: HashMap<(u8, String, String), usize> = HashMap::new();
-        let entries = self.entries.clone();
-        for entry in &entries {
-            if self.results.len() >= self.expression.number_of_results {
+        let mut deduplicated = std::collections::HashMap::new();
+        let has_structured_sources = !self.sources.is_empty();
+        let sources = if has_structured_sources {
+            self.sources.clone()
+        } else {
+            vec![SearchSource::project_file("", self.entries.clone())]
+        };
+        let sources_total = sources.len();
+        let mut sources_visited = 0;
+        let mut entries_visited = 0;
+        let mut cancelled = cancellation.is_cancelled();
+
+        'sources: for source in &sources {
+            if cancellation.is_cancelled() {
+                cancelled = true;
                 break;
             }
-            if matches!(&entry.origin, SearchOrigin::Orphan { .. })
-                && self.expression.exclude_orphans
-            {
-                continue;
-            }
-            if entry.translation.is_some() && !self.expression.search_translated {
-                continue;
-            }
-            if entry.translation.is_none() && !self.expression.search_untranslated {
-                continue;
-            }
-            let Some(result) = self.match_entry(entry) else {
-                continue;
-            };
-            let duplicate_kind = match &entry.origin {
-                SearchOrigin::Project { .. } => Some(0),
-                SearchOrigin::TranslationMemory { .. } => Some(1),
-                _ => None,
-            };
-            if !self.expression.all_results {
-                if let Some(kind) = duplicate_kind {
-                    let key = (
-                        kind,
-                        result.source.clone(),
-                        result.translation.clone().unwrap_or_default(),
-                    );
-                    if let Some(index) = deduplicated.get(&key).copied() {
-                        let prior = &mut self.results[index];
-                        let original = prior.preamble.clone().unwrap_or_default();
-                        let (base, count) = parse_more_preamble(&original);
-                        prior.preamble = Some(if base.is_empty() {
-                            format!("{}\u{00a0}matches", count + 2)
-                        } else {
-                            format!("{base} +{}\u{00a0}more", count + 1)
-                        });
-                        continue;
-                    }
-                    deduplicated.insert(key, self.results.len());
+            sources_visited += 1;
+            for (source_entry_index, raw_entry) in source.entries.iter().enumerate() {
+                if cancellation.is_cancelled() {
+                    cancelled = true;
+                    break 'sources;
                 }
+                if self.results.len() >= self.expression.number_of_results {
+                    break 'sources;
+                }
+                let entry = if has_structured_sources {
+                    source.materialize_entry(raw_entry, source_entry_index)
+                } else {
+                    raw_entry.clone()
+                };
+                entries_visited += 1;
+                self.consider_entry(&entry, &mut deduplicated);
+                on_progress(SearchProgress {
+                    sources_total,
+                    sources_visited,
+                    entries_visited,
+                    results_found: self.results.len(),
+                });
             }
-            self.results.push(result);
         }
-        self.completed = true;
+        cancelled |= cancellation.is_cancelled();
+        self.completed = !cancelled;
+        SearchRunOutcome {
+            completed: self.completed,
+            cancelled,
+            sources_visited,
+            entries_visited,
+            results_found: self.results.len(),
+        }
+    }
+
+    fn consider_entry(
+        &mut self,
+        entry: &ProjectSearchEntry,
+        deduplicated: &mut std::collections::HashMap<(u8, String, String), usize>,
+    ) {
+        if matches!(&entry.origin, SearchOrigin::Orphan { .. }) && self.expression.exclude_orphans {
+            return;
+        }
+        if entry.translation.is_some() && !self.expression.search_translated {
+            return;
+        }
+        if entry.translation.is_none() && !self.expression.search_untranslated {
+            return;
+        }
+        let Some(result) = self.match_entry(entry) else {
+            return;
+        };
+        let duplicate_kind = match &entry.origin {
+            SearchOrigin::Project { .. } => Some(0),
+            SearchOrigin::TranslationMemory { .. } => Some(1),
+            _ => None,
+        };
+        if !self.expression.all_results {
+            if let Some(kind) = duplicate_kind {
+                let key = (
+                    kind,
+                    result.source.clone(),
+                    result.translation.clone().unwrap_or_default(),
+                );
+                if let Some(index) = deduplicated.get(&key).copied() {
+                    let prior = &mut self.results[index];
+                    let original = prior.preamble.clone().unwrap_or_default();
+                    let (base, count) = parse_more_preamble(&original);
+                    prior.preamble = Some(if base.is_empty() {
+                        format!("{}\u{00a0}matches", count + 2)
+                    } else {
+                        format!("{base} +{}\u{00a0}more", count + 1)
+                    });
+                    return;
+                }
+                deduplicated.insert(key, self.results.len());
+            }
+        }
+        self.results.push(result);
     }
 
     fn match_entry(&self, entry: &ProjectSearchEntry) -> Option<SearchResult> {

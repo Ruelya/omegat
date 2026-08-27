@@ -19,10 +19,7 @@ fn golden(rel: &str) -> Value {
 fn searcher_golden(method: &str) -> Value {
     let value = golden(&format!("search/SearcherTest#{method}.json"));
     let expected = format!("org.omegat.core.search.SearcherTest#{method}");
-    assert_eq!(
-        value["java_test"].as_str(),
-        Some(expected.as_str())
-    );
+    assert_eq!(value["java_test"].as_str(), Some(expected.as_str()));
     value
 }
 
@@ -499,13 +496,13 @@ fn searcher_all_java_methods_use_stateful_product_path() {
     }
 
     let check = |method: &str,
-                     query: &str,
-                     source: &str,
-                     translation: Option<&str>,
-                     note: Option<&str>,
-                     properties: Vec<(&str, &str)>,
-                     creator: Option<&str>,
-                     expected_field: &str| {
+                 query: &str,
+                 source: &str,
+                 translation: Option<&str>,
+                 note: Option<&str>,
+                 properties: Vec<(&str, &str)>,
+                 creator: Option<&str>,
+                 expected_field: &str| {
         let g = searcher_golden(method);
         let mut entry = ProjectSearchEntry::project(1, "source.txt", source, translation);
         entry.note = note.map(str::to_string);
@@ -746,6 +743,81 @@ fn searcher_all_java_methods_use_stateful_product_path() {
             .as_deref(),
         Some("source.txt +1\u{00a0}more")
     );
+}
+
+#[test]
+fn searcher_traverses_typed_sources_and_cancels_between_entries() {
+    use omegat_core::search::{
+        ProjectSearchEntry, SearchCancellation, SearchExpression, SearchOrigin, SearchSource,
+        Searcher,
+    };
+
+    let entry = |source: &str| ProjectSearchEntry {
+        origin: SearchOrigin::Project {
+            entry_number: 0,
+            file: String::new(),
+        },
+        ..ProjectSearchEntry::project(0, "", source, None)
+    };
+    let sources = vec![
+        SearchSource::project_file(
+            "source/chapter.txt",
+            vec![entry("needle one"), entry("needle two")],
+        ),
+        SearchSource::external_tm("tm/reference.tmx", vec![entry("needle from tm")]),
+        SearchSource::glossary("glossary/terms.txt", vec![entry("needle glossary")]),
+    ];
+    let mut searcher =
+        Searcher::with_sources(SearchExpression::exact("needle", true), sources.clone());
+    let token = SearchCancellation::default();
+    let mut progress = Vec::new();
+    let outcome = searcher.run_cancellable(&token, |state| progress.push(state));
+    assert_eq!(
+        outcome,
+        omegat_core::search::SearchRunOutcome {
+            completed: true,
+            cancelled: false,
+            sources_visited: 3,
+            entries_visited: 4,
+            results_found: 4,
+        }
+    );
+    assert_eq!(progress.last().unwrap().sources_total, 3);
+    let results = searcher.get_search_results().unwrap();
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.entry_number)
+            .collect::<Vec<_>>(),
+        vec![1, 2, -1, -4]
+    );
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.preamble.as_deref())
+            .collect::<Vec<_>>(),
+        vec![
+            Some("source/chapter.txt"),
+            Some("source/chapter.txt"),
+            Some("tm/reference.tmx"),
+            Some("glossary/terms.txt"),
+        ]
+    );
+
+    let mut cancelled = Searcher::with_sources(SearchExpression::exact("needle", true), sources);
+    let token = SearchCancellation::default();
+    let cancel_from_progress = token.clone();
+    let outcome = cancelled.run_cancellable(&token, move |state| {
+        if state.entries_visited == 2 {
+            cancel_from_progress.cancel();
+        }
+    });
+    assert_eq!(outcome.completed, false);
+    assert_eq!(outcome.cancelled, true);
+    assert_eq!(outcome.sources_visited, 1);
+    assert_eq!(outcome.entries_visited, 2);
+    assert_eq!(cancelled.get_partial_results().len(), 2);
+    assert!(cancelled.get_search_results().is_err());
 }
 
 #[test]
