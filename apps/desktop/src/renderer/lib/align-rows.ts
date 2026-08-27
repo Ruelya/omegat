@@ -54,6 +54,72 @@ export type AlignVisibleRows = {
   lastRow: number;
 };
 
+export type AlignDragViewport = AlignVisibleRows & {
+  pointerY: number;
+  viewportTop: number;
+  viewportBottom: number;
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  rowCount: number;
+  edgeSize?: number;
+  maxStep?: number;
+};
+
+export type AlignDragViewportResult = {
+  delta: number;
+  focusRow: number | null;
+};
+
+/**
+ * Model native JTable drag autoscroll for the renderer viewport.
+ *
+ * The focus row follows the nearest visible row while scrolling, then exposes
+ * the explicit before-first/after-last drop boundary once the viewport reaches
+ * either end. `delta` is clamped to the remaining scroll range so the renderer
+ * never oscillates beyond a boundary.
+ */
+export function alignmentDragViewport(
+  state: AlignDragViewport,
+): AlignDragViewportResult {
+  if (
+    state.rowCount <= 0 ||
+    !Number.isFinite(state.pointerY) ||
+    state.viewportBottom <= state.viewportTop
+  ) {
+    return { delta: 0, focusRow: null };
+  }
+  const height = state.viewportBottom - state.viewportTop;
+  const edgeSize = Math.max(1, Math.min(state.edgeSize ?? 48, height / 2));
+  const maxStep = Math.max(1, Math.floor(state.maxStep ?? 24));
+  const maxScrollTop = Math.max(0, state.scrollHeight - state.clientHeight);
+  const scrollTop = Math.max(0, Math.min(state.scrollTop, maxScrollTop));
+  const first = Math.max(0, Math.min(state.firstRow, state.rowCount - 1));
+  const last = Math.max(first, Math.min(state.lastRow, state.rowCount - 1));
+
+  const topDistance = state.pointerY - state.viewportTop;
+  if (topDistance < edgeSize) {
+    const pressure = 1 - Math.max(0, topDistance) / edgeSize;
+    const requested = -Math.max(1, Math.ceil(maxStep * pressure));
+    return {
+      delta: Math.max(-scrollTop, requested),
+      focusRow: scrollTop === 0 ? -1 : first,
+    };
+  }
+
+  const bottomDistance = state.viewportBottom - state.pointerY;
+  if (bottomDistance < edgeSize) {
+    const pressure = 1 - Math.max(0, bottomDistance) / edgeSize;
+    const requested = Math.max(1, Math.ceil(maxStep * pressure));
+    return {
+      delta: Math.min(maxScrollTop - scrollTop, requested),
+      focusRow: scrollTop === maxScrollTop ? state.rowCount : last,
+    };
+  }
+
+  return { delta: 0, focusRow: null };
+}
+
 /**
  * Return the selected edge that must be brought into the current viewport.
  * A range taller than the viewport follows its focus/lead row, like JTable.

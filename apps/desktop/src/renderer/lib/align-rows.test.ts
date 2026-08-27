@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  alignmentDragViewport,
   alignmentRows,
   alignmentPointerSelection,
   alignmentScrollTarget,
@@ -224,6 +225,55 @@ describe("alignment visual rows", () => {
     expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 5, 10, 12)).toBe(10);
     expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 5, 1, 12)).toBe(1);
     expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 1, 10, 12)).toBe(10);
+  });
+
+  it("drives drag autoscroll and exposes exact top and bottom focus boundaries", () => {
+    const viewport = {
+      viewportTop: 100,
+      viewportBottom: 300,
+      scrollHeight: 1_000,
+      clientHeight: 200,
+      rowCount: 40,
+      firstRow: 8,
+      lastRow: 16,
+      edgeSize: 40,
+      maxStep: 20,
+    };
+    expect(
+      alignmentDragViewport({
+        ...viewport,
+        pointerY: 110,
+        scrollTop: 250,
+      }),
+    ).toEqual({ delta: -15, focusRow: 8 });
+    expect(
+      alignmentDragViewport({
+        ...viewport,
+        pointerY: 290,
+        scrollTop: 250,
+      }),
+    ).toEqual({ delta: 15, focusRow: 16 });
+    expect(
+      alignmentDragViewport({
+        ...viewport,
+        pointerY: 200,
+        scrollTop: 250,
+      }),
+    ).toEqual({ delta: 0, focusRow: null });
+    expect(
+      alignmentDragViewport({
+        ...viewport,
+        pointerY: 90,
+        scrollTop: 0,
+      }),
+    ).toEqual({ delta: 0, focusRow: -1 });
+    expect(
+      alignmentDragViewport({
+        ...viewport,
+        pointerY: 310,
+        scrollTop: 800,
+      }),
+    ).toEqual({ delta: 0, focusRow: 40 });
   });
 
   it("models Java one-column drag/drop eligibility and request payloads", () => {

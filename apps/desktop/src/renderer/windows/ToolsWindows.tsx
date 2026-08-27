@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import {
+  alignmentDragViewport,
   alignmentRows,
   alignmentPointerSelection,
   alignmentScrollTarget,
@@ -39,9 +40,19 @@ export function AlignWindow() {
   const [message, setMessage] = useState("");
   const spanEditor = useRef<HTMLTextAreaElement>(null);
   const tableScroll = useRef<HTMLDivElement>(null);
+  const alignTable = useRef<HTMLTableElement>(null);
   const draggedRows = useRef<{
     startRow: number;
     endRow: number;
+    side: Exclude<AlignSide, "both">;
+  } | null>(null);
+  const dragPointer = useRef<{
+    clientY: number;
+    side: Exclude<AlignSide, "both">;
+  } | null>(null);
+  const dragScrollFrame = useRef<number | null>(null);
+  const [dragTarget, setDragTarget] = useState<{
+    row: number;
     side: Exclude<AlignSide, "both">;
   } | null>(null);
   const rows = useMemo(() => alignmentRows(beads), [beads]);
@@ -91,6 +102,14 @@ export function AlignWindow() {
       viewport.scrollTop += rowRect.bottom - viewportRect.bottom;
     }
   }, [anchor, sel, rows]);
+  useEffect(
+    () => () => {
+      if (dragScrollFrame.current != null) {
+        cancelAnimationFrame(dragScrollFrame.current);
+      }
+    },
+    [],
+  );
   async function run() {
     const r = (await window.omegat?.rpc("align.run", {
       source: src,
@@ -203,6 +222,13 @@ export function AlignWindow() {
     row: number,
     dragSide: Exclude<AlignSide, "both">,
   ) {
+    if (dragScrollFrame.current != null) {
+      cancelAnimationFrame(dragScrollFrame.current);
+      dragScrollFrame.current = null;
+    }
+    dragPointer.current = null;
+    setDragTarget(null);
+    alignTable.current?.focus({ preventScroll: true });
     const inSelection =
       side === dragSide && row >= selectedRows.start && row <= selectedRows.end;
     draggedRows.current = {
@@ -231,12 +257,91 @@ export function AlignWindow() {
         })
       : { allowed: false };
   }
+  function focusTableDrop(
+    row: number,
+    targetSide: Exclude<AlignSide, "both">,
+  ) {
+    const allowed = tableDropResult(row, targetSide).allowed;
+    setDragTarget((current) => {
+      const next = allowed ? { row, side: targetSide } : null;
+      return current?.row === next?.row && current?.side === next?.side
+        ? current
+        : next;
+    });
+    return allowed;
+  }
+  function dragViewportAt(
+    clientY: number,
+    targetSide: Exclude<AlignSide, "both">,
+  ) {
+    const viewport = tableScroll.current;
+    const visible = visibleTableRows();
+    if (!viewport || !visible) return false;
+    const rect = viewport.getBoundingClientRect();
+    const result = alignmentDragViewport({
+      pointerY: clientY,
+      viewportTop: rect.top,
+      viewportBottom: rect.bottom,
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      clientHeight: viewport.clientHeight,
+      firstRow: visible.firstRow,
+      lastRow: visible.lastRow,
+      rowCount: rows.length,
+    });
+    const allowed =
+      result.focusRow == null ? false : focusTableDrop(result.focusRow, targetSide);
+    if (result.delta !== 0 && dragScrollFrame.current == null) {
+      dragScrollFrame.current = requestAnimationFrame(continueTableDragScroll);
+    }
+    return allowed;
+  }
+  function continueTableDragScroll() {
+    dragScrollFrame.current = null;
+    const pointer = dragPointer.current;
+    const viewport = tableScroll.current;
+    const visible = visibleTableRows();
+    if (!pointer || !viewport || !visible || !draggedRows.current) return;
+    const rect = viewport.getBoundingClientRect();
+    const result = alignmentDragViewport({
+      pointerY: pointer.clientY,
+      viewportTop: rect.top,
+      viewportBottom: rect.bottom,
+      scrollTop: viewport.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      clientHeight: viewport.clientHeight,
+      firstRow: visible.firstRow,
+      lastRow: visible.lastRow,
+      rowCount: rows.length,
+    });
+    if (result.delta !== 0) {
+      viewport.scrollTop += result.delta;
+    }
+    if (result.focusRow != null) {
+      focusTableDrop(result.focusRow, pointer.side);
+    }
+    if (result.delta !== 0) {
+      dragScrollFrame.current = requestAnimationFrame(continueTableDragScroll);
+    }
+  }
+  function stopTableDrag() {
+    draggedRows.current = null;
+    dragPointer.current = null;
+    setDragTarget(null);
+    if (dragScrollFrame.current != null) {
+      cancelAnimationFrame(dragScrollFrame.current);
+      dragScrollFrame.current = null;
+    }
+  }
   function tableDragOver(
     event: React.DragEvent<HTMLTableCellElement>,
     row: number,
     targetSide: Exclude<AlignSide, "both">,
   ) {
-    if (tableDropResult(row, targetSide).allowed) {
+    dragPointer.current = { clientY: event.clientY, side: targetSide };
+    const directAllowed = focusTableDrop(row, targetSide);
+    const edgeAllowed = dragViewportAt(event.clientY, targetSide);
+    if (directAllowed || edgeAllowed) {
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
     }
@@ -247,11 +352,28 @@ export function AlignWindow() {
     targetSide: Exclude<AlignSide, "both">,
   ) {
     const drop = tableDropResult(row, targetSide);
-    draggedRows.current = null;
-    if (!drop.allowed || !drop.action || !drop.extra) return;
+    stopTableDrag();
+    if (!drop.allowed || !drop.action || !drop.extra) {
+      alignTable.current?.focus({ preventScroll: true });
+      return;
+    }
     event.preventDefault();
-    void edit(drop.action, drop.extra);
+    void edit(drop.action, drop.extra).finally(() => {
+      alignTable.current?.focus({ preventScroll: true });
+    });
   }
+  const activeDescendant =
+    dragTarget != null
+      ? dragTarget.row < 0
+        ? `align-drop-top-${dragTarget.side}`
+        : dragTarget.row >= rows.length
+          ? `align-drop-bottom-${dragTarget.side}`
+          : `align-cell-${dragTarget.row}-${dragTarget.side}`
+      : rows.length === 0
+        ? undefined
+        : side === "both"
+          ? `align-row-${sel}`
+          : `align-cell-${sel}-${side}`;
   return (
     <Modal id="align" title={t("aligner")} wide>
       <div className="form">
@@ -290,6 +412,12 @@ export function AlignWindow() {
           disabled={side === "both" || rows.length === 0}
           value={spanText}
           onChange={(event) => setSpanText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              alignTable.current?.focus({ preventScroll: true });
+            }
+          }}
         />
         <div className="btn-row">
           <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
@@ -332,8 +460,10 @@ export function AlignWindow() {
         {message && <div className="meta">{message}</div>}
         <div className="align-table-scroll" ref={tableScroll}>
           <table
+            ref={alignTable}
             className="align-table"
             aria-label="manual alignment table"
+            aria-activedescendant={activeDescendant}
             tabIndex={0}
             onKeyDown={tableKeyDown}
           >
@@ -344,11 +474,23 @@ export function AlignWindow() {
             <tr className="align-drop-edge" aria-label="alignment top boundary">
               <td />
               <td
+                id="align-drop-top-source"
+                className={
+                  dragTarget?.row === -1 && dragTarget.side === "source"
+                    ? "drag-target"
+                    : undefined
+                }
                 aria-label="move source before first alignment"
                 onDragOver={(event) => tableDragOver(event, -1, "source")}
                 onDrop={(event) => dropTableRows(event, -1, "source")}
               />
               <td
+                id="align-drop-top-target"
+                className={
+                  dragTarget?.row === -1 && dragTarget.side === "target"
+                    ? "drag-target"
+                    : undefined
+                }
                 aria-label="move target before first alignment"
                 onDragOver={(event) => tableDragOver(event, -1, "target")}
                 onDrop={(event) => dropTableRows(event, -1, "target")}
@@ -360,6 +502,7 @@ export function AlignWindow() {
                 row.rowIndex >= selectedRows.start && row.rowIndex <= selectedRows.end;
               return (
                 <tr
+                  id={`align-row-${row.rowIndex}`}
                   key={`${row.beadIndex}-${row.rowInBead}`}
                   data-align-row={row.rowIndex}
                   className={`${selected ? "sel " : ""}${bead.status}`}
@@ -372,6 +515,7 @@ export function AlignWindow() {
                     );
                     setSel(next.focus);
                     setAnchor(next.anchor);
+                    alignTable.current?.focus({ preventScroll: true });
                   }}
                 >
                   <td>
@@ -393,14 +537,21 @@ export function AlignWindow() {
                     )}
                   </td>
                   <td
+                    id={`align-cell-${row.rowIndex}-source`}
+                    className={
+                      dragTarget?.row === row.rowIndex && dragTarget.side === "source"
+                        ? "drag-target"
+                        : undefined
+                    }
                     draggable={row.source != null}
-                    onClick={() => setSide("source")}
+                    onClick={() => {
+                      setSide("source");
+                      alignTable.current?.focus({ preventScroll: true });
+                    }}
                     onDragStart={(event) =>
                       startTableDrag(event, row.rowIndex, "source")
                     }
-                    onDragEnd={() => {
-                      draggedRows.current = null;
-                    }}
+                    onDragEnd={stopTableDrag}
                     onDragOver={(event) =>
                       tableDragOver(event, row.rowIndex, "source")
                     }
@@ -411,14 +562,21 @@ export function AlignWindow() {
                     {row.source ?? ""}
                   </td>
                   <td
+                    id={`align-cell-${row.rowIndex}-target`}
+                    className={
+                      dragTarget?.row === row.rowIndex && dragTarget.side === "target"
+                        ? "drag-target"
+                        : undefined
+                    }
                     draggable={row.target != null}
-                    onClick={() => setSide("target")}
+                    onClick={() => {
+                      setSide("target");
+                      alignTable.current?.focus({ preventScroll: true });
+                    }}
                     onDragStart={(event) =>
                       startTableDrag(event, row.rowIndex, "target")
                     }
-                    onDragEnd={() => {
-                      draggedRows.current = null;
-                    }}
+                    onDragEnd={stopTableDrag}
                     onDragOver={(event) =>
                       tableDragOver(event, row.rowIndex, "target")
                     }
@@ -434,11 +592,23 @@ export function AlignWindow() {
             <tr className="align-drop-edge" aria-label="alignment bottom boundary">
               <td />
               <td
+                id="align-drop-bottom-source"
+                className={
+                  dragTarget?.row === rows.length && dragTarget.side === "source"
+                    ? "drag-target"
+                    : undefined
+                }
                 aria-label="move source after last alignment"
                 onDragOver={(event) => tableDragOver(event, rows.length, "source")}
                 onDrop={(event) => dropTableRows(event, rows.length, "source")}
               />
               <td
+                id="align-drop-bottom-target"
+                className={
+                  dragTarget?.row === rows.length && dragTarget.side === "target"
+                    ? "drag-target"
+                    : undefined
+                }
                 aria-label="move target after last alignment"
                 onDragOver={(event) => tableDragOver(event, rows.length, "target")}
                 onDrop={(event) => dropTableRows(event, rows.length, "target")}
