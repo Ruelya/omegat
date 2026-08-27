@@ -655,7 +655,6 @@ try {
     },
     sidecarResponsive: postCancel.version.version,
   }));
-  await client.evaluate('setTimeout(() => window.omegat.quit(), 0); "quit"');
 } catch (error) {
   if (stderr) process.stderr.write(stderr);
   throw error;
