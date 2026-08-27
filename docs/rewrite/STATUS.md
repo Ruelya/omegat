@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **56750** lines; `apps/desktop/src`
-  TS/TSX/CSS **19697** lines (**~48%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **19697**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **8441**
+- Rewrite Rust: `crates/**/*.rs` **57961** lines; `apps/desktop/src`
+  TS/TSX/CSS **21529** lines (**~50%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **21529**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **8874**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -56,10 +56,11 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-27 verification:** core selected suites **147 passed**, filters
-**84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, plugin registry **4 passed**, sidecar contract **6 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **23 files / 145
+**2026-08-27 verification:** core selected suites **148 passed**, filters
+**85 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, plugin registry **4 passed**, sidecar contract **8 passed** plus
+sidecar watcher unit **1 passed**, native plugin RPC/fault isolation **1
+passed**, and desktop **23 files / 147
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -233,7 +234,8 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**720** vs **963**, `EditorController` **1210** vs **2365**. The headless
+**720** vs **963**, `EditorController` **1146** vs **2365**; the mounted
+renderer's independent `RendererPageProjection` is **248** lines. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -324,13 +326,15 @@ The renderer store no longer keeps a second `draft` string alongside
 `Document3.translation`: native input, `IEditor`, menu actions, Finder, and all
 inserting docks read or publish the same document snapshot. `IEditor` also no
 longer keeps module-global selected-text or filter mirrors; source selection
-and the serializable editor filter live in the store, while
-`EditorController` remains the paging/Marker projection over that snapshot.
-The mounted renderer path no longer adopts that snapshot into
-`EditorController.document`, `entries`, active-entry fields, or its
-`EditorTextArea3` selection. It derives one immutable page plus request-scoped
-Marker inputs from Zustand's index and sole `Document3`; exact tests verify the
-headless controller retains no renderer active segment or selection.
+and the serializable editor filter live in the store. The mounted renderer path
+no longer imports or instantiates `EditorController`.
+`RendererPageProjection` derives one immutable page plus request-scoped Marker
+inputs from Zustand's index and sole `Document3`; it owns only page bounds,
+Marker jobs/cache, tooltips, and scroll anchors. The native Marker bridge now
+targets that narrow host, while file-drop behavior is a standalone product
+boundary. Exact tests verify the headless controller retains no renderer active
+segment or selection and late inactive page-edge callbacks cannot repopulate
+the mounted projection.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
@@ -352,7 +356,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**21 files / 141 tests**, including exact success and
+**23 files / 147 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -457,17 +461,25 @@ new Dock loaders. Exact tests assert event order, changed-key payloads, no
 `entry.set` during an external fix, and same-key cross-project cancellation.
 Dock aborts now cross Electron IPC as request IDs and NDJSON
 `$/cancelRequest` notifications. The sidecar reads cancellation concurrently
-with request workers, returns exact `-32800`, stops search/dictionary
-publication cooperatively, and terminates an in-flight MT curl process; delayed
-MT, dictionary, completer, multi-step selection, and repeated search requests
-therefore stop at the protocol boundary instead of being ignored only by React.
+with request workers, returns exact `-32800`, stops search/dictionary/filter
+publication cooperatively, and terminates in-flight MT and LanguageTool curl
+processes. `issues.list` passes the same token through its per-entry checks and
+LanguageTool calls; large text-filter reads check it per 64 KiB and every
+filter parse/write boundary suppresses cancelled output. Exact contract tests
+cancel direct LanguageTool, aggregated issues, and filter parse requests, then
+prove the stateful sidecar remains responsive.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
-on Linux without relying on recursive-watch support. Their events and
-successful team sync/conflict resolution call the sidecar's
+on Linux without relying on recursive-watch support. They now install and
+remove per-directory watchers as nested directories appear or disappear at
+runtime. Independently, the sidecar scans its active project inputs and emits
+`project.files-changed` NDJSON notifications for newly created, modified, or
+deleted files; Electron merges those with native events in one debounce set.
+Those events and successful team sync/conflict resolution call the sidecar's
 `project.external-refresh`, which reloads project properties, project/external
 TM, glossary, and sources before the existing EXTERNAL_REFRESH bus rebinds the
 sole `Document3` and starts new Dock work. Sidecar contract tests exercise both
-wire cancellation/responsiveness and on-disk source/glossary adoption.
+wire cancellation/responsiveness, proactive runtime-directory events, and
+on-disk source/glossary adoption.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
