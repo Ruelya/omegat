@@ -290,7 +290,7 @@ try {
   assert.deepEqual(rendered, {
     text: "😀 plugin",
     marked: "plugin",
-    title: "Example marker in source/marker.example",
+    title: "Example marker in marker.example",
   });
 
   const crash = await client.evaluate(`window.omegat.rpc("markers.query", {
@@ -325,7 +325,7 @@ try {
   })`);
   assert.deepEqual(rendererAlive, {
     marked: "plugin",
-    title: "Example marker in source/marker.example",
+    title: "Example marker in marker.example",
   });
 
   console.log(JSON.stringify({
