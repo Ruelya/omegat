@@ -664,17 +664,21 @@ export function TeamWindow() {
   const resolve = useApp((s) => s.resolveConflict);
   const operation = useApp((s) => s.longOperation);
   const cancelOperation = useApp((s) => s.cancelLongOperation);
-  const teamOperationActive = Boolean(
+  const operationActive = Boolean(
     operation
-    && (
-      operation.kind === "teamSync"
-      || operation.kind === "teamCommit"
-      || operation.kind === "teamResolve"
-    )
     && (
       operation.phase === "started"
       || operation.phase === "progress"
       || operation.phase === "cancelling"
+    ),
+  );
+  const teamOperationActive = Boolean(
+    operationActive
+    && operation
+    && (
+      operation.kind === "teamSync"
+      || operation.kind === "teamCommit"
+      || operation.kind === "teamResolve"
     ),
   );
   const [manual, setManual] = useState("");
@@ -703,7 +707,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-resolve-ours"
-              disabled={teamOperationActive}
+              disabled={operationActive}
               onClick={() => void resolve("ours", c.source, undefined, c.entry_key)}
             >
               {t("keepOurs")}
@@ -711,7 +715,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-resolve-theirs"
-              disabled={teamOperationActive}
+              disabled={operationActive}
               onClick={() => void resolve("theirs", c.source, undefined, c.entry_key)}
             >
               {t("keepTheirs")}
@@ -719,7 +723,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-resolve-manual"
-              disabled={teamOperationActive}
+              disabled={operationActive}
               onClick={() => void resolve("manual", c.source, manual, c.entry_key)}
             >
               手工
@@ -743,6 +747,7 @@ export function TeamWindow() {
               type="button"
               className="primary"
               data-operation-action="team-sync"
+              disabled={operationActive}
               onClick={() => void sync()}
             >
               {t("sync")}
@@ -750,6 +755,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-commit-source"
+              disabled={operationActive}
               onClick={() => void commit("source")}
             >
               {t("commitSource")}
@@ -757,6 +763,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-commit-target"
+              disabled={operationActive}
               onClick={() => void commit("target")}
             >
               {t("commitTarget")}

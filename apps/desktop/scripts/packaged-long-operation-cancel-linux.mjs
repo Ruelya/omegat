@@ -358,6 +358,27 @@ async function editorState(client) {
   })()`);
 }
 
+async function clickEnabledConflictAction(client, key, action, label) {
+  const serializedKey = JSON.stringify(key);
+  return waitFor(label, async () => {
+    const clicked = await client.evaluate(`(() => {
+      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+        .find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(serializedKey)}
+        );
+      const action = ${JSON.stringify(action)};
+      const button = row?.querySelector(
+        '[data-operation-action="' + action + '"]'
+      );
+      if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+      button.click();
+      return true;
+    })()`);
+    return clicked ? true : undefined;
+  });
+}
+
 async function terminate(child) {
   if (!child || child.exitCode != null || child.signalCode != null) return;
   const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
@@ -1949,21 +1970,11 @@ try {
       characterData: true,
     });
   })()`);
-  assert.equal(
-    await client.evaluate(`(() => {
-      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
-        .find((candidate) =>
-          candidate.getAttribute("data-team-conflict-key")
-            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
-        );
-      const button = row?.querySelector(
-        '[data-operation-action="team-resolve-theirs"]'
-      );
-      button?.click();
-      return Boolean(button);
-    })()`),
-    true,
-    "visible keep-theirs action was unavailable for cancellation",
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.wanted.key,
+    "team-resolve-theirs",
+    "enabled keep-theirs action for cancellation",
   );
   const cancelledTeamResolve = await waitFor(
     "protocol-confirmed team.resolve cancellation",
@@ -2047,21 +2058,11 @@ try {
     false,
   );
 
-  assert.equal(
-    await client.evaluate(`(() => {
-      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
-        .find((candidate) =>
-          candidate.getAttribute("data-team-conflict-key")
-            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
-        );
-      const button = row?.querySelector(
-        '[data-operation-action="team-resolve-theirs"]'
-      );
-      button?.click();
-      return Boolean(button);
-    })()`),
-    true,
-    "visible keep-theirs action was unavailable for interruption recovery",
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.wanted.key,
+    "team-resolve-theirs",
+    "enabled keep-theirs action for interruption recovery",
   );
   const interruptedResolveProgress = await waitFor(
     "team.resolve snapshot before process interruption",
@@ -2224,21 +2225,11 @@ try {
     window.__omegatRpcOperationTrace = [];
     window.__omegatDomOperationTrace = [];
   })()`);
-  assert.equal(
-    await client.evaluate(`(() => {
-      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
-        .find((candidate) =>
-          candidate.getAttribute("data-team-conflict-key")
-            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
-        );
-      const button = row?.querySelector(
-        '[data-operation-action="team-resolve-theirs"]'
-      );
-      button?.click();
-      return Boolean(button);
-    })()`),
-    true,
-    "visible keep-theirs action disappeared after cancellation",
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.wanted.key,
+    "team-resolve-theirs",
+    "enabled keep-theirs action after cancellation",
   );
   const firstResolvedTeamConflict = await waitFor(
     "first same-source complete-key keep-theirs write-back",
@@ -2289,21 +2280,11 @@ try {
   assert.equal(untouchedDecoy?.index, orderedDecoy.index);
   assert.equal(untouchedDecoy?.translation, secondConflictOurs);
 
-  assert.equal(
-    await client.evaluate(`(() => {
-      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
-        .find((candidate) =>
-          candidate.getAttribute("data-team-conflict-key")
-            === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
-        );
-      const button = row?.querySelector(
-        '[data-operation-action="team-resolve-ours"]'
-      );
-      button?.click();
-      return Boolean(button);
-    })()`),
-    true,
-    "second same-source keep-ours action was unavailable",
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.decoy.key,
+    "team-resolve-ours",
+    "enabled same-source keep-ours action",
   );
   const resolvedTeamConflict = await waitFor(
     "second same-source complete-key keep-ours write-back",
