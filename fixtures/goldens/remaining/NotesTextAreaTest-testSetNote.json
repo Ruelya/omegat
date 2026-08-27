@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.notes.NotesTextAreaTest#testSetNote",
+  "set": "foobar",
+  "empty_is_null": true,
+  "keys": [
+    "org.omegat.gui.notes.NotesTextAreaTest#testSetNote"
+  ]
+}

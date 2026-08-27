@@ -1,0 +1,27 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2-recurse-bugfix-SF205.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testParseRegression",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "en",
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<html lang=\"en\">\n\n<body>\n\t<script></script><script></script>\n\t<style></style><script></script>\n\t<script></script><style></style>\n\t<p>This is first line.</p>\n\t<p>This is second line.</p>\n</body>\n\n</html>"
+}

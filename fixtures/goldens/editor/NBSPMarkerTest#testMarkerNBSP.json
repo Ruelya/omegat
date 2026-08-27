@@ -1,0 +1,15 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.NBSPMarkerTest#testMarkerNBSP",
+  "enabled": true,
+  "source": "source text with NBSP.",
+  "translation": null,
+  "is_active": true,
+  "marks": [
+    {
+      "startOffset": 16,
+      "endOffset": 17,
+      "entryPart": "SOURCE"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

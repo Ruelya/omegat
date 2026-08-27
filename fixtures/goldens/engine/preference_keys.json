@@ -1,0 +1,153 @@
+{
+  "java_test": "org.omegat.gui.preferences.view.GeneralOptionsController#persist",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "controllers": {
+    "AppearanceController": [
+      "menuui_class_name",
+      "project_files_show_on_load",
+      "theme_class_name",
+      "theme_color_mode",
+      "theme_dark_class_name"
+    ],
+    "AutoCompleterController": [
+      "ac_show_suggestions_automatically",
+      "ac_switch_views_with_lr"
+    ],
+    "AutotextAutoCompleterOptionsController": [
+      "ac_autotext_enabled",
+      "ac_autotext_sort_alphabetically",
+      "ac_autotext_sort_by_length",
+      "ac_autotext_sort_full_text"
+    ],
+    "CharTableAutoCompleterOptionsController": [
+      "ac_chartable_custom_char_string",
+      "ac_chartable_enabled",
+      "ac_chartable_unique_custom_chars",
+      "ac_chartable_use_custom_chars"
+    ],
+    "CustomColorSelectionController": [
+
+    ],
+    "DictionaryPreferencesController": [
+      "dictionary_auto_search",
+      "dictionary_condensed_view",
+      "dictionary_fuzzy_matching"
+    ],
+    "EditingBehaviorController": [
+      "allowTagEditing",
+      "editor_initial_segment_load_count",
+      "mark_para_delimitation_text",
+      "save_auto_status",
+      "save_origin",
+      "tagValidateOnLeave",
+      "wf_allowTransEqualToSrc",
+      "wf_convertNumbers",
+      "wf_explanatoryText",
+      "wf_exportCurrentSegment",
+      "wf_insertBestMatch",
+      "wf_minimalSimilarity",
+      "wf_noSourceText",
+      "wf_singleClickSegmentActivation",
+      "wf_stopOnAlternativeTranslation",
+      "— ¶ —————————————————————"
+    ],
+    "FontSelectionController": [
+      "dictionary_font_size",
+      "dictionary_use_font",
+      "project_files_use_font",
+      "source_font",
+      "source_font_size"
+    ],
+    "GeneralOptionsController": [
+      "always_confirm_quit"
+    ],
+    "GlossaryAutoCompleterOptionsController": [
+      "ac_glossary_enabled",
+      "ac_glossary_show_source",
+      "ac_glossary_show_target_before_source",
+      "ac_glossary_sort_alphabetically",
+      "ac_glossary_sort_by_length"
+    ],
+    "GlossaryPreferencesController": [
+      "glossary_merge_alternate_definitions",
+      "glossary_not_exact_match",
+      "glossary_replace_on_insert",
+      "glossary_require_similar_case",
+      "glossary_sort_by_length",
+      "glossary_sort_by_src_length",
+      "glossary_stemming",
+      "glossary_stemming_full",
+      "glossary_tbx_display_context"
+    ],
+    "HistoryAutoCompleterOptionsController": [
+      "allow_history_completer",
+      "history_completer_prediction_enabled"
+    ],
+    "LanguageToolConfigurationController": [
+
+    ],
+    "MachineTranslationPreferencesController": [
+      "mt_auto_fetch",
+      "mt_only_untranslated"
+    ],
+    "PluginsPreferencesController": [
+
+    ],
+    "SaveOptionsController": [
+      "allow_project_extern_cmd",
+      "auto_save_interval",
+      "external_command",
+      "stat_format"
+    ],
+    "SecureStoreController": [
+
+    ],
+    "SourceFilesViewOptionsController": [
+      "project_files_show_translation_progress"
+    ],
+    "SpellcheckerConfigurationController": [
+      "allow_auto_spellchecking",
+      "spellcheker_dir",
+      "target_lang"
+    ],
+    "TMMatchesPreferencesController": [
+      "ext_tmx_fuzzy_match_threshold",
+      "ext_tmx_match_template",
+      "ext_tmx_show_level2",
+      "ext_tmx_sort_key",
+      "ext_tmx_use_slash",
+      "keep_foreign_matches",
+      "paragraph_match_from_segment_tmx",
+      "penalty_foreign_matches"
+    ],
+    "TagProcessingOptionsController": [
+      "loose_tag_ordering",
+      "tagValidation_customPattern",
+      "tagValidation_elaborateCheck",
+      "tagValidation_javaMessageFormatSimplePatternCheck",
+      "tagValidation_noCheck",
+      "tagValidation_removePattern",
+      "tagValidation_simpleCheck",
+      "tags_valid_required"
+    ],
+    "TeamOptionsController": [
+      "team_Author"
+    ],
+    "UserPassController": [
+      "proxy_password",
+      "proxy_user_name"
+    ],
+    "VersionCheckPreferencesController": [
+      "automatically_check_version"
+    ],
+    "ViewOptionsController": [
+      "view_option_mod_info_template",
+      "view_option_mod_info_template_wo_date",
+      "view_option_ppt_simplify",
+      "view_option_source_active_bold",
+      "view_option_source_all_bold",
+      "view_option_template_active",
+      "view_option_unique_first"
+    ]
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-NOI18N.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testNOI18N",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Value"
+  ],
+  "ids": [
+    "ID"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "ID=Value\n# NOI18N\nID2=Value2\n"
+}

@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.DefaultTokenizerTest#testContainsAll",
+  "text": "The quick brown fox jumped over the lazy dog.",
+  "the_brown_inexact": true,
+  "the_brown_exact": false,
+  "keys": [
+    "org.omegat.tokenizer.DefaultTokenizerTest#testContainsAll"
+  ]
+}

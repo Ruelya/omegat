@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.MainWindowMenuTest#testAddToolsMenuPagerItems",
+  "menu": "tools",
+  "pager": true,
+  "keys": [
+    "org.omegat.gui.main.MainWindowMenuTest#testAddToolsMenuPagerItems"
+  ]
+}

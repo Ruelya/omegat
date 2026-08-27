@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testAlphanumericStringCase",
+  "Mql5_title": true,
+  "mql5_lower": true,
+  "MQL5_upper": true,
+  "mQl5_mixed": true,
+  "keys": [
+    "org.omegat.util.StringUtilTest#testAlphanumericStringCase"
+  ]
+}

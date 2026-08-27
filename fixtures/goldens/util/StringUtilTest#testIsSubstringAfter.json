@@ -1,0 +1,36 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testIsSubstringAfter",
+  "cases": [
+    {
+      "text": "123456",
+      "after": false,
+      "sub": "67",
+      "pos": 5
+    },
+    {
+      "text": "123456",
+      "after": true,
+      "sub": "6",
+      "pos": 5
+    },
+    {
+      "text": "123456",
+      "after": true,
+      "sub": "56",
+      "pos": 4
+    },
+    {
+      "text": "123456",
+      "after": true,
+      "sub": "12",
+      "pos": 0
+    },
+    {
+      "text": "123456",
+      "after": true,
+      "sub": "23",
+      "pos": 1
+    }
+  ]
+}

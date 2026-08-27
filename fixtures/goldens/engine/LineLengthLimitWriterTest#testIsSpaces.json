@@ -1,0 +1,18 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.text.LineLengthLimitWriterTest#testIsSpaces",
+  "cases": [
+    {
+      "token": "  ",
+      "spaces": true
+    },
+    {
+      "token": "abc ",
+      "spaces": false
+    },
+    {
+      "token": "def",
+      "spaces": false
+    }
+  ]
+}
