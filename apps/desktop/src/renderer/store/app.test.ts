@@ -1292,7 +1292,7 @@ describe("app store", () => {
 
   it("rejects queued proactive events from an older same-root generation", async () => {
     const root = "/same-root";
-    const refresh = vi.fn(async () => undefined);
+    const refresh = vi.fn(async () => true);
     let notify: ((event: {
       root: string;
       paths: string[];
