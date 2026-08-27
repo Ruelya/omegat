@@ -20,8 +20,8 @@ import {
   type Document3State,
 } from "./Document3";
 import {
-  type EditorScrollAnchor,
-  type ScrollAnchorCandidate,
+  type RendererScrollAnchor,
+  type RendererScrollAnchorCandidate,
   RendererPageProjection,
 } from "./RendererPageProjection";
 import {
@@ -32,6 +32,7 @@ import { bindMarkerRemark } from "./IEditor";
 import { makeFilter } from "./IEditorFilter";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
+import { handleEditorFileDrop } from "./EditorFileDrop";
 import { buildRenderedTextFragments } from "./RenderedText";
 import { renderedCaretFromPoint } from "./RenderedTextHitTest";
 import type { EntryPart, Mark } from "./mark/Mark";
@@ -50,7 +51,7 @@ type MarkerTooltipState = {
   y: number;
 };
 
-function scrollCandidates(container: HTMLElement): ScrollAnchorCandidate[] {
+function scrollCandidates(container: HTMLElement): RendererScrollAnchorCandidate[] {
   return [...container.querySelectorAll<HTMLElement>("[data-entry-key]")].map((element) => {
     const bounds = element.getBoundingClientRect();
     return {
@@ -144,7 +145,7 @@ export function SegmentEditor() {
   const surface = useRef<HTMLDivElement>(null);
   const ime = useRef<HTMLTextAreaElement>(null);
   const interaction = useRef(new EditorTextArea3());
-  const pendingScrollAnchor = useRef<EditorScrollAnchor | null>(null);
+  const pendingScrollAnchor = useRef<RendererScrollAnchor | null>(null);
   const [pageRadius, setPageRadius] = useState(8);
   const [manualConflict, setManualConflict] = useState("");
   const [markerTooltip, setMarkerTooltip] = useState<MarkerTooltipState | null>(null);
@@ -606,7 +607,7 @@ export function SegmentEditor() {
     const drop = window.omegat.inspectDrop
       ? await window.omegat.inspectDrop(paths)
       : { kind: "files" as const, paths };
-    const result = await editorController.handleFileDrop(drop, projectLoaded, {
+    const result = await handleEditorFileDrop(drop, projectLoaded, {
       openProject: open,
       importFiles: importPaths,
     });

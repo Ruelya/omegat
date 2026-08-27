@@ -33,13 +33,13 @@ export type RendererPageEntry = {
   marks: Mark[];
 };
 
-export type ScrollAnchorCandidate = {
+export type RendererScrollAnchorCandidate = {
   key: string;
   top: number;
   bottom: number;
 };
 
-export type EditorScrollAnchor = {
+export type RendererScrollAnchor = {
   key: string;
   offset: number;
 };
@@ -188,8 +188,8 @@ export class RendererPageProjection {
 
   captureScrollAnchor(
     viewportTop: number,
-    candidates: readonly ScrollAnchorCandidate[],
-  ): EditorScrollAnchor | null {
+    candidates: readonly RendererScrollAnchorCandidate[],
+  ): RendererScrollAnchor | null {
     const candidate =
       candidates.find(({ bottom }) => Number.isFinite(bottom) && bottom > viewportTop)
       ?? candidates.at(-1);
@@ -198,9 +198,9 @@ export class RendererPageProjection {
   }
 
   scrollAdjustmentForAnchor(
-    anchor: EditorScrollAnchor | null,
+    anchor: RendererScrollAnchor | null,
     viewportTop: number,
-    candidates: readonly ScrollAnchorCandidate[],
+    candidates: readonly RendererScrollAnchorCandidate[],
   ): number {
     if (!anchor) return 0;
     const candidate = candidates.find(({ key }) => key === anchor.key);
