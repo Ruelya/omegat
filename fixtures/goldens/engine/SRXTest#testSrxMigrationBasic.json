@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.segmentation.SRXTest#testSrxMigrationBasic",
+  "maps": 17,
+  "pattern": "JA",
+  "lang": "JA",
+  "keys": [
+    "org.omegat.core.segmentation.SRXTest#testSrxMigrationBasic"
+  ]
+}

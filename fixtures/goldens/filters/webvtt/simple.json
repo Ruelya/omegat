@@ -1,0 +1,16 @@
+{
+  "id": "webvtt",
+  "fixture": "webvtt/simple.vtt",
+  "java_test": "org.omegat.filters2.subtitles.WebVttFilter#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "Hello"
+  ],
+  "ids": [
+    "00:00:00.000 --> 00:00:01.000"
+  ],
+  "empty_write_text": "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:01.000\r\nHello\r\n"
+}

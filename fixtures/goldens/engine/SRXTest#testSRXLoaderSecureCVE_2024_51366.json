@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.segmentation.SRXTest#testSRXLoaderSecureCVE_2024_51366",
+  "loaded": true,
+  "payload_executed": false,
+  "keys": [
+    "org.omegat.core.segmentation.SRXTest#testSRXLoaderSecureCVE_2024_51366"
+  ]
+}

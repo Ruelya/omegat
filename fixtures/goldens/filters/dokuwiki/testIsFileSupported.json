@@ -1,0 +1,18 @@
+{
+  "id": "dokuwiki",
+  "java_test": "org.omegat.filters.DokuWikiFilterTest#testIsFileSupported",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "supported": [
+    {
+      "ok": true,
+      "fixture": "dokuwiki/dokuwiki.txt"
+    },
+    {
+      "ok": false,
+      "fixture": "text/text1.txt"
+    }
+  ]
+}

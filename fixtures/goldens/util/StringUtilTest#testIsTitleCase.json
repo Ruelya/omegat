@@ -1,0 +1,34 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testIsTitleCase",
+  "cases": [
+    {
+      "title": false,
+      "input": "foobar"
+    },
+    {
+      "title": false,
+      "input": "fooBar"
+    },
+    {
+      "title": true,
+      "input": "Foobar"
+    },
+    {
+      "title": true,
+      "input": "Fo1bar"
+    },
+    {
+      "title": true,
+      "input": "ǈbcd"
+    },
+    {
+      "title": true,
+      "input": "ǈ"
+    },
+    {
+      "title": false,
+      "input": "Ǉ"
+    }
+  ]
+}
