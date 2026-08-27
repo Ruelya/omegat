@@ -108,6 +108,159 @@ fn every_listed_method_is_known() {
 }
 
 #[test]
+fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("editor-translations");
+
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
+    std::fs::write(root.join("source/a.txt"), "Repeated").unwrap();
+    std::fs::write(root.join("source/b.txt"), "Repeated").unwrap();
+    let reloaded = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    assert_eq!(reloaded["result"]["entries"], 2);
+    let listed = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
+    assert_eq!(
+        listed["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| (
+                entry["index"].as_u64().unwrap(),
+                entry["file"].as_str().unwrap(),
+                entry["source"].as_str().unwrap(),
+                entry["revision"].as_u64().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, "a.txt", "Repeated", 1), (1, "b.txt", "Repeated", 1)]
+    );
+
+    let shared = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.set",
+        json!({
+            "index": 0,
+            "translation": "Partagé",
+            "note": "default note",
+            "revision": 1,
+            "default_translation": true
+        }),
+    );
+    assert_eq!(
+        shared["result"]["updated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| (
+                entry["index"].as_u64().unwrap(),
+                entry["translation"].as_str().unwrap(),
+                entry["note"].as_str().unwrap(),
+                entry["default_translation"].as_bool().unwrap(),
+                entry["revision"].as_u64().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, "Partagé", "default note", true, 2),
+            (1, "Partagé", "default note", true, 2),
+        ]
+    );
+
+    let alternative = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "entry.set",
+        json!({
+            "index": 1,
+            "translation": "Occurrence privée",
+            "note": "alternative note",
+            "revision": 2,
+            "default_translation": false
+        }),
+    );
+    assert_eq!(
+        alternative["result"]["updated"],
+        json!([{
+            "index": 1,
+            "file": "b.txt",
+            "id": "0",
+            "source": "Repeated",
+            "translation": "Occurrence privée",
+            "note": "alternative note",
+            "comment": "",
+            "default_translation": false,
+            "revision": 3,
+            "translated": true,
+            "tags": [],
+            "properties": [
+                ["changeid", "omegat-rewrite"],
+                ["changedate", alternative["result"]["entry"]["properties"][1][1].clone()]
+            ]
+        }])
+    );
+    let final_entries = rpc(&mut stdin, &mut stdout, 6, "entry.list", json!({}));
+    assert_eq!(
+        final_entries["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| (
+                entry["index"].as_u64().unwrap(),
+                entry["translation"].as_str().unwrap(),
+                entry["default_translation"].as_bool().unwrap(),
+                entry["revision"].as_u64().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, "Partagé", true, 2), (1, "Occurrence privée", false, 3)]
+    );
+
+    let stale = rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "entry.set",
+        json!({
+            "index": 0,
+            "translation": "Stale",
+            "revision": 1,
+            "default_translation": true
+        }),
+    );
+    assert_eq!(stale["error"]["code"], -32002);
+    assert_eq!(
+        stale["error"]["message"],
+        "optimistic lock failed for entry 0"
+    );
+    let _ = child.kill();
+}
+
+#[test]
 fn alignment_manual_edit_is_written_through_rpc() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())
