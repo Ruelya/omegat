@@ -44,7 +44,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 - Java `src/main/java`: **779** files / **157825** lines
 - Rewrite Rust: `crates/**/*.rs` **59846** lines; `apps/desktop/src`
-  TS/TSX/CSS **22869** lines (**~52%** of Java main lines, a scale check only)
+  TS/TSX/CSS **22921** lines (**~52%** of Java main lines, a scale check only)
 - Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **22869**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **9164**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
@@ -522,6 +522,16 @@ success can publish; compile skips its post-operation stats/log, team skips
 conflict/refresh publication, reload reactivates the rolled-back project
 entry, and align keeps the prior bead model. Exact desktop tests cover the
 NDJSON lifecycle, `$/progress` stage, renderer IPC state, and cancel outcome.
+The real Linux `linux-unpacked` compile-cancellation E2E opens a **2400-file**
+project, starts compile from the visible toolbar, waits for the exact
+`project.compile.targets` status-bar stage, and cancels from the visible
+control. The main-process client now remains `cancelling` until the sidecar
+acknowledges the cooperative token with protocol error **-32800**, after which
+the renderer shows `cancelled` with the retained stage. The E2E strictly
+observes started/progress/cancelling/cancelled, proves the complete preexisting
+target tree is byte-identical, finds no compile staging residue, and verifies
+the same stateful sidecar still reports version **6.2.0** and all **2400**
+entries. This is Linux package evidence only.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
 on Linux without relying on recursive-watch support. They now install and
 remove per-directory watchers as nested directories appear or disappear at
