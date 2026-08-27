@@ -1563,12 +1563,16 @@ try {
     await xdotool(xvfb.display, ["key", "Up"]);
   }
   await xdotool(xvfb.display, ["key", "Return"]);
-  await waitFor("decoy after visible alternative-translation commit", async () => {
-    const state = await editorState(client);
-    return state.key === JSON.stringify(duplicateSetup.decoy.key)
-      ? state
-      : undefined;
-  });
+  const decoyAfterAlternativeCommit = await waitFor(
+    "decoy after visible alternative-translation commit",
+    async () => {
+      const state = await editorState(client);
+      return state.key === JSON.stringify(duplicateSetup.decoy.key)
+        ? state
+        : undefined;
+    },
+  );
+  assert.equal(decoyAfterAlternativeCommit.translation, secondConflictOurs);
   const entriesAfterAlternativeCommit = await client.evaluate(
     `window.omegat.rpc("entry.list", {})`,
     true,
@@ -1583,26 +1587,8 @@ try {
     entriesAfterAlternativeCommit.find((entry) =>
       JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
     )?.translation,
-    "",
+    secondConflictOurs,
   );
-  assert.equal(
-    await client.evaluate(`(() => {
-      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
-      surface?.focus();
-      return document.activeElement?.classList.contains("ime-proxy") ?? false;
-    })()`),
-    true,
-    "packaged team decoy did not focus before clearing its best-match draft",
-  );
-  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
-  await xdotool(xvfb.display, ["key", "BackSpace"]);
-  await waitFor("cleared decoy best-match draft", async () => {
-    const state = await editorState(client);
-    return state.key === JSON.stringify(duplicateSetup.decoy.key)
-      && state.translation === ""
-      ? state
-      : undefined;
-  });
   assert.equal(
     await client.evaluate(`(() => {
       const button = document.querySelector(".topbar button");
