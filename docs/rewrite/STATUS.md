@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **57961** lines; `apps/desktop/src`
-  TS/TSX/CSS **21529** lines (**~50%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **21529**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **8874**
+- Rewrite Rust: `crates/**/*.rs` **59103** lines; `apps/desktop/src`
+  TS/TSX/CSS **21846** lines (**~51%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **21846**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **9015**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -57,10 +57,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **148 passed**, filters
-**85 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **8 passed** plus
-sidecar watcher unit **1 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 147
+sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
+passed**, and desktop **23 files / 150
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -204,10 +204,17 @@ schema-value, `translate=false`, and dialect-specific intact regions exact.
 Flash and WordPress now use their Java namespace read-ahead checks during
 public `.xml` registry selection, and translated XML Spreadsheet/Flash/
 WordPress text keeps the source `XMLText` CDATA mode during write-back.
+OpenDocument and OpenXML public filters now carry cancellation through ZIP
+entry reads, XML character/event loops, part callbacks, and write-back.
+Cancelled Office output is discarded from a sibling temporary file instead of
+replacing the destination; the exact product test keeps the original archive
+unchanged.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
-filters3 `openxml`.
+filters3 `openxml`. The filters4 abstract ZIP/XML and MS Office product paths
+also check cancellation inside entry I/O and StAX traversal, with atomic final
+archive replacement.
 
 **P5 tokenizers:** `TokenizerTest` **7/7**. `BaseTokenizerTest` **6/6**
 verbatim `assert_eq`. `DefaultTokenizerTest` contains / containsAll
@@ -234,8 +241,9 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**720** vs **963**, `EditorController` **1146** vs **2365**; the mounted
-renderer's independent `RendererPageProjection` is **248** lines. The headless
+**720** vs **963**, `EditorController` **1106** vs **2365**; its standalone
+headless `HeadlessLoadedWindow` is **141** lines, and the mounted renderer's
+independent `RendererPageProjection` is **248** lines. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -303,6 +311,9 @@ chooses a deterministic next visible entry (or a truly empty view) when a
 reload or rebuilt filter removes the active segment. Exact Zustand and
 controller tests cover commit-before-reload, reordered same-source entries,
 caret clamping, filter retention, and empty-filter recovery.
+The controller no longer stores visible indices, loaded bounds, page radius,
+marker-key membership, or loaded-page generation itself; those concerns live
+in `HeadlessLoadedWindow`, with exact isolation/paging/generation tests.
 External-fix refresh now rebuilds the active segment from the authoritative
 entry without first committing a stale live draft; ordinary refresh retains
 commit-before-rebuild behavior. Controller `changeCase` clamps roaming UTF-16
@@ -468,6 +479,11 @@ LanguageTool calls; large text-filter reads check it per 64 KiB and every
 filter parse/write boundary suppresses cancelled output. Exact contract tests
 cancel direct LanguageTool, aggregated issues, and filter parse requests, then
 prove the stateful sidecar remains responsive.
+The same token now reaches RealProject source reload/compile/export loops,
+deep XML/ZIP/Office parsing and atomic write-back, team transactions, and
+aligner extraction/decoding. Sidecar `project.reload`, `project.compile`,
+`team.sync`, `team.commit`, and `align.run` map cooperative cancellation to
+the exact protocol error `-32800`.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
 on Linux without relying on recursive-watch support. They now install and
 remove per-directory watchers as nested directories appear or disappear at
@@ -480,6 +496,12 @@ TM, glossary, and sources before the existing EXTERNAL_REFRESH bus rebinds the
 sole `Document3` and starts new Dock work. Sidecar contract tests exercise both
 wire cancellation/responsiveness, proactive runtime-directory events, and
 on-disk source/glossary adoption.
+Each forwarded proactive event now carries the renderer project generation and
+its native/sidecar source set. A queued event from an older same-root project
+generation is rejected before refresh. Sidecar writes bracket the Rust scanner
+with begin/end snapshots, while Electron suppresses matching native watcher
+echoes for the same write-source operation; exact product tests prove saving
+does not feed back as an external mutation and later real changes still publish.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
@@ -543,6 +565,10 @@ project across processes. A real child process holds the product lock while a
 second sync receives an exact conflict without creating `active.json`; sync
 continues after the holder exits. The suite is **30 passed / 1 ignored** (the
 preserved SVN binary prerequisite).
+Sync and project-file commit now check the shared cancellation token before and
+between prepare, mapped copy/delete propagation, rebase, and publication
+phases. Cancellation exits through `TeamError::Cancelled`, preserving the
+transaction rollback path instead of publishing the remaining repositories.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -600,6 +626,9 @@ injection), observes native `dragstart`/`dragover`, holds at the visible
 viewport edge until rAF reaches `align-drop-bottom-source`, and strictly checks
 the sidecar result: moving source row 0 to the bottom creates **81** visual rows
 with the original target-only first bead and a source-only final bead.
+`align.run` now passes the protocol cancellation token through extraction,
+unit pairing, HMM construction, Viterbi/forward-backward decoding, and the
+pre-write boundary, returning `-32800` without publishing a partial result.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
