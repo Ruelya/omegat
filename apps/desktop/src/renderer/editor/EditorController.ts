@@ -62,8 +62,9 @@ export type EditorScrollAnchor = {
   offset: number;
 };
 
+export type { EditorCaretPosition } from "./EditorDocumentLifecycle";
+
 export type {
-  EditorCaretPosition,
   EditorFileDrop,
   EditorFileDropHandlers,
   EditorFileDropResult,
