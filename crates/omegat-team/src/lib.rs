@@ -600,10 +600,18 @@ mod tests {
         );
 
         let first = git2::Repository::open_bare(&bare_a).unwrap();
-        let first_tree = first.head().unwrap().peel_to_tree().unwrap();
+        let first_tree = first
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_tree()
+            .unwrap();
         assert!(first_tree.get_path(Path::new("first.txt")).is_err());
         let second = git2::Repository::open_bare(&bare_b).unwrap();
-        let second_tree = second.head().unwrap().peel_to_tree().unwrap();
+        let second_tree = second
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_tree()
+            .unwrap();
         assert!(second_tree.get_path(Path::new("second.txt")).is_err());
     }
 
