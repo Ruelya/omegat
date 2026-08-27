@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.GlossaryReaderTBXTest#testRead",
+  "count": 1,
+  "src": "alpha smoothing factor",
+  "loc": "hu translation",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryReaderTBXTest#testRead"
+  ]
+}

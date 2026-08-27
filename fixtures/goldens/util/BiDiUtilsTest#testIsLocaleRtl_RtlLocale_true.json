@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.BiDiUtilsTest#testIsLocaleRtl_RtlLocale_true",
+  "rtl_en": false,
+  "rtl_ar": true,
+  "keys": [
+    "org.omegat.util.BiDiUtilsTest#testIsLocaleRtl_RtlLocale_true"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.ComesFromAutoTMMarkerTest#testMarkersNotActive",
+  "marks": null,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

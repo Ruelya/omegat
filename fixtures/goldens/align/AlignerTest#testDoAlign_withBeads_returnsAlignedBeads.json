@@ -1,0 +1,32 @@
+{
+  "java_test": "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
+  "beads": [
+    [
+      "a",
+      "A"
+    ],
+    [
+      "bb",
+      "BB"
+    ],
+    [
+      "ccc",
+      "CCC"
+    ]
+  ],
+  "result": [
+    [
+      "a",
+      "A"
+    ],
+    [
+      "bb",
+      "BB"
+    ],
+    [
+      "ccc",
+      "CCC"
+    ]
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

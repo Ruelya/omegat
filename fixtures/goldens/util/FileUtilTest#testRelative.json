@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testRelative",
+  "digit": true,
+  "unix": false,
+  "rel": true,
+  "win": false,
+  "keys": [
+    "org.omegat.util.FileUtilTest#testRelative"
+  ]
+}
