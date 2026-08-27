@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringMultipleMatches",
+  "hit": true,
+  "count": 2,
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchStringMultipleMatches"
+  ]
+}

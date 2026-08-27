@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testFirstN",
+  "n2": "𝐀𝐀",
+  "n0": "",
+  "n1": "𝐀",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testFirstN"
+  ]
+}

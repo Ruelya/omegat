@@ -1,0 +1,46 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.MagicCommentTest#testParseString",
+  "cases": [
+    {
+      "input": "# -*- coding: UTF-8 -*-",
+      "map": {
+        "coding": "UTF-8"
+      }
+    },
+    {
+      "input": "# comment -*- coding: UTF-8 -*-",
+      "map": {
+        "coding": "UTF-8"
+      }
+    },
+    {
+      "input": "# comment -*- coding: UTF-8; foo: bar -*-",
+      "map": {
+        "coding": "UTF-8",
+        "foo": "bar"
+      }
+    },
+    {
+      "input": "# comment -*- foo: bar; coding: UTF-8; -*-",
+      "map": {
+        "coding": "UTF-8",
+        "foo": "bar"
+      }
+    },
+    {
+      "input": "# comment -*- foo: bar; -*- coding: UTF-8",
+      "map": {
+        "foo": "bar"
+      }
+    },
+    {
+      "input": "# comment -*- foo: bar; coding: UTF-8",
+      "map": {}
+    },
+    {
+      "input": "# comment foo: bar; coding: UTF-8 -*-",
+      "map": {}
+    }
+  ]
+}
