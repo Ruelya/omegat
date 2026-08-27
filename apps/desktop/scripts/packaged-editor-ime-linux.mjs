@@ -349,6 +349,11 @@ try {
   await client.evaluate(`(() => {
     window.__omegatE2ePointer = null;
     window.__omegatE2eImeEvents = [];
+    window.__omegatE2eMouseDrag = {
+      sequence: [],
+      trusted: [],
+      buttons: [],
+    };
     document.addEventListener("pointermove", (event) => {
       window.__omegatE2ePointer = {
         clientX: event.clientX,
@@ -364,6 +369,39 @@ try {
           inputType: event.inputType ?? null,
           composing: event.isComposing ?? null,
         });
+      }, true);
+    }
+    for (const type of ["mousedown", "mousemove", "mouseup"]) {
+      document.addEventListener(type, (event) => {
+        const drag = window.__omegatE2eMouseDrag;
+        const editor = Boolean(event.target?.closest?.(".editor-surface"));
+        if (type === "mousedown" && editor && event.button === 0) {
+          drag.sequence = ["mousedown"];
+          drag.trusted = [event.isTrusted];
+          drag.buttons = [event.buttons];
+          return;
+        }
+        if (
+          type === "mousemove"
+          && drag.sequence.length === 1
+          && editor
+          && (event.buttons & 1) === 1
+        ) {
+          drag.sequence.push("mousemove");
+          drag.trusted.push(event.isTrusted);
+          drag.buttons.push(event.buttons);
+          return;
+        }
+        if (
+          type === "mouseup"
+          && drag.sequence.length === 2
+          && editor
+          && event.button === 0
+        ) {
+          drag.sequence.push("mouseup");
+          drag.trusted.push(event.isTrusted);
+          drag.buttons.push(event.buttons);
+        }
       }, true);
     }
   })()`);
@@ -438,37 +476,43 @@ try {
   const selectionEnd = screenPoint(selectionPoints.end);
   await xdotool(xvfb.display, [
     "mousemove",
+    "--sync",
     String(selectionStart.x),
     String(selectionStart.y),
-    "click",
+    "mousedown",
     "1",
   ]);
   await xdotool(xvfb.display, [
     "mousemove",
+    "--sync",
     String(selectionEnd.x),
     String(selectionEnd.y),
-    "keydown",
-    "Shift_L",
-    "click",
-    "1",
-    "keyup",
-    "Shift_L",
   ]);
-  const selected = await waitFor("native directional editor selection", async () => {
+  await xdotool(xvfb.display, [
+    "mouseup",
+    "1",
+  ]);
+  const selected = await waitFor("native XTEST mouse drag editor selection", async () => {
     const state = await client.evaluate(`(() => {
       const selection = document.querySelector(".editor-selection");
       return {
         text: selection?.textContent ?? null,
         caretAfter: selection?.nextElementSibling?.classList.contains("caret") ?? false,
         focusedProxy: document.activeElement?.classList.contains("ime-proxy") ?? false,
+        drag: window.__omegatE2eMouseDrag,
       };
     })()`);
-    return state.text === "alpha" ? state : undefined;
+    return state.text === "alpha" && state.drag.sequence.length === 3 ? state : undefined;
   });
   assert.deepEqual(selected, {
     text: "alpha",
     caretAfter: true,
     focusedProxy: true,
+    drag: {
+      sequence: ["mousedown", "mousemove", "mouseup"],
+      trusted: [true, true, true],
+      buttons: [1, 1, 0],
+    },
   });
 
   await client.evaluate("window.__omegatE2eImeEvents = []");
@@ -619,7 +663,8 @@ try {
     JSON.stringify({
       result: "passed",
       package: executable,
-      pointerInput: "XTEST",
+      pointerInput: "XTEST mousedown-mousemove-mouseup",
+      mouseSequence: selected.drag.sequence,
       nativeInput: "Chromium Input.imeSetComposition",
       selected: selected.text,
       translation: persisted.translation,

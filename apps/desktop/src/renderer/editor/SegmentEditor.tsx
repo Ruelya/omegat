@@ -7,6 +7,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
   type UIEvent,
 } from "react";
@@ -211,6 +212,8 @@ export function SegmentEditor() {
   const [pageRadius, setPageRadius] = useState(8);
   const composing = useRef(false);
   const discardCompositionEnd = useRef(false);
+  const dragPointer = useRef<number | null>(null);
+  const suppressClick = useRef(false);
   editorController.setPageRadius(pageRadius);
   const loadedPage = editorController.synchronizeRendererProject(entries, activeIndex, document3);
   const loadedPageSignature = loadedPage.map(({ key }) => key).join("\u0000");
@@ -424,6 +427,10 @@ export function SegmentEditor() {
   }
 
   function onClick(ev: MouseEvent<HTMLDivElement>) {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
     const root = surface.current;
     if (!root) return;
     const hit = renderedCaretFromPoint(root, ev.clientX, ev.clientY);
@@ -431,6 +438,61 @@ export function SegmentEditor() {
     const area = prepareInteraction();
     area.setCaretFromRenderedOffset(hit.offset, hit.bias, ev.shiftKey);
     readSelection(area);
+  }
+
+  function onPointerDown(ev: PointerEvent<HTMLDivElement>) {
+    if (ev.button !== 0 || !ev.isPrimary) return;
+    const root = surface.current;
+    if (!root) return;
+    const hit = renderedCaretFromPoint(root, ev.clientX, ev.clientY);
+    if (!hit) return;
+    ev.preventDefault();
+    dragPointer.current = ev.pointerId;
+    suppressClick.current = true;
+    ev.currentTarget.setPointerCapture(ev.pointerId);
+    const area = prepareInteraction();
+    area.beginMouseSelection(hit.offset, hit.bias, ev.shiftKey);
+    area.focus();
+    readSelection(area);
+    ime.current?.focus({ preventScroll: true });
+  }
+
+  function onPointerMove(ev: PointerEvent<HTMLDivElement>) {
+    if (dragPointer.current !== ev.pointerId || !interaction.current.isMouseSelecting()) return;
+    if ((ev.buttons & 1) === 0) {
+      finishPointerSelection(ev);
+      return;
+    }
+    const root = surface.current;
+    if (!root) return;
+    const hit = renderedCaretFromPoint(root, ev.clientX, ev.clientY);
+    if (!hit) return;
+    ev.preventDefault();
+    if (interaction.current.updateMouseSelection(hit.offset, hit.bias)) {
+      readSelection(interaction.current);
+    }
+  }
+
+  function finishPointerSelection(ev: PointerEvent<HTMLDivElement>) {
+    if (dragPointer.current !== ev.pointerId) return;
+    ev.preventDefault();
+    const root = surface.current;
+    const hit = root
+      ? renderedCaretFromPoint(root, ev.clientX, ev.clientY)
+      : null;
+    interaction.current.endMouseSelection(hit?.offset, hit?.bias);
+    readSelection(interaction.current);
+    dragPointer.current = null;
+    if (ev.currentTarget.hasPointerCapture(ev.pointerId)) {
+      ev.currentTarget.releasePointerCapture(ev.pointerId);
+    }
+  }
+
+  function cancelPointerSelection(ev: PointerEvent<HTMLDivElement>) {
+    if (dragPointer.current !== ev.pointerId) return;
+    interaction.current.endMouseSelection();
+    readSelection(interaction.current);
+    dragPointer.current = null;
   }
 
   function onDoubleClick(ev: MouseEvent<HTMLDivElement>) {
@@ -529,6 +591,10 @@ export function SegmentEditor() {
             aria-multiline="true"
             aria-label={t("target")}
             onKeyDown={onKey}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={finishPointerSelection}
+            onPointerCancel={cancelPointerSelection}
             onClick={onClick}
             onDoubleClick={onDoubleClick}
             onCopy={onCopy}

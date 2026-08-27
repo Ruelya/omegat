@@ -44,6 +44,7 @@ export class EditorTextArea3 {
   private currentWordLocale = "und";
   private focused = false;
   private composition: CompositionSession | null = null;
+  private mouseSelectionActive = false;
   private readonly popupConstructors: PopupMenuConstructor[] = [];
   private readonly wordListeners = new Set<(word: string | null, locale: string) => void>();
   private readonly focusListeners = new Set<(focused: boolean) => void>();
@@ -59,6 +60,7 @@ export class EditorTextArea3 {
     const anchor = this.selectionAnchor - this.doc.translationStart;
     const focus = this.selectionFocus - this.doc.translationStart;
     this.composition = null;
+    this.mouseSelectionActive = false;
     this.doc = doc;
     if (preserveSelection) {
       this.setSelection(
@@ -114,6 +116,41 @@ export class EditorTextArea3 {
       this.setCaretPosition(next, bias);
     }
     return this.caretPosition;
+  }
+
+  /**
+   * Start a native mouse drag at a renderer-relative UTF-16 offset. The
+   * renderer owns pointer capture, while this model owns the directional
+   * selection over the active Document3 translation.
+   */
+  beginMouseSelection(
+    offset: number,
+    bias: "before" | "after" = "after",
+    extendSelection = false,
+  ): number {
+    this.setCaretFromRenderedOffset(offset, bias, extendSelection);
+    this.mouseSelectionActive = true;
+    return this.caretPosition;
+  }
+
+  updateMouseSelection(offset: number, bias: "before" | "after" = "after"): boolean {
+    if (!this.mouseSelectionActive) return false;
+    this.setCaretFromRenderedOffset(offset, bias, true);
+    return true;
+  }
+
+  endMouseSelection(
+    offset?: number,
+    bias: "before" | "after" = "after",
+  ): boolean {
+    if (!this.mouseSelectionActive) return false;
+    if (offset !== undefined) this.setCaretFromRenderedOffset(offset, bias, true);
+    this.mouseSelectionActive = false;
+    return true;
+  }
+
+  isMouseSelecting(): boolean {
+    return this.mouseSelectionActive;
   }
 
   setSelection(start: number, end: number): void {

@@ -17,6 +17,7 @@ import { HistoryPredictor } from "./history/HistoryPredictor";
 import { HistoryCompleter } from "./history/HistoryCompleter";
 import { IEditor } from "./IEditor";
 import { makeFilter } from "./IEditorFilter";
+import { buildActiveDocument } from "./SegmentBuilder";
 import { TagAutoCompleterView } from "./TagAutoCompleterView";
 import { TranslationUndoManager } from "./TranslationUndoManager";
 
@@ -254,6 +255,33 @@ describe("Document3 / IEditor / completer classes", () => {
       focus: area.getSelectionFocus(),
       direction: area.getSelectionDirection(),
     }).toEqual({ anchor: 8, focus: 1, direction: "backward" });
+  });
+
+  it("EditorTextArea3 keeps native mouse dragging on the Document3 UTF-16 path", () => {
+    const area = new EditorTextArea3();
+    const doc = buildActiveDocument(7, "selection source", "alpha 😀 beta");
+    area.setDocument(doc);
+
+    expect(area.beginMouseSelection(0, "before")).toBe(doc.translationStart);
+    expect(area.isMouseSelecting()).toBe(true);
+    expect(area.updateMouseSelection(5, "after")).toBe(true);
+    expect({
+      anchor: area.getSelectionAnchor(),
+      focus: area.getSelectionFocus(),
+      direction: area.getSelectionDirection(),
+      selected: area.getSelectedText(),
+    }).toEqual({
+      anchor: doc.translationStart,
+      focus: doc.translationStart + 5,
+      direction: "forward",
+      selected: "alpha",
+    });
+    expect(area.endMouseSelection(5, "after")).toBe(true);
+    expect(area.isMouseSelecting()).toBe(false);
+
+    expect(area.handleBeforeInput("insertText", "日本語")).toBe(true);
+    expect(extractTranslation(area.getOmDocument())).toBe("日本語 😀 beta");
+    expect(area.getOmDocument().dirty).toBe(true);
   });
 
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {

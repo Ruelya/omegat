@@ -12,6 +12,9 @@ describe("segment editor source", () => {
     expect(src).toMatch(/synchronizeRendererProject/);
     expect(src).toMatch(/area\.handleBeforeInput\(native\.inputType, native\.data\)/);
     expect(src).toMatch(/renderedCaretFromPoint\(root, ev\.clientX, ev\.clientY\)/);
+    expect(src).toMatch(/area\.beginMouseSelection\(hit\.offset, hit\.bias, ev\.shiftKey\)/);
+    expect(src).toMatch(/interaction\.current\.updateMouseSelection\(hit\.offset, hit\.bias\)/);
+    expect(src).toMatch(/onPointerUp=\{finishPointerSelection\}/);
     expect(src).toMatch(/scrollAdjustmentForAnchor/);
     expect(src).toMatch(/area\.pasteText\(text\)/);
   });
