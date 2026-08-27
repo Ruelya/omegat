@@ -1,0 +1,48 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter-tags.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testTags",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Link to <m0>http://localhost</m0>.",
+    "About <b0>Gandalf</b0>",
+    "<i0>Tags</i0> translation zz<i1>2</i1>z <b2>-NONTRANSLATED",
+    "one <a0> two </b1> three <c2> four </d3> five",
+    "About <m0>Gandalf</m0> and <m1>other</m1>.",
+    "one <o0>two</o0> three",
+    "one <t0/> three",
+    "one <w0/> three",
+    "Nested tags: before <g0><g1><x2/></g1></g0> after",
+    "<m0>Check protected-only tag reading</m0>"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.1\">\n    <file target-language=\"be\" source-language=\"en\" original=\"text.txt\">\n        <body>\n            <trans-unit>\n                <source>source</source>\n                <target>Link to <mrk mtype=\"protected\">http://localhost</mrk>.</target>\n            </trans-unit>\n            <trans-unit id=\"7\" resname=\"7\">\n                <source xml:lang=\"EN-US\">About <bpt id=\"1\">&lt;b&gt;</bpt>Gandalf<ept id=\"1\">&lt;/b&gt;</ept></source>\n                <target xml:lang=\"FR-FR\">About <bpt id=\"1\">&lt;b&gt;</bpt>Gandalf<ept id=\"1\">&lt;/b&gt;</ept></target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target><bpt rid=\"1\">&lt;i&gt;</bpt>Tags<ept rid=\"1\">&lt;/i&gt;</ept> translation zz<bpt rid=\"2\">&lt;ig&gt;</bpt>2<ept rid=\"2\">&lt;/ig&gt;</ept>z <it pos=\"begin\">&lt;bbb</it>-NONTRANSLATED</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target>one <it pos=\"begin\">&lt;a&gt;</it> two <it pos=\"end\">&lt;b&gt;</it> three <it pos=\"open\">&lt;c&gt;</it> four <it pos=\"close\">&lt;d&gt;</it> five</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target>About <mrk mtype=\"protected\">Gandalf</mrk> and <mrk mtype=\"other\">other</mrk>.</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target>one <bpt type=\"other\" i=\"2\"></bpt>two<ept i=\"2\"></ept> three</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target>one <ph type=\"w\">two</ph> three</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target>one <ph type=\"w\"></ph> three</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target>Nested tags: before <g id=\"0\"><g id=\"1\"><x id=\"2\"/></g></g> after</target>\n            </trans-unit>\n            <trans-unit>\n                <source>source</source>\n                <target><mrk mtype=\"protected\">Check protected-only tag reading</mrk></target>\n            </trans-unit>\n        </body>\n    </file>\n</xliff>"
+}

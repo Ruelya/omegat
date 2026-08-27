@@ -1,0 +1,11 @@
+{
+  "id": "filters",
+  "java_test": "org.omegat.filters.FiltersTest#testFiltersComparison",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "filters_equal_same_config": true,
+  "filters_equal_after_ignore_file_context_flip": false,
+  "filters_equal_after_target_encoding_change": false
+}

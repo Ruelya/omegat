@@ -1,0 +1,14 @@
+{
+  "id": "msoffice",
+  "java_test": "org.omegat.filters4.xml.openxml.OpenXmlFilterTest#testOpenXmlFilterIsFileSupported",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "supported": [
+    {
+      "fixture": "openXML/document.xml",
+      "ok": true
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.editor.CollapsibleBarTest#toggleExpandsAndCollapses",
+  "after_toggle": true,
+  "after_second_toggle": false,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
