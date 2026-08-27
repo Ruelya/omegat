@@ -1,3 +1,5 @@
+import type { RpcOperationEvent } from "../../shared/rpc-operation";
+
 export type VersionInfo = { name: string; version: string; protocol: string; rewrite: boolean };
 export type EntryKeyDto = {
   file: string;
@@ -311,6 +313,7 @@ declare global {
         clientRequestId?: string,
       ) => Promise<unknown>;
       cancelRpc?: (clientRequestId: string) => Promise<boolean>;
+      onRpcOperation?: (fn: (event: RpcOperationEvent) => void) => () => void;
       startup?: () => Promise<{
         project: string | null;
         configDir: string;

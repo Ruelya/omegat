@@ -65,4 +65,74 @@ describe("SidecarRpcClient", () => {
     );
     expect(lines).toHaveLength(3);
   });
+
+  it("publishes exact long-operation progress and terminal states", async () => {
+    const lines: string[] = [];
+    const operations: unknown[] = [];
+    const client = new SidecarRpcClient(
+      (line) => lines.push(line),
+      () => undefined,
+      (event) => operations.push(event),
+    );
+    const compile = client.request(
+      "project.compile",
+      { progress_token: "operation-compile-1" },
+      "operation-compile-1",
+    );
+    client.acceptChunk([
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "$/progress",
+        params: { token: "operation-compile-1", stage: "compile:filters" },
+      }),
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: { files: 3 } }),
+      "",
+    ].join("\n"));
+    await expect(compile).resolves.toEqual({ files: 3 });
+
+    const team = client.request(
+      "team.sync",
+      { progress_token: "operation-teamSync-2" },
+      "operation-teamSync-2",
+    );
+    client.acceptChunk(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      error: { code: -32800, message: "request cancelled" },
+    })}\n`);
+    await expect(team).rejects.toMatchObject({
+      name: "AbortError",
+      message: "request cancelled",
+    });
+
+    expect(operations).toEqual([
+      {
+        requestId: "operation-compile-1",
+        method: "project.compile",
+        phase: "started",
+      },
+      {
+        requestId: "operation-compile-1",
+        method: "project.compile",
+        phase: "progress",
+        stage: "compile:filters",
+      },
+      {
+        requestId: "operation-compile-1",
+        method: "project.compile",
+        phase: "succeeded",
+      },
+      {
+        requestId: "operation-teamSync-2",
+        method: "team.sync",
+        phase: "started",
+      },
+      {
+        requestId: "operation-teamSync-2",
+        method: "team.sync",
+        phase: "cancelled",
+        error: "request cancelled",
+      },
+    ]);
+  });
 });

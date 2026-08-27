@@ -6,10 +6,17 @@ import { defaultPreferences } from "../lib/preferences";
 import { projectEvents } from "../lib/project-events";
 import { toSearchParams } from "../lib/search-params";
 import { dispatchMenuAction } from "../menus/actions";
-import { connectExternalProjectEvents, resetAppState, useApp } from "./app";
+import type { RpcOperationEvent } from "../../shared/rpc-operation";
+import {
+  connectExternalProjectEvents,
+  connectRpcOperationEvents,
+  resetAppState,
+  useApp,
+} from "./app";
 
 const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
+let rpcOperationListener: ((event: RpcOperationEvent) => void) | null = null;
 
 function installBridge() {
   const mem = new Map<string, string>();
@@ -26,6 +33,12 @@ function installBridge() {
     omegat: {
       rpc,
       cancelRpc,
+      onRpcOperation: (listener: (event: RpcOperationEvent) => void) => {
+        rpcOperationListener = listener;
+        return () => {
+          if (rpcOperationListener === listener) rpcOperationListener = null;
+        };
+      },
       pickDir: async () => null,
       pickFile: async () => null,
       pickFiles: async () => [],
@@ -68,6 +81,7 @@ describe("app store", () => {
   beforeEach(() => {
     rpc.mockReset();
     cancelRpc.mockClear();
+    rpcOperationListener = null;
     installBridge();
     resetAppState();
   });
@@ -408,6 +422,141 @@ describe("app store", () => {
     )).toBe(true);
   });
 
+  it("routes compile, team, and align through explicit long-operation requests", async () => {
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "project.compile") return { files: 2 };
+      if (method === "stats.get") {
+        return {
+          files: 1,
+          segments: 2,
+          translated: 1,
+          unique_segments: 2,
+          source_words: 2,
+          target_words: 1,
+        };
+      }
+      if (method === "team.sync") return { action: "sync", message: "done" };
+      if (method === "team.commit") return { action: "commit", message: "done" };
+      if (method === "align.run") return { pairs: [] };
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+
+    await useApp.getState().compile();
+    await useApp.getState().teamSync();
+    await useApp.getState().teamCommit("target");
+    await useApp.getState().runLongOperation("align", {
+      source: "/source",
+      target: "/target",
+      dest: "/out.tmx",
+    });
+
+    expect(
+      rpc.mock.calls
+        .filter(([method]) => [
+          "project.compile",
+          "team.sync",
+          "team.commit",
+          "align.run",
+        ].includes(method))
+        .map(([method, params, requestId]) => [method, params, requestId]),
+    ).toEqual([
+      [
+        "project.compile",
+        { progress_token: "operation-compile-1" },
+        "operation-compile-1",
+      ],
+      [
+        "team.sync",
+        { progress_token: "operation-teamSync-2" },
+        "operation-teamSync-2",
+      ],
+      [
+        "team.commit",
+        { which: "target", progress_token: "operation-teamCommit-3" },
+        "operation-teamCommit-3",
+      ],
+      [
+        "align.run",
+        {
+          source: "/source",
+          target: "/target",
+          dest: "/out.tmx",
+          progress_token: "operation-align-4",
+        },
+        "operation-align-4",
+      ],
+    ]);
+    expect(useApp.getState().longOperation).toEqual({
+      requestId: "operation-align-4",
+      kind: "align",
+      method: "align.run",
+      phase: "succeeded",
+      stage: null,
+      error: null,
+    });
+  });
+
+  it("mirrors main-process progress and cancels compile without stale publication", async () => {
+    let rejectCompile!: (error: Error) => void;
+    const pendingCompile = new Promise((_resolve, reject) => {
+      rejectCompile = reject;
+    });
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "project.compile") return pendingCompile;
+      if (method === "stats.get") throw new Error("stats must not run after cancellation");
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    const disconnect = connectRpcOperationEvents();
+    const compiling = useApp.getState().compile();
+    const requestId = "operation-compile-1";
+    rpcOperationListener?.({
+      requestId,
+      method: "project.compile",
+      phase: "progress",
+      stage: "compile:filters",
+    });
+    expect(useApp.getState().longOperation).toEqual({
+      requestId,
+      kind: "compile",
+      method: "project.compile",
+      phase: "progress",
+      stage: "compile:filters",
+      error: null,
+    });
+
+    cancelRpc.mockImplementationOnce(async (cancelledId: string) => {
+      rpcOperationListener?.({
+        requestId: cancelledId,
+        method: "project.compile",
+        phase: "cancelling",
+      });
+      const error = new Error("RPC request cancelled");
+      error.name = "AbortError";
+      rejectCompile(error);
+      rpcOperationListener?.({
+        requestId: cancelledId,
+        method: "project.compile",
+        phase: "cancelled",
+      });
+      return true;
+    });
+    await expect(useApp.getState().cancelLongOperation()).resolves.toBe(true);
+    await compiling;
+    disconnect();
+
+    expect(cancelRpc).toHaveBeenCalledWith(requestId);
+    expect(useApp.getState().longOperation).toEqual({
+      requestId,
+      kind: "compile",
+      method: "project.compile",
+      phase: "cancelled",
+      stage: "compile:filters",
+      error: null,
+    });
+    expect(useApp.getState().status).toBe("compile cancelled");
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual(["project.compile"]);
+  });
+
   it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {
     const props = {
       root: "/p",
@@ -514,7 +663,7 @@ describe("app store", () => {
       }],
       ["issues.list", undefined],
       ["project.save", undefined],
-      ["project.reload", undefined],
+      ["project.reload", { progress_token: "operation-reload-1" }],
       ["entry.list", undefined],
       ["stats.get", undefined],
       ["matches.query", { index: 0 }],
@@ -522,6 +671,9 @@ describe("app store", () => {
       ["issues.list", undefined],
       ["completer.query", { index: 0, prefix: "", text: "edited second" }],
     ]);
+    expect(
+      rpc.mock.calls.find(([method]) => method === "project.reload")?.[2],
+    ).toBe("operation-reload-1");
     expect({
       index: useApp.getState().index,
       key: useApp.getState().entries[0]?.key,

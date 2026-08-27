@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
+import { isLongOperationMethod } from "../shared/rpc-operation";
 import {
   createApplicationLifecycle,
   registerApplicationLifecycle,
@@ -107,6 +108,12 @@ function startSidecar() {
       ) {
         projectFileWatcher.acceptExternalChange({ root, paths });
       }
+    },
+    (event) => {
+      if (!isLongOperationMethod(event.method)) return;
+      BrowserWindow.getAllWindows().forEach((window) => {
+        window.webContents.send("rpc:operation", event);
+      });
     },
   );
   sidecar.stdout.setEncoding("utf8");

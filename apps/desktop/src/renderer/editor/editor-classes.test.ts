@@ -16,6 +16,12 @@ import {
 import { allowInsert } from "./DocumentFilter3";
 import { EditorController } from "./EditorController";
 import {
+  findCyclicEntryIndex,
+  findEntryBySourceAndKey,
+  findEntryInFile,
+  rebindEntryAfterReload,
+} from "./EditorNavigation";
+import {
   nextUntranslatedEntryIndex,
   selectionAfterEntryChange,
 } from "./EditorSelection";
@@ -510,6 +516,77 @@ describe("Document3 / IEditor / completer classes", () => {
     controller.removeFilter();
     expect(controller.gotoEntry(1)).toBe(true);
     expect(controller.getCurrentTranslation()).toBe("un");
+  });
+
+  it("EditorNavigation owns complete-key, file, cyclic, and reload decisions", () => {
+    const entries = [
+      {
+        key: {
+          file: "same.txt",
+          source_text: "same",
+          id: "duplicate",
+          prev: "",
+          next: "other",
+          path: "/first",
+        },
+        file: "same.txt",
+        source: "same",
+        translation: "default",
+        translated: true,
+      },
+      {
+        key: {
+          file: "same.txt",
+          source_text: "same",
+          id: "duplicate",
+          prev: "other",
+          next: "",
+          path: "/second",
+        },
+        file: "same.txt",
+        source: "same",
+        translation: "alternative",
+        translated: true,
+        isAlt: true,
+      },
+      {
+        file: "other.txt",
+        source: "empty",
+        translation: "",
+        translated: false,
+      },
+    ];
+    const secondKey = entries[1]!.key!;
+
+    expect({
+      keyed: findEntryBySourceAndKey(entries, "same", secondKey),
+      sourceDefault: findEntryBySourceAndKey(entries, "same", null),
+      visibleFile: findEntryInFile(entries, "same.txt", new Set([1, 2])),
+      cyclic: findCyclicEntryIndex(
+        entries,
+        1,
+        1,
+        (_entry, index) => index !== 0,
+        (entry) => !entry.translated,
+      ),
+      rebound: rebindEntryAfterReload(
+        [entries[1]!, entries[0]!],
+        1,
+        (entry) => entry.key?.path === secondKey.path,
+      ),
+      fallback: rebindEntryAfterReload(
+        [entries[2]!],
+        7,
+        () => false,
+      ),
+    }).toEqual({
+      keyed: 1,
+      sourceDefault: 0,
+      visibleFile: 1,
+      cyclic: 2,
+      rebound: { index: 0, exact: true },
+      fallback: { index: 0, exact: false },
+    });
   });
 
   it("EditorController rebuilds filters around the current entry and restores an empty view", () => {

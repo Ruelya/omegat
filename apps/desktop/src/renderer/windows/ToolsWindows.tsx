@@ -24,6 +24,18 @@ import { useApp } from "../store/app";
 import { Modal } from "./Modal";
 
 export function AlignWindow() {
+  const runLongOperation = useApp((state) => state.runLongOperation);
+  const operation = useApp((state) => state.longOperation);
+  const cancelOperation = useApp((state) => state.cancelLongOperation);
+  const alignOperationActive = Boolean(
+    operation
+    && operation.kind === "align"
+    && (
+      operation.phase === "started"
+      || operation.phase === "progress"
+      || operation.phase === "cancelling"
+    ),
+  );
   const [src, setSrc] = useState("");
   const [tgt, setTgt] = useState("");
   const [dest, setDest] = useState("");
@@ -111,14 +123,25 @@ export function AlignWindow() {
     [],
   );
   async function run() {
-    const r = (await window.omegat?.rpc("align.run", {
-      source: src,
-      target: tgt,
-      mode,
-      algo,
-      counter,
-      calculator,
-    })) as { pairs?: { source: string; target: string }[]; beads?: AlignBead[] };
+    let r: { pairs?: { source: string; target: string }[]; beads?: AlignBead[] };
+    try {
+      r = await runLongOperation("align", {
+        source: src,
+        target: tgt,
+        dest,
+        mode,
+        algo,
+        counter,
+        calculator,
+      });
+    } catch (error) {
+      setMessage(
+        error instanceof Error && error.name === "AbortError"
+          ? "alignment cancelled"
+          : String(error),
+      );
+      return;
+    }
     const next = Array.isArray(r?.beads)
       ? r.beads
       : (r?.pairs ?? []).map((pair) => ({
@@ -420,7 +443,18 @@ export function AlignWindow() {
           }}
         />
         <div className="btn-row">
-          <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
+          {alignOperationActive ? (
+            <button
+              type="button"
+              className="primary"
+              disabled={operation?.phase === "cancelling"}
+              onClick={() => void cancelOperation()}
+            >
+              {operation?.phase === "cancelling" ? "Cancelling…" : t("cancel")}
+            </button>
+          ) : (
+            <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
+          )}
           <button type="button" onClick={() => void edit("merge")}>{t("alignMerge")}</button>
           <button type="button" onClick={() => void edit("split")}>{t("alignSplit")}</button>
           <button type="button" onClick={() => void edit("up")}>{t("alignUp")}</button>
@@ -627,6 +661,17 @@ export function TeamWindow() {
   const conflicts = useApp((s) => s.teamConflicts);
   const sync = useApp((s) => s.teamSync);
   const resolve = useApp((s) => s.resolveConflict);
+  const operation = useApp((s) => s.longOperation);
+  const cancelOperation = useApp((s) => s.cancelLongOperation);
+  const teamOperationActive = Boolean(
+    operation
+    && (operation.kind === "teamSync" || operation.kind === "teamCommit")
+    && (
+      operation.phase === "started"
+      || operation.phase === "progress"
+      || operation.phase === "cancelling"
+    ),
+  );
   const [manual, setManual] = useState("");
   return (
     <Modal id="team" title={t("team")}>
@@ -653,7 +698,18 @@ export function TeamWindow() {
         </div>
       ))}
       <div className="btn-row">
-        <button type="button" className="primary" onClick={() => void sync()}>{t("sync")}</button>
+        {teamOperationActive ? (
+          <button
+            type="button"
+            className="primary"
+            disabled={operation?.phase === "cancelling"}
+            onClick={() => void cancelOperation()}
+          >
+            {operation?.phase === "cancelling" ? "Cancelling…" : t("cancel")}
+          </button>
+        ) : (
+          <button type="button" className="primary" onClick={() => void sync()}>{t("sync")}</button>
+        )}
         <button type="button" onClick={() => useApp.getState().openWindow("mapping")}>{t("accessRoot")}</button>
         <button type="button" onClick={() => useApp.getState().openWindow("team", false)}>{t("cancel")}</button>
       </div>

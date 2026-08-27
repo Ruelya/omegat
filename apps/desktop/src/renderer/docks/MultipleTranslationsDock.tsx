@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { t } from "../i18n";
 import { IEditor } from "../editor/IEditor";
-import { sameCompleteEntryKey } from "../editor/EditorController";
+import { sameCompleteEntryKey } from "../editor/EditorNavigation";
 import {
   MultipleTranslationsController,
   type MultipleTranslationTarget,

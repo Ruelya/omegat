@@ -5,7 +5,11 @@ import { t } from "./i18n";
 import { useMenuBindings } from "./menus/useMenuBindings";
 import { PrefsWindow } from "./prefs/PrefsWindow";
 import { SearchWindow } from "./search/SearchWindow";
-import { connectExternalProjectEvents, useApp } from "./store/app";
+import {
+  connectExternalProjectEvents,
+  connectRpcOperationEvents,
+  useApp,
+} from "./store/app";
 import { Welcome } from "./welcome/Welcome";
 import { AboutWindow, ChangesWindow, LicenseWindow, LogWindow } from "./windows/AboutLicenseLog";
 import { FilesWindow, IssuesWindow } from "./windows/FilesIssues";
@@ -44,6 +48,7 @@ export function App() {
   }, []);
 
   useEffect(() => connectExternalProjectEvents(), []);
+  useEffect(() => connectRpcOperationEvents(), []);
 
   useEffect(() => {
     const root = app.props?.root;
@@ -68,6 +73,15 @@ export function App() {
   }, [app.prefs?.autosave_seconds, app.screen]);
 
   const w = app.windows;
+  const operationActive = app.longOperation
+    && (
+      app.longOperation.phase === "started"
+      || app.longOperation.phase === "progress"
+      || app.longOperation.phase === "cancelling"
+    );
+  const operationText = app.longOperation
+    ? `${app.longOperation.kind}: ${app.longOperation.stage ?? app.longOperation.phase}`
+    : "";
   return (
     <div
       className="app"
@@ -75,6 +89,8 @@ export function App() {
       data-project-generation={app.projectEvent.projectGeneration}
       data-entry-generation={app.projectEvent.entryGeneration}
       data-project-id={app.projectEvent.projectId ?? ""}
+      data-operation={app.longOperation?.kind ?? ""}
+      data-operation-phase={app.longOperation?.phase ?? ""}
     >
       <header className="topbar">
         <div className="brand">
@@ -85,7 +101,23 @@ export function App() {
         {app.screen === "workspace" && (
           <>
             <button type="button" onClick={() => void app.save()}>{t("save")}</button>
-            <button type="button" className="primary" onClick={() => void app.compile()}>{t("compile")}</button>
+            <button
+              type="button"
+              className="primary"
+              disabled={Boolean(operationActive)}
+              onClick={() => void app.compile()}
+            >
+              {t("compile")}
+            </button>
+            {operationActive && (
+              <button
+                type="button"
+                disabled={app.longOperation?.phase === "cancelling"}
+                onClick={() => void app.cancelLongOperation()}
+              >
+                {app.longOperation?.phase === "cancelling" ? "Cancelling…" : t("cancel")}
+              </button>
+            )}
             <button type="button" onClick={() => app.openWindow("search")}>{t("search")}</button>
             <button type="button" onClick={() => app.openWindow("files")}>{t("files")}</button>
             <button type="button" onClick={() => app.openWindow("issues")}>{t("issues")}</button>
@@ -107,6 +139,7 @@ export function App() {
           <span>{app.stats ? `${app.stats.translated}/${app.stats.segments}` : ""}</span>
           <span>{app.props ? `${app.props.source_lang} → ${app.props.target_lang}` : ""}</span>
           <span>{app.status}</span>
+          <span role="status" aria-live="polite">{operationText}</span>
           <span>{app.props?.root}</span>
         </footer>
       )}

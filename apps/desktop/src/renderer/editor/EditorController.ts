@@ -18,6 +18,12 @@ import {
   type EditorFileDropHandlers,
   type EditorFileDropResult,
 } from "./EditorFileDrop";
+import {
+  findCyclicEntryIndex,
+  findEntryBySourceAndKey,
+  findEntryInFile,
+  rebindEntryAfterReload,
+} from "./EditorNavigation";
 import { HeadlessLoadedWindow } from "./HeadlessLoadedWindow";
 import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
 import type { Mark } from "./mark/Mark";
@@ -89,43 +95,6 @@ type EditorUndoState = {
   translation: string;
   caret: EditorCaretPosition;
 };
-
-/**
- * Find the next matching entry with Java's project-wide wraparound behavior.
- * The current entry is considered last, after every other entry was checked.
- */
-export function findCyclicEntryIndex<T>(
-  entries: readonly T[],
-  currentIndex: number,
-  direction: -1 | 1,
-  allowed: (entry: T, index: number) => boolean = () => true,
-  matches: (entry: T, index: number) => boolean = () => true,
-): number | null {
-  if (entries.length === 0) return null;
-  const origin = Math.max(0, Math.min(currentIndex, entries.length - 1));
-  for (let distance = 1; distance <= entries.length; distance += 1) {
-    const index = (origin + direction * distance + entries.length * 2) % entries.length;
-    const entry = entries[index]!;
-    if (allowed(entry, index) && matches(entry, index)) return index;
-  }
-  return null;
-}
-
-export function sameCompleteEntryKey(
-  left: EntryKeyDto | undefined,
-  right: EntryKeyDto | undefined,
-): boolean {
-  return Boolean(
-    left
-    && right
-    && left.file === right.file
-    && left.source_text === right.source_text
-    && left.id === right.id
-    && left.prev === right.prev
-    && left.next === right.next
-    && left.path === right.path
-  );
-}
 
 export class EditorController {
   readonly editor = IEditor;
@@ -494,9 +463,13 @@ export class EditorController {
     this.undo.undoStack = [];
     this.undo.redoStack = [];
 
-    const reboundIndex = previousKey === null
-      ? -1
-      : this.entries.findIndex((entry, index) => this.entryKey(index, entry) === previousKey);
+    const rebound = rebindEntryAfterReload(
+      this.entries,
+      previousIndex,
+      (entry, index) =>
+        previousKey !== null && this.entryKey(index, entry) === previousKey,
+    );
+    const reboundIndex = rebound.exact ? rebound.index : -1;
     if (this.loadedWindow.visibleIndices().length === 0) {
       this.clearActiveView(reboundIndex >= 0 ? reboundIndex : previousIndex);
       return reboundIndex >= 0;
@@ -593,12 +566,7 @@ export class EditorController {
     source: string | null,
     key: EntryKeyDto | null = null,
   ): boolean {
-    const index = this.entries.findIndex((entry) => {
-      if (source !== null && entry.source !== source) return false;
-      if (key !== null) return sameCompleteEntryKey(entry.key, key);
-      const translated = entry.translated ?? entry.translation.length > 0;
-      return !entry.isAlt && translated;
-    });
+    const index = findEntryBySourceAndKey(this.entries, source, key);
     if (index < 0 || !this.loadedWindow.contains(index)) return false;
     if (index === this.displayedEntryIndex) return true;
     this.activateEntry(index);
@@ -612,10 +580,12 @@ export class EditorController {
       if (typeof file === "number") throw new RangeError("file index out of bounds");
       return false;
     }
-    const index = this.loadedWindow.findVisible(
-      (candidate) => this.entries[candidate]?.file === fileName,
+    const index = findEntryInFile(
+      this.entries,
+      fileName,
+      this.loadedWindow.visibleSet(),
     );
-    if (index === undefined) return false;
+    if (index === null) return false;
     const changed = index !== this.displayedEntryIndex;
     this.activateEntry(index);
     return changed;

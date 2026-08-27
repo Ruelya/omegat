@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { createDocument3, replaceEditText, type Document3State } from "../editor/Document3";
-import { issuesForEntryOnLeave, sameCompleteEntryKey } from "../editor/EditorController";
+import { issuesForEntryOnLeave } from "../editor/EditorController";
+import {
+  findCyclicEntryIndex,
+  rebindEntryAfterReload,
+  sameCompleteEntryKey,
+} from "../editor/EditorNavigation";
 import { IEditor } from "../editor/IEditor";
 import { makeFilter, type EditorFilterState } from "../editor/IEditorFilter";
 import {
@@ -39,6 +44,13 @@ import type {
   WindowId,
 } from "../lib/types";
 import { applyDocumentLocale, detectLocale, t } from "../i18n";
+import {
+  LONG_OPERATION_METHODS,
+  longOperationKindForMethod,
+  type LongOperationKind,
+  type RpcOperationEvent,
+  type RpcOperationPhase,
+} from "../../shared/rpc-operation";
 
 function readLocal(key: string): string | null {
   try {
@@ -57,17 +69,19 @@ function writeLocal(key: string, value: string) {
 }
 
 let nextRpcRequestId = 1;
+let nextLongOperationId = 1;
 
 async function rpc<T>(
   method: string,
   params?: unknown,
   signal?: AbortSignal,
+  clientRequestId?: string,
 ): Promise<T> {
   if (!window.omegat) {
     throw new Error("sidecar bridge unavailable");
   }
   if (!signal) {
-    return window.omegat.rpc(method, params) as Promise<T>;
+    return window.omegat.rpc(method, params, clientRequestId) as Promise<T>;
   }
   stopIfCancelled(signal);
   const requestId = `renderer-${nextRpcRequestId++}`;
@@ -87,6 +101,54 @@ function stopIfCancelled(signal: AbortSignal): void {
   const error = new Error("dock request cancelled");
   error.name = "AbortError";
   throw error;
+}
+
+function abortError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+export type RendererLongOperation = {
+  requestId: string;
+  kind: LongOperationKind;
+  method: string;
+  phase: RpcOperationPhase;
+  stage: string | null;
+  error: string | null;
+};
+
+function applyRpcOperationEvent(
+  current: RendererLongOperation | null,
+  event: RpcOperationEvent,
+): RendererLongOperation | null {
+  const kind = longOperationKindForMethod(event.method);
+  if (kind === null) return current;
+  if (event.phase !== "started" && current?.requestId !== event.requestId) {
+    return current;
+  }
+  if (
+    event.phase === "started"
+    && current
+    && current.requestId !== event.requestId
+    && (current.phase === "started"
+      || current.phase === "progress"
+      || current.phase === "cancelling")
+  ) {
+    return current;
+  }
+  return {
+    requestId: event.requestId,
+    kind,
+    method: event.method,
+    phase: event.phase,
+    stage: event.stage ?? current?.stage ?? null,
+    error: event.error ?? (event.phase === "failed" ? "operation failed" : null),
+  };
 }
 
 type SelectedDockData = {
@@ -153,20 +215,6 @@ function isOptimisticLock(error: unknown): boolean {
   return /optimistic(?: lock| revision)/i.test(String(error));
 }
 
-function reloadedEntryIndex(
-  entries: readonly EntryDto[],
-  previous: EntryDto | undefined,
-  previousIndex: number,
-): number {
-  if (entries.length === 0) return -1;
-  const keyed = previous
-    ? entries.findIndex((entry) => sameCompleteEntryKey(entry.key, previous.key))
-    : -1;
-  return keyed >= 0
-    ? keyed
-    : Math.max(0, Math.min(previousIndex, entries.length - 1));
-}
-
 type Screen = "welcome" | "workspace";
 
 export type AppState = {
@@ -215,6 +263,12 @@ export type AppState = {
   historyPrediction: boolean;
   mtAutoFetch: boolean;
   status: string;
+  longOperation: RendererLongOperation | null;
+  runLongOperation: <T>(
+    kind: LongOperationKind,
+    params?: Record<string, unknown>,
+  ) => Promise<T>;
+  cancelLongOperation: () => Promise<boolean>;
   applyPrefs: (p: Preferences) => void;
   setLocale: (locale: string) => void;
   logLine: (line: string) => void;
@@ -340,6 +394,7 @@ const initialState = {
   historyPrediction: true,
   mtAutoFetch: false,
   status: "",
+  longOperation: null as RendererLongOperation | null,
 };
 
 export const useApp = create<AppState>((set, get) => ({
@@ -352,6 +407,94 @@ export const useApp = create<AppState>((set, get) => ({
     applyDocumentLocale(loc);
     return loc;
   })(),
+  runLongOperation: async <T,>(
+    kind: LongOperationKind,
+    params: Record<string, unknown> = {},
+  ): Promise<T> => {
+    const active = get().longOperation;
+    if (
+      active
+      && (active.phase === "started"
+        || active.phase === "progress"
+        || active.phase === "cancelling")
+    ) {
+      void window.omegat.cancelRpc?.(active.requestId);
+    }
+    const method = LONG_OPERATION_METHODS[kind];
+    const requestId = `operation-${kind}-${nextLongOperationId++}`;
+    set({
+      longOperation: {
+        requestId,
+        kind,
+        method,
+        phase: "started",
+        stage: null,
+        error: null,
+      },
+    });
+    try {
+      const result = await rpc<T>(
+        method,
+        { ...params, progress_token: requestId },
+        undefined,
+        requestId,
+      );
+      const current = get().longOperation;
+      if (
+        current?.requestId === requestId
+        && (current.phase === "cancelling" || current.phase === "cancelled")
+      ) {
+        throw abortError(`${kind} cancelled`);
+      }
+      if (current?.requestId === requestId) {
+        set({ longOperation: { ...current, phase: "succeeded", error: null } });
+      }
+      return result;
+    } catch (error) {
+      const current = get().longOperation;
+      const cancelled = isAbortError(error)
+        || (
+          current?.requestId === requestId
+          && (current.phase === "cancelling" || current.phase === "cancelled")
+        );
+      if (current?.requestId === requestId) {
+        set({
+          longOperation: {
+            ...current,
+            phase: cancelled ? "cancelled" : "failed",
+            error: cancelled ? null : String(error),
+          },
+        });
+      }
+      if (cancelled && !isAbortError(error)) {
+        throw abortError(`${kind} cancelled`);
+      }
+      throw error;
+    }
+  },
+  cancelLongOperation: async () => {
+    const active = get().longOperation;
+    if (
+      !active
+      || (active.phase !== "started" && active.phase !== "progress")
+      || !window.omegat.cancelRpc
+    ) {
+      return false;
+    }
+    set({ longOperation: { ...active, phase: "cancelling" } });
+    const accepted = await window.omegat.cancelRpc(active.requestId);
+    const current = get().longOperation;
+    if (current?.requestId === active.requestId && current.phase === "cancelling") {
+      set({
+        longOperation: {
+          ...current,
+          phase: accepted ? "cancelled" : "failed",
+          error: accepted ? null : "operation is no longer active",
+        },
+      });
+    }
+    return accepted;
+  },
   applyPrefs: (p) => {
     const prefs = defaultPreferences(p);
     applyDocumentLocale(prefs.locale || get().locale);
@@ -485,14 +628,32 @@ export const useApp = create<AppState>((set, get) => ({
     const committedEntry = committed.entries[committed.index];
     await rpc("project.save");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
-    const reloaded = await rpc<{ props?: ProjectPropsDto }>("project.reload");
+    let reloaded: { props?: ProjectPropsDto };
+    try {
+      reloaded = await get().runLongOperation<{ props?: ProjectPropsDto }>("reload");
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
+      if (get().props?.root === root) {
+        set({ status: "reload cancelled" });
+        await get().select(
+          Math.max(0, Math.min(committed.index, committed.entries.length - 1)),
+          false,
+        );
+      }
+      return;
+    }
     if (!dockLifecycle.isCurrent(lifecycle)) return;
     const listed = await rpc<EntryDto[]>("entry.list");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
-    const index = reloadedEntryIndex(entries, committedEntry, committed.index);
+    const binding = rebindEntryAfterReload(
+      entries,
+      committed.index,
+      (entry) => sameCompleteEntryKey(entry.key, committedEntry?.key),
+    );
+    const index = binding.index;
     if (index < 0) {
       set({
         entries,
@@ -789,10 +950,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
   teamSync: async () => {
     try {
-      const r = await rpc<{ action: string; message: string }>("team.sync");
+      const r = await get().runLongOperation<{ action: string; message: string }>(
+        "teamSync",
+      );
       set({ teamMessage: `${r.action}: ${r.message}` });
       await get().refreshEntriesAfterExternalChange(undefined, true);
     } catch (e) {
+      if (isAbortError(e)) {
+        set({ teamMessage: "sync cancelled" });
+        return;
+      }
       const msg = String(e);
       set({ teamMessage: msg, error: msg });
       try {
@@ -807,9 +974,17 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   teamCommit: async (which) => {
-    const r = await rpc<{ action: string; message: string }>("team.commit", { which });
-    set({ teamMessage: `${r.action}: ${r.message}` });
-    get().logLine(`commit ${which}`);
+    try {
+      const r = await get().runLongOperation<{ action: string; message: string }>(
+        "teamCommit",
+        { which },
+      );
+      set({ teamMessage: `${r.action}: ${r.message}` });
+      get().logLine(`commit ${which}`);
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
+      set({ teamMessage: `commit ${which} cancelled` });
+    }
   },
   resolveConflict: async (side, source, translation) => {
     const src = source ?? get().teamConflicts[0]?.source ?? "";
@@ -900,7 +1075,12 @@ export const useApp = create<AppState>((set, get) => ({
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
-    const index = reloadedEntryIndex(entries, previous, before.index);
+    const binding = rebindEntryAfterReload(
+      entries,
+      before.index,
+      (entry) => sameCompleteEntryKey(entry.key, previous?.key),
+    );
+    const index = binding.index;
     if (index < 0) {
       set({
         entries,
@@ -1191,7 +1371,16 @@ export const useApp = create<AppState>((set, get) => ({
     get().logLine(`Document3 range ${d.translationStart}-${d.translationEnd}`);
   },
   compile: async (file) => {
-    await rpc("project.compile", file ? { file } : {});
+    try {
+      await get().runLongOperation(
+        "compile",
+        file ? { file } : {},
+      );
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
+      set({ status: "compile cancelled" });
+      return;
+    }
     set({ stats: await rpc<StatsDto>("stats.get") });
     const target = file ?? get().props?.target_dir ?? "";
     get().logLine(`compiled target ${target}`);
@@ -1209,14 +1398,8 @@ export const useApp = create<AppState>((set, get) => ({
       ...entry,
       translation: entry.translation,
     });
-    const findCyclic = (pred: (entry: EntryDto) => boolean, step: 1 | -1) => {
-      for (let distance = 1; distance <= entries.length; distance += 1) {
-        const candidate = (index + step * distance + entries.length * 2) % entries.length;
-        const entry = entries[candidate]!;
-        if (allowed(entry) && pred(entry)) return candidate;
-      }
-      return -1;
-    };
+    const findCyclic = (pred: (entry: EntryDto) => boolean, step: 1 | -1) =>
+      findCyclicEntryIndex(entries, index, step, allowed, pred) ?? -1;
     let next = -1;
     if (kind === "next") next = findCyclic(() => true, 1);
     else if (kind === "prev") next = findCyclic(() => true, -1);
@@ -1307,6 +1490,14 @@ projectEvents.subscribe((projectEvent) => {
   useApp.setState({ projectEvent });
 });
 
+export function connectRpcOperationEvents(): () => void {
+  return window.omegat?.onRpcOperation?.((event) => {
+    useApp.setState((state) => ({
+      longOperation: applyRpcOperationEvent(state.longOperation, event),
+    }));
+  }) ?? (() => undefined);
+}
+
 export function connectExternalProjectEvents(): () => void {
   return window.omegat?.onProjectExternalChange?.(({
     root,
@@ -1329,6 +1520,7 @@ export function connectExternalProjectEvents(): () => void {
 }
 
 export function resetAppState() {
+  nextLongOperationId = 1;
   projectEvents.reset();
   useApp.setState({
     ...initialState,

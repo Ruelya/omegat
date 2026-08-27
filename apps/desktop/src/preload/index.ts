@@ -1,10 +1,16 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { RpcOperationEvent } from "../shared/rpc-operation";
 
 contextBridge.exposeInMainWorld("omegat", {
   rpc: (method: string, params?: unknown, clientRequestId?: string) =>
     ipcRenderer.invoke("rpc", method, params ?? {}, clientRequestId),
   cancelRpc: (clientRequestId: string) =>
     ipcRenderer.invoke("rpc-cancel", clientRequestId) as Promise<boolean>,
+  onRpcOperation: (fn: (event: RpcOperationEvent) => void) => {
+    const listener = (_: unknown, event: RpcOperationEvent) => fn(event);
+    ipcRenderer.on("rpc:operation", listener);
+    return () => ipcRenderer.removeListener("rpc:operation", listener);
+  },
   startup: () =>
     ipcRenderer.invoke("startup-context") as Promise<{
       project: string | null;
