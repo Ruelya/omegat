@@ -58,8 +58,15 @@ async function rpc<T>(method: string, params?: unknown): Promise<T> {
 }
 
 function normalizeEntrySetResult(result: EntrySetResult | EntryDto): EntrySetResult {
-  if ("entry" in result && Array.isArray(result.updated)) return result;
-  return { entry: result, updated: [result] };
+  if (
+    "entry" in result
+    && "updated" in result
+    && Array.isArray(result.updated)
+  ) {
+    return result as EntrySetResult;
+  }
+  const entry = result as EntryDto;
+  return { entry, updated: [entry] };
 }
 
 function isOptimisticLock(error: unknown): boolean {
