@@ -190,6 +190,13 @@ function terminate(pid) {
   }
 }
 
+async function terminateAndWait(child) {
+  if (!child || child.exitCode != null || child.signalCode != null) return;
+  const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+  terminate(child.pid);
+  await Promise.race([exited, sleep(2_000)]);
+}
+
 if (process.platform !== "linux") {
   throw new Error("This E2E exercises real pointer input in a Linux package");
 }
@@ -586,7 +593,12 @@ try {
   throw error;
 } finally {
   client?.close();
-  terminate(launched?.pid);
-  terminate(xvfb.child.pid);
-  await rm(workDir, { recursive: true, force: true });
+  await terminateAndWait(launched);
+  await terminateAndWait(xvfb.child);
+  await rm(workDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 }
