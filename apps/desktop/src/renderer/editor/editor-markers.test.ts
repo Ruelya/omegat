@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createDocument3 } from "./Document3";
 import { EditorController } from "./EditorController";
+import { HeadlessLoadedWindow } from "./HeadlessLoadedWindow";
+import { HeadlessMarkerLifecycle } from "./HeadlessMarkerLifecycle";
 import { makeFilter } from "./IEditorFilter";
 import { javaTooltipAt, MarkerController } from "./MarkerController";
 import { RendererPageProjection } from "./RendererPageProjection";
@@ -67,6 +69,45 @@ describe("editor markers vs Java-exported goldens", () => {
       const g = loadGold(name);
       expect(compact(runNbsp(g), g.marks), name).toEqual(g.marks);
     }
+  });
+
+  it("HeadlessMarkerLifecycle publishes the exact Java NBSP interval", () => {
+    const g = loadGold("NBSPMarkerTest#testMarkerNBSP.json");
+    const entries = [{
+      file: "source.txt",
+      source: String(g.source),
+      translation: String(g.translation ?? ""),
+    }];
+    const loadedWindow = new HeadlessLoadedWindow();
+    loadedWindow.rebuild(entries, () => true);
+    loadedWindow.around(0, 0);
+    const lifecycle = new HeadlessMarkerLifecycle(loadedWindow);
+
+    const page = lifecycle.page(entries, 0);
+    expect({
+      page: page.map(({ index, entryNumber, active, file, source, translation }) => ({
+        index,
+        entryNumber,
+        active,
+        file,
+        source,
+        translation,
+      })),
+      nbsp: compact(
+        page[0]!.marks.filter(({ painter }) => painter === "nbsp"),
+        g.marks,
+      ),
+    }).toEqual({
+      page: [{
+        index: 0,
+        entryNumber: 1,
+        active: true,
+        file: "source.txt",
+        source: g.source,
+        translation: "",
+      }],
+      nbsp: g.marks,
+    });
   });
 
   it("WhitespaceMarkerTest methods assert_eq intervals", () => {

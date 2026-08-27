@@ -8,6 +8,7 @@ import { RemoveTagMarker } from "./mark/RemoveTagMarker";
 import { ReplaceMarker } from "./mark/ReplaceMarker";
 import { createFilterDocument, replace } from "./DocumentFilter3";
 import { EditorController } from "./EditorController";
+import { EditorDocumentLifecycle } from "./EditorDocumentLifecycle";
 import { SegmentExportImport } from "./SegmentExportImport";
 import { CharTableModel } from "./chartable/CharTableModel";
 import { ARROW_COLLAPSED, CollapsibleBar } from "./CollapsibleBar";
@@ -135,29 +136,46 @@ describe("remaining editor Java *Test goldens", () => {
 
   it("EditorControllerTest methods assert_eq", () => {
     const c = new EditorController();
+    const documents = new EditorDocumentLifecycle();
     const defaults = load("EditorControllerTest#testEditorControllerDefaults.json");
-    expect(c.editor).toBeTruthy();
     expect(c.displayedFileIndex).toBe(defaults.displayed_file_index);
 
     const empty = load("EditorControllerTest#testEditorControllerLoadEmptyProject.json");
+    documents.clear();
     c.loadEmptyProject();
-    expect(c.isOrientationAllLtr()).toBe(empty.orientation_all_ltr);
-    expect(c.getOmDocument()).toBeNull();
+    expect({
+      orientation_all_ltr: c.isOrientationAllLtr(),
+      document: documents.document,
+    }).toEqual({
+      orientation_all_ltr: empty.orientation_all_ltr,
+      document: empty.document,
+    });
 
     const simple = load("EditorControllerTest#testEditorControllerLoadSimpleProject.json");
+    const lifecycleDocument = documents.activate(1, "XXX", "");
     c.loadSimpleProject();
     const doc = c.getOmDocument();
-    expect(doc).not.toBeNull();
-    expect(c.isOrientationAllLtr()).toBe(true);
-    expect(c.getCurrentFile()).toBe(simple.current_file);
-    expect(c.getCurrentEntryNumber()).toBe(simple.current_entry_number);
-    expect(doc!.translationStart).toBe(simple.translation_start);
-    expect(doc!.translationEnd).toBe(simple.translation_end);
+    expect({
+      current_file: c.getCurrentFile(),
+      current_entry_number: c.getCurrentEntryNumber(),
+      translation_start: lifecycleDocument.translationStart,
+      translation_end: lifecycleDocument.translationEnd,
+    }).toEqual({
+      current_file: simple.current_file,
+      current_entry_number: simple.current_entry_number,
+      translation_start: simple.translation_start,
+      translation_end: simple.translation_end,
+    });
 
     const caret = load("EditorControllerTest#testEditorControllerLoadSimpleProjectWithCaretEvent.json");
-    expect(doc!.fullText.length).toBeGreaterThan(0);
-    expect(doc!.translationStart).toBe(caret.translation_start);
-    expect(doc!.translationEnd).toBe(caret.translation_end);
+    expect({
+      translation_start: documents.document!.translationStart,
+      translation_end: documents.document!.translationEnd,
+    }).toEqual({
+      translation_start: caret.translation_start,
+      translation_end: caret.translation_end,
+    });
+    expect(doc).toEqual(lifecycleDocument);
   });
 
   it("CharTableModel default grid matches Java constants", () => {

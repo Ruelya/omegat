@@ -1,15 +1,20 @@
 /** Java `org.omegat.gui.editor.EditorController` — IEditor implementation host. */
 import {
-  commitAndDeactivate as commitDocument,
   replaceEditText as replaceDocumentText,
   type Document3State,
 } from "./Document3";
+import {
+  EditorDocumentLifecycle,
+  type EditorCaretPosition,
+} from "./EditorDocumentLifecycle";
+import {
+  HeadlessMarkerLifecycle,
+  type HeadlessMarkerPageEntry,
+} from "./HeadlessMarkerLifecycle";
 import { IEditor } from "./IEditor";
 import { makeFilter, type IEditorFilter } from "./IEditorFilter";
-import { MarkerController, type MarkerSnapshot } from "./MarkerController";
-import { buildActiveDocument } from "./SegmentBuilder";
+import type { MarkerSnapshot } from "./MarkerController";
 import { SegmentHistory } from "./SegmentHistory";
-import { EditorTextArea3, type ProtectedRange } from "./EditorTextArea3";
 import { TranslationUndoManager } from "./TranslationUndoManager";
 import { changeCase as changeEditorCase, getWordBoundary, type ChangeCaseMode } from "./EditorUtils";
 import {
@@ -25,8 +30,7 @@ import {
   rebindEntryAfterReload,
 } from "./EditorNavigation";
 import { HeadlessLoadedWindow } from "./HeadlessLoadedWindow";
-import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
-import type { Mark } from "./mark/Mark";
+import type { MarkerProvider, ProtectedPart } from "./mark/IMarker";
 import type { EntryKeyDto, IssueDto } from "../lib/types";
 
 export type LoadedEntry = {
@@ -45,16 +49,7 @@ export type LoadedEntry = {
   protectedParts?: ProtectedPart[];
 };
 
-export type LoadedPageEntry = {
-  key: string;
-  index: number;
-  entryNumber: number;
-  file: string;
-  source: string;
-  translation: string;
-  active: boolean;
-  marks: Mark[];
-};
+export type LoadedPageEntry = HeadlessMarkerPageEntry;
 
 export type ScrollAnchorCandidate = {
   key: string;
@@ -67,13 +62,8 @@ export type EditorScrollAnchor = {
   offset: number;
 };
 
-export type EditorCaretPosition = {
-  position?: number;
-  selectionStart?: number;
-  selectionEnd?: number;
-};
-
 export type {
+  EditorCaretPosition,
   EditorFileDrop,
   EditorFileDropHandlers,
   EditorFileDropResult,
@@ -98,25 +88,37 @@ type EditorUndoState = {
 
 export class EditorController {
   readonly editor = IEditor;
-  readonly textArea = new EditorTextArea3();
-  readonly markers = new MarkerController();
+  readonly documents = new EditorDocumentLifecycle();
+  readonly textArea = this.documents.textArea;
+  readonly loadedWindow = new HeadlessLoadedWindow();
+  readonly markerLifecycle = new HeadlessMarkerLifecycle(this.loadedWindow);
+  readonly markers = this.markerLifecycle.markers;
   readonly undo = new TranslationUndoManager<EditorUndoState>();
   readonly history = new SegmentHistory();
-  readonly loadedWindow = new HeadlessLoadedWindow();
   displayedFileIndex = 0;
   previousDisplayedFileIndex = 0;
   displayedEntryIndex = -1;
-  document: Document3State | null = null;
   currentFile: string | null = null;
   currentEntryNumber = 0;
   entries: LoadedEntry[] = [];
   sourceLangIsRTL = false;
   targetLangIsRTL = false;
-  markerSnapshot: MarkerSnapshot | null = null;
   leaveIssues: IssueDto[] = [];
   targetLocale = "en";
   private entriesFilter: IEditorFilter = makeFilter("none");
   private filterOriginIndex = 0;
+
+  get document(): Document3State | null {
+    return this.documents.document;
+  }
+
+  set document(document: Document3State | null) {
+    this.documents.setCurrent(document);
+  }
+
+  get markerSnapshot(): MarkerSnapshot | null {
+    return this.markerLifecycle.snapshot;
+  }
 
   getCurrentTranslation(): string {
     return this.document?.translation ?? this.editor.getCurrentTranslation();
@@ -229,47 +231,21 @@ export class EditorController {
   }
 
   getPositionInEntryTranslation(position: number): number {
-    const doc = this.document;
-    if (!doc?.editMode) return -1;
-    return Math.max(
-      0,
-      Math.min(position, doc.translationEnd) - doc.translationStart,
-    );
+    return this.documents.getPositionInEntryTranslation(position);
   }
 
   getCurrentPositionInEntryTranslation(): number {
-    return this.getPositionInEntryTranslation(this.textArea.getCaretPosition());
+    return this.documents.getCurrentPositionInEntryTranslation();
   }
 
   getCurrentPositionInEntryTranslationInEditor(): EditorCaretPosition {
-    const doc = this.document;
-    if (!doc?.editMode) return { position: -1 };
-    const start = this.getPositionInEntryTranslation(this.textArea.getSelectionStart());
-    const end = this.getPositionInEntryTranslation(this.textArea.getSelectionEnd());
-    if (start === end) {
-      return {
-        position: this.getPositionInEntryTranslation(this.textArea.getCaretPosition()),
-      };
-    }
-    return { selectionStart: start, selectionEnd: end };
+    return this.documents.getCaretPosition();
   }
 
   setCaretPosition(position: EditorCaretPosition): void {
-    const doc = this.document;
-    if (!doc?.editMode) return;
+    if (!this.document?.editMode) return;
     this.bindDocumentToTextArea(true);
-    if (position.position !== undefined) {
-      this.textArea.setCaretPosition(doc.translationStart + position.position);
-    } else if (
-      position.selectionStart !== undefined
-      && position.selectionEnd !== undefined
-    ) {
-      this.textArea.setSelection(
-        doc.translationStart + position.selectionStart,
-        doc.translationStart + position.selectionEnd,
-      );
-    }
-    this.textArea.clampSelectionToTranslation();
+    this.documents.setCaretPosition(position);
   }
 
   getSelectedText(): string {
@@ -277,7 +253,7 @@ export class EditorController {
     if (this.textArea.getOmDocument() !== this.document) {
       this.bindDocumentToTextArea(true);
     }
-    return this.textArea.getSelectedText();
+    return this.documents.getSelectedText();
   }
 
   setTargetLocale(locale: string): void {
@@ -352,7 +328,7 @@ export class EditorController {
       const index = entryNumber - 1;
       const entry = this.entries[index];
       if (!entry) return;
-      this.markers.invalidate(this.entryKey(index, entry));
+      this.markerLifecycle.invalidateEntry(index, entry);
       if (index === this.displayedEntryIndex) refreshActive = true;
     });
     if (refreshActive) {
@@ -391,19 +367,19 @@ export class EditorController {
     this.refreshCurrentMarkers();
   }
 
-  registerPluginMarker(name: string, marker: import("./mark/IMarker").MarkerProvider): void {
-    this.markers.registerPluginMarker(name, marker);
+  registerPluginMarker(name: string, marker: MarkerProvider): void {
+    this.markerLifecycle.registerPluginMarker(name, marker);
     this.refreshCurrentMarkers();
   }
 
   unregisterPluginMarker(name: string): boolean {
-    const removed = this.markers.unregisterPluginMarker(name);
+    const removed = this.markerLifecycle.unregisterPluginMarker(name);
     if (removed) this.refreshCurrentMarkers();
     return removed;
   }
 
   remarkOneMarker(name: string): void {
-    this.markers.remarkOneMarker(name);
+    this.markerLifecycle.remarkOneMarker(name);
     this.refreshCurrentMarkers();
   }
 
@@ -412,9 +388,7 @@ export class EditorController {
     this.document = null;
     this.displayedEntryIndex = -1;
     this.entries = entries.map((entry) => ({ ...entry }));
-    this.markers.invalidate();
-    this.loadedWindow.invalidate();
-    this.markerSnapshot = null;
+    this.markerLifecycle.invalidateAll();
     this.rebuildVisibleEntries();
     this.history.back = [];
     this.history.forward = [];
@@ -454,9 +428,7 @@ export class EditorController {
     this.commitCurrentDocument(true);
 
     this.entries = entries.map((entry) => ({ ...entry }));
-    this.markers.invalidate();
-    this.loadedWindow.invalidate();
-    this.markerSnapshot = null;
+    this.markerLifecycle.invalidateAll();
     this.rebuildVisibleEntries();
     this.history.back = [];
     this.history.forward = [];
@@ -495,7 +467,7 @@ export class EditorController {
     this.history.forward = [];
     this.undo.undoStack = [];
     this.undo.redoStack = [];
-    this.markers.invalidate();
+    this.markerLifecycle.invalidateAll(false);
     this.clearActiveView(0);
   }
 
@@ -537,10 +509,17 @@ export class EditorController {
     this.filterOriginIndex = index;
     this.currentFile = e.file;
     this.currentEntryNumber = index + 1;
-    this.document = buildActiveDocument(this.currentEntryNumber, e.source, e.translation);
-    this.refreshCurrentMarkers();
-    this.bindDocumentToTextArea();
-    this.setCaretPosition(position);
+    this.documents.activate(
+      this.currentEntryNumber,
+      e.source,
+      e.translation,
+      position,
+      (document) => {
+        this.document = document;
+        this.refreshCurrentMarkers();
+        return this.currentDocumentPresentation();
+      },
+    );
     this.undo.undoStack = [];
     this.undo.redoStack = [];
     this.loadWindowAround(index);
@@ -680,9 +659,7 @@ export class EditorController {
     if (hadActiveEntry) this.commitCurrentDocument(true);
     this.entriesFilter = filter;
     this.rebuildVisibleEntries();
-    this.markers.invalidate();
-    this.loadedWindow.invalidate();
-    this.markerSnapshot = null;
+    this.markerLifecycle.invalidateAll();
 
     if (this.loadedWindow.visibleIndices().length === 0) {
       this.clearActiveView(previousIndex);
@@ -742,26 +719,7 @@ export class EditorController {
   }
 
   getLoadedPage(): LoadedPageEntry[] {
-    this.updateLoadedMarkerLifecycle();
-    return this.loadedWindow
-      .loadedIndices()
-      .map((index) => {
-        const entry = this.entries[index]!;
-        const active = index === this.displayedEntryIndex;
-        const snapshot = active && this.markerSnapshot
-          ? this.markerSnapshot
-          : this.markers.processEntry(this.entryKey(index, entry), this.markerInput(entry, active));
-        return {
-          key: this.entryKey(index, entry),
-          index,
-          entryNumber: index + 1,
-          file: entry.file,
-          source: entry.source,
-          translation: entry.translation,
-          active,
-          marks: snapshot.marks,
-        };
-      });
+    return this.markerLifecycle.page(this.entries, this.displayedEntryIndex);
   }
 
   setPageRadius(radius: number): void {
@@ -824,17 +782,8 @@ export class EditorController {
     this.updateLoadedMarkerLifecycle();
   }
 
-  private loadedEntryIndices(): number[] {
-    return this.loadedWindow.loadedIndices();
-  }
-
   private updateLoadedMarkerLifecycle(): void {
-    const keys = this.loadedEntryIndices().map((index) =>
-      this.entryKey(index, this.entries[index]!)
-    );
-    if (this.loadedWindow.synchronizeMarkerKeys(keys)) {
-      this.markers.retainEntries(keys);
-    }
+    this.markerLifecycle.synchronizeLoadedEntries(this.entries);
   }
 
   private clearActiveView(originIndex: number): void {
@@ -844,10 +793,10 @@ export class EditorController {
     this.currentEntryNumber = 0;
     this.displayedEntryIndex = -1;
     this.loadedWindow.clearRange();
-    this.markerSnapshot = null;
+    this.markerLifecycle.clearSnapshot();
     this.undo.undoStack = [];
     this.undo.redoStack = [];
-    this.textArea.setDocument(buildActiveDocument(0, "", ""));
+    this.documents.clear();
     this.updateLoadedMarkerLifecycle();
   }
 
@@ -868,11 +817,7 @@ export class EditorController {
    * commit can replace the active Document3.
    */
   private adoptLiveDocument(): void {
-    if (!this.document) return;
-    const live = this.textArea.getOmDocument();
-    if (live.source !== this.document.source) return;
-    if (this.textArea.isComposing()) this.textArea.commitComposition();
-    this.document = this.textArea.getOmDocument();
+    this.documents.adoptLiveDocument();
   }
 
   private currentUndoState(): EditorUndoState {
@@ -888,7 +833,7 @@ export class EditorController {
     this.syncActiveEntry();
     this.propagateCurrentDefaultTranslation();
     if (!deactivate || !this.document.editMode) return;
-    this.document = commitDocument(this.document);
+    this.documents.commit(true);
     this.refreshCurrentMarkers();
     this.bindDocumentToTextArea(true);
     this.undo.undoStack = [];
@@ -915,57 +860,20 @@ export class EditorController {
       }
       entry.translation = this.document.translation;
       entry.translated = this.document.translation.length > 0;
-      this.markers.invalidate(this.entryKey(index, entry));
+      this.markerLifecycle.invalidateEntry(index, entry);
     }
-  }
-
-  private markerInput(entry: LoadedEntry, active: boolean): MarkerInput {
-    return {
-      sourceText: entry.source,
-      translationText: entry.translation,
-      isActive: active,
-      isAlt: entry.isAlt,
-      fromAuto: entry.fromAuto,
-      fromMt: entry.fromMt,
-      linked: entry.linked,
-      protectedParts: entry.protectedParts,
-      entryKey: entry.key,
-    };
   }
 
   private entryKey(index: number, entry: LoadedEntry): string {
-    return entry.key
-      ? JSON.stringify(entry.key)
-      : JSON.stringify({
-          index,
-          file: entry.file,
-          source_text: entry.source,
-          id: entry.id ?? null,
-        });
+    return this.markerLifecycle.entryKey(index, entry);
   }
 
   async refreshCurrentMarkersAsync(): Promise<boolean> {
-    if (!this.document || this.displayedEntryIndex < 0) return false;
-    const entry = this.entries[this.displayedEntryIndex];
-    if (!entry) return false;
-    const key = this.entryKey(this.displayedEntryIndex, entry);
-    const input = this.markerInput(entry, true);
-    const source = this.document.source;
-    const translation = this.document.translation;
-    await this.markers.processEntryAsync(key, input);
-    const current = this.entries[this.displayedEntryIndex];
-    if (
-      !this.document
-      || !current
-      || this.entryKey(this.displayedEntryIndex, current) !== key
-      || this.document.source !== source
-      || this.document.translation !== translation
-    ) {
-      return false;
-    }
-    const marked = this.markers.applyToDocument(key, this.document, input);
-    this.document = marked.document;
-    this.markerSnapshot = marked.snapshot;
+    const document = await this.markerLifecycle.refreshCurrentAsync(
+      () => this.currentMarkerState(),
+    );
+    if (!document) return false;
+    this.document = document;
     this.bindDocumentToTextArea(true);
     return true;
   }
@@ -976,92 +884,52 @@ export class EditorController {
    * generation, including requests that belong to inactive entries.
    */
   async refreshLoadedPageMarkersAsync(): Promise<boolean> {
-    const generation = this.loadedWindow.currentGeneration();
-    const jobs = this.loadedEntryIndices().map((index) => {
-      const entry = this.entries[index]!;
-      return {
-        index,
-        key: this.entryKey(index, entry),
-        input: this.markerInput(entry, index === this.displayedEntryIndex),
-      };
-    });
-    if (jobs.length === 0) return false;
-    await Promise.all(jobs.map(({ key, input }) =>
-      this.markers.processEntryAsync(key, input)
-    ));
-    if (generation !== this.loadedWindow.currentGeneration()) return false;
-
-    const current = this.loadedEntryIndices();
-    if (
-      current.length !== jobs.length
-      || current.some((index, offset) => {
-        const entry = this.entries[index];
-        const job = jobs[offset];
-        return !entry
-          || !job
-          || index !== job.index
-          || this.entryKey(index, entry) !== job.key
-          || JSON.stringify(this.markerInput(entry, index === this.displayedEntryIndex))
-            !== JSON.stringify(job.input);
-      })
-    ) {
-      return false;
-    }
-
-    const active = jobs.find(({ index }) => index === this.displayedEntryIndex);
-    const entry = this.entries[this.displayedEntryIndex];
-    if (
-      active
-      && entry
-      && this.document
-      && this.document.source === active.input.sourceText
-      && this.document.translation === active.input.translationText
-    ) {
-      const marked = this.markers.applyToDocument(
-        active.key,
-        this.document,
-        active.input,
-      );
-      this.document = marked.document;
-      this.markerSnapshot = marked.snapshot;
+    const result = await this.markerLifecycle.refreshPageAsync(
+      () => this.currentMarkerState(),
+    );
+    if (!result.accepted) return false;
+    if (result.document) {
+      this.document = result.document;
       this.bindDocumentToTextArea(true);
     }
-    return true;
+    return result.accepted;
   }
 
   private refreshCurrentMarkers(): void {
     if (!this.document || this.displayedEntryIndex < 0) {
-      this.markerSnapshot = null;
+      this.markerLifecycle.clearSnapshot();
       return;
     }
-    const entry = this.entries[this.displayedEntryIndex];
-    if (!entry) {
-      this.markerSnapshot = null;
-      return;
-    }
-    const marked = this.markers.applyToDocument(
-      this.entryKey(this.displayedEntryIndex, entry),
+    this.document = this.markerLifecycle.decorateCurrent(
+      this.entries,
+      this.displayedEntryIndex,
       this.document,
-      this.markerInput(entry, true),
     );
-    this.document = marked.document;
-    this.markerSnapshot = marked.snapshot;
   }
 
   private bindDocumentToTextArea(preserveSelection = false): void {
     if (!this.document) return;
-    this.textArea.setDocument(this.document, preserveSelection);
-    this.textArea.setProtectedRanges(
-      this.markerSnapshot?.marks.flatMap((mark): ProtectedRange[] =>
-        mark.entryPart === "TRANSLATION" && mark.painter === "protected"
-          ? [{
-              start: mark.startOffset,
-              end: mark.endOffset,
-              tooltip: mark.toolTipText,
-            }]
-          : []
-      ) ?? [],
+    this.documents.applyPresentation(
+      this.currentDocumentPresentation(),
+      preserveSelection,
     );
+  }
+
+  private currentDocumentPresentation() {
+    if (!this.document) throw new Error("active document required");
+    return this.markerLifecycle.documentPresentation(this.document);
+  }
+
+  private currentMarkerState(): {
+    entries: readonly LoadedEntry[];
+    activeIndex: number;
+    document: Document3State | null;
+  } {
+    return {
+      entries: this.entries,
+      activeIndex: this.displayedEntryIndex,
+      document: this.document,
+    };
   }
 
   /** Drop per-project document state (EditorProjectReloadLeakTest). */
