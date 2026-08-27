@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **52511** lines; `apps/desktop/src`
-  TS/TSX/CSS **13183** lines (**~42%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **13183**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5023**
+- Rewrite Rust: `crates/**/*.rs` **54145** lines; `apps/desktop/src`
+  TS/TSX/CSS **13875** lines (**~43%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **13875**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5102**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -57,7 +57,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**67 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**70 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **3 passed**, and desktop **18 files / 91
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -145,7 +145,7 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **14/14**: in addition to seven ZIP cases,
+The deep write-back suite is now **17/17**: in addition to seven ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
 translated attributes/text under out-of-order translation maps. OpenXML
 hidden field text, external relationship targets, and intact fallback content
@@ -171,6 +171,14 @@ and `translatable=false` resources while writing named string/plural IDs,
 protected inline tags, apostrophe escaping, and an explicitly empty plural
 translation independently; the test checks the rewritten XML structure and
 reparsed segment set with exact equality.
+Three further public `FilterRegistry.for_path` cases cover standalone dialect
+write-back with strict structure and reparse equality. ResX and WiX duplicate
+source strings now prefer their distinct named IDs over a conflicting
+source-key fallback. ResX also keeps decoded `>` names, `FieldName`, `type`,
+and `mimetype` data intact. TXML writes duplicate targets by occurrence ID,
+restores each protected `ut`, keeps `source`/`skeleton`/`revisions` intact,
+and accepts an explicitly empty target translation through the common XML
+product path.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -201,7 +209,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**521** vs **963**, `EditorController` **509** vs **2365**. The headless
+**534** vs **963**, `EditorController` **509** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -222,10 +230,14 @@ Repeated native `compositionstart` events retain one replaceable
 Chromium's final `insertText` commit route through `Document3`. A real Linux
 `linux-unpacked` E2E uses XTEST clicks/Shift-clicks to select exactly `alpha`,
 then Chromium `Input.imeSetComposition` updates replace that selection and
-Enter persists the exact `日本語 😀 beta` translation through the NDJSON
-sidecar. Entering the workspace in that E2E also exposed and fixed a React 19
-infinite-update defect by keeping the Multiple Translations Zustand snapshot
-stable. This is Linux Electron evidence only, not Windows/macOS evidence.
+XTEST Tab commits a second active composition on real focus loss. After
+refocusing with a real click, XTEST Escape cancels `取消中` and restores the
+exact pre-composition text; a late native `compositionend` is discarded
+instead of reinserting cancelled text. Enter then persists the exact
+`日本語失焦 😀 beta` translation through the NDJSON sidecar. Entering the
+workspace in that E2E also exposed and fixed a React 19 infinite-update defect
+by keeping the Multiple Translations Zustand snapshot stable. This is Linux
+Electron evidence only, not Windows/macOS evidence.
 MarkerController caches
 per-entry generations, maps translation/source marks into `Document3` spans,
 and invalidates those spans after edits.
