@@ -536,9 +536,18 @@ try {
       return {
         rowCount: rows.length,
         firstSource: document.querySelector("#align-cell-0-source")?.textContent,
+        firstTarget: document.querySelector("#align-cell-0-target")?.textContent,
+        secondSource: document.querySelector("#align-cell-1-source")?.textContent,
+        secondTarget: document.querySelector("#align-cell-1-target")?.textContent,
         lastSource: document.querySelector(
           "#align-cell-" + (rows.length - 1) + "-source",
         )?.textContent,
+        lastTarget: document.querySelector(
+          "#align-cell-" + (rows.length - 1) + "-target",
+        )?.textContent,
+        activeDescendant: document.querySelector(
+          'table[aria-label="manual alignment table"]',
+        )?.getAttribute("aria-activedescendant"),
         focused:
           document.activeElement?.getAttribute("aria-label") ===
           "manual alignment table",
@@ -546,9 +555,14 @@ try {
     })()`);
     return state.lastSource === sourceLines[0] ? state : undefined;
   });
-  assert.equal(dropped.rowCount, 80);
-  assert.equal(dropped.firstSource, sourceLines[1]);
+  assert.equal(dropped.rowCount, 81);
+  assert.equal(dropped.firstSource, "");
+  assert.equal(dropped.firstTarget, targetLines[0]);
+  assert.equal(dropped.secondSource, sourceLines[1]);
+  assert.equal(dropped.secondTarget, targetLines[1]);
   assert.equal(dropped.lastSource, sourceLines[0]);
+  assert.equal(dropped.lastTarget, "");
+  assert.equal(dropped.activeDescendant, "align-cell-80-source");
   assert.equal(dropped.focused, true);
 
   console.log(
