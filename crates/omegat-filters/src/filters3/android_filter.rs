@@ -111,9 +111,10 @@ impl FilterHooks for AndroidHooks {
                 .and_then(|id| self.translations.get(id))
                 .or_else(|| self.translations.get(&e));
             if let Some(t) = translation {
-                if !t.is_empty() {
-                    r = t.clone();
-                }
+                // AndroidFilter delegates any non-null callback result,
+                // including an explicitly empty translation. Treating ""
+                // as "missing" makes it impossible to clear a resource.
+                r = t.clone();
             }
         }
         r.replace('\'', "\\'")

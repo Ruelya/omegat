@@ -1267,3 +1267,144 @@ fn openxml_nested_callbacks_write_to_reversed_zip_parts_by_qualified_id() {
         );
     }
 }
+
+#[test]
+fn android_comments_intact_resources_and_empty_plural_write_back_by_named_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("deep-android.xml");
+    let output = temp.path().join("translated-deep-android.xml");
+    std::fs::write(
+        &source,
+        r#"<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2"><!--Translator note--><string name="title">Don\'t <b>stop</b></string><!--DO NOT TRANSLATE generated value--><string name="locked">Locked</string><string name="flag" translatable="false">Invisible</string><plurals name="count"><item quantity="one">One item</item><item quantity="other"><xliff:g id="count">%d</xliff:g> items</item></plurals></resources>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("android").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| {
+                (
+                    segment.id.as_str(),
+                    segment.source.as_str(),
+                    segment.note.as_deref(),
+                    segment
+                        .protected_parts
+                        .iter()
+                        .map(|part| (part.text.as_str(), part.details.as_str()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "title",
+                "Don't <b0>stop</b0>",
+                Some("Translator note"),
+                vec![("<b0>", "<b>"), ("</b0>", "</b>")],
+            ),
+            ("count/one", "One item", None, vec![]),
+            (
+                "count/other",
+                "<x0>%d</x0> items",
+                None,
+                vec![
+                    ("<x0>", r#"<xliff:g id="count">"#),
+                    ("</x0>", "</xliff:g>"),
+                ],
+            ),
+        ]
+    );
+
+    let translations = HashMap::from([
+        (
+            "count/other".into(),
+            "<x0>%d</x0> éléments".into(),
+        ),
+        ("count/one".into(), String::new()),
+        ("title".into(), "N'arrêtez <b0>jamais</b0>".into()),
+        ("locked".into(), "Must not be written".into()),
+        ("flag".into(), "Must stay intact".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let strings: Vec<_> = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "string")
+        .map(|node| {
+            (
+                node.attribute("name"),
+                node.attribute("translatable"),
+                node.text(),
+                node.descendants()
+                    .filter(|child| child.is_text())
+                    .filter_map(|child| child.text())
+                    .collect::<String>(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        strings,
+        vec![
+            (
+                Some("title"),
+                None,
+                Some(r#"N\'arrêtez "#),
+                r#"N\'arrêtez jamais"#.to_string(),
+            ),
+            (Some("locked"), None, Some("Locked"), "Locked".to_string()),
+            (
+                Some("flag"),
+                Some("false"),
+                Some("Invisible"),
+                "Invisible".to_string(),
+            ),
+        ]
+    );
+    let plural_items: Vec<_> = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "item")
+        .map(|node| {
+            (
+                node.attribute("quantity"),
+                node.text(),
+                node.descendants()
+                    .filter(|child| child.is_text())
+                    .filter_map(|child| child.text())
+                    .collect::<String>(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        plural_items,
+        vec![
+            (Some("one"), None, String::new()),
+            (
+                Some("other"),
+                None,
+                "%d éléments".to_string(),
+            ),
+        ]
+    );
+
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("title", "N'arrêtez <b0>jamais</b0>"),
+            ("count/other", "<x0>%d</x0> éléments"),
+        ]
+    );
+}
