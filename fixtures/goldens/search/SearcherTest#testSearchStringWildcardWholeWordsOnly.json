@@ -1,0 +1,20 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringWildcardWholeWordsOnly",
+  "cases": [
+    {
+      "hit": true,
+      "text": "greatness counts"
+    },
+    {
+      "hit": true,
+      "text": "great"
+    },
+    {
+      "hit": false,
+      "text": "ungrateful"
+    }
+  ],
+  "type": "EXACT",
+  "query": "great*"
+}

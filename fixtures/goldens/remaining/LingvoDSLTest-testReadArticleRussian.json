@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleRussian",
+  "word": "tool",
+  "article": "<div style=\"text-indent: 30px\">станок</div>",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleRussian"
+  ]
+}

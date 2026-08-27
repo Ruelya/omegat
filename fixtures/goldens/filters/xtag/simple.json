@@ -1,0 +1,16 @@
+{
+  "id": "xtag",
+  "fixture": "xtag/simple.xtg",
+  "java_test": "org.omegat.filters2.xtagqxp.XtagFilter#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+
+  ],
+  "ids": [
+
+  ],
+  "empty_write_text": "Hello"
+}
