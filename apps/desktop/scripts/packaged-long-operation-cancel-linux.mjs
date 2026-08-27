@@ -1588,6 +1588,23 @@ try {
       ? state
       : undefined;
   });
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "alt+e"]);
+  await xdotool(xvfb.display, ["key", "End"]);
+  for (let index = 0; index < 3; index += 1) {
+    await xdotool(xvfb.display, ["key", "Up"]);
+  }
+  await xdotool(xvfb.display, ["key", "Return"]);
+  await waitFor("packaged decoy alternative committed", async () => {
+    const entries = await client.evaluate(`window.omegat.rpc("entry.list", {})`);
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    );
+    return decoy?.translation === secondConflictOurs
+        && decoy.default_translation === false
+      ? decoy
+      : undefined;
+  });
   await client.evaluate(`(() => {
     window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
   })()`);
