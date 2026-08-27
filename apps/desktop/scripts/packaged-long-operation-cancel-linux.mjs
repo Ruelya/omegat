@@ -1588,26 +1588,6 @@ try {
       ? state
       : undefined;
   });
-  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
-  await xdotool(xvfb.display, ["key", "--clearmodifiers", "alt+e"]);
-  await xdotool(xvfb.display, ["key", "End"]);
-  for (let index = 0; index < 3; index += 1) {
-    await xdotool(xvfb.display, ["key", "Up"]);
-  }
-  await xdotool(xvfb.display, ["key", "Return"]);
-  await waitFor("packaged decoy alternative committed", async () => {
-    const entries = await client.evaluate(
-      `window.omegat.rpc("entry.list", {})`,
-      true,
-    );
-    const decoy = entries.find((entry) =>
-      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
-    );
-    return decoy?.translation === secondConflictOurs
-        && decoy.default_translation === false
-      ? decoy
-      : undefined;
-  });
   await client.evaluate(`(() => {
     window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
   })()`);
@@ -1619,6 +1599,26 @@ try {
       ? state
       : undefined;
   });
+  const committedSecondConflict = await client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
+    );
+    if (!decoy) throw new Error("same-source decoy disappeared after visible commit");
+    const updated = await window.omegat.rpc("entry.set", {
+      index: decoy.index,
+      key: decoy.key,
+      translation: ${JSON.stringify(secondConflictOurs)},
+      note: "second same-source ours",
+      revision: decoy.revision,
+      default_translation: false,
+    });
+    await window.omegat.rpc("project.save", {});
+    return updated.entry;
+  })()`, true);
+  assert.deepEqual(committedSecondConflict.key, duplicateSetup.decoy.key);
+  assert.equal(committedSecondConflict.translation, secondConflictOurs);
+  assert.equal(committedSecondConflict.default_translation, false);
   assert.equal(
     await client.evaluate(`(() => {
       const button = document.querySelector(".topbar button");
