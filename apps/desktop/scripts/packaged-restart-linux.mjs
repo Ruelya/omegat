@@ -188,6 +188,13 @@ async function processArgv(pid) {
   return raw.toString().split("\0").filter(Boolean);
 }
 
+function hasCommandArgument(argv, expected) {
+  const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\0 ])${escaped}(?:$|[\\0 ])`).test(
+    argv.join("\0"),
+  );
+}
+
 async function processExited(pid) {
   try {
     await access(`/proc/${pid}`);
@@ -256,11 +263,11 @@ try {
   );
   const initialArgv = await processArgv(initialPid);
   assert(
-    initialArgv.includes(`--remote-debugging-port=${port}`),
+    hasCommandArgument(initialArgv, `--remote-debugging-port=${port}`),
     `Initial package arguments were unexpected: ${JSON.stringify(initialArgv)}`,
   );
   assert(
-    initialArgv.includes(marker),
+    hasCommandArgument(initialArgv, marker),
     `Initial package marker was missing: ${JSON.stringify(initialArgv)}`,
   );
   const firstTarget = await waitFor("initial packaged renderer", () =>
@@ -296,11 +303,11 @@ try {
   restartedPid = await browserPid(secondBrowser.webSocketDebuggerUrl);
   const restartedArgv = await processArgv(restartedPid);
   assert(
-    restartedArgv.includes(`--remote-debugging-port=${port}`),
+    hasCommandArgument(restartedArgv, `--remote-debugging-port=${port}`),
     `Restarted package dropped arguments: ${JSON.stringify(restartedArgv)}`,
   );
   assert(
-    restartedArgv.includes(marker),
+    hasCommandArgument(restartedArgv, marker),
     `Restarted package dropped its marker: ${JSON.stringify(restartedArgv)}`,
   );
   assert.notEqual(restartedPid, initialPid);
