@@ -382,8 +382,26 @@ try {
 
   await dispatchFileDrop(client, importedFile);
   const imported = await waitFor("ordinary file imported through packaged drop", async () => {
-    const entries = await client.evaluate("window.omegat.rpc('entry.list', {})", true);
-    return entries?.length === 2 ? entries : undefined;
+    const state = await client.evaluate(`(async () => {
+      const app = document.querySelector(".app");
+      return {
+        entries: await window.omegat.rpc("entry.list", {}),
+        event: app?.dataset.projectEvent ?? null,
+        projectId: app?.dataset.projectId ?? null,
+        projectGeneration: Number(app?.dataset.projectGeneration ?? -1),
+        activeSource: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
+      };
+    })()`, true);
+    if (
+      state.entries?.length === 2
+      && state.event === "entry"
+      && state.projectId === droppedProject
+      && state.projectGeneration > dockRace.projectGeneration
+      && state.activeSource === "Keep <x0/> tag."
+    ) {
+      return state.entries;
+    }
+    throw new Error(JSON.stringify(state));
   });
   assert.deepEqual(
     imported.map(({ file, source }) => ({ file, source })),
