@@ -57,10 +57,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **148 passed**, filters
-**86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, plugin registry **4 passed**, sidecar contract **12 passed** plus
-sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 160
+**86 passed**, team **34 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, plugin registry **4 passed**, sidecar contract **15 passed** plus
+sidecar journal/watcher unit **4 passed**, native plugin RPC/fault isolation **1
+passed**, and desktop **23 files / 166
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
