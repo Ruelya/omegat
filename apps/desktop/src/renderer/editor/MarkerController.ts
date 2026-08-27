@@ -177,6 +177,12 @@ export class MarkerController {
   processEntry(entryKey: string, input: MarkerInput): MarkerSnapshot {
     const fingerprint = JSON.stringify(input);
     const previous = this.cache.get(entryKey);
+    if (previous && previous.fingerprint !== fingerprint) {
+      // Inactive entries are calculated asynchronously as well. Editing or
+      // reloading one must expire its in-flight result even when the entry key
+      // remains stable.
+      this.cancelPending(entryKey);
+    }
     const cached: CachedMarkers = previous?.fingerprint === fingerprint
       ? previous
       : {
@@ -379,6 +385,22 @@ export class MarkerController {
   ): string[] {
     const cached = this.cache.get(entryKey);
     return cached ? tooltipTextsOverRange(cached.marks, entryPart, start, end) : [];
+  }
+
+  /**
+   * Keep marker state only for entries represented by the current document
+   * page. Java drops queued `EntryMarks` with the old SegmentBuilder graph
+   * whenever the editor document is rebuilt; this is the key-based equivalent.
+   */
+  retainEntries(entryKeys: readonly string[]): void {
+    const retained = new Set(entryKeys);
+    for (const entryKey of this.cache.keys()) {
+      if (!retained.has(entryKey)) this.invalidate(entryKey);
+    }
+    for (const key of this.pending.keys()) {
+      const split = key.lastIndexOf("\u0000");
+      if (!retained.has(key.slice(0, split))) this.pending.delete(key);
+    }
   }
 
   /**

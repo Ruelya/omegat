@@ -152,14 +152,18 @@ export function SegmentEditor() {
   editorController.setPageRadius(pageRadius);
   const loadedPage = editorController.synchronizeRendererProject(entries, activeIndex, document3);
   const activeLoadedEntry = loadedPage.find((entry) => entry.active);
-  const loadedPageSignature = loadedPage.map(({ key }) => key).join("\u0000");
+  const loadedPageSignature = loadedPage
+    .map(({ key, source, translation, active }) =>
+      JSON.stringify([key, source, translation, active])
+    )
+    .join("\u0000");
 
   useEffect(() => {
     let current = true;
     const unbind = bindMarkerRemark((name) => {
       editorController.remarkOneMarker(name);
       setMarkerRevision((revision) => revision + 1);
-      void editorController.refreshCurrentMarkersAsync().then((applied) => {
+      void editorController.refreshLoadedPageMarkersAsync().then((applied) => {
         if (current && applied) setMarkerRevision((revision) => revision + 1);
       });
     });
@@ -175,7 +179,7 @@ export function SegmentEditor() {
     void connection.ready
       .then((installed) => {
         if (!current || !installed) return;
-        return editorController.refreshCurrentMarkersAsync().then((applied) => {
+        return editorController.refreshLoadedPageMarkersAsync().then((applied) => {
           if (current && applied) setMarkerRevision((revision) => revision + 1);
         });
       })
@@ -204,7 +208,7 @@ export function SegmentEditor() {
 
   useEffect(() => {
     let current = true;
-    void editorController.refreshCurrentMarkersAsync().then((applied) => {
+    void editorController.refreshLoadedPageMarkersAsync().then((applied) => {
       if (current && applied) setMarkerRevision((revision) => revision + 1);
     });
     return () => {

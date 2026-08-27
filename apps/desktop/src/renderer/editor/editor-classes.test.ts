@@ -419,6 +419,98 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.getCurrentTranslation()).toBe("un");
   });
 
+  it("EditorController rebuilds filters around the current entry and restores an empty view", () => {
+    const controller = new EditorController();
+    controller.loadProject([
+      { file: "a.txt", source: "first", translation: "", note: "earlier" },
+      { file: "a.txt", source: "second", translation: "" },
+      { file: "a.txt", source: "third", translation: "trois" },
+      { file: "b.txt", source: "fourth", translation: "", note: "later" },
+    ], 3);
+    controller.setCaretPosition({ position: 2 });
+
+    controller.setFilter(makeFilter("noted"));
+    expect({
+      active: controller.getCurrentEntryNumber(),
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      loaded: controller.getLoadedRange(),
+    }).toEqual({
+      active: 4,
+      caret: { position: 0 },
+      loaded: { first: 0, last: 3 },
+    });
+
+    controller.setFilter(makeFilter("search", "not present"));
+    expect({
+      retainedEntries: controller.entries.length,
+      active: controller.getCurrentEntryNumber(),
+      document: controller.getOmDocument(),
+      loaded: controller.getLoadedRange(),
+    }).toEqual({
+      retainedEntries: 4,
+      active: 0,
+      document: null,
+      loaded: { first: -1, last: -1 },
+    });
+
+    controller.removeFilter();
+    expect({
+      active: controller.getCurrentEntryNumber(),
+      source: controller.getCurrentEntry()?.source,
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+    }).toEqual({
+      active: 4,
+      source: "fourth",
+      caret: { position: 0 },
+    });
+  });
+
+  it("EditorController reload rebinds a complete EntryKey and clamps its relative selection", () => {
+    const controller = new EditorController();
+    const firstKey = {
+      file: "same.txt",
+      source_text: "same",
+      id: "duplicate",
+      prev: "",
+      next: "other",
+      path: "/first",
+    };
+    const secondKey = {
+      file: "same.txt",
+      source_text: "same",
+      id: "duplicate",
+      prev: "other",
+      next: "",
+      path: "/second",
+    };
+    controller.loadProject([
+      { key: firstKey, file: "same.txt", source: "same", translation: "first" },
+      { key: secondKey, file: "same.txt", source: "same", translation: "abcdefghij" },
+    ], 2);
+    controller.setCaretPosition({ selectionStart: 2, selectionEnd: 8 });
+
+    const rebound = controller.reloadProject([
+      { key: secondKey, file: "same.txt", source: "same", translation: "xy" },
+      { key: firstKey, file: "same.txt", source: "same", translation: "first reloaded" },
+    ]);
+
+    expect({
+      rebound,
+      active: controller.getCurrentEntryNumber(),
+      key: controller.getCurrentEntry()?.key,
+      translation: controller.getCurrentTranslation(),
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      dirty: controller.getOmDocument()?.dirty,
+    }).toEqual({
+      rebound: true,
+      active: 1,
+      key: secondKey,
+      translation: "xy",
+      caret: { position: 2 },
+      dirty: false,
+    });
+  });
+
   it("EditorController commits live edits and applies cyclic Java navigation state", () => {
     const controller = new EditorController();
     controller.loadProject([

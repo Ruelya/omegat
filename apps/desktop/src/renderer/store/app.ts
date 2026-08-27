@@ -75,6 +75,33 @@ function isOptimisticLock(error: unknown): boolean {
   return /optimistic(?: lock| revision)/i.test(String(error));
 }
 
+function sameEntryKey(a: EntryDto["key"] | undefined, b: EntryDto["key"] | undefined): boolean {
+  return Boolean(
+    a
+    && b
+    && a.file === b.file
+    && a.source_text === b.source_text
+    && a.id === b.id
+    && a.prev === b.prev
+    && a.next === b.next
+    && a.path === b.path
+  );
+}
+
+function reloadedEntryIndex(
+  entries: readonly EntryDto[],
+  previous: EntryDto | undefined,
+  previousIndex: number,
+): number {
+  if (entries.length === 0) return -1;
+  const keyed = previous
+    ? entries.findIndex((entry) => sameEntryKey(entry.key, previous.key))
+    : -1;
+  return keyed >= 0
+    ? keyed
+    : Math.max(0, Math.min(previousIndex, entries.length - 1));
+}
+
 type Screen = "welcome" | "workspace";
 
 export type AppState = {
@@ -320,11 +347,60 @@ export const useApp = create<AppState>((set, get) => ({
   reloadProject: async () => {
     const root = get().props?.root;
     if (!root) return;
-    await rpc("project.reload");
+    const before = get();
+    const previous = before.entries[before.index];
+    if (
+      previous
+      && (before.draft !== previous.translation || before.note !== previous.note)
+    ) {
+      await get().commitCurrent();
+    }
+    const committed = get();
+    const committedEntry = committed.entries[committed.index];
+    await rpc("project.save");
+    const reloaded = await rpc<{ props?: ProjectPropsDto }>("project.reload");
     const entries = await rpc<EntryDto[]>("entry.list");
     const stats = await rpc<StatsDto>("stats.get");
-    set({ entries, stats });
-    await get().select(get().index, false);
+    const index = reloadedEntryIndex(entries, committedEntry, committed.index);
+    if (index < 0) {
+      set({
+        entries,
+        stats,
+        props: reloaded.props ?? committed.props,
+        index: 0,
+        draft: "",
+        note: "",
+        document3: createDocument3("", ""),
+        matches: [],
+        glossary: [],
+        issues: [],
+        completer: [],
+        history: { undo: [], redo: [] },
+        navBack: [],
+        navForward: [],
+        editConflict: null,
+        status: "",
+      });
+    } else {
+      const entry = entries[index]!;
+      // Install a clean target snapshot before querying entry details. This
+      // prevents `select` from mistaking a reordered entry at the old numeric
+      // index for the dirty pre-reload document.
+      set({
+        entries,
+        stats,
+        props: reloaded.props ?? committed.props,
+        index,
+        draft: entry.translation,
+        note: entry.note,
+        document3: createDocument3(entry.source, entry.translation),
+        history: { undo: [], redo: [] },
+        navBack: [],
+        navForward: [],
+        editConflict: null,
+      });
+      await get().select(index, false);
+    }
     get().logLine("reloaded project");
   },
   select: async (index, recordHistory = true) => {

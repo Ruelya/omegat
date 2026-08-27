@@ -132,6 +132,9 @@ export class EditorController {
   private entriesFilter: IEditorFilter = makeFilter("none");
   private visibleEntryIndices: number[] = [];
   private pageRadius = 25;
+  private filterOriginIndex = 0;
+  private loadedMarkerKeys = new Set<string>();
+  private loadedPageGeneration = 0;
 
   getCurrentTranslation(): string {
     return this.document?.translation ?? this.editor.getCurrentTranslation();
@@ -352,17 +355,72 @@ export class EditorController {
     this.displayedEntryIndex = -1;
     this.entries = entries.map((entry) => ({ ...entry }));
     this.markers.invalidate();
+    this.loadedMarkerKeys.clear();
+    this.loadedPageGeneration += 1;
     this.markerSnapshot = null;
     this.rebuildVisibleEntries();
     this.history.back = [];
     this.history.forward = [];
+    this.undo.undoStack = [];
+    this.undo.redoStack = [];
     if (this.visibleEntryIndices.length === 0) {
-      this.loadEmptyProject();
+      this.clearActiveView(Math.max(0, preferredEntryNumber - 1));
       return;
     }
     const requested = Math.max(0, Math.min(preferredEntryNumber - 1, this.entries.length - 1));
     const initial = this.visibleEntryIndices.includes(requested) ? requested : this.visibleEntryIndices[0]!;
     this.activateEntry(initial);
+  }
+
+  /**
+   * Rebuild the editor after a project reload while retaining the active
+   * complete EntryKey and its translation-relative caret/selection. Incoming
+   * entries remain authoritative: the caller commits the old entry before
+   * asking the sidecar to reload.
+   *
+   * @returns whether the former complete EntryKey still exists after reload.
+   */
+  reloadProject(entries: readonly LoadedEntry[]): boolean {
+    this.adoptLiveDocument();
+    const previousIndex = this.displayedEntryIndex >= 0
+      ? this.displayedEntryIndex
+      : this.filterOriginIndex;
+    const previousEntry = this.entries[this.displayedEntryIndex];
+    const previousKey = previousEntry
+      ? this.entryKey(this.displayedEntryIndex, previousEntry)
+      : null;
+    const caret = this.document
+      ? this.getCurrentPositionInEntryTranslationInEditor()
+      : { position: 0 };
+    this.commitCurrentDocument(true);
+
+    this.entries = entries.map((entry) => ({ ...entry }));
+    this.markers.invalidate();
+    this.loadedMarkerKeys.clear();
+    this.loadedPageGeneration += 1;
+    this.markerSnapshot = null;
+    this.rebuildVisibleEntries();
+    this.history.back = [];
+    this.history.forward = [];
+    this.undo.undoStack = [];
+    this.undo.redoStack = [];
+
+    const reboundIndex = previousKey === null
+      ? -1
+      : this.entries.findIndex((entry, index) => this.entryKey(index, entry) === previousKey);
+    if (this.visibleEntryIndices.length === 0) {
+      this.clearActiveView(reboundIndex >= 0 ? reboundIndex : previousIndex);
+      return reboundIndex >= 0;
+    }
+    const reboundVisible =
+      reboundIndex >= 0 && this.visibleEntryIndices.includes(reboundIndex);
+    const anchor = reboundIndex >= 0 ? reboundIndex : previousIndex;
+    const target = reboundVisible
+      ? reboundIndex
+      : this.visibleEntryIndices.find((index) => index >= anchor)
+        ?? this.visibleEntryIndices[0]!;
+    this.openEntry(target, false, reboundVisible ? caret : { position: 0 });
+    return reboundIndex >= 0;
   }
 
   /**
@@ -383,13 +441,7 @@ export class EditorController {
     const safeIndex = Math.max(0, Math.min(activeIndex, this.entries.length - 1));
     const active = this.entries[safeIndex];
     if (!active || !this.visibleEntryIndices.includes(safeIndex)) {
-      this.document = null;
-      this.currentFile = null;
-      this.currentEntryNumber = 0;
-      this.displayedEntryIndex = -1;
-      this.firstLoaded = -1;
-      this.lastLoaded = -1;
-      this.markerSnapshot = null;
+      this.clearActiveView(safeIndex);
       return [];
     }
     const files = [...new Set(this.entries.map((entry) => entry.file))];
@@ -412,20 +464,16 @@ export class EditorController {
     this.commitCurrentDocument(true);
     this.entries = [];
     this.visibleEntryIndices = [];
-    this.document = null;
-    this.currentFile = null;
-    this.currentEntryNumber = 0;
     this.displayedFileIndex = 0;
     this.previousDisplayedFileIndex = 0;
-    this.displayedEntryIndex = -1;
-    this.firstLoaded = -1;
-    this.lastLoaded = -1;
     this.history.back = [];
     this.history.forward = [];
     this.undo.undoStack = [];
     this.undo.redoStack = [];
     this.markers.invalidate();
-    this.markerSnapshot = null;
+    this.loadedMarkerKeys.clear();
+    this.loadedPageGeneration += 1;
+    this.clearActiveView(0);
   }
 
   /** Java `EditorControllerTest#testEditorControllerLoadSimpleProject` fixture. */
@@ -463,6 +511,7 @@ export class EditorController {
     this.previousDisplayedFileIndex = this.displayedFileIndex;
     this.displayedFileIndex = Math.max(0, files.indexOf(e.file));
     this.displayedEntryIndex = index;
+    this.filterOriginIndex = index;
     this.currentFile = e.file;
     this.currentEntryNumber = index + 1;
     this.document = buildActiveDocument(this.currentEntryNumber, e.source, e.translation);
@@ -576,24 +625,35 @@ export class EditorController {
   }
 
   setFilter(filter: IEditorFilter): void {
+    const hadActiveEntry = this.displayedEntryIndex >= 0;
+    const previousIndex = hadActiveEntry
+      ? this.displayedEntryIndex
+      : this.filterOriginIndex;
     this.adoptLiveDocument();
     this.syncActiveEntry();
+    const caret = this.document
+      ? this.getCurrentPositionInEntryTranslationInEditor()
+      : { position: 0 };
+    if (hadActiveEntry) this.commitCurrentDocument(true);
     this.entriesFilter = filter;
     this.rebuildVisibleEntries();
-    if (this.displayedEntryIndex >= 0 && !this.visibleEntryIndices.includes(this.displayedEntryIndex)) {
-      const next = this.visibleEntryIndices[0];
-      if (next === undefined) {
-        this.commitCurrentDocument(true);
-        this.document = null;
-        this.currentFile = null;
-        this.currentEntryNumber = 0;
-        this.displayedEntryIndex = -1;
-      } else {
-        this.activateEntry(next);
-      }
-    } else if (this.displayedEntryIndex >= 0) {
-      this.loadWindowAround(this.displayedEntryIndex);
+    this.markers.invalidate();
+    this.loadedMarkerKeys.clear();
+    this.loadedPageGeneration += 1;
+    this.markerSnapshot = null;
+
+    if (this.visibleEntryIndices.length === 0) {
+      this.clearActiveView(previousIndex);
+      return;
     }
+    const preserveCurrent =
+      hadActiveEntry && this.visibleEntryIndices.includes(previousIndex);
+    const target = preserveCurrent
+      ? previousIndex
+      : this.visibleEntryIndices.find((index) =>
+          hadActiveEntry ? index > previousIndex : index >= previousIndex
+        ) ?? this.visibleEntryIndices[0]!;
+    this.openEntry(target, false, preserveCurrent ? caret : { position: 0 });
   }
 
   removeFilter(): void {
@@ -640,6 +700,7 @@ export class EditorController {
   }
 
   getLoadedPage(): LoadedPageEntry[] {
+    this.updateLoadedMarkerLifecycle();
     if (this.firstLoaded < 0 || this.lastLoaded < this.firstLoaded) return [];
     const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
     const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
@@ -675,6 +736,7 @@ export class EditorController {
     if (first <= 0) return 0;
     const next = Math.max(0, first - Math.max(0, Math.floor(count)));
     this.firstLoaded = this.visibleEntryIndices[next]!;
+    this.updateLoadedMarkerLifecycle();
     return first - next;
   }
 
@@ -686,6 +748,7 @@ export class EditorController {
       last + Math.max(0, Math.floor(count)),
     );
     this.lastLoaded = this.visibleEntryIndices[next]!;
+    this.updateLoadedMarkerLifecycle();
     return next - last;
   }
 
@@ -732,12 +795,53 @@ export class EditorController {
     if (visiblePosition < 0) {
       this.firstLoaded = -1;
       this.lastLoaded = -1;
+      this.updateLoadedMarkerLifecycle();
       return;
     }
     const first = Math.max(0, visiblePosition - radius);
     const last = Math.min(this.visibleEntryIndices.length - 1, visiblePosition + radius);
     this.firstLoaded = this.visibleEntryIndices[first]!;
     this.lastLoaded = this.visibleEntryIndices[last]!;
+    this.updateLoadedMarkerLifecycle();
+  }
+
+  private loadedEntryIndices(): number[] {
+    if (this.firstLoaded < 0 || this.lastLoaded < this.firstLoaded) return [];
+    const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
+    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
+    return first < 0 || last < first
+      ? []
+      : this.visibleEntryIndices.slice(first, last + 1);
+  }
+
+  private updateLoadedMarkerLifecycle(): void {
+    const keys = this.loadedEntryIndices().map((index) =>
+      this.entryKey(index, this.entries[index]!)
+    );
+    if (
+      keys.length === this.loadedMarkerKeys.size
+      && keys.every((key) => this.loadedMarkerKeys.has(key))
+    ) {
+      return;
+    }
+    this.loadedMarkerKeys = new Set(keys);
+    this.loadedPageGeneration += 1;
+    this.markers.retainEntries(keys);
+  }
+
+  private clearActiveView(originIndex: number): void {
+    this.filterOriginIndex = Math.max(0, originIndex);
+    this.document = null;
+    this.currentFile = null;
+    this.currentEntryNumber = 0;
+    this.displayedEntryIndex = -1;
+    this.firstLoaded = -1;
+    this.lastLoaded = -1;
+    this.markerSnapshot = null;
+    this.undo.undoStack = [];
+    this.undo.redoStack = [];
+    this.textArea.setDocument(buildActiveDocument(0, "", ""));
+    this.updateLoadedMarkerLifecycle();
   }
 
   private replaceWithoutHistory(state: EditorUndoState): void {
@@ -856,6 +960,65 @@ export class EditorController {
     this.document = marked.document;
     this.markerSnapshot = marked.snapshot;
     this.bindDocumentToTextArea(true);
+    return true;
+  }
+
+  /**
+   * Run asynchronous providers for every entry in the rendered page. A page
+   * rebuild, filter, reload, edit, or navigation invalidates the captured
+   * generation, including requests that belong to inactive entries.
+   */
+  async refreshLoadedPageMarkersAsync(): Promise<boolean> {
+    const generation = this.loadedPageGeneration;
+    const jobs = this.loadedEntryIndices().map((index) => {
+      const entry = this.entries[index]!;
+      return {
+        index,
+        key: this.entryKey(index, entry),
+        input: this.markerInput(entry, index === this.displayedEntryIndex),
+      };
+    });
+    if (jobs.length === 0) return false;
+    await Promise.all(jobs.map(({ key, input }) =>
+      this.markers.processEntryAsync(key, input)
+    ));
+    if (generation !== this.loadedPageGeneration) return false;
+
+    const current = this.loadedEntryIndices();
+    if (
+      current.length !== jobs.length
+      || current.some((index, offset) => {
+        const entry = this.entries[index];
+        const job = jobs[offset];
+        return !entry
+          || !job
+          || index !== job.index
+          || this.entryKey(index, entry) !== job.key
+          || JSON.stringify(this.markerInput(entry, index === this.displayedEntryIndex))
+            !== JSON.stringify(job.input);
+      })
+    ) {
+      return false;
+    }
+
+    const active = jobs.find(({ index }) => index === this.displayedEntryIndex);
+    const entry = this.entries[this.displayedEntryIndex];
+    if (
+      active
+      && entry
+      && this.document
+      && this.document.source === active.input.sourceText
+      && this.document.translation === active.input.translationText
+    ) {
+      const marked = this.markers.applyToDocument(
+        active.key,
+        this.document,
+        active.input,
+      );
+      this.document = marked.document;
+      this.markerSnapshot = marked.snapshot;
+      this.bindDocumentToTextArea(true);
+    }
     return true;
   }
 

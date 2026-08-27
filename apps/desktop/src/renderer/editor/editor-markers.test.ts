@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createDocument3 } from "./Document3";
+import { EditorController } from "./EditorController";
 import { javaTooltipAt, MarkerController } from "./MarkerController";
 import { AltTranslationsMarker } from "./mark/AltTranslationsMarker";
 import { BidiMarkers } from "./mark/BidiMarkers";
@@ -402,6 +403,86 @@ describe("editor markers vs Java-exported goldens", () => {
       painter: "remark-current",
       entryPart: "TRANSLATION",
     }]);
+  });
+
+  it("expires asynchronous Marker work when an inactive entry leaves the loaded page", async () => {
+    const controller = new EditorController();
+    const pending: {
+      input: MarkerInput;
+      resolve: (marks: Mark[]) => void;
+    }[] = [];
+    controller.registerPluginMarker("example.InactiveAsyncMarker", {
+      getMarksForEntryAsync: (input) =>
+        new Promise<Mark[]>((resolve) => {
+          pending.push({ input, resolve });
+        }),
+    });
+    controller.setPageRadius(1);
+    controller.loadProject([
+      { file: "a.txt", id: "first", source: "first", translation: "un" },
+      { file: "a.txt", id: "second", source: "second", translation: "deux" },
+      { file: "b.txt", id: "third", source: "third", translation: "trois" },
+    ], 2);
+    const initialPage = controller.getLoadedPage();
+    const stalePage = controller.refreshLoadedPageMarkersAsync();
+    expect(pending.map(({ input }) => ({
+      source: input.sourceText,
+      active: input.isActive,
+    }))).toEqual([
+      { source: "first", active: false },
+      { source: "second", active: true },
+      { source: "third", active: false },
+    ]);
+
+    controller.setPageRadius(0);
+    pending[0]!.resolve([{
+      startOffset: 0,
+      endOffset: 2,
+      painter: "inactive-stale-first",
+      entryPart: "TRANSLATION",
+    }]);
+    pending[1]!.resolve([{
+      startOffset: 0,
+      endOffset: 4,
+      painter: "active-current",
+      entryPart: "TRANSLATION",
+    }]);
+    pending[2]!.resolve([{
+      startOffset: 0,
+      endOffset: 5,
+      painter: "inactive-stale-third",
+      entryPart: "TRANSLATION",
+    }]);
+
+    expect(await stalePage).toBe(false);
+    expect({
+      first: controller.markers.getCached(initialPage[0]!.key),
+      third: controller.markers.getCached(initialPage[2]!.key),
+      activeBeforeApply: controller.getOmDocument()?.spans
+        .filter(({ style }) => style.startsWith("marker:"))
+        .map(({ style }) => style),
+    }).toEqual({
+      first: null,
+      third: null,
+      activeBeforeApply: [],
+    });
+
+    expect(await controller.refreshLoadedPageMarkersAsync()).toBe(true);
+    expect({
+      page: controller.getLoadedPage().map(({ entryNumber, marks }) => ({
+        entryNumber,
+        painters: marks.map(({ painter }) => painter),
+      })),
+      document: controller.getOmDocument()?.spans
+        .filter(({ style }) => style.startsWith("marker:"))
+        .map(({ style }) => style),
+    }).toEqual({
+      page: [{
+        entryNumber: 2,
+        painters: ["active-current"],
+      }],
+      document: ["marker:active-current"],
+    });
   });
 
   it("bridges sidecar spell tokens into Java-style translation marks", async () => {

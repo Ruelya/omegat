@@ -240,7 +240,7 @@ await mkdir(join(projectDir, "source"), { recursive: true });
 await mkdir(configDir, { recursive: true });
 await writeFile(
   join(projectDir, "source", "editor.txt"),
-  "Editor input selection source.",
+  "Editor input <x0/> selection source.",
   "utf8",
 );
 await rpcOnce(configDir, "project.create", {
@@ -302,7 +302,7 @@ try {
   });
   assert.equal(
     readyEditor.source,
-    "Editor input selection source.",
+    "Editor input <x0/> selection source.",
     JSON.stringify(readyEditor),
   );
 
@@ -665,6 +665,263 @@ try {
   });
   assert.equal(persisted.translation, "日本語失焦 😀 beta");
 
+  await client.evaluate(`(async () => {
+    const prefs = await window.omegat.rpc("prefs.get");
+    await window.omegat.rpc("prefs.set", {
+      ...prefs,
+      marks: {
+        ...prefs.marks,
+        whitespace: true,
+        nbsp: true,
+        bidi: true,
+        glossary: true,
+      },
+    });
+    await window.omegat.rpc("glossary.add", {
+      source: "Editor",
+      target: "Éditeur",
+      comment: "packaged decoration E2E",
+    });
+    setTimeout(() => location.reload(), 0);
+    return true;
+  })()`, true);
+  await waitFor("renderer reload with decoration preferences", async () => {
+    const ready = await client.evaluate(`({
+      surface: Boolean(document.querySelector(".editor-surface")),
+      source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
+      whitespace: Boolean(document.querySelector(".mark-ws")),
+    })`);
+    if (ready.surface && ready.source === "Editor input <x0/> selection source.") return ready;
+    throw new Error(JSON.stringify(ready));
+  });
+
+  const decorationFocus = await client.evaluate(`(() => {
+    const rect = document.querySelector(".editor-surface").getBoundingClientRect();
+    return { x: rect.left + 20, y: rect.top + rect.height / 2 };
+  })()`);
+  const decorationFocusScreen = screenPoint(decorationFocus);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(decorationFocusScreen.x),
+    String(decorationFocusScreen.y),
+    "click",
+    "1",
+    "key",
+    "ctrl+a",
+  ]);
+  const decoratedText = "Editor 😀\u00a0beta\u200egamma <x0/> delta";
+  await client.command("Input.insertText", { text: decoratedText });
+  const decorated = await waitFor("complex decorated Document3 fragments", async () => {
+    const state = await client.evaluate(`(() => {
+      const fragments = [...document.querySelectorAll(".editor-surface [data-offset]")];
+      const compact = (offset) => {
+        const fragment = fragments.find(
+          (element) => Number(element.dataset.offset) === offset,
+        );
+        return fragment ? {
+          text: fragment.textContent,
+          sourceLength: Number(fragment.dataset.sourceLength),
+          atomic: fragment.dataset.atomic ?? null,
+          tag: fragment.dataset.tag ?? null,
+          classes: [...fragment.classList],
+        } : null;
+      };
+      return {
+        glossary: compact(0),
+        whitespace: compact(6),
+        emoji: compact(7),
+        nbsp: compact(9),
+        bidi: compact(14),
+        gamma: compact(15),
+        tag: compact(21),
+      };
+    })()`);
+    const ready =
+      state.glossary?.classes.includes("mark-glossary")
+      && state.whitespace?.text === "·"
+      && state.emoji?.text === "😀"
+      && state.nbsp?.text === "⍽"
+      && state.nbsp?.classes.includes("mark-nbsp")
+      && state.nbsp?.classes.includes("product-marker-nbsp")
+      && state.bidi?.text === "LRM"
+      && state.gamma?.text === "gamma"
+      && state.tag?.tag === "<x0/>";
+    if (ready) return state;
+    throw new Error(JSON.stringify(state));
+  });
+  assert.deepEqual(decorated, {
+    glossary: {
+      text: "Editor",
+      sourceLength: 6,
+      atomic: null,
+      tag: null,
+      classes: ["mark-glossary"],
+    },
+    whitespace: {
+      text: "·",
+      sourceLength: 1,
+      atomic: null,
+      tag: null,
+      classes: ["mark-ws"],
+    },
+    emoji: {
+      text: "😀",
+      sourceLength: 2,
+      atomic: null,
+      tag: null,
+      classes: [],
+    },
+    nbsp: {
+      text: "⍽",
+      sourceLength: 1,
+      atomic: null,
+      tag: null,
+      classes: ["mark-nbsp", "product-marker-nbsp"],
+    },
+    bidi: {
+      text: "LRM",
+      sourceLength: 1,
+      atomic: "true",
+      tag: null,
+      classes: ["mark-bidi", "product-marker-lrm"],
+    },
+    gamma: {
+      text: "gamma",
+      sourceLength: 5,
+      atomic: null,
+      tag: null,
+      classes: [],
+    },
+    tag: {
+      text: "<x0/>",
+      sourceLength: 5,
+      atomic: "true",
+      tag: "<x0/>",
+      classes: ["tag", "tag-protected", "product-marker-protected"],
+    },
+  });
+
+  const nbspPoint = await client.evaluate(`(() => {
+    const rect = document.querySelector('.editor-surface [data-offset="9"]')
+      .getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`);
+  const nbspScreen = screenPoint(nbspPoint);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(nbspScreen.x),
+    String(nbspScreen.y),
+  ]);
+  const decoratedTooltip = await waitFor("decorated NBSP native pointer tooltip", async () => {
+    const tooltip = await client.evaluate(`(() => {
+      const element = document.querySelector('[role="tooltip"]');
+      return element ? {
+        part: element.dataset.entryPart,
+        javaHtml: element.dataset.javaTooltip,
+        texts: element.textContent,
+      } : null;
+    })()`);
+    return tooltip?.javaHtml === "<html>NBSP</html>" ? tooltip : undefined;
+  });
+  assert.deepEqual(decoratedTooltip, {
+    part: "TRANSLATION",
+    javaHtml: "<html>NBSP</html>",
+    texts: "NBSP",
+  });
+
+  await client.evaluate(`(() => {
+    window.__omegatDecoratedPointerDrag = {
+      sequence: [],
+      trusted: [],
+      buttons: [],
+      pointerTypes: [],
+    };
+    for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+      document.addEventListener(type, (event) => {
+        const drag = window.__omegatDecoratedPointerDrag;
+        const editor = Boolean(event.target?.closest?.(".editor-surface"));
+        if (type === "pointerdown" && editor && event.button === 0) {
+          drag.sequence = ["pointerdown"];
+          drag.trusted = [event.isTrusted];
+          drag.buttons = [event.buttons];
+          drag.pointerTypes = [event.pointerType];
+        } else if (
+          type === "pointermove"
+          && drag.sequence.length === 1
+          && editor
+          && (event.buttons & 1) === 1
+        ) {
+          drag.sequence.push("pointermove");
+          drag.trusted.push(event.isTrusted);
+          drag.buttons.push(event.buttons);
+          drag.pointerTypes.push(event.pointerType);
+        } else if (
+          type === "pointerup"
+          && drag.sequence.length === 2
+          && editor
+          && event.button === 0
+        ) {
+          drag.sequence.push("pointerup");
+          drag.trusted.push(event.isTrusted);
+          drag.buttons.push(event.buttons);
+          drag.pointerTypes.push(event.pointerType);
+        }
+      }, true);
+    }
+  })()`);
+  const decoratedSelectionPoints = await client.evaluate(`(() => {
+    const fragment = [...document.querySelectorAll(".editor-surface [data-offset]")]
+      .find((element) => Number(element.dataset.offset) === 15);
+    const node = fragment.firstChild;
+    const point = (offset) => {
+      const range = document.createRange();
+      range.setStart(node, offset);
+      range.collapse(true);
+      const caret = range.getBoundingClientRect();
+      const bounds = fragment.getBoundingClientRect();
+      return { x: caret.left, y: bounds.top + bounds.height / 2 };
+    };
+    return { start: point(0), end: point(5) };
+  })()`);
+  const decoratedStart = screenPoint(decoratedSelectionPoints.start);
+  const decoratedEnd = screenPoint(decoratedSelectionPoints.end);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(decoratedStart.x),
+    String(decoratedStart.y),
+    "mousedown",
+    "1",
+  ]);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(decoratedEnd.x),
+    String(decoratedEnd.y),
+  ]);
+  await xdotool(xvfb.display, ["mouseup", "1"]);
+  const decoratedSelection = await waitFor("decorated native pointer selection", async () => {
+    const state = await client.evaluate(`({
+      selected: document.querySelector(".editor-selection")?.textContent ?? null,
+      drag: window.__omegatDecoratedPointerDrag,
+      focusedProxy: document.activeElement?.classList.contains("ime-proxy") ?? false,
+    })`);
+    if (state.selected === "gamma" && state.drag.sequence.length === 3) return state;
+    throw new Error(JSON.stringify(state));
+  });
+  assert.deepEqual(decoratedSelection, {
+    selected: "gamma",
+    drag: {
+      sequence: ["pointerdown", "pointermove", "pointerup"],
+      trusted: [true, true, true],
+      buttons: [1, 1, 0],
+      pointerTypes: ["mouse", "mouse", "mouse"],
+    },
+    focusedProxy: true,
+  });
+
   console.log(
     JSON.stringify({
       result: "passed",
@@ -684,6 +941,10 @@ try {
       cancelCompositionStarts: cancelled.compositionStarts,
       cancelBeforeInputTypes: cancelled.beforeInputTypes,
       cancelRestored: cancelled.text === blurred.text,
+      decoratedText,
+      decoratedSelection: decoratedSelection.selected,
+      decoratedTooltip,
+      decoratedFragments: decorated,
     }),
   );
   await client.evaluate('setTimeout(() => window.omegat.quit(), 0); "quit"');

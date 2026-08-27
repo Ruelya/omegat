@@ -160,6 +160,145 @@ describe("app store", () => {
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")[0]).toBe("/p");
   });
 
+  it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {
+    const props = {
+      root: "/p",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: true,
+      has_repositories: false,
+    };
+    const first = {
+      ...sampleEntry,
+      key: {
+        file: "same.txt",
+        source_text: "same",
+        id: "duplicate",
+        prev: "",
+        next: "other",
+        path: "/first",
+      },
+      index: 0,
+      file: "same.txt",
+      id: "duplicate",
+      source: "same",
+      translation: "first",
+      translated: true,
+    };
+    const active = {
+      ...first,
+      key: {
+        ...first.key,
+        prev: "other",
+        next: "",
+        path: "/second",
+      },
+      index: 1,
+      translation: "old second",
+      note: "old note",
+      revision: 4,
+    };
+    const committed = {
+      ...active,
+      translation: "edited second",
+      note: "edited note",
+      revision: 5,
+    };
+    const reloadedEntries = [
+      { ...committed, index: 0 },
+      { ...first, index: 1 },
+    ];
+    const stats = {
+      files: 1,
+      segments: 2,
+      translated: 2,
+      unique_segments: 2,
+      source_words: 2,
+      target_words: 4,
+    };
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.set") {
+        expect(params).toEqual({
+          index: 1,
+          key: active.key,
+          translation: "edited second",
+          note: "edited note",
+          revision: 4,
+          default_translation: true,
+        });
+        return { entry: committed, updated: [committed] };
+      }
+      if (method === "project.save") return { ok: true };
+      if (method === "project.reload") return { ok: true, entries: 2, props };
+      if (method === "entry.list") return reloadedEntries;
+      if (method === "stats.get") return stats;
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+        || method === "completer.query"
+      ) {
+        return [];
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [first, active],
+      index: 1,
+      draft: "edited second",
+      note: "edited note",
+      document3: createDocument3("same", "edited second"),
+      navBack: [0],
+      navForward: [0],
+    });
+
+    await useApp.getState().reloadProject();
+
+    expect(rpc.mock.calls.map(([method, params]) => [method, params])).toEqual([
+      ["entry.set", {
+        index: 1,
+        key: active.key,
+        translation: "edited second",
+        note: "edited note",
+        revision: 4,
+        default_translation: true,
+      }],
+      ["project.save", undefined],
+      ["project.reload", undefined],
+      ["entry.list", undefined],
+      ["stats.get", undefined],
+      ["matches.query", { index: 0 }],
+      ["glossary.query", { index: 0 }],
+      ["issues.list", undefined],
+      ["completer.query", { index: 0, prefix: "", text: "edited second" }],
+    ]);
+    expect({
+      index: useApp.getState().index,
+      key: useApp.getState().entries[0]?.key,
+      draft: useApp.getState().draft,
+      note: useApp.getState().note,
+      source: useApp.getState().document3.source,
+      translation: useApp.getState().document3.translation,
+      dirty: useApp.getState().document3.dirty,
+      navBack: useApp.getState().navBack,
+      navForward: useApp.getState().navForward,
+      stats: useApp.getState().stats,
+    }).toEqual({
+      index: 0,
+      key: active.key,
+      draft: "edited second",
+      note: "edited note",
+      source: "same",
+      translation: "edited second",
+      dirty: false,
+      navBack: [],
+      navForward: [],
+      stats,
+    });
+  });
+
   it("resolves a team conflict through team.resolve", async () => {
     rpc.mockImplementation(async (method: string, params: unknown) => {
       if (method === "team.resolve") return { conflicts: [] };
