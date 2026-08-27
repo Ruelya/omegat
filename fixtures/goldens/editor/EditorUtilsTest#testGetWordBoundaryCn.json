@@ -1,0 +1,28 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorUtilsTest#testGetWordBoundaryCn",
+  "text": "太平寺中的文笔塔",
+  "locale": "zh_CN",
+  "cases": [
+    {
+      "offset": 2,
+      "forward": false,
+      "expect": 0
+    },
+    {
+      "offset": 2,
+      "forward": true,
+      "expect": 3
+    },
+    {
+      "offset": 4,
+      "forward": false,
+      "expect": 3
+    },
+    {
+      "offset": 4,
+      "forward": true,
+      "expect": 5
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ExternalTMFactoryTest#testLoadPO",
+  "supported": true,
+  "count": 1013,
+  "src0": "Choose syntax highlighting",
+  "tgt0": "Вылучэньне &колерам сынтаксысу",
+  "src1": "< Auto >",
+  "tgt1": "Пра праграму",
+  "keys": [
+    "org.omegat.core.data.ExternalTMFactoryTest#testLoadPO"
+  ]
+}

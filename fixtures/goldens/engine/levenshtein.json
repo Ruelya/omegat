@@ -1,0 +1,91 @@
+{
+  "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testIdenticalTokens",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testIdenticalTokens",
+      "name": "testIdenticalTokens",
+      "source": [
+        "test",
+        "example"
+      ],
+      "target": [
+        "test",
+        "example"
+      ],
+      "distance": 0,
+      "null_inputs": false
+    },
+    {
+      "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testSourceNonEmptyTargetEmpty",
+      "name": "testSourceNonEmptyTargetEmpty",
+      "source": [
+        "alpha",
+        "beta"
+      ],
+      "target": [
+
+      ],
+      "distance": 2,
+      "null_inputs": false
+    },
+    {
+      "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testSourceEmptyTargetNonEmpty",
+      "name": "testSourceEmptyTargetNonEmpty",
+      "source": [
+
+      ],
+      "target": [
+        "gamma",
+        "delta",
+        "epsilon"
+      ],
+      "distance": 3,
+      "null_inputs": false
+    },
+    {
+      "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testCompletelyDifferentTokens",
+      "name": "testCompletelyDifferentTokens",
+      "source": [
+        "A",
+        "B",
+        "C"
+      ],
+      "target": [
+        "X",
+        "Y",
+        "Z"
+      ],
+      "distance": 3,
+      "null_inputs": false
+    },
+    {
+      "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testPartiallySimilarTokens",
+      "name": "testPartiallySimilarTokens",
+      "source": [
+        "cat",
+        "dog",
+        "fish"
+      ],
+      "target": [
+        "cat",
+        "wolf",
+        "fish"
+      ],
+      "distance": 1,
+      "null_inputs": false
+    },
+    {
+      "java_test": "org.omegat.core.matching.LevenshteinDistanceTest#testNullInputs",
+      "name": "testNullInputs",
+      "source": [
+        "null"
+      ],
+      "target": [
+
+      ],
+      "distance": -1,
+      "null_inputs": true
+    }
+  ]
+}

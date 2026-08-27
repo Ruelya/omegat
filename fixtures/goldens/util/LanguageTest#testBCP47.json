@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.LanguageTest#testBCP47",
+  "plus": false,
+  "es419": true,
+  "code": "en",
+  "keys": [
+    "org.omegat.util.LanguageTest#testBCP47"
+  ]
+}

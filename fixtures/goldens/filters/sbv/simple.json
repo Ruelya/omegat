@@ -1,0 +1,16 @@
+{
+  "id": "sbv",
+  "fixture": "sbv/simple.sbv",
+  "java_test": "org.omegat.filters2.subtitles.SbvFilter#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "Hello"
+  ],
+  "ids": [
+    "0:00:00.000,0:00:01.000"
+  ],
+  "empty_write_text": "0:00:00.000,0:00:01.000\r\nHello\r\n"
+}
