@@ -1866,6 +1866,10 @@ try {
       throw new Error(JSON.stringify({ product, state }));
     },
   );
+  await waitFor(
+    "completed sidecar-recovered fingerprint journal removal",
+    async () => await pathExists(refreshJournal) ? undefined : true,
+  );
   const sidecarRestartEntries = await client.evaluate(
     "window.omegat.rpc('entry.list', {})",
     true,
@@ -1881,10 +1885,6 @@ try {
       JSON.stringify(duplicateSetup.decoy.key),
     ]),
     "recovered refresh did not rebind unresolved conflicts by complete key",
-  );
-  await waitFor(
-    "completed sidecar-recovered fingerprint journal removal",
-    async () => await pathExists(refreshJournal) ? undefined : true,
   );
   const sidecarFingerprintRecovery = {
     progress: sidecarRestartProgress,
