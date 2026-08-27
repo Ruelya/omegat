@@ -913,10 +913,9 @@ fn xliff_double_nested_sub_and_content_tags_write_back_in_depth_first_id_order()
     assert_eq!(subs.len(), 2);
     assert_eq!(
         subs[1]
-            .ancestors()
-            .filter(|node| node.tag_name().name() == "sub")
-            .count(),
-        1
+            .parent()
+            .filter(|node| node.tag_name().name() == "sub"),
+        Some(subs[0])
     );
     assert_eq!(
         (
