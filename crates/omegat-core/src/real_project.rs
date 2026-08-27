@@ -267,7 +267,7 @@ impl ProjectSession {
     fn reload_sources_cancellable(
         &mut self,
         cancellation: &CancellationToken,
-        checkpoint: &str,
+        checkpoint: &'static str,
     ) -> Result<()> {
         if cancellation.is_cancelled() {
             return Err(CoreError::Cancelled);
