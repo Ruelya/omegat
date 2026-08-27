@@ -6,11 +6,22 @@
 //! Viterbi is a min-cost path; Forward-Backward is a posterior / soft path — not an alias.
 
 use crate::error::Result;
+use crate::language::Language;
 use crate::segment::split_sentences_lang;
 use crate::tmx::{ProjectTmx, TmxEntry};
 use omegat_filters::{FilterContext, FilterRegistry};
 use std::collections::HashMap;
 use std::path::Path;
+
+pub const PREF_ALGORITHM: &str = "aligner_algorithm_class";
+pub const PREF_CALCULATOR: &str = "aligner_calculator_type";
+pub const PREF_COUNTER: &str = "aligner_counter_type";
+pub const PREF_SEGMENT: &str = "aligner_segment";
+pub const PREF_REMOVE_TAGS: &str = "aligner_remove_tags";
+pub const PREF_SOURCE_LANGUAGE: &str = "aligner_source_language";
+pub const PREF_TARGET_LANGUAGE: &str = "aligner_target_language";
+pub const PREF_LAST_SOURCE_DIR: &str = "aligner_last_source_dir";
+pub const PREF_LAST_TARGET_DIR: &str = "aligner_last_target_dir";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlignMode {
@@ -82,39 +93,95 @@ impl Default for AlignSettings {
 
 impl AlignSettings {
     pub fn persist(&self, store: &mut std::collections::HashMap<String, String>) {
-        store.insert("aligner.algorithmClass".into(), self.algorithm.clone());
-        store.insert("aligner.calculatorType".into(), self.calculator.clone());
-        store.insert("aligner.counterType".into(), self.counter.clone());
-        store.insert("aligner.segment".into(), self.segment.to_string());
-        store.insert("aligner.removeTags".into(), self.remove_tags.to_string());
+        store.insert(PREF_ALGORITHM.into(), persisted_algo(&self.algorithm));
+        store.insert(PREF_CALCULATOR.into(), self.calculator.to_ascii_uppercase());
+        store.insert(PREF_COUNTER.into(), self.counter.to_ascii_uppercase());
+        store.insert(PREF_SEGMENT.into(), self.segment.to_string());
+        store.insert(PREF_REMOVE_TAGS.into(), self.remove_tags.to_string());
     }
 
     pub fn restore(store: &std::collections::HashMap<String, String>) -> Self {
         let mut s = Self::default();
-        if let Some(v) = store.get("aligner.algorithmClass") {
-            s.algorithm = normalize_algo(v);
+        if let Some(v) = store.get(PREF_ALGORITHM) {
+            if let Some(value) = normalize_algo(v) {
+                s.algorithm = value;
+            }
         }
-        if let Some(v) = store.get("aligner.calculatorType") {
-            s.calculator = v.to_ascii_lowercase();
+        if let Some(v) = store.get(PREF_CALCULATOR) {
+            if matches!(v.to_ascii_lowercase().as_str(), "normal" | "poisson") {
+                s.calculator = v.to_ascii_lowercase();
+            }
         }
-        if let Some(v) = store.get("aligner.counterType") {
-            s.counter = v.to_ascii_lowercase();
+        if let Some(v) = store.get(PREF_COUNTER) {
+            if matches!(v.to_ascii_lowercase().as_str(), "word" | "char") {
+                s.counter = v.to_ascii_lowercase();
+            }
         }
-        if let Some(v) = store.get("aligner.segment") {
+        if let Some(v) = store.get(PREF_SEGMENT) {
             s.segment = v == "true";
         }
-        if let Some(v) = store.get("aligner.removeTags") {
+        if let Some(v) = store.get(PREF_REMOVE_TAGS) {
             s.remove_tags = v == "true";
         }
         s
     }
 }
 
-fn normalize_algo(v: &str) -> String {
-    match v.to_ascii_lowercase().as_str() {
-        "fb" | "forward-backward" | "forward_backward" => "forward-backward".into(),
-        other => other.to_string(),
+fn persisted_algo(v: &str) -> String {
+    if normalize_algo(v).as_deref() == Some("forward-backward") {
+        "FB".into()
+    } else {
+        "VITERBI".into()
     }
+}
+
+fn normalize_algo(v: &str) -> Option<String> {
+    match v.to_ascii_lowercase().as_str() {
+        "fb" | "forward-backward" | "forward_backward" => Some("forward-backward".into()),
+        "viterbi" => Some("viterbi".into()),
+        _ => None,
+    }
+}
+
+/// Java `AlignFilePickerController.persistLanguages`.
+pub fn persist_languages(
+    store: &mut HashMap<String, String>,
+    source: Option<&str>,
+    target: Option<&str>,
+) {
+    if let Some(source) = source {
+        store.insert(PREF_SOURCE_LANGUAGE.into(), Language::new(Some(source)).get_language());
+    }
+    if let Some(target) = target {
+        store.insert(PREF_TARGET_LANGUAGE.into(), Language::new(Some(target)).get_language());
+    }
+}
+
+/// Java `AlignFilePickerController.restorePersistedLanguage`.
+pub fn restore_language(store: &HashMap<String, String>, key: &str, fallback: &str) -> String {
+    store
+        .get(key)
+        .filter(|value| Language::verify_single_lang_code(value))
+        .map(|value| Language::new(Some(value)).get_language())
+        .unwrap_or_else(|| Language::new(Some(fallback)).get_language())
+}
+
+/// Java `AlignFilePickerController.persistInputDir`: remember a file's parent.
+pub fn persist_input_dir(
+    store: &mut HashMap<String, String>,
+    key: &str,
+    file: Option<&Path>,
+) {
+    if let Some(parent) = file.and_then(Path::parent) {
+        if !parent.as_os_str().is_empty() {
+            store.insert(key.into(), parent.to_string_lossy().into_owned());
+        }
+    }
+}
+
+/// Java `AlignFilePickerController.restorePersistedDir`.
+pub fn restore_input_dir(store: &HashMap<String, String>, key: &str) -> Option<String> {
+    store.get(key).filter(|value| !value.is_empty()).cloned()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -762,32 +829,36 @@ mod tests {
         }
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("out.tmx");
-        write_aligned_tmx(&tmx, &dest, "en", "ja").unwrap();
+        let src_lang = g["src_lang"].as_str().unwrap();
+        let tgt_lang = g["tgt_lang"].as_str().unwrap();
+        write_aligned_tmx(&tmx, &dest, src_lang, tgt_lang).unwrap();
         let xml = std::fs::read_to_string(&dest).unwrap();
-        for needle in g["contains"].as_array().unwrap() {
-            let n = needle.as_str().unwrap();
-            assert!(xml.contains(n), "missing {n} in {xml}");
-        }
+        let parsed = crate::tmx::parse_tmx(&xml, src_lang, tgt_lang);
+        assert_eq!(pairs_from_tmx(&parsed), expected_pairs(&g));
+
+        let missing = load_align_golden("AlignerTest#testWritePairsToTMX_missingLanguageThrows.json");
         let err = write_aligned_tmx(&tmx, &dest, "", "").unwrap_err();
-        assert!(err.to_string().contains("IllegalStateException"));
-        let beads = do_align(
-            &[
-                ("a".into(), "A".into()),
-                ("bb".into(), "BB".into()),
-                ("ccc".into(), "CCC".into()),
-            ],
-            Some(AlignAlgo::Viterbi),
-        )
-        .unwrap();
+        let error_class = match err {
+            crate::error::CoreError::InvalidProject(_) => "IllegalStateException",
+            _ => "Other",
+        };
+        assert_eq!(error_class, missing["expect_error"].as_str().unwrap());
+
+        let aligned = load_align_golden("AlignerTest#testDoAlign_withBeads_returnsAlignedBeads.json");
+        let input_spec = serde_json::json!({ "pairs": aligned["beads"].clone() });
+        let result_spec = serde_json::json!({ "pairs": aligned["result"].clone() });
+        let beads = do_align(&expected_pairs(&input_spec), Some(AlignAlgo::Viterbi)).unwrap();
+        assert_eq!(beads, expected_pairs(&result_spec));
+
+        let missing = load_align_golden("AlignerTest#testDoAlign_missingSettingsThrows.json");
+        let error_class = match do_align(&[("x".into(), "y".into())], None).unwrap_err() {
+            crate::error::CoreError::InvalidProject(_) => "IllegalStateException",
+            _ => "Other",
+        };
         assert_eq!(
-            beads,
-            vec![
-                ("a".into(), "A".into()),
-                ("bb".into(), "BB".into()),
-                ("ccc".into(), "CCC".into())
-            ]
+            error_class,
+            missing["expect_error"].as_str().unwrap()
         );
-        assert!(do_align(&[("x".into(), "y".into())], None).is_err());
     }
 
     #[test]

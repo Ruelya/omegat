@@ -1,6 +1,0 @@
-{
-  "java_test": "org.omegat.tools.ExportGoldens#testDetectRTLO",
-  "rtlo": "‮",
-  "forbidden_in_bundles": true,
-  "exported_by": "org.omegat.tools.ExportGoldens"
-}

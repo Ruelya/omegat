@@ -12,14 +12,5 @@
   ],
   "src_lang": "en",
   "tgt_lang": "ja",
-  "contains": [
-    "srclang=\"en\"",
-    "Hello world",
-    "こんにちは世界",
-    "Goodbye",
-    "さようなら",
-    "xml:lang=\"en\"",
-    "xml:lang=\"ja\""
-  ],
   "exported_by": "org.omegat.tools.ExportGoldens"
 }

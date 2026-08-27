@@ -1644,9 +1644,120 @@ fn remaining_util_engine_readers_match_java() {
     settings.persist(&mut store);
     let restored = omegat_core::align::AlignSettings::restore(&store);
     assert_eq!(restored, settings);
+
     let defaults = golden("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json");
-    let d = omegat_core::align::AlignSettings::default();
-    assert_eq!(d.algorithm, defaults.get("algorithm").and_then(|v| v.as_str()).unwrap_or("viterbi"));
+    assert_eq!(
+        omegat_core::align::AlignSettings::default(),
+        omegat_core::align::AlignSettings {
+            algorithm: defaults["algorithm"].as_str().unwrap().into(),
+            calculator: defaults["calculator"].as_str().unwrap().into(),
+            counter: defaults["counter"].as_str().unwrap().into(),
+            segment: defaults["segment"].as_bool().unwrap(),
+            remove_tags: defaults["remove_tags"].as_bool().unwrap(),
+        }
+    );
+
+    let stored = golden("align/AlignSettingsPersistenceTest#testStoredValuesRestored.json");
+    let persisted = std::collections::HashMap::from([
+        (omegat_core::align::PREF_ALGORITHM.into(), "FB".into()),
+        (
+            omegat_core::align::PREF_SEGMENT.into(),
+            stored["segment"].as_bool().unwrap().to_string(),
+        ),
+    ]);
+    let restored = omegat_core::align::AlignSettings::restore(&persisted);
+    assert_eq!(restored.algorithm, stored["algorithm"].as_str().unwrap());
+    assert_eq!(restored.segment, stored["segment"].as_bool().unwrap());
+    assert_eq!(restored.calculator, stored["calculator"].as_str().unwrap());
+
+    let fallback =
+        golden("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored.json");
+    assert_eq!(
+        omegat_core::align::restore_language(
+            &std::collections::HashMap::new(),
+            omegat_core::align::PREF_SOURCE_LANGUAGE,
+            fallback["fallback"].as_str().unwrap(),
+        ),
+        fallback["fallback"].as_str().unwrap()
+    );
+    let invalid =
+        golden("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid.json");
+    let invalid_store = std::collections::HashMap::from([(
+        omegat_core::align::PREF_SOURCE_LANGUAGE.into(),
+        invalid["stored"].as_str().unwrap().into(),
+    )]);
+    assert_eq!(
+        omegat_core::align::restore_language(
+            &invalid_store,
+            omegat_core::align::PREF_SOURCE_LANGUAGE,
+            invalid["fallback"].as_str().unwrap(),
+        ),
+        invalid["fallback"].as_str().unwrap()
+    );
+
+    let dirs = golden("align/AlignSettingsPersistenceTest#testInputDirRoundTrip.json");
+    let mut dir_store = std::collections::HashMap::new();
+    let source_file = std::path::PathBuf::from(dirs["source_dir"].as_str().unwrap()).join("src.txt");
+    omegat_core::align::persist_input_dir(
+        &mut dir_store,
+        omegat_core::align::PREF_LAST_SOURCE_DIR,
+        Some(&source_file),
+    );
+    omegat_core::align::persist_input_dir(
+        &mut dir_store,
+        omegat_core::align::PREF_LAST_TARGET_DIR,
+        None,
+    );
+    assert_eq!(
+        omegat_core::align::restore_input_dir(
+            &dir_store,
+            omegat_core::align::PREF_LAST_SOURCE_DIR,
+        )
+        .as_deref(),
+        dirs["source_dir"].as_str()
+    );
+    assert_eq!(
+        omegat_core::align::restore_input_dir(
+            &dir_store,
+            omegat_core::align::PREF_LAST_TARGET_DIR,
+        ),
+        None
+    );
+
+    let languages = golden("align/AlignSettingsPersistenceTest#testLanguageRoundTrip.json");
+    let mut lang_store = std::collections::HashMap::new();
+    omegat_core::align::persist_languages(
+        &mut lang_store,
+        languages["source_lang"].as_str(),
+        languages["target_lang"].as_str(),
+    );
+    assert_eq!(
+        omegat_core::align::restore_language(
+            &lang_store,
+            omegat_core::align::PREF_SOURCE_LANGUAGE,
+            "eo",
+        ),
+        languages["source_lang"].as_str().unwrap()
+    );
+    assert_eq!(
+        omegat_core::align::restore_language(
+            &lang_store,
+            omegat_core::align::PREF_TARGET_LANGUAGE,
+            "eo",
+        ),
+        languages["target_lang"].as_str().unwrap()
+    );
+
+    let filters =
+        golden("align/AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults.json");
+    let align_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/align/heapSource.txt");
+    assert_eq!(
+        omegat_core::align::extract_units(&align_fixture)
+            .unwrap()
+            .is_empty(),
+        !filters["non_empty"].as_bool().unwrap()
+    );
 }
 
 #[test]
