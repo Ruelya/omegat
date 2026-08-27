@@ -7,14 +7,15 @@ import { PREF_PAGES } from "./pages";
 
 export function PrefsWindow() {
   const app = useApp();
+  const loadPrefs = app.loadPrefs;
   const [page, setPage] = useState(PREF_PAGES[0]!.id);
   const [draft, setDraft] = useState<Preferences | null>(app.prefs ? defaultPreferences(app.prefs) : null);
   useEffect(() => {
-    void app.loadPrefs().then(() => {
+    void loadPrefs().then(() => {
       const p = useApp.getState().prefs;
       setDraft(p ? defaultPreferences(p) : null);
     });
-  }, [app]);
+  }, [loadPrefs]);
   if (!draft) return null;
   const current = PREF_PAGES.find((p) => p.id === page) ?? PREF_PAGES[0]!;
   const setPref = <K extends keyof Preferences>(k: K, v: Preferences[K]) => {
