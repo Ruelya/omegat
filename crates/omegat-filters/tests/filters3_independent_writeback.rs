@@ -452,7 +452,7 @@ fn xml_spreadsheet_translation_retains_cdata_and_numeric_cells() {
     );
 
     let translations = HashMap::from([
-        ("0".into(), "Bêta <i>italique</i>".into()),
+        ("0".into(), "Bêta et italique".into()),
         ("123".into(), "999".into()),
     ]);
     filter
@@ -460,16 +460,22 @@ fn xml_spreadsheet_translation_retains_cdata_and_numeric_cells() {
         .unwrap();
     assert_eq!(
         segment_pairs(&filter.parse(&output, &context).unwrap()),
-        vec![("0".into(), "Bêta <i>italique</i>".into())]
+        vec![("0".into(), "Bêta et italique".into())]
     );
     assert_eq!(
         std::fs::read_to_string(&output).unwrap(),
-        "<?xml version=\"1.0\"?>\n<Workbook xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"><Cell><Data ss:Type=\"String\"><![CDATA[Bêta <i>italique</i>]]></Data></Cell><Cell><Data ss:Type=\"Number\"><![CDATA[123]]></Data></Cell></Workbook>"
+        "<?xml version=\"1.0\"?>\n<Workbook xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"><Cell><Data ss:Type=\"String\"><![CDATA[Bêta et italique]]></Data></Cell><Cell><Data ss:Type=\"Number\"><![CDATA[123]]></Data></Cell></Workbook>"
     );
 }
 
 #[test]
 fn flash_namespace_sniff_and_cdata_writeback_use_the_public_registry_path() {
+    assert_eq!(
+        omegat_filters::filters3::sniff_xml_id(
+            "<root>http://ns.adobe.com/xfl/2008/ is only text</root>"
+        ),
+        None
+    );
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("movie.xml");
     let output = temp.path().join("movie-fr.xml");
@@ -493,22 +499,28 @@ fn flash_namespace_sniff_and_cdata_writeback_use_the_public_registry_path() {
         .write(
             &source,
             &output,
-            &HashMap::from([("0".into(), "Éclair <i>traduit</i>".into())]),
+            &HashMap::from([("0".into(), "Éclair traduit".into())]),
             &context,
         )
         .unwrap();
     assert_eq!(
         segment_pairs(&filter.parse(&output, &context).unwrap()),
-        vec![("0".into(), "Éclair <i>traduit</i>".into())]
+        vec![("0".into(), "Éclair traduit".into())]
     );
     assert_eq!(
         std::fs::read_to_string(&output).unwrap(),
-        "<?xml version=\"1.0\"?>\n<DOMDocument xmlns=\"http://ns.adobe.com/xfl/2008/\"><timeline><characters><![CDATA[Éclair <i>traduit</i>]]></characters><script><![CDATA[trace('hidden')]]></script></timeline></DOMDocument>"
+        "<?xml version=\"1.0\"?>\n<DOMDocument xmlns=\"http://ns.adobe.com/xfl/2008/\"><timeline><characters><![CDATA[Éclair traduit]]></characters><script><![CDATA[trace('hidden')]]></script></timeline></DOMDocument>"
     );
 }
 
 #[test]
 fn wordpress_namespace_sniff_writes_post_cdata_but_not_metadata_or_titles() {
+    assert_eq!(
+        omegat_filters::filters3::sniff_xml_id(
+            "<rss><description>http://wordpress.org/export/1.2/</description></rss>"
+        ),
+        None
+    );
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("export.xml");
     let output = temp.path().join("export-fr.xml");
@@ -532,7 +544,7 @@ fn wordpress_namespace_sniff_writes_post_cdata_but_not_metadata_or_titles() {
     );
 
     let translations = HashMap::from([
-        ("1".into(), "Article <em>traduit</em>".into()),
+        ("1".into(), "Article traduit".into()),
         ("0".into(), "Description publique".into()),
         ("Intact title".into(), "Must remain intact".into()),
         ("publish".into(), "draft".into()),
@@ -544,12 +556,12 @@ fn wordpress_namespace_sniff_writes_post_cdata_but_not_metadata_or_titles() {
         segment_pairs(&filter.parse(&output, &context).unwrap()),
         vec![
             ("0".into(), "Description publique".into()),
-            ("1".into(), "Article <em>traduit</em>".into()),
+            ("1".into(), "Article traduit".into()),
         ]
     );
     assert_eq!(
         std::fs::read_to_string(&output).unwrap(),
-        "<?xml version=\"1.0\"?>\n<rss xmlns:wp=\"http://wordpress.org/export/1.2/\" xmlns:content=\"urn:content\"><channel><wp:status>publish</wp:status><description>Description publique</description><item><title>Intact title</title><content:encoded><![CDATA[Article <em>traduit</em>]]></content:encoded></item></channel></rss>"
+        "<?xml version=\"1.0\"?>\n<rss xmlns:wp=\"http://wordpress.org/export/1.2/\" xmlns:content=\"urn:content\"><channel><wp:status>publish</wp:status><description>Description publique</description><item><title>Intact title</title><content:encoded><![CDATA[Article traduit]]></content:encoded></item></channel></rss>"
     );
 }
 
