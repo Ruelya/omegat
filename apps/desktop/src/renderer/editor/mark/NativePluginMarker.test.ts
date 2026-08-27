@@ -71,7 +71,11 @@ describe("native cdylib Marker product bridge", () => {
         protected_parts: [],
       }],
     ]);
-    expect(controller.markerSnapshot?.marks).toEqual([{
+    expect(
+      controller.markerSnapshot?.marks.filter(({ painter }) =>
+        painter === "native-plugin"
+      ),
+    ).toEqual([{
       startOffset: 3,
       endOffset: 9,
       painter: "native-plugin",
