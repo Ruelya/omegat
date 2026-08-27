@@ -159,13 +159,15 @@ pub fn initialize_legacy(args: &[&str]) -> RuntimePrefs {
     while i < args.len() {
         match args[i] {
             "--config-dir" => {
-                if let Some(v) = args.get(i + 1) {
+                if let Some(v) = args.get(i + 1).filter(|value| !value.is_empty()) {
                     p.config_dir = Some(expand_tilde_home_dir(v));
                     i += 1;
                 }
             }
             other if let Some(v) = other.strip_prefix("--config-dir=") => {
-                p.config_dir = Some(expand_tilde_home_dir(v));
+                if !v.is_empty() {
+                    p.config_dir = Some(expand_tilde_home_dir(v));
+                }
             }
             "--config-file" => {
                 if let Some(v) = args.get(i + 1) {

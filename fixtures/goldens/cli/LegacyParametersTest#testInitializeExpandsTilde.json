@@ -3,7 +3,7 @@
   "java_test": "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde",
   "input": "~/omegat-conf",
   "home_relative": "omegat-conf",
-  "keys": [
-    "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde"
+  "argv": [
+    "--config-dir=~/omegat-conf"
   ]
 }

@@ -4,7 +4,8 @@
   "file": "/tmp/Bundle.properties",
   "key": "TF_MENU_FILE",
   "value": "Bundle from the command line",
-  "keys": [
-    "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle"
+  "argv": [
+    "--resource-bundle",
+    "/tmp/Bundle.properties"
   ]
 }

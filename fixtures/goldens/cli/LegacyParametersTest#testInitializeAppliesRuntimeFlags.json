@@ -4,7 +4,9 @@
   "project_locking": false,
   "location_save": false,
   "no_team": true,
-  "keys": [
-    "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags"
+  "argv": [
+    "--disable-project-locking",
+    "--disable-location-save",
+    "--no-team"
   ]
 }

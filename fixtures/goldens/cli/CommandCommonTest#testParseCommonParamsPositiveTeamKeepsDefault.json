@@ -2,7 +2,8 @@
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.cli.CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault",
   "no_team": false,
-  "keys": [
-    "org.omegat.cli.CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault"
+  "argv": [
+    "start",
+    "--team"
   ]
 }

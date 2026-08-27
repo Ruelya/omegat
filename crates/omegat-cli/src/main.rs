@@ -64,6 +64,33 @@ struct Cli {
 enum Commands {
     Start {
         project: Option<PathBuf>,
+        /// Java common-parameter quiet mode
+        #[arg(long)]
+        quiet: bool,
+        /// Java common-parameter project-lock switch
+        #[arg(long = "no-project-locking")]
+        no_project_locking: bool,
+        /// Java common-parameter location-save switch
+        #[arg(long = "no-location-save")]
+        no_location_save: bool,
+        /// Java negatable team option
+        #[arg(long = "no-team")]
+        no_team: bool,
+        /// Explicit positive form of the Java negatable team option
+        #[arg(long)]
+        team: bool,
+        /// Java source tokenizer override
+        #[arg(long = "ITokenizer")]
+        tokenizer_source: Option<String>,
+        /// Java target tokenizer override
+        #[arg(long = "ITokenizerTarget")]
+        tokenizer_target: Option<String>,
+        /// Java alternate source filename pattern
+        #[arg(long = "alternate-filename-from")]
+        alternate_filename_from: Option<String>,
+        /// Java alternate target filename pattern
+        #[arg(long = "alternate-filename-to")]
+        alternate_filename_to: Option<String>,
     },
     Translate {
         project: Option<PathBuf>,
@@ -156,7 +183,7 @@ fn main() -> Result<()> {
     if cli.no_team {
         std::env::set_var("OMEGAT_NO_TEAM", "1");
     }
-    if let Some(dir) = &cli.config_dir {
+    if let Some(dir) = &cli.config_dir.filter(|dir| !dir.as_os_str().is_empty()) {
         std::env::set_var("OMEGAT_CONFIG_DIR", dir);
     }
     if let Some(f) = &cli.config_file {
@@ -176,12 +203,57 @@ fn main() -> Result<()> {
     }
     match cli.command.unwrap_or(Commands::Start {
         project: cli.project.clone(),
+        quiet: false,
+        no_project_locking: false,
+        no_location_save: false,
+        no_team: false,
+        team: false,
+        tokenizer_source: None,
+        tokenizer_target: None,
+        alternate_filename_from: None,
+        alternate_filename_to: None,
     }) {
-        Commands::Start { project } => {
-            println!(
-                "OmegaT {} rewrite — launch the Electron app (apps/desktop) or use `omegat translate`.",
-                omegat_ipc::APP_VERSION
-            );
+        Commands::Start {
+            project,
+            quiet,
+            no_project_locking,
+            no_location_save,
+            no_team,
+            team,
+            tokenizer_source,
+            tokenizer_target,
+            alternate_filename_from,
+            alternate_filename_to,
+        } => {
+            if no_project_locking {
+                std::env::set_var("OMEGAT_DISABLE_PROJECT_LOCKING", "1");
+            }
+            if no_location_save {
+                std::env::set_var("OMEGAT_DISABLE_LOCATION_SAVE", "1");
+            }
+            if no_team {
+                std::env::set_var("OMEGAT_NO_TEAM", "1");
+            } else if team {
+                std::env::remove_var("OMEGAT_NO_TEAM");
+            }
+            if let Some(value) = tokenizer_source {
+                std::env::set_var("OMEGAT_TOKENIZER_SOURCE", value);
+            }
+            if let Some(value) = tokenizer_target {
+                std::env::set_var("OMEGAT_TOKENIZER_TARGET", value);
+            }
+            if let Some(value) = alternate_filename_from {
+                std::env::set_var("OMEGAT_ALTERNATE_FILENAME_FROM", value);
+            }
+            if let Some(value) = alternate_filename_to {
+                std::env::set_var("OMEGAT_ALTERNATE_FILENAME_TO", value);
+            }
+            if !quiet {
+                println!(
+                    "OmegaT {} rewrite — launch the Electron app (apps/desktop) or use `omegat translate`.",
+                    omegat_ipc::APP_VERSION
+                );
+            }
             if let Some(p) = project.or(cli.project) {
                 println!("Project: {}", p.display());
             }
