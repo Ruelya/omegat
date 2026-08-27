@@ -246,6 +246,7 @@ describe("app store", () => {
         method === "matches.query"
         || method === "glossary.query"
         || method === "issues.list"
+        || method === "completer.query"
       ) return [];
       throw new Error(`unexpected RPC: ${method}`);
     });

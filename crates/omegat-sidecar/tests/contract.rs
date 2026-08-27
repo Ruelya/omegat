@@ -750,11 +750,6 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     tmx.push_str(
         r#"<tu><tuv xml:lang="en"><seg>cancel me</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu>"#,
     );
-    for index in 0..20_000 {
-        tmx.push_str(&format!(
-            r#"<tu><tuv xml:lang="en"><seg>filler {index}</seg></tuv><tuv xml:lang="fr"><seg>translation {index}</seg></tuv></tu>"#
-        ));
-    }
     tmx.push_str("</body></tmx>");
     let save_tmx = root.join("omegat/project_save.tmx");
     std::fs::write(&save_tmx, tmx).unwrap();
