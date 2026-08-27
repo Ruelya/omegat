@@ -60,7 +60,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **12 passed** plus
 sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 157
+passed**, and desktop **23 files / 158
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -241,9 +241,10 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**720** vs **963**, `EditorController` **1076** plus extracted
-`EditorNavigation` **102** vs Java controller **2365**; its standalone
-headless `HeadlessLoadedWindow` is **141** lines, and the mounted renderer's
+**720** vs **963**, `EditorController` **944** plus extracted
+`EditorDocumentLifecycle` **141**, `HeadlessMarkerLifecycle` **274**, and
+`EditorNavigation` **102** vs Java controller **2365**; its standalone headless
+`HeadlessLoadedWindow` is **141** lines, and the mounted renderer's
 independent `RendererPageProjection` is **248** lines. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
@@ -312,6 +313,16 @@ chooses a deterministic next visible entry (or a truly empty view) when a
 reload or rebuilt filter removes the active segment. Exact Zustand and
 controller tests cover commit-before-reload, reordered same-source entries,
 caret clamping, filter retention, and empty-filter recovery.
+`EditorDocumentLifecycle` now owns the sole headless `Document3`, its
+`EditorTextArea3`, activation presentation order, live IME adoption,
+deactivation, relative caret/selection, and protected-range binding.
+`HeadlessMarkerLifecycle` owns the loaded-page key set, synchronous active
+decoration, asynchronous publication fences, per-page cache retention, and
+conversion of protected marks back into document ranges. `EditorController`
+only orchestrates those two product modules with project/navigation state.
+Desktop golden tests directly import both extracted APIs: all four exported
+`EditorControllerTest` payloads remain strict-equal, and the lifecycle page
+publishes the exact Java-exported NBSP source interval.
 Complete `EntryKey` matching, source/default lookup, file lookup, filtered
 cyclic traversal, and reload rebinding now live in the imported
 `EditorNavigation` product module. Both the headless controller and mounted
@@ -374,7 +385,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**23 files / 147 tests**, including exact success and
+**23 files / 158 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
