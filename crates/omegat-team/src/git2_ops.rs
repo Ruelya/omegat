@@ -79,6 +79,22 @@ pub fn fetch(dir: &Path, remote: &str, user: &UserPass) -> Result<()> {
         .map_err(map_err)
 }
 
+pub fn remote_branch_version(
+    dir: &Path,
+    remote: &str,
+    branch: &str,
+    user: &UserPass,
+) -> Result<String> {
+    fetch(dir, remote, user)?;
+    let repo = open(dir)?;
+    let reference = format!("refs/remotes/{remote}/{branch}");
+    let commit = repo
+        .revparse_single(&reference)
+        .and_then(|object| object.peel_to_commit())
+        .map_err(map_err)?;
+    Ok(commit.id().to_string())
+}
+
 pub fn reset_hard(dir: &Path, spec: &str) -> Result<()> {
     let repo = open(dir)?;
     let obj = repo.revparse_single(spec).map_err(map_err)?;

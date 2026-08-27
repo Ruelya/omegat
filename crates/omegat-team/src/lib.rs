@@ -758,9 +758,17 @@ mod tests {
             .collect();
         assert_eq!(rows.last().unwrap()["phase"], "recovered");
         assert_eq!(
-            rows.iter()
-                .any(|row| row["phase"] == "publishing"
-                    && row["published"] == serde_json::json!([0])),
+            rows.iter().any(|row| {
+                row["phase"] == "publishing"
+                    && row["commit_started"] == serde_json::json!([0])
+                    && row["published"] == serde_json::json!([])
+            }),
+            true
+        );
+        assert_eq!(
+            rows.iter().any(|row| {
+                row["phase"] == "recovering" && row["published"] == serde_json::json!([0])
+            }),
             true
         );
     }

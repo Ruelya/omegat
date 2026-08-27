@@ -410,6 +410,26 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
         transaction.file_remotes.clone(),
     )?;
     transaction.phase = "recovering".into();
+    for &index in &transaction.commit_started {
+        if transaction.published.contains(&index) {
+            continue;
+        }
+        let repo = &props.repositories[index];
+        let Some(rollback_version) = transaction.rollback_versions[index].as_deref() else {
+            continue;
+        };
+        if repo.repo_type == "git"
+            && crate::git_remote_repository2::transaction_commit_was_published(
+                props,
+                repo,
+                rollback_version,
+            )?
+        {
+            transaction.published.push(index);
+        }
+    }
+    transaction.published.sort_unstable();
+    transaction.published.dedup();
     transaction.persist(props)?;
     let mut failures = rollback_repositories(
         props,
@@ -520,9 +540,6 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             journal.commit_started.clone_from(&commit_started);
             journal.persist(props)?;
             commit_repository(props, index, &[observed[index].clone()], "OmegaT team sync")?;
-            published.push(index);
-            journal.published.clone_from(&published);
-            journal.persist(props)?;
             #[cfg(test)]
             if CRASH_AFTER_PUBLISH_REPOSITORY
                 .compare_exchange(index, usize::MAX, Ordering::SeqCst, Ordering::SeqCst)
@@ -530,6 +547,9 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             {
                 std::process::abort();
             }
+            published.push(index);
+            journal.published.clone_from(&published);
+            journal.persist(props)?;
         }
         journal.phase = "saving-bases".into();
         journal.persist(props)?;

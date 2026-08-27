@@ -179,6 +179,29 @@ pub fn rollback_unpublished(
     Ok(())
 }
 
+/// Resolve the crash window after a local commit/push returned but before the
+/// provider durably recorded its publication checkpoint.
+pub fn transaction_commit_was_published(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    rollback_version: &str,
+) -> Result<bool> {
+    let dir = repo_work_dir(props, repo);
+    let local = git2_ops::current_version(&dir)?;
+    if local == rollback_version {
+        return Ok(false);
+    }
+    let branch = if is_inplace(props, repo) {
+        git2_ops::current_branch(&dir)?
+    } else if let Some(branch) = &repo.branch {
+        branch.clone()
+    } else {
+        git2_ops::current_branch(&dir)?
+    };
+    let user = git_credentials_provider::for_repo(props, repo);
+    Ok(git2_ops::remote_branch_version(&dir, "origin", &branch, &user)? == local)
+}
+
 pub fn switch_to_version(
     props: &ProjectProperties,
     repo: &RepositoryDef,
