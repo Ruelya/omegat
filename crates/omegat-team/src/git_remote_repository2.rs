@@ -26,7 +26,7 @@ pub fn prepare(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
     let user = git_credentials_provider::for_repo(props, repo);
     if is_inplace(props, repo) {
         if props.root.join(".git").exists() {
-            let _ = git2_ops::pull_ff(&props.root, &user);
+            git2_ops::pull_ff(&props.root, &user)?;
         }
         return Ok(());
     }
@@ -35,17 +35,18 @@ pub fn prepare(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
     }
     let dir = repo_work_dir(props, repo);
     if dir.join(".git").exists() {
-        let _ = git2_ops::fetch(&dir, "origin", &user);
-        let branch = repo
-            .branch
-            .clone()
-            .unwrap_or_else(|| git2_ops::current_branch(&dir).unwrap_or_else(|_| "main".into()));
+        git2_ops::fetch(&dir, "origin", &user)?;
+        let branch = match &repo.branch {
+            Some(branch) => branch.clone(),
+            None => git2_ops::current_branch(&dir)?,
+        };
         let remote_ref = format!("refs/remotes/origin/{branch}");
-        if git2_ops::has_ref(&dir, &remote_ref) {
-            git2_ops::reset_hard(&dir, &remote_ref)?;
-        } else {
-            let _ = git2_ops::pull_ff(&dir, &user);
+        if !git2_ops::has_ref(&dir, &remote_ref) {
+            return Err(crate::error::TeamError::Command(format!(
+                "git2: configured branch origin/{branch} does not exist"
+            )));
         }
+        git2_ops::reset_hard(&dir, &remote_ref)?;
         return Ok(());
     }
     git2_ops::clone(&repo.url, &dir, repo.branch.as_deref(), &user)?;
@@ -55,24 +56,27 @@ pub fn prepare(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
 pub fn commit_and_push(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
     let dir = repo_work_dir(props, repo);
     if !dir.join(".git").exists() {
-        return Ok(());
+        return Err(crate::error::TeamError::Command(format!(
+            "git2: repository is not initialized at {}",
+            dir.display()
+        )));
     }
     let user = git_credentials_provider::for_repo(props, repo);
-    let _ = git2_ops::add_all(&dir);
-    let _ = commit(&dir, "OmegaT team sync");
-    if is_inplace(props, repo) {
-        let branch = git2_ops::current_branch(&dir).unwrap_or_else(|_| "main".into());
-        let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
-        let _ = git2_ops::push(&dir, "origin", &spec, &user);
+    let committed = git2_ops::commit_if_changed(&dir, None, "OmegaT team sync")?;
+    if committed.is_none() {
         return Ok(());
     }
-    let branch = repo
-        .branch
-        .clone()
-        .unwrap_or_else(|| git2_ops::current_branch(&dir).unwrap_or_else(|_| "main".into()));
+    if is_inplace(props, repo) {
+        let branch = git2_ops::current_branch(&dir)?;
+        let spec = format!("refs/heads/{branch}:refs/heads/{branch}");
+        return git2_ops::push(&dir, "origin", &spec, &user);
+    }
+    let branch = match &repo.branch {
+        Some(branch) => branch.clone(),
+        None => git2_ops::current_branch(&dir)?,
+    };
     let dest = format!("HEAD:refs/heads/{branch}");
-    let _ = git2_ops::push(&dir, "origin", &dest, &user);
-    Ok(())
+    git2_ops::push(&dir, "origin", &dest, &user)
 }
 
 pub fn commit(dir: &Path, message: &str) -> Result<String> {
