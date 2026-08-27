@@ -1204,6 +1204,9 @@ dependencies = [
 [[package]]
 name = "omegat-example-plugin"
 version = "6.2.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "omegat-filters"

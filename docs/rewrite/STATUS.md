@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **56089** lines; `apps/desktop/src`
-  TS/TSX/CSS **15706** lines (**~45%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **15706**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **6311**
+- Rewrite Rust: `crates/**/*.rs` **56518** lines; `apps/desktop/src`
+  TS/TSX/CSS **16081** lines (**~46%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **16081**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **6685**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -58,8 +58,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **4 passed**, and desktop **18 files / 108
-tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
+**4 passed**, sidecar contract **4 passed**, native plugin RPC **1 passed**,
+and desktop **19 files / 111 tests passed** after a clean TypeScript check.
+Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
 Linux packaged aligner E2E now passes with XTEST pointer input through the
@@ -217,7 +218,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**571** vs **963**, `EditorController` **801** vs **2365**. The headless
+**571** vs **963**, `EditorController` **831** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -264,8 +265,12 @@ across files through one filtered product path. Undo/redo snapshots retain the
 relative caret or selection while marker spans are recalculated. The live
 Zustand product path persists a changed draft/note through `entry.set` before
 selection, history, or cyclic navigation; an optimistic-write failure leaves
-the original dirty document active instead of discarding it. Desktop
-verification is now **18 files / 108 tests**, including exact success and
+the original dirty document active instead of discarding it.
+`EditorController.replacePartOfText` now treats start/end as translation-
+relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
+`Document3`, synchronizes the entry, recalculates markers, and restores the
+original relative selection on undo. Desktop verification is now **19 files /
+111 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -289,6 +294,14 @@ expired callback cannot replace current ranges. `SpellCheckerMarker` calls the
 real sidecar `spell.check` path, maps its UTF-16 token offsets to translation
 spans, and learn/ignore each trigger one spell-only recomputation; exact tests
 discard both an older-document callback and a pre-remark callback.
+The append-only cdylib host ABI now accepts executable Marker registrations.
+`markers.list` discovers them through the sidecar and `markers.query` sends
+the complete EntryKey plus editor context into the native callback. The
+renderer registers each callback as an asynchronous provider, maps strict
+UTF-16 output into `Document3`, unloads it with the React lifecycle, and
+discards StrictMode-era discovery responses. The real example cdylib is built
+and loaded in tests; exact sidecar and renderer assertions cover emoji
+offsets, plugin metadata, tooltip/color, complete EntryKey, and unload.
 `FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.
@@ -644,7 +657,9 @@ are exported; Wiki/MED have API fixtures).
 0 (values still equal to English are only the brand `OmegaT`). Literal
 `\\uXXXX` leftovers from the Bundle remapper are decoded. electron-builder
 targets Linux deb/rpm/tar, Windows nsis, macOS dmg (unsigned; see
-`PACKAGING.md`). Plugin ABI is `omegat_plugin_register` (`PLUGIN_ABI.md`).
+`PACKAGING.md`). Plugin ABI is `omegat_plugin_register` (`PLUGIN_ABI.md`);
+its executable Marker callback is loaded by the sidecar and registered in the
+React editor, not merely listed in a manifest.
 Packaged manuals are one markdown file per UI locale under `docs/manual/`
 plus `java-html.md`. `ar.recent` and other leftover English menu phrases
 are taken from `Bundle_*.properties`. Packages stay unsigned
