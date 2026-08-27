@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
+  "ops": [
+    "merge",
+    "split",
+    "move-up",
+    "move-down"
+  ],
+  "keys": [
+    "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "pdf",
+  "fixture": "pdf/file-PdfFilter.pdf",
+  "java_test": "org.omegat.filters.PdfFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "This is some text. This is also some text. "
+  ],
+  "ids": [
+    ""
+  ],
+  "empty_write_text": "This is some text. This is also some text. \n"
+}

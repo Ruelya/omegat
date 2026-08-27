@@ -1,0 +1,25 @@
+{
+  "java_test": "org.omegat.gui.align.AlignerTest#testAlignerHeapMode",
+  "mode": "heapwise",
+  "source": "fixtures/align/heapSource.txt",
+  "target": "fixtures/align/heapTarget.txt",
+  "pairs": [
+    [
+      "This is sentence one.",
+      "これが1つ目のセンテンス。"
+    ],
+    [
+      "Short sentence.",
+      "短い文。"
+    ],
+    [
+      "And then this is a very, very, very long sentence. Where shall it end?",
+      "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"
+    ],
+    [
+      "No one knows.",
+      "誰も知らない。"
+    ]
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
