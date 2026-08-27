@@ -3318,17 +3318,74 @@ public final class ExportGoldens {
     }
 
     private void exportAlignerGoldens() throws Exception {
-        Map<String, Object> heap = new LinkedHashMap<>();
-        heap.put("exported_by", "org.omegat.tools.ExportGoldens");
-        heap.put("java_test", "org.omegat.gui.align.AlignerTest#testAlignerHeapMode");
-        heap.put("mode", "heapwise");
-        heap.put("pairs", List.of(
+        assertJavaTestClass("org.omegat.gui.align.AlignerTest");
+        List<List<String>> heapPairs = List.of(
                 List.of("This is sentence one.", "これが1つ目のセンテンス。"),
                 List.of("Short sentence.", "短い文。"),
                 List.of("And then this is a very, very, very long sentence. Where shall it end?",
                         "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"),
-                List.of("No one knows.", "誰も知らない。")));
+                List.of("No one knows.", "誰も知らない。"));
+        Map<String, Object> heap = new LinkedHashMap<>();
+        heap.put("exported_by", "org.omegat.tools.ExportGoldens");
+        heap.put("java_test", "org.omegat.gui.align.AlignerTest#testAlignerHeapMode");
+        heap.put("mode", "heapwise");
+        heap.put("source", "fixtures/align/heapSource.txt");
+        heap.put("target", "fixtures/align/heapTarget.txt");
+        heap.put("pairs", heapPairs);
         writeJson(goldenRoot.resolve("align/AlignerTest#testAlignerHeapMode.json"), heap);
+
+        Map<String, Object> parse = new LinkedHashMap<>();
+        parse.put("exported_by", "org.omegat.tools.ExportGoldens");
+        parse.put("java_test", "org.omegat.gui.align.AlignerTest#testAlignerParseMode");
+        parse.put("mode", "parsewise");
+        parse.put("source", "fixtures/align/parseSource.txt");
+        parse.put("target", "fixtures/align/parseTarget.txt");
+        parse.put("pairs", List.of(
+                List.of("This is sentence one.", "これが1つ目のセンテンス。"),
+                List.of("Short sentence.", "短い文。"),
+                List.of("And then this is a very, very, very long sentence.",
+                        "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"),
+                List.of("Where shall it end? No one knows.", "誰も知らない。")));
+        writeJson(goldenRoot.resolve("align/AlignerTest#testAlignerParseMode.json"), parse);
+
+        Map<String, Object> id = new LinkedHashMap<>();
+        id.put("exported_by", "org.omegat.tools.ExportGoldens");
+        id.put("java_test", "org.omegat.gui.align.AlignerTest#testAlignerIDMode");
+        id.put("mode", "id");
+        id.put("source", "fixtures/align/idSource.properties");
+        id.put("target", "fixtures/align/idTarget.properties");
+        id.put("pairs", List.of(
+                List.of("This is sentence one.", "これが1つ目のセンテンス。"),
+                List.of("Short sentence.", "短い文。"),
+                List.of("And then this is a very, very, very long sentence.",
+                        "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"),
+                List.of("Where shall it end?", "誰も知らない。")));
+        writeJson(goldenRoot.resolve("align/AlignerTest#testAlignerIDMode.json"), id);
+
+        Map<String, Object> write = new LinkedHashMap<>();
+        write.put("exported_by", "org.omegat.tools.ExportGoldens");
+        write.put("java_test", "org.omegat.gui.align.AlignerTest#testWritePairsToTMX_writesExpectedTMX");
+        write.put("pairs", List.of(
+                List.of("Hello world", "こんにちは世界"),
+                List.of("Goodbye", "さようなら")));
+        write.put("src_lang", "en");
+        write.put("tgt_lang", "ja");
+        writeJson(goldenRoot.resolve("align/AlignerTest#testWritePairsToTMX_writesExpectedTMX.json"), write);
+
+        writeCase("align/AlignerTest#testWritePairsToTMX_missingLanguageThrows.json",
+                "org.omegat.gui.align.AlignerTest#testWritePairsToTMX_missingLanguageThrows",
+                Map.of("expect_error", "IllegalStateException"));
+        List<List<String>> beads = List.of(
+                List.of("a", "A"), List.of("bb", "BB"), List.of("ccc", "CCC"));
+        Map<String, Object> aligned = new LinkedHashMap<>();
+        aligned.put("exported_by", "org.omegat.tools.ExportGoldens");
+        aligned.put("java_test", "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads");
+        aligned.put("beads", beads);
+        aligned.put("result", beads);
+        writeJson(goldenRoot.resolve("align/AlignerTest#testDoAlign_withBeads_returnsAlignedBeads.json"), aligned);
+        writeCase("align/AlignerTest#testDoAlign_missingSettingsThrows.json",
+                "org.omegat.gui.align.AlignerTest#testDoAlign_missingSettingsThrows",
+                Map.of("expect_error", "IllegalStateException"));
     }
 
     /** One JSON per in-scope test* for rewrite waves R1–R10 (Java API results). */
@@ -3339,6 +3396,7 @@ public final class ExportGoldens {
         exportFileUtilTests();
         exportSearcherTests();
         exportTeamFactoryTests();
+        exportTeamMappingTests();
         exportLineLengthLimitTests();
         exportFilterMasterPluginTests();
         exportTokenizerRemainderTests();
@@ -3354,6 +3412,32 @@ public final class ExportGoldens {
         exportRemainingRich();
         exportThinProductTests();
         exportRemainingInScope();
+    }
+
+    private void exportTeamMappingTests() throws Exception {
+        assertJavaTestClass("org.omegat.core.team2.RemoteRepositoryProviderTest");
+        writeCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithExcludes",
+                Map.of("excludes", List.of("**/*.bak", "*.png", "subdir/3.jpg"),
+                        "copied", List.of(
+                                "glossary/sub/myglossary.txt",
+                                "source/3.jpg",
+                                "source/file1.txt",
+                                "source/otherproject/otherprojectfile.txt",
+                                "source/subdir/file2.txt")));
+        writeCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithSExcludes.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithSExcludes",
+                Map.of("excludes", List.of("**/*.bak", "/*.png", "/subdir/3.jpg"),
+                        "copied", List.of(
+                                "glossary/sub/myglossary.txt",
+                                "source/3.jpg",
+                                "source/4.png",
+                                "source/asubdir/subdir/3.jpg",
+                                "source/file1.txt",
+                                "source/otherproject/otherprojectfile.txt",
+                                "source/subdir/3.jpg",
+                                "source/subdir/4.png",
+                                "source/subdir/file2.txt")));
     }
 
     private void exportScriptItemTests() throws Exception {
@@ -4519,9 +4603,6 @@ public final class ExportGoldens {
         writeCase("remaining/HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully",
                 Map.of("body", "Test file contents", "exists", true));
-        writeCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json",
-                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithExcludes",
-                Map.of("excludes_honored", true, "copied", true));
         writeCase("remaining/EditorUtilsTest-testRemoveDirectionChars.json",
                 "org.omegat.util.editor.EditorUtilsTest#testRemoveDirectionChars",
                 Map.of("cases", List.of(
@@ -4692,7 +4773,7 @@ public final class ExportGoldens {
                 Map.of("status", 304, "skip_write", true));
         writeCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull",
-                Map.of("version", "abc", "throws", true));
+                Map.of("version", "1.0", "throws", true, "message", "Not supported"));
         writeCase("remaining/HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionUpdatesToLatest",
                 new LinkedHashMap<String, Object>() {{
@@ -5150,29 +5231,37 @@ public final class ExportGoldens {
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions",
                 Map.of("project_locking", false, "location_save", false, "no_team", true,
                         "tokenizer_source", "org.omegat.tokenizer.LuceneEnglishTokenizer",
-                        "tokenizer_target", "org.omegat.tokenizer.LuceneGermanTokenizer"));
+                        "tokenizer_target", "org.omegat.tokenizer.LuceneGermanTokenizer",
+                        "argv", List.of("start", "--no-project-locking", "--no-location-save", "--no-team",
+                                "--ITokenizer", "org.omegat.tokenizer.LuceneEnglishTokenizer",
+                                "--ITokenizerTarget", "org.omegat.tokenizer.LuceneGermanTokenizer")));
         writeCase("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault",
-                Map.of("no_team", false));
+                Map.of("no_team", false, "argv", List.of("start", "--team")));
         writeCase("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json",
                 "org.omegat.cli.CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched",
-                Map.of("project_locking", true, "location_save", true, "no_team", false));
+                Map.of("project_locking", true, "location_save", true, "no_team", false,
+                        "argv", List.of("start")));
         writeCase("cli/LegacyParametersTest#testInitializeAppliesConfigDir.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeAppliesConfigDir",
-                Map.of("config_dir", "/tmp/omegat-conf"));
+                Map.of("config_dir", "/tmp/omegat-conf",
+                        "argv", List.of("--config-dir", "/tmp/omegat-conf")));
         writeCase("cli/LegacyParametersTest#testInitializeExpandsTilde.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeExpandsTilde",
-                Map.of("input", "~/omegat-conf", "home_relative", "omegat-conf"));
+                Map.of("input", "~/omegat-conf", "home_relative", "omegat-conf",
+                        "argv", List.of("--config-dir=~/omegat-conf")));
         writeCase("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeWithoutConfigDir",
-                Map.of("present", false));
+                Map.of("present", false, "argv", List.of()));
         writeCase("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeAppliesRuntimeFlags",
-                Map.of("project_locking", false, "location_save", false, "no_team", true));
+                Map.of("project_locking", false, "location_save", false, "no_team", true,
+                        "argv", List.of("--disable-project-locking", "--disable-location-save", "--no-team")));
         writeCase("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json",
                 "org.omegat.cli.LegacyParametersTest#testInitializeLoadsResourceBundle",
                 Map.of("file", "/tmp/Bundle.properties", "key", "TF_MENU_FILE",
-                        "value", "Bundle from the command line"));
+                        "value", "Bundle from the command line",
+                        "argv", List.of("--resource-bundle", "/tmp/Bundle.properties")));
         exportProjectPropertiesTests();
         exportTmxReaderAndSrxTests();
     }
@@ -5316,6 +5405,7 @@ public final class ExportGoldens {
     }
 
     private void exportAlignerWindowTests() throws Exception {
+        assertJavaTestClass("org.omegat.gui.align.AlignSettingsPersistenceTest");
         writeCase("align/AlignerWindowTest#testMergeSplitMove.json",
                 "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
                 Map.of("ops", List.of("merge", "split", "move-up", "move-down")));
@@ -5327,6 +5417,26 @@ public final class ExportGoldens {
                 "org.omegat.gui.align.AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored",
                 Map.of("algorithm", "viterbi", "calculator", "normal",
                         "counter", "word", "segment", true, "remove_tags", false));
+        writeCase("align/AlignSettingsPersistenceTest#testStoredValuesRestored.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testStoredValuesRestored",
+                Map.of("algorithm", "forward-backward", "segment", false, "calculator", "normal"));
+        writeCase("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored",
+                Map.of("fallback", "eo"));
+        writeCase("align/AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageFallbackWhenStoredCodeInvalid",
+                Map.of("stored", "not a code", "fallback", "eo"));
+        writeCase("align/AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults",
+                Map.of("mode", "heapwise", "non_empty", true));
+        Map<String, Object> inputDirs = new LinkedHashMap<>();
+        inputDirs.put("source_dir", "tmp/foo");
+        inputDirs.put("target_dir", null);
+        writeCase("align/AlignSettingsPersistenceTest#testInputDirRoundTrip.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testInputDirRoundTrip", inputDirs);
+        writeCase("align/AlignSettingsPersistenceTest#testLanguageRoundTrip.json",
+                "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageRoundTrip",
+                Map.of("source_lang", "fr-FR", "target_lang", "de"));
     }
 
     private void writeJson(Path path, Map<String, Object> data) throws Exception {

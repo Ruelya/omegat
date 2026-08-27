@@ -118,7 +118,10 @@ leaking child text as segments. HTML write-back retains detected UTF-8,
 UTF-16 LE/BE (including BOM), and declared legacy encodings instead of always
 emitting UTF-8. Raw script/style closing and optional P/LI/DT/DD/table/option
 implicit boundaries follow HTMLParser-style closure without swallowing later
-segments.
+segments. Incomplete start tags, declarations, and processing instructions are
+now preserved as raw markup; recovery resumes at the next `<` boundary so one
+broken tag cannot hide a later paragraph, including through the public
+`HtmlFilter.parse` / `write` path.
 
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported.
@@ -206,11 +209,23 @@ two-client rebase uses `assert_eq` on conflict `ours`/`theirs`.
 `RemoteRepositoryProvider2Test` slash / abs-local helpers and HTTP
 `file://` retrieve, 304 skip-write, `switchToVersion` (`null` ok /
 non-null `"Not supported"`), and remaining copy/rename mapping
-goldens `assert_eq` Java cases.
+goldens `assert_eq` Java cases. Mapping glob evaluation now distinguishes
+slash-anchored exclusions from recursive unanchored exclusions using
+separator-aware matching. The two Java all-copy cases assert exact destination
+sets (**5** unanchored / **9** slash-anchored), through the same observable copy
+path used by sync.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
 ops golden is exported. CLI Main / Legacy / CommandCommon goldens exist.
+All **8/8** aligner-settings methods now call product persistence APIs with
+strict values for enum keys, booleans, language fallback/round-trip, input
+directories, and empty-filter fallback. The TMX write test parses the product
+output back to exact source/target pairs instead of using substring checks.
+The real CLI parser accepts the Java restart/common argument vectors, including
+post-subcommand `--no-project-locking`, `--no-location-save`, `--no-team` /
+`--team`, tokenizer overrides, alternate filename patterns, and empty
+`--config-dir=` handling.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
