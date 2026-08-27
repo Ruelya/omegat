@@ -19,3 +19,13 @@ export type MarkerInput = {
 export interface IMarker {
   getMarksForEntry(input: MarkerInput): Mark[] | null;
 }
+
+export interface IAsyncMarker {
+  getMarksForEntryAsync(input: MarkerInput): Promise<Mark[] | null>;
+}
+
+export type MarkerProvider = IMarker | IAsyncMarker;
+
+export function isAsyncMarker(marker: MarkerProvider): marker is IAsyncMarker {
+  return "getMarksForEntryAsync" in marker;
+}

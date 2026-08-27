@@ -13,8 +13,10 @@ import { EditorTextArea3 } from "./EditorTextArea3";
 import { TranslationUndoManager } from "./TranslationUndoManager";
 import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
 import type { Mark } from "./mark/Mark";
+import type { EntryKeyDto } from "../lib/types";
 
 export type LoadedEntry = {
+  key?: EntryKeyDto;
   file: string;
   source: string;
   translation: string;
@@ -240,7 +242,7 @@ export class EditorController {
     this.refreshCurrentMarkers();
   }
 
-  registerPluginMarker(name: string, marker: import("./mark/IMarker").IMarker): void {
+  registerPluginMarker(name: string, marker: import("./mark/IMarker").MarkerProvider): void {
     this.markers.registerPluginMarker(name, marker);
     this.refreshCurrentMarkers();
   }
@@ -732,7 +734,40 @@ export class EditorController {
   }
 
   private entryKey(index: number, entry: LoadedEntry): string {
-    return `${index}:${entry.file}:${entry.id ?? ""}`;
+    return entry.key
+      ? JSON.stringify(entry.key)
+      : JSON.stringify({
+          index,
+          file: entry.file,
+          source_text: entry.source,
+          id: entry.id ?? null,
+        });
+  }
+
+  async refreshCurrentMarkersAsync(): Promise<boolean> {
+    if (!this.document || this.displayedEntryIndex < 0) return false;
+    const entry = this.entries[this.displayedEntryIndex];
+    if (!entry) return false;
+    const key = this.entryKey(this.displayedEntryIndex, entry);
+    const input = this.markerInput(entry, true);
+    const source = this.document.source;
+    const translation = this.document.translation;
+    await this.markers.processEntryAsync(key, input);
+    const current = this.entries[this.displayedEntryIndex];
+    if (
+      !this.document
+      || !current
+      || this.entryKey(this.displayedEntryIndex, current) !== key
+      || this.document.source !== source
+      || this.document.translation !== translation
+    ) {
+      return false;
+    }
+    const marked = this.markers.applyToDocument(key, this.document, input);
+    this.document = marked.document;
+    this.markerSnapshot = marked.snapshot;
+    this.textArea.setDocument(this.document, true);
+    return true;
   }
 
   private refreshCurrentMarkers(): void {

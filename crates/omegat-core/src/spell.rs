@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use omegat_ipc::SpellTokenDto;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpellBackend {
@@ -132,10 +133,48 @@ impl SpellChecker {
     }
 
     pub fn unknown_in(&self, text: &str) -> Vec<String> {
-        text.split(|c: char| !c.is_alphabetic())
-            .filter(|w| w.len() > 2 && !self.is_correct(w))
-            .map(|w| w.to_string())
+        self.misspelled_tokens(text)
+            .into_iter()
+            .map(|token| token.word)
             .collect()
+    }
+
+    /// Java spell-marker token shape with browser-compatible UTF-16 offsets.
+    pub fn misspelled_tokens(&self, text: &str) -> Vec<SpellTokenDto> {
+        let mut tokens = Vec::new();
+        let mut start_byte = None;
+        let mut start_utf16 = 0usize;
+        let mut utf16_offset = 0usize;
+
+        for (byte_offset, ch) in text.char_indices() {
+            if ch.is_alphabetic() {
+                if start_byte.is_none() {
+                    start_byte = Some(byte_offset);
+                    start_utf16 = utf16_offset;
+                }
+            } else if let Some(start) = start_byte.take() {
+                let word = &text[start..byte_offset];
+                if word.chars().count() > 2 && !self.is_correct(word) {
+                    tokens.push(SpellTokenDto {
+                        word: word.to_string(),
+                        offset: start_utf16,
+                        length: utf16_offset - start_utf16,
+                    });
+                }
+            }
+            utf16_offset += ch.len_utf16();
+        }
+        if let Some(start) = start_byte {
+            let word = &text[start..];
+            if word.chars().count() > 2 && !self.is_correct(word) {
+                tokens.push(SpellTokenDto {
+                    word: word.to_string(),
+                    offset: start_utf16,
+                    length: utf16_offset - start_utf16,
+                });
+            }
+        }
+        tokens
     }
 
     pub fn learn(&mut self, word: &str, project_root: &Path) {

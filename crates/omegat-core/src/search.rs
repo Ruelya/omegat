@@ -1276,6 +1276,9 @@ mod tests {
         Entry {
             file: "a.txt".into(),
             id: "1".into(),
+            prev: Some(String::new()),
+            next: Some(String::new()),
+            path: None,
             source: source.into(),
             translation: translation.into(),
             note: note.into(),

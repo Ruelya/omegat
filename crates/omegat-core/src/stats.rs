@@ -526,6 +526,9 @@ mod tests {
         Entry {
             file: file.into(),
             id: src.into(),
+            prev: Some(String::new()),
+            next: Some(String::new()),
+            path: None,
             source: src.into(),
             translation: tgt.into(),
             note: String::new(),

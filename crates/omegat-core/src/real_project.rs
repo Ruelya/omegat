@@ -171,8 +171,8 @@ impl ProjectSession {
                 continue;
             };
             let parsed = filter.parse(&file, &ctx)?;
-            let nsegs = parsed.segments.len();
-            for (i, seg) in parsed.segments.into_iter().enumerate() {
+            let mut file_entries = Vec::new();
+            for seg in parsed.segments {
                 let custom = (!self.prefs.srx_path.is_empty())
                     .then(|| std::fs::read_to_string(&self.prefs.srx_path).ok())
                     .flatten()
@@ -186,13 +186,12 @@ impl ProjectSession {
                     if sentence.trim().is_empty() {
                         continue;
                     }
-                    self.entries.push(Entry {
+                    file_entries.push(Entry {
                         file: rel.clone(),
-                        id: if nsegs == 1 && i == 0 {
-                            seg.id.clone()
-                        } else {
-                            format!("{}:{}", seg.id, self.entries.len())
-                        },
+                        id: seg.id.clone(),
+                        prev: None,
+                        next: None,
+                        path: seg.path.clone(),
                         source: sentence,
                         translation: seg.existing_translation.clone().unwrap_or_default(),
                         note: seg.note.clone().unwrap_or_default(),
@@ -204,6 +203,21 @@ impl ProjectSession {
                     });
                 }
             }
+            let sources = file_entries
+                .iter()
+                .map(|entry| entry.source.clone())
+                .collect::<Vec<_>>();
+            for (index, entry) in file_entries.iter_mut().enumerate() {
+                entry.prev = Some(
+                    index
+                        .checked_sub(1)
+                        .and_then(|previous| sources.get(previous))
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+                entry.next = Some(sources.get(index + 1).cloned().unwrap_or_default());
+            }
+            self.entries.extend(file_entries);
         }
         Ok(())
     }
@@ -235,7 +249,7 @@ impl ProjectSession {
                 continue;
             }
             if e.translation.is_empty() {
-                if let Some(hit) = self.tmx.get_translation(&e.file, &e.id, &e.source) {
+                if let Some(hit) = self.tmx.get_translation_for_key(&e.key()) {
                     e.translation = hit.translation.clone();
                     e.note = hit.note.clone().unwrap_or_default();
                     e.default_translation = hit.default_translation;
@@ -278,6 +292,9 @@ impl ProjectSession {
                     default_translation: e.default_translation,
                     file: (!e.default_translation).then(|| e.file.clone()),
                     id: (!e.default_translation).then(|| e.id.clone()),
+                    prev: (!e.default_translation).then(|| e.prev.clone()).flatten(),
+                    next: (!e.default_translation).then(|| e.next.clone()).flatten(),
+                    path: (!e.default_translation).then(|| e.path.clone()).flatten(),
                     changer: Some("omegat-rewrite".into()),
                     changed: Some(now_iso()),
                     ..Default::default()
@@ -294,6 +311,12 @@ impl ProjectSession {
             .ok_or_else(|| CoreError::InvalidProject("entry out of range".into()))?;
         if current.revision != params.revision {
             return Err(CoreError::OptimisticLock(params.index));
+        }
+        if params.key.as_ref().is_some_and(|key| key != &current.key()) {
+            return Err(CoreError::InvalidProject(format!(
+                "entry key changed at index {}",
+                params.index
+            )));
         }
         if !params.translation.trim().is_empty() {
             let mode = self.prefs.tag_validation.as_str();
@@ -317,6 +340,9 @@ impl ProjectSession {
             default_translation: params.default_translation,
             file: (!params.default_translation).then(|| current.file.clone()),
             id: (!params.default_translation).then(|| current.id.clone()),
+            prev: (!params.default_translation).then(|| current.prev.clone()).flatten(),
+            next: (!params.default_translation).then(|| current.next.clone()).flatten(),
+            path: (!params.default_translation).then(|| current.path.clone()).flatten(),
             changer: Some("omegat-rewrite".into()),
             changed: Some(changed.clone()),
             ..Default::default()
@@ -324,8 +350,7 @@ impl ProjectSession {
 
         if params.default_translation {
             if !current.default_translation {
-                self.tmx
-                    .remove_occurrence_translation(&current.file, &current.id, &current.source);
+                self.tmx.remove_occurrence_translation_for_key(&current.key());
             }
             self.tmx.insert(tmx_entry);
         } else {

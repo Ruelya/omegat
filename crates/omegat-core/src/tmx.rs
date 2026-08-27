@@ -1,4 +1,5 @@
 use crate::error::Result;
+use omegat_ipc::EntryKeyDto;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -16,6 +17,9 @@ pub struct TmxEntry {
     pub default_translation: bool,
     pub file: Option<String>,
     pub id: Option<String>,
+    pub prev: Option<String>,
+    pub next: Option<String>,
+    pub path: Option<String>,
     #[serde(default)]
     pub penalty: i32,
     #[serde(default)]
@@ -48,7 +52,12 @@ impl ProjectTmx {
             {
                 return false;
             }
-            entry.default_translation || (candidate.file == entry.file && candidate.id == entry.id)
+            entry.default_translation
+                || (candidate.file == entry.file
+                    && candidate.id == entry.id
+                    && candidate.prev == entry.prev
+                    && candidate.next == entry.next
+                    && candidate.path == entry.path)
         });
         if let Some(idx) = existing {
             self.entries[idx] = entry;
@@ -81,6 +90,18 @@ impl ProjectTmx {
             .find(|e| !e.default_translation && e.id.as_deref() == Some(id) && e.source == source)
     }
 
+    pub fn get_multiple_translation_for_key(&self, key: &EntryKeyDto) -> Option<&TmxEntry> {
+        self.entries.iter().find(|entry| {
+            !entry.default_translation
+                && entry.source == key.source_text
+                && entry.file.as_deref() == Some(key.file.as_str())
+                && entry.id == key.id
+                && entry.prev == key.prev
+                && entry.next == key.next
+                && entry.path == key.path
+        })
+    }
+
     /// Resolve an occurrence exactly as Java `RealProject#getTranslationInfo`:
     /// occurrence-specific alternative first, then the source-wide default.
     pub fn get_translation(&self, file: &str, id: &str, source: &str) -> Option<&TmxEntry> {
@@ -101,6 +122,13 @@ impl ProjectTmx {
                 })
             })
             .or_else(|| self.get_default_translation(source))
+    }
+
+    /// Resolve a project occurrence by Java's complete `EntryKey`, then fall
+    /// back to the source-wide default translation.
+    pub fn get_translation_for_key(&self, key: &EntryKeyDto) -> Option<&TmxEntry> {
+        self.get_multiple_translation_for_key(key)
+            .or_else(|| self.get_default_translation(&key.source_text))
     }
 
     pub fn set_default_translation(&mut self, source: &str, translation: &str) {
@@ -156,12 +184,45 @@ impl ProjectTmx {
         self.rebuild_source_index();
     }
 
+    pub fn set_occurrence_translation_for_key(
+        &mut self,
+        key: &EntryKeyDto,
+        translation: &str,
+        note: Option<String>,
+    ) {
+        self.insert(TmxEntry {
+            source: key.source_text.clone(),
+            translation: translation.into(),
+            default_translation: false,
+            file: Some(key.file.clone()),
+            id: key.id.clone(),
+            prev: key.prev.clone(),
+            next: key.next.clone(),
+            path: key.path.clone(),
+            note,
+            ..Default::default()
+        });
+    }
+
     pub fn remove_occurrence_translation(&mut self, file: &str, id: &str, source: &str) {
         self.entries.retain(|entry| {
             entry.default_translation
                 || entry.source != source
                 || entry.id.as_deref() != Some(id)
                 || (!file.is_empty() && entry.file.as_deref() != Some(file))
+        });
+        self.rebuild_source_index();
+    }
+
+    pub fn remove_occurrence_translation_for_key(&mut self, key: &EntryKeyDto) {
+        self.entries.retain(|entry| {
+            entry.default_translation
+                || entry.source != key.source_text
+                || entry.file.as_deref() != Some(key.file.as_str())
+                || entry.id != key.id
+                || entry.prev != key.prev
+                || entry.next != key.next
+                || entry.path != key.path
         });
         self.rebuild_source_index();
     }
@@ -240,8 +301,20 @@ impl ProjectTmx {
                         xml_escape(id)
                     ));
                 }
+                for (kind, value) in [
+                    ("prev", e.prev.as_deref()),
+                    ("next", e.next.as_deref()),
+                    ("path", e.path.as_deref()),
+                ] {
+                    if let Some(value) = value {
+                        body.push_str(&format!(
+                            "      <prop type=\"{kind}\">{}</prop>\n",
+                            xml_escape(value)
+                        ));
+                    }
+                }
                 for (k, v) in &e.props {
-                    if k == "file" || k == "id" {
+                    if matches!(k.as_str(), "file" | "id" | "prev" | "next" | "path") {
                         continue;
                     }
                     body.push_str(&format!(
@@ -654,6 +727,9 @@ pub fn parse_tmx_all(raw: &str, source_lang: &str, target_lang: &str) -> Vec<Tmx
         let tuid = attr(tu, "tuid");
         let file = extract_prop(tu, "file");
         let id = extract_prop(tu, "id").or(tuid);
+        let prev = extract_prop(tu, "prev");
+        let next = extract_prop(tu, "next");
+        let path = extract_prop(tu, "path");
         let tuvs = collect_tuvs(tu);
         let source = get_tuv_by_lang(&tuvs, &src_l).map(|t| t.text.clone());
         let target = get_tuv_by_lang(&tuvs, &tgt_l).or_else(|| {
@@ -670,6 +746,9 @@ pub fn parse_tmx_all(raw: &str, source_lang: &str, target_lang: &str) -> Vec<Tmx
                 default_translation: file.is_none(),
                 file,
                 id,
+                prev,
+                next,
+                path,
                 changer: t.changeid.clone(),
                 changed: t.changedate.clone(),
                 creator: t.creationid.clone(),
@@ -1121,6 +1200,54 @@ mod tests {
         assert_eq!(
             back.get("Hello <f0>x</f0>").unwrap().changer.as_deref(),
             Some("alice")
+        );
+    }
+
+    #[test]
+    fn alternative_roundtrip_uses_complete_entry_key_context() {
+        let first = EntryKeyDto {
+            file: "same.po".into(),
+            source_text: "Repeated".into(),
+            id: Some("message".into()),
+            prev: Some("before one".into()),
+            next: Some("after one".into()),
+            path: Some("dialog/one".into()),
+        };
+        let second = EntryKeyDto {
+            prev: Some("before two".into()),
+            next: Some("after two".into()),
+            path: Some("dialog/two".into()),
+            ..first.clone()
+        };
+        let mut tmx = ProjectTmx::new();
+        tmx.set_occurrence_translation_for_key(&first, "Premier", None);
+        tmx.set_occurrence_translation_for_key(&second, "Deuxième", None);
+
+        let loaded = parse_tmx(&tmx.to_xml("en", "fr"), "en", "fr");
+        assert_eq!(
+            (
+                loaded
+                    .get_translation_for_key(&first)
+                    .map(|entry| entry.translation.as_str()),
+                loaded
+                    .get_translation_for_key(&second)
+                    .map(|entry| entry.translation.as_str()),
+            ),
+            (Some("Premier"), Some("Deuxième"))
+        );
+
+        let mut removed = loaded;
+        removed.remove_occurrence_translation_for_key(&first);
+        assert_eq!(
+            (
+                removed
+                    .get_translation_for_key(&first)
+                    .map(|entry| entry.translation.as_str()),
+                removed
+                    .get_translation_for_key(&second)
+                    .map(|entry| entry.translation.as_str()),
+            ),
+            (None, Some("Deuxième"))
         );
     }
 }

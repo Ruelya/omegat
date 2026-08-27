@@ -103,6 +103,7 @@ mod tests {
         session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 0,
+                key: None,
                 translation: "Bonjour le monde.".into(),
                 note: None,
                 revision: rev,
@@ -137,6 +138,7 @@ mod tests {
         let err = session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 0,
+                key: None,
                 translation: "x".into(),
                 note: None,
                 revision: 999,
@@ -165,6 +167,9 @@ mod tests {
             Entry {
                 file: "a.txt".into(),
                 id: "first".into(),
+                prev: Some(String::new()),
+                next: Some("Repeated".into()),
+                path: Some("/first".into()),
                 source: "Repeated".into(),
                 translation: "old default".into(),
                 note: String::new(),
@@ -177,6 +182,9 @@ mod tests {
             Entry {
                 file: "a.txt".into(),
                 id: "second".into(),
+                prev: Some("Repeated".into()),
+                next: Some(String::new()),
+                path: Some("/second".into()),
                 source: "Repeated".into(),
                 translation: "old default".into(),
                 note: String::new(),
@@ -189,6 +197,9 @@ mod tests {
             Entry {
                 file: "b.txt".into(),
                 id: "third".into(),
+                prev: Some(String::new()),
+                next: Some(String::new()),
+                path: Some("/third".into()),
                 source: "Repeated".into(),
                 translation: "existing alternative".into(),
                 note: "private note".into(),
@@ -202,10 +213,8 @@ mod tests {
         session
             .tmx
             .set_default_translation("Repeated", "old default");
-        session.tmx.set_occurrence_translation(
-            "b.txt",
-            "third",
-            "Repeated",
+        session.tmx.set_occurrence_translation_for_key(
+            &session.entries[2].key(),
             "existing alternative",
             Some("private note".into()),
         );
@@ -213,6 +222,7 @@ mod tests {
         let propagated = session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 0,
+                key: None,
                 translation: "shared".into(),
                 note: Some("shared note".into()),
                 revision: 1,
@@ -257,6 +267,7 @@ mod tests {
         let alternative = session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 1,
+                key: None,
                 translation: "second only".into(),
                 note: Some("second note".into()),
                 revision: 2,
@@ -291,6 +302,7 @@ mod tests {
         let back_to_default = session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 1,
+                key: None,
                 translation: "new shared".into(),
                 note: Some("new shared note".into()),
                 revision: 3,
@@ -312,14 +324,14 @@ mod tests {
         assert_eq!(
             session
                 .tmx
-                .get_translation("a.txt", "second", "Repeated")
+                .get_translation_for_key(&session.entries[1].key())
                 .map(|entry| (entry.translation.as_str(), entry.default_translation)),
             Some(("new shared", true))
         );
         assert_eq!(
             session
                 .tmx
-                .get_translation("b.txt", "third", "Repeated")
+                .get_translation_for_key(&session.entries[2].key())
                 .map(|entry| (entry.translation.as_str(), entry.default_translation)),
             Some(("existing alternative", false))
         );
@@ -347,6 +359,7 @@ mod tests {
         let err = session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 0,
+                key: None,
                 translation: "Bonjour x".into(),
                 note: None,
                 revision: rev,
@@ -583,6 +596,7 @@ mod tests {
         session
             .set_entry(&omegat_ipc::SetEntryParams {
                 index: 0,
+                key: None,
                 translation: "Bonjour x".into(),
                 note: None,
                 revision: rev,

@@ -272,6 +272,10 @@ impl App {
                 s.spell.ignore(word, &s.props.root);
                 Ok(json!({"ok": true}))
             }
+            "spell.check" => {
+                let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                Ok(serde_json::to_value(self.session()?.spell.misspelled_tokens(text)).unwrap())
+            }
             "tmx.export" => {
                 let level = params
                     .get("level")
@@ -618,6 +622,7 @@ impl App {
                         if state.translation != e.translation {
                             let _ = s.set_entry(&SetEntryParams {
                                 index,
+                                key: Some(e.key()),
                                 translation: state.translation.clone(),
                                 note: Some(state.note.clone()),
                                 revision: e.revision,

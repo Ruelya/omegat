@@ -1,12 +1,15 @@
 //! Java `SourceTextEntry` / `EntryKey` counterpart.
 
 use crate::tags;
-use omegat_ipc::EntryDto;
+use omegat_ipc::{EntryDto, EntryKeyDto};
 
 #[derive(Debug, Clone)]
 pub struct Entry {
     pub file: String,
     pub id: String,
+    pub prev: Option<String>,
+    pub next: Option<String>,
+    pub path: Option<String>,
     pub source: String,
     pub translation: String,
     pub note: String,
@@ -18,6 +21,17 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn key(&self) -> EntryKeyDto {
+        EntryKeyDto {
+            file: self.file.clone(),
+            source_text: self.source.clone(),
+            id: (!self.id.is_empty()).then(|| self.id.clone()),
+            prev: self.prev.clone(),
+            next: self.next.clone(),
+            path: self.path.clone(),
+        }
+    }
+
     pub fn translated(&self) -> bool {
         !self.translation.trim().is_empty()
     }
@@ -25,6 +39,7 @@ impl Entry {
     pub fn to_dto(&self, index: usize) -> EntryDto {
         EntryDto {
             index,
+            key: self.key(),
             file: self.file.clone(),
             id: self.id.clone(),
             source: self.source.clone(),

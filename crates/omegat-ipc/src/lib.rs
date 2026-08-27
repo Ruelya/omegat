@@ -203,9 +203,24 @@ pub struct OpenProjectParams {
     pub root: String,
 }
 
+/// Java `org.omegat.core.data.EntryKey` on the wire.
+///
+/// `prev`/`next` deliberately preserve empty boundary strings separately from
+/// `null`; Java writes those values into alternative-translation TMX records.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EntryKeyDto {
+    pub file: String,
+    pub source_text: String,
+    pub id: Option<String>,
+    pub prev: Option<String>,
+    pub next: Option<String>,
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntryDto {
     pub index: usize,
+    pub key: EntryKeyDto,
     pub file: String,
     pub id: String,
     pub source: String,
@@ -222,6 +237,10 @@ pub struct EntryDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetEntryParams {
     pub index: usize,
+    /// Protects index-based editor writes from applying after a source reload
+    /// changed the entry at that index. Older clients may omit it.
+    #[serde(default)]
+    pub key: Option<EntryKeyDto>,
     pub translation: String,
     pub note: Option<String>,
     pub revision: u64,
@@ -398,6 +417,15 @@ pub struct IssueDto {
     pub file: String,
     pub message: String,
     pub severity: String,
+}
+
+/// One misspelled token. Offsets and lengths are UTF-16 code units, matching
+/// Java `Token` and browser string indexing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpellTokenDto {
+    pub word: String,
+    pub offset: usize,
+    pub length: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

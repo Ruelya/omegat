@@ -34,6 +34,7 @@ const METHODS: &[&str] = &[
     "mt.query",
     "dict.query",
     "completer.query",
+    "spell.check",
     "spell.learn",
     "spell.ignore",
     "spell.install",
@@ -158,6 +159,8 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
             .collect::<Vec<_>>(),
         vec![(0, "a.txt", "Repeated", 1), (1, "b.txt", "Repeated", 1)]
     );
+    let first_key = listed["result"][0]["key"].clone();
+    let second_key = listed["result"][1]["key"].clone();
 
     let shared = rpc(
         &mut stdin,
@@ -166,6 +169,7 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
         "entry.set",
         json!({
             "index": 0,
+            "key": first_key,
             "translation": "Partagé",
             "note": "default note",
             "revision": 1,
@@ -198,6 +202,7 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
         "entry.set",
         json!({
             "index": 1,
+            "key": second_key,
             "translation": "Occurrence privée",
             "note": "alternative note",
             "revision": 2,
@@ -208,6 +213,14 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
         alternative["result"]["updated"],
         json!([{
             "index": 1,
+            "key": {
+                "file": "b.txt",
+                "source_text": "Repeated",
+                "id": "0",
+                "prev": "",
+                "next": "",
+                "path": null
+            },
             "file": "b.txt",
             "id": "0",
             "source": "Repeated",
@@ -257,6 +270,34 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
         stale["error"]["message"],
         "optimistic lock failed for entry 0"
     );
+
+    let misspelled = rpc(
+        &mut stdin,
+        &mut stdout,
+        8,
+        "spell.check",
+        json!({"text": "😀 bonjour xyzzyqq"}),
+    );
+    assert_eq!(
+        misspelled["result"],
+        json!([{"word": "xyzzyqq", "offset": 11, "length": 7}])
+    );
+    let learned = rpc(
+        &mut stdin,
+        &mut stdout,
+        9,
+        "spell.learn",
+        json!({"word": "xyzzyqq"}),
+    );
+    assert_eq!(learned["result"], json!({"ok": true}));
+    let rechecked = rpc(
+        &mut stdin,
+        &mut stdout,
+        10,
+        "spell.check",
+        json!({"text": "😀 bonjour xyzzyqq"}),
+    );
+    assert_eq!(rechecked["result"], json!([]));
     let _ = child.kill();
 }
 

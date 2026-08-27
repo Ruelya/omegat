@@ -1,6 +1,15 @@
 export type VersionInfo = { name: string; version: string; protocol: string; rewrite: boolean };
+export type EntryKeyDto = {
+  file: string;
+  source_text: string;
+  id: string | null;
+  prev: string | null;
+  next: string | null;
+  path: string | null;
+};
 export type EntryDto = {
   index: number;
+  key?: EntryKeyDto;
   file: string;
   id: string;
   source: string;

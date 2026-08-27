@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { createDocument3, replaceEditText, type Document3State } from "../editor/Document3";
+import { IEditor } from "../editor/IEditor";
 import {
   marksFromPrefs,
   nextMissingTag,
@@ -551,10 +552,12 @@ export const useApp = create<AppState>((set, get) => ({
   },
   learnWord: async (word) => {
     await rpc("spell.learn", { word });
+    IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
     await get().select(get().index, false);
   },
   ignoreWord: async (word) => {
     await rpc("spell.ignore", { word });
+    IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
     await get().select(get().index, false);
   },
   addGlossary: async (source, target, comment = "") => {
@@ -698,6 +701,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const response = await rpc<EntrySetResult | EntryDto>("entry.set", {
         index,
+        ...(e.key ? { key: e.key } : {}),
         translation: draft,
         note,
         revision: e.revision,

@@ -27,6 +27,7 @@ import {
 import { bindMarkerRemark } from "./IEditor";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
+import type { EntryPart, Mark } from "./mark/Mark";
 
 const editorController = new EditorController();
 bindMarkerRemark((name) => editorController.remarkOneMarker(name));
@@ -119,6 +120,8 @@ function renderRichText(
   marks: ReturnType<typeof useApp.getState>["marks"],
   terms: string[],
   keyPrefix: string,
+  productMarks: Mark[] = [],
+  entryPart: EntryPart = "TRANSLATION",
 ): ReactNode[] {
   let cursor = offset;
   return parseDocument(text).flatMap((tok, i) => {
@@ -136,24 +139,41 @@ function renderRichText(
         </span>
       );
     }
-    let textOffset = start;
-    return decorateText(tok.value, marks, terms).map((span, j) => {
-      const spanOffset = textOffset;
-      textOffset += span.text.length;
-      return (
+    const relevant = productMarks.filter((mark) =>
+      mark.entryPart === entryPart
+      && mark.startOffset < start + tok.value.length
+      && mark.endOffset > start
+    );
+    const boundaries = new Set([0, tok.value.length]);
+    for (const mark of relevant) {
+      boundaries.add(Math.max(0, mark.startOffset - start));
+      boundaries.add(Math.min(tok.value.length, mark.endOffset - start));
+    }
+    const points = [...boundaries].sort((a, b) => a - b);
+    return points.slice(0, -1).flatMap((sliceStart, sliceIndex) => {
+      const sliceEnd = points[sliceIndex + 1]!;
+      const raw = tok.value.slice(sliceStart, sliceEnd);
+      const markerClasses = relevant
+        .filter((mark) => mark.startOffset < start + sliceEnd && mark.endOffset > start + sliceStart)
+        .map((mark) =>
+          mark.painter === "spell"
+            ? "mark-spell"
+            : `product-marker-${mark.painter.replace(/[^a-z0-9_-]/gi, "-")}`,
+        );
+      return decorateText(raw, marks, terms).map((span, decoratedIndex) => (
         <span
-          key={`${keyPrefix}-text-${i}-${j}`}
-          className={span.cls.join(" ")}
-          data-offset={spanOffset}
+          key={`${keyPrefix}-text-${i}-${sliceIndex}-${decoratedIndex}`}
+          className={[...span.cls, ...markerClasses].join(" ")}
+          data-offset={start + sliceStart}
         >
           {span.text}
         </span>
-      );
+      ));
     });
   });
 }
 
-export function SegmentSource() {
+export function SegmentSource({ productMarks = [] }: { productMarks?: Mark[] }) {
   const e = useApp((s) => s.entries[s.index]);
   const marks = useApp((s) => s.marks);
   const glossary = useApp((s) => s.glossary);
@@ -162,19 +182,7 @@ export function SegmentSource() {
   const terms = glossary.map((g) => g.source);
   return (
     <div className={`src ${sourceClass(e, marks)} ${selected === e.source ? "is-selected-source" : ""}`}>
-      {parseDocument(e.source).map((tok, i) =>
-        tok.kind === "tag" ? (
-          <span key={i} className="tag" data-tag={tok.value}>
-            {tok.value}
-          </span>
-        ) : (
-          decorateText(tok.value, marks, terms).map((sp, j) => (
-            <span key={`${i}-${j}`} className={sp.cls.join(" ")}>
-              {sp.text}
-            </span>
-          ))
-        ),
-      )}
+      {renderRichText(e.source, 0, marks, terms, "active-source", productMarks, "SOURCE")}
     </div>
   );
 }
@@ -215,6 +223,7 @@ export function SegmentEditor() {
   });
   const [pageRadius, setPageRadius] = useState(8);
   const [manualConflict, setManualConflict] = useState("");
+  const [, setMarkerRevision] = useState(0);
   const composing = useRef(false);
   const discardCompositionEnd = useRef(false);
   const dragPointer = useRef<number | null>(null);
@@ -238,6 +247,16 @@ export function SegmentEditor() {
   useEffect(() => {
     if (editConflict) setManualConflict(editConflict.ours);
   }, [editConflict]);
+
+  useEffect(() => {
+    let current = true;
+    void editorController.refreshCurrentMarkersAsync().then((applied) => {
+      if (current && applied) setMarkerRevision((revision) => revision + 1);
+    });
+    return () => {
+      current = false;
+    };
+  }, [activeIndex, document3.source, document3.translation, loadedPageSignature]);
 
   useEffect(() => {
     if (focus === "editor") surface.current?.focus();
@@ -624,7 +643,7 @@ export function SegmentEditor() {
         >
           <div className="segment-meta">{entry.file} · #{entry.entryNumber}</div>
           <div className="pane-h">{t("source")}</div>
-          <SegmentSource />
+          <SegmentSource productMarks={entry.marks} />
           <div className="pane-h">{t("target")}</div>
           <div
             ref={surface}
@@ -657,15 +676,15 @@ export function SegmentEditor() {
               }
             }}
           >
-            {renderRichText(beforeSelection, 0, marks, terms, "before")}
+            {renderRichText(beforeSelection, 0, marks, terms, "before", entry.marks)}
             {selected && selection.focus === selectionStart && <span className="caret" aria-hidden />}
             {selected && (
               <span className="editor-selection">
-                {renderRichText(selected, selectionStart, marks, terms, "selection")}
+                {renderRichText(selected, selectionStart, marks, terms, "selection", entry.marks)}
               </span>
             )}
             {(!selected || selection.focus === selectionEnd) && <span className="caret" aria-hidden />}
-            {renderRichText(afterSelection, selectionEnd, marks, terms, "after")}
+            {renderRichText(afterSelection, selectionEnd, marks, terms, "after", entry.marks)}
             <textarea
               ref={ime}
               className="ime-proxy"
@@ -698,11 +717,26 @@ export function SegmentEditor() {
         >
           <div className="segment-meta">{entry.file} · #{entry.entryNumber}</div>
           <div className="src">
-            {renderRichText(entry.source, 0, marks, terms, `source-${entry.key}`)}
+            {renderRichText(
+              entry.source,
+              0,
+              marks,
+              terms,
+              `source-${entry.key}`,
+              entry.marks,
+              "SOURCE",
+            )}
           </div>
           <div className="tgt">
             {entry.translation
-              ? renderRichText(entry.translation, 0, marks, terms, `target-${entry.key}`)
+              ? renderRichText(
+                  entry.translation,
+                  0,
+                  marks,
+                  terms,
+                  `target-${entry.key}`,
+                  entry.marks,
+                )
               : <span className="muted">{entry.source}</span>}
           </div>
         </section>

@@ -4,13 +4,19 @@ import { BidiMarkers } from "./mark/BidiMarkers";
 import { ComesFromAutoTMMarker } from "./mark/ComesFromAutoTMMarker";
 import { ComesFromMTMarker } from "./mark/ComesFromMTMarker";
 import { FontFallbackMarker } from "./mark/FontFallbackMarker";
-import type { IMarker, MarkerInput } from "./mark/IMarker";
+import {
+  isAsyncMarker,
+  type IMarker,
+  type MarkerInput,
+  type MarkerProvider,
+} from "./mark/IMarker";
 import type { Mark } from "./mark/Mark";
 import type { Document3State, StyledSpan } from "./Document3";
 import { NBSPMarker } from "./mark/NBSPMarker";
 import { ProtectedPartsMarker } from "./mark/ProtectedPartsMarker";
 import { RemoveTagMarker } from "./mark/RemoveTagMarker";
 import { ReplaceMarker } from "./mark/ReplaceMarker";
+import { SpellCheckerMarker } from "./mark/SpellCheckerMarker";
 import { WhitespaceMarker } from "./mark/WhitespaceMarker";
 
 export type MarkerSnapshot = {
@@ -29,7 +35,7 @@ type CachedMarkers = MarkerSnapshot & {
 
 type RegisteredMarker = {
   name: string;
-  marker: IMarker;
+  marker: MarkerProvider;
   plugin: boolean;
   registration: number;
 };
@@ -38,7 +44,9 @@ export class MarkerController {
   private readonly registered: RegisteredMarker[];
   private generation = 0;
   private registration = 0;
+  private request = 0;
   private readonly cache = new Map<string, CachedMarkers>();
+  private readonly pending = new Map<string, number>();
 
   constructor() {
     const builtins: [string, IMarker][] = [
@@ -59,9 +67,15 @@ export class MarkerController {
       plugin: false,
       registration: ++this.registration,
     }));
+    this.registered.push({
+      name: "org.omegat.core.spellchecker.SpellCheckerMarker",
+      marker: new SpellCheckerMarker(),
+      plugin: false,
+      registration: ++this.registration,
+    });
   }
 
-  get markers(): IMarker[] {
+  get markers(): MarkerProvider[] {
     return this.registered.map(({ marker }) => marker);
   }
 
@@ -69,7 +83,7 @@ export class MarkerController {
     return this.registered.map(({ name }) => name);
   }
 
-  registerPluginMarker(name: string, marker: IMarker): void {
+  registerPluginMarker(name: string, marker: MarkerProvider): void {
     const normalized = name.trim();
     if (!normalized) throw new Error("marker name is required");
     if (this.resolveMarkerName(normalized)) {
@@ -97,9 +111,10 @@ export class MarkerController {
   }
 
   process(input: MarkerInput): Mark[] {
-    return this.registered.flatMap(({ marker }) =>
-      marker.getMarksForEntry(input)?.map((mark) => ({ ...mark })) ?? [],
-    );
+    return this.registered.flatMap(({ marker }) => {
+      if (isAsyncMarker(marker)) return [];
+      return marker.getMarksForEntry(input)?.map((mark) => ({ ...mark })) ?? [];
+    });
   }
 
   processEntry(entryKey: string, input: MarkerInput): MarkerSnapshot {
@@ -123,6 +138,7 @@ export class MarkerController {
       }
     }
     for (const registration of this.registered) {
+      if (isAsyncMarker(registration.marker)) continue;
       const prior = cached.byMarker.get(registration.name);
       if (prior?.registration === registration.registration) continue;
       cached.byMarker.set(registration.name, {
@@ -148,12 +164,94 @@ export class MarkerController {
     };
   }
 
+  /**
+   * Calculate asynchronous marker providers with a per-entry/per-marker token.
+   * A later calculation, edit, `remarkOneMarker`, or unload invalidates the
+   * token, so a slow callback can never publish marks for an older document.
+   */
+  async processEntryAsync(entryKey: string, input: MarkerInput): Promise<MarkerSnapshot> {
+    this.processEntry(entryKey, input);
+    const fingerprint = JSON.stringify(input);
+    const jobs = this.registered.flatMap((registration) => {
+      if (!isAsyncMarker(registration.marker)) return [];
+      const cache = this.cache.get(entryKey);
+      const prior = cache?.byMarker.get(registration.name);
+      if (cache?.fingerprint === fingerprint && prior?.registration === registration.registration) {
+        return [];
+      }
+      const pendingKey = this.pendingKey(entryKey, registration.name);
+      const token = ++this.request;
+      this.pending.set(pendingKey, token);
+      return [{
+        registration,
+        pendingKey,
+        token,
+        result: registration.marker.getMarksForEntryAsync(input),
+      }];
+    });
+
+    await Promise.all(jobs.map(async ({ registration, pendingKey, token, result }) => {
+      let marks: Mark[] | null;
+      try {
+        marks = await result;
+      } catch {
+        return;
+      }
+      if (this.pending.get(pendingKey) !== token) return;
+      const live = this.registered.find(({ name }) => name === registration.name);
+      const cache = this.cache.get(entryKey);
+      if (
+        live?.registration !== registration.registration
+        || cache?.fingerprint !== fingerprint
+      ) {
+        return;
+      }
+      cache.byMarker.set(registration.name, {
+        registration: registration.registration,
+        marks: marks?.map((mark) => ({ ...mark })) ?? [],
+      });
+      cache.generation = ++this.generation;
+      cache.marks = this.registered.flatMap(({ name }) =>
+        cache.byMarker.get(name)?.marks.map((mark) => ({ ...mark })) ?? [],
+      );
+      this.pending.delete(pendingKey);
+    }));
+
+    return this.getCached(entryKey) ?? {
+      entryKey,
+      generation: 0,
+      marks: [],
+    };
+  }
+
   applyToDocument(
     entryKey: string,
     document: Document3State,
     input: MarkerInput,
   ): { document: Document3State; snapshot: MarkerSnapshot } {
     const snapshot = this.processEntry(entryKey, input);
+    return {
+      document: this.applySnapshotToDocument(document, snapshot),
+      snapshot,
+    };
+  }
+
+  async applyToDocumentAsync(
+    entryKey: string,
+    document: Document3State,
+    input: MarkerInput,
+  ): Promise<{ document: Document3State; snapshot: MarkerSnapshot }> {
+    const snapshot = await this.processEntryAsync(entryKey, input);
+    return {
+      document: this.applySnapshotToDocument(document, snapshot),
+      snapshot,
+    };
+  }
+
+  private applySnapshotToDocument(
+    document: Document3State,
+    snapshot: MarkerSnapshot,
+  ): Document3State {
     const sourceStart = document.fullText.indexOf(document.source);
     const markerSpans = snapshot.marks.flatMap((mark): StyledSpan[] => {
       const base = mark.entryPart === "TRANSLATION" ? document.translationStart : sourceStart;
@@ -174,14 +272,11 @@ export class MarkerController {
       }];
     });
     return {
-      document: {
-        ...document,
-        spans: [
-          ...document.spans.filter((span) => !span.style.startsWith("marker:")),
-          ...markerSpans,
-        ],
-      },
-      snapshot,
+      ...document,
+      spans: [
+        ...document.spans.filter((span) => !span.style.startsWith("marker:")),
+        ...markerSpans,
+      ],
     };
   }
 
@@ -201,6 +296,7 @@ export class MarkerController {
    * entries. The latter is Java's `remarkOneMarker` lifecycle.
    */
   invalidate(entryKey?: string, markerName?: string): void {
+    this.cancelPending(entryKey, markerName);
     const resolved = markerName ? this.resolveMarkerName(markerName) : null;
     if (markerName && !resolved) return;
     if (resolved) {
@@ -228,5 +324,24 @@ export class MarkerController {
       registered.endsWith(`.${name}`),
     );
     return simple?.name ?? null;
+  }
+
+  private pendingKey(entryKey: string, markerName: string): string {
+    return `${entryKey}\u0000${markerName}`;
+  }
+
+  private cancelPending(entryKey?: string, markerName?: string): void {
+    const resolved = markerName ? this.resolveMarkerName(markerName) : null;
+    for (const key of this.pending.keys()) {
+      const split = key.lastIndexOf("\u0000");
+      const pendingEntry = key.slice(0, split);
+      const pendingMarker = key.slice(split + 1);
+      if (
+        (entryKey === undefined || entryKey === pendingEntry)
+        && (markerName === undefined || resolved === pendingMarker)
+      ) {
+        this.pending.delete(key);
+      }
+    }
   }
 }

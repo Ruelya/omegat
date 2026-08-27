@@ -8,6 +8,7 @@ import { AltTranslationsMarker } from "./mark/AltTranslationsMarker";
 import { BidiMarkers } from "./mark/BidiMarkers";
 import { NBSPMarker } from "./mark/NBSPMarker";
 import { ProtectedPartsMarker } from "./mark/ProtectedPartsMarker";
+import { SpellCheckerMarker } from "./mark/SpellCheckerMarker";
 import { WhitespaceMarker } from "./mark/WhitespaceMarker";
 import { allMarkers } from "./mark/markers";
 import type { MarkerInput } from "./mark/IMarker";
@@ -266,5 +267,65 @@ describe("editor markers vs Java-exported goldens", () => {
     expect(() => ctrl.registerPluginMarker("NBSPMarker", plugin)).toThrow(
       "marker already registered: NBSPMarker",
     );
+  });
+
+  it("discards an asynchronous marker callback from an older translation generation", async () => {
+    const ctrl = new MarkerController();
+    const pending: ((marks: Mark[]) => void)[] = [];
+    ctrl.registerPluginMarker("example.AsyncMarker", {
+      getMarksForEntryAsync: () =>
+        new Promise<Mark[]>((resolve) => {
+          pending.push(resolve);
+        }),
+    });
+    const input = (translationText: string): MarkerInput => ({
+      sourceText: "source",
+      translationText,
+      isActive: true,
+    });
+
+    const stale = ctrl.processEntryAsync("entry", input("old"));
+    const current = ctrl.processEntryAsync("entry", input("new text"));
+    expect(pending).toHaveLength(2);
+    pending[1]!([{
+      startOffset: 4,
+      endOffset: 8,
+      painter: "async-current",
+      entryPart: "TRANSLATION",
+    }]);
+    await current;
+    pending[0]!([{
+      startOffset: 0,
+      endOffset: 3,
+      painter: "async-stale",
+      entryPart: "TRANSLATION",
+    }]);
+    await stale;
+
+    expect(ctrl.getCached("entry")!.marks.filter((mark) => mark.painter.startsWith("async"))).toEqual([{
+      startOffset: 4,
+      endOffset: 8,
+      painter: "async-current",
+      entryPart: "TRANSLATION",
+    }]);
+  });
+
+  it("bridges sidecar spell tokens into Java-style translation marks", async () => {
+    const calls: string[] = [];
+    const marker = new SpellCheckerMarker(async (text) => {
+      calls.push(text);
+      return [{ word: "wrng", offset: 3, length: 4 }];
+    });
+    expect(await marker.getMarksForEntryAsync({
+      sourceText: "source",
+      translationText: "😀 wrng",
+      isActive: true,
+    })).toEqual([{
+      startOffset: 3,
+      endOffset: 7,
+      painter: "spell",
+      entryPart: "TRANSLATION",
+    }]);
+    expect(calls).toEqual(["😀 wrng"]);
   });
 });
