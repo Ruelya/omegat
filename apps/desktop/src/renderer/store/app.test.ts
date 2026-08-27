@@ -537,6 +537,20 @@ describe("app store", () => {
     rpcOperationListener?.({
       requestId,
       method: "project.compile",
+      phase: "progress",
+      stage: "compile:late",
+    });
+    expect(useApp.getState().longOperation).toEqual({
+      requestId,
+      kind: "compile",
+      method: "project.compile",
+      phase: "cancelling",
+      stage: "compile:filters",
+      error: null,
+    });
+    rpcOperationListener?.({
+      requestId,
+      method: "project.compile",
       phase: "cancelled",
     });
     const error = new Error("request cancelled");
@@ -556,6 +570,40 @@ describe("app store", () => {
     });
     expect(useApp.getState().status).toBe("compile cancelled");
     expect(rpc.mock.calls.map(([method]) => method)).toEqual(["project.compile"]);
+  });
+
+  it("does not claim cancellation when a cancelling sidecar request succeeds", async () => {
+    let resolveSync!: (value: { action: string; message: string }) => void;
+    const pendingSync = new Promise<{ action: string; message: string }>((resolve) => {
+      resolveSync = resolve;
+    });
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "team.sync") return pendingSync;
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+
+    const syncing = useApp.getState().runLongOperation<{ action: string; message: string }>(
+      "teamSync",
+    );
+    await vi.waitFor(() => {
+      expect(rpc.mock.calls.some(([method]) => method === "team.sync")).toBe(true);
+    });
+    await expect(useApp.getState().cancelLongOperation()).resolves.toBe(true);
+    expect(useApp.getState().longOperation?.phase).toBe("cancelling");
+
+    resolveSync({ action: "sync", message: "completed before cancellation" });
+    await expect(syncing).resolves.toEqual({
+      action: "sync",
+      message: "completed before cancellation",
+    });
+    expect(useApp.getState().longOperation).toEqual({
+      requestId: "operation-teamSync-1",
+      kind: "teamSync",
+      method: "team.sync",
+      phase: "succeeded",
+      stage: null,
+      error: null,
+    });
   });
 
   it("cancels reload, keeps the rolled-back entry, and republishes its visible status", async () => {

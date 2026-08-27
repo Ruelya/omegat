@@ -129,6 +129,13 @@ export function App() {
             <button type="button" onClick={() => app.openWindow("search")}>{t("search")}</button>
             <button type="button" onClick={() => app.openWindow("files")}>{t("files")}</button>
             <button type="button" onClick={() => app.openWindow("issues")}>{t("issues")}</button>
+            <button
+              type="button"
+              data-operation-action="team-window"
+              onClick={() => app.openWindow("team")}
+            >
+              {t("team")}
+            </button>
           </>
         )}
         <button type="button" onClick={() => app.openWindow("prefs")} aria-label={t("prefs")}>

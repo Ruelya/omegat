@@ -135,6 +135,9 @@ export class SidecarRpcClient {
             method: request.method,
             phase: response.error.code === -32800 ? "cancelled" : "failed",
             error: error.message,
+            ...(typeof response.error.code === "number"
+              ? { errorCode: response.error.code }
+              : {}),
           });
         }
         request.reject(error);
@@ -180,7 +183,13 @@ export class SidecarRpcClient {
     }
     const id = this.clientRequests.get(params.token);
     const request = id === undefined ? undefined : this.pending.get(id);
-    if (!request || request.clientRequestId !== params.token) return;
+    if (
+      !request
+      || request.clientRequestId !== params.token
+      || request.cancellationRequested
+    ) {
+      return;
+    }
     this.onOperation({
       requestId: params.token,
       method: request.method,

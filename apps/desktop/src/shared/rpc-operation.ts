@@ -26,6 +26,7 @@ export type RpcOperationEvent = {
   phase: RpcOperationPhase;
   stage?: string;
   error?: string;
+  errorCode?: number;
 };
 
 export function longOperationKindForMethod(

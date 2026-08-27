@@ -104,6 +104,14 @@ describe("SidecarRpcClient", () => {
     expect(teamSettled).toBe(false);
     client.acceptChunk(`${JSON.stringify({
       jsonrpc: "2.0",
+      method: "$/progress",
+      params: {
+        token: "operation-teamSync-2",
+        stage: "team.mapping.copy",
+      },
+    })}\n`);
+    client.acceptChunk(`${JSON.stringify({
+      jsonrpc: "2.0",
       id: 2,
       error: { code: -32800, message: "request cancelled" },
     })}\n`);
@@ -144,6 +152,7 @@ describe("SidecarRpcClient", () => {
         method: "team.sync",
         phase: "cancelled",
         error: "request cancelled",
+        errorCode: -32800,
       },
     ]);
     expect(lines.map((line) => JSON.parse(line)).at(-1)).toEqual({

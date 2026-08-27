@@ -136,6 +136,9 @@ function applyRpcOperationEvent(
   if (event.phase !== "started" && current?.requestId !== event.requestId) {
     return current;
   }
+  if (current?.phase === "cancelling" && event.phase === "progress") {
+    return current;
+  }
   if (
     event.phase === "started"
     && current
@@ -447,7 +450,7 @@ export const useApp = create<AppState>((set, get) => ({
       const current = get().longOperation;
       if (
         current?.requestId === requestId
-        && (current.phase === "cancelling" || current.phase === "cancelled")
+        && current.phase === "cancelled"
       ) {
         throw abortError(`${kind} cancelled`);
       }
@@ -460,7 +463,7 @@ export const useApp = create<AppState>((set, get) => ({
       const cancelled = isAbortError(error)
         || (
           current?.requestId === requestId
-          && (current.phase === "cancelling" || current.phase === "cancelled")
+          && current.phase === "cancelled"
         );
       if (current?.requestId === requestId) {
         set({

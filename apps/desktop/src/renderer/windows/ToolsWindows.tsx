@@ -660,6 +660,7 @@ export function TeamWindow() {
   const msg = useApp((s) => s.teamMessage);
   const conflicts = useApp((s) => s.teamConflicts);
   const sync = useApp((s) => s.teamSync);
+  const commit = useApp((s) => s.teamCommit);
   const resolve = useApp((s) => s.resolveConflict);
   const operation = useApp((s) => s.longOperation);
   const cancelOperation = useApp((s) => s.cancelLongOperation);
@@ -675,7 +676,7 @@ export function TeamWindow() {
   const [manual, setManual] = useState("");
   return (
     <Modal id="team" title={t("team")}>
-      <p>{msg || "Git / SVN / HTTP / file · prepare → rebase → commit"}</p>
+      <p data-team-message>{msg || "Git / SVN / HTTP / file · prepare → rebase → commit"}</p>
       {conflicts.map((c, i) => (
         <div key={`${c.kind ?? "tmx"}-${c.source ?? i}`} className="hit">
           <div>
@@ -708,7 +709,30 @@ export function TeamWindow() {
             {operation?.phase === "cancelling" ? "Cancelling…" : t("cancel")}
           </button>
         ) : (
-          <button type="button" className="primary" onClick={() => void sync()}>{t("sync")}</button>
+          <>
+            <button
+              type="button"
+              className="primary"
+              data-operation-action="team-sync"
+              onClick={() => void sync()}
+            >
+              {t("sync")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="team-commit-source"
+              onClick={() => void commit("source")}
+            >
+              {t("commitSource")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="team-commit-target"
+              onClick={() => void commit("target")}
+            >
+              {t("commitTarget")}
+            </button>
+          </>
         )}
         <button type="button" onClick={() => useApp.getState().openWindow("mapping")}>{t("accessRoot")}</button>
         <button type="button" onClick={() => useApp.getState().openWindow("team", false)}>{t("cancel")}</button>

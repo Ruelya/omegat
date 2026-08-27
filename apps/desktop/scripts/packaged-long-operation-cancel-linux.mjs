@@ -192,11 +192,13 @@ class DevToolsClient {
   }
 }
 
-async function snapshot(root) {
+async function snapshot(root, { ignoreTopLevel = [] } = {}) {
+  const ignored = new Set(ignoreTopLevel);
   const files = [];
   async function walk(dir, prefix = "") {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!prefix && ignored.has(entry.name)) continue;
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       const path = join(dir, entry.name);
       if (entry.isDirectory()) await walk(path, relative);
@@ -241,6 +243,57 @@ async function writeSources(sourceDir) {
   }
 }
 
+async function writeRemoteSources(sourceDir) {
+  await mkdir(sourceDir, { recursive: true });
+  const payload = "z".repeat(4_096);
+  for (let start = 0; start < SOURCE_FILES; start += 100) {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(100, SOURCE_FILES - start) },
+        (_, offset) => {
+          const index = start + offset;
+          return writeFile(
+            join(sourceDir, `${String(index).padStart(4, "0")}.txt`),
+            `Remote ${index}: ${payload}`,
+            "utf8",
+          );
+        },
+      ),
+    );
+  }
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function editorState(client) {
+  return client.evaluate(`(() => {
+    const segment = document.querySelector(".editor-segment.is-active");
+    const surface = segment?.querySelector(".editor-surface");
+    const caret = surface?.querySelector(":scope > .caret");
+    const following = caret
+      ? [...surface.children]
+          .slice([...surface.children].indexOf(caret) + 1)
+          .find((child) => child.hasAttribute("data-offset"))
+      : null;
+    return {
+      entry: Number(segment?.getAttribute("data-entry") ?? -1),
+      key: segment?.getAttribute("data-entry-key") ?? "",
+      source: segment?.querySelector(".src")?.textContent ?? "",
+      translation: surface?.textContent ?? "",
+      caret: following
+        ? Number(following.getAttribute("data-offset"))
+        : (surface?.textContent.length ?? -1),
+    };
+  })()`);
+}
+
 async function terminate(child) {
   if (!child || child.exitCode != null || child.signalCode != null) return;
   const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
@@ -270,6 +323,204 @@ async function xdotool(display, args) {
   });
 }
 
+async function sidecarProjectState(client) {
+  return client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const version = await window.omegat.rpc("sys.version", {});
+    return {
+      version,
+      entryCount: entries.length,
+      firstEntry: entries[0] ?? null,
+    };
+  })()`, true);
+}
+
+async function cancelTeamOperation(
+  client,
+  { kind, action, cancelledMessage, project, remotes },
+) {
+  const projectBefore = await snapshot(project, {
+    ignoreTopLevel: [".repositories"],
+  });
+  const remoteBefore = await Promise.all(
+    remotes.map(({ root }) => snapshot(root)),
+  );
+  const activeJournal = join(
+    project,
+    ".repositories",
+    "transactions",
+    "active.json",
+  );
+  const activeBefore = await editorState(client);
+  const parsedKey = JSON.parse(activeBefore.key);
+  assert.deepEqual(
+    Object.keys(parsedKey).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+    "the packaged editor did not expose a complete six-field EntryKey",
+  );
+  const sidecarBefore = await sidecarProjectState(client);
+  assert.equal(sidecarBefore.entryCount, SOURCE_FILES);
+  assert.equal(sidecarBefore.firstEntry.key.file, parsedKey.file);
+  assert.notEqual(
+    activeBefore.translation,
+    sidecarBefore.firstEntry.translation,
+    "the active Document3 must be dirty before team cancellation",
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatTeamProgress = null;
+    window.__omegatTeamCancelObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatTeamCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === ${JSON.stringify(kind)}
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "team.mapping.copy"
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button || window.__omegatTeamProgress) return;
+        window.__omegatTeamProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          operation: app.dataset.operation,
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          cancelVisible: true,
+        };
+        button.click();
+      }
+    });
+    window.__omegatTeamCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector(
+        '[data-operation-action=${JSON.stringify(action)}]'
+      );
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    `visible ${action} action was unavailable`,
+  );
+
+  const terminal = await waitFor(`${kind} protocol-confirmed cancellation`, async () => {
+    const state = await client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      return {
+        operation: app?.dataset.operation ?? "",
+        phase: app?.dataset.operationPhase ?? "",
+        stage: app?.dataset.operationStage ?? "",
+        operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+        cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+      };
+    })()`);
+    if (
+      state.operation === kind
+      && state.phase === "cancelled"
+      && state.stage === "team.mapping.copy"
+      && state.operationStatus === `${kind}: cancelled (team.mapping.copy)`
+      && state.teamMessage === cancelledMessage
+      && !state.cancelVisible
+    ) {
+      return state;
+    }
+    throw new Error(JSON.stringify(state));
+  });
+
+  const postCancel = await client.evaluate(`(async () => {
+    window.__omegatTeamCancelObserver?.disconnect();
+    const entries = await window.omegat.rpc("entry.list", {});
+    const version = await window.omegat.rpc("sys.version", {});
+    return {
+      visibleProgress: window.__omegatTeamProgress,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+      version,
+      entryCount: entries.length,
+      firstEntry: entries[0] ?? null,
+    };
+  })()`, true);
+  assert(postCancel.visibleProgress, `${kind} progress checkpoint was not observed`);
+  assert.equal(postCancel.visibleProgress.operation, kind);
+  assert.equal(postCancel.visibleProgress.phase, "progress");
+  assert.equal(postCancel.visibleProgress.stage, "team.mapping.copy");
+  assert.equal(postCancel.visibleProgress.status, `${kind}: team.mapping.copy`);
+  assert.equal(postCancel.visibleProgress.cancelVisible, true);
+  assert(postCancel.visibleProgress.requestId);
+
+  const requestEvents = postCancel.rpcTrace.filter(
+    (event) => event.requestId === postCancel.visibleProgress.requestId,
+  );
+  const requestTrace = requestEvents
+    .map((event) => `${event.phase}:${event.stage}`)
+    .filter((value, index, values) => index === 0 || values[index - 1] !== value);
+  assert.deepEqual(requestTrace, [
+    "started:",
+    "progress:team.mapping.copy",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  const cancelledEvent = requestEvents.find((event) => event.phase === "cancelled");
+  assert.equal(
+    cancelledEvent?.errorCode,
+    -32800,
+    `${kind} became terminal without the sidecar cancellation code`,
+  );
+  assert(
+    postCancel.domTrace.includes(
+      `${kind}|cancelling|team.mapping.copy|${kind}: cancelling (team.mapping.copy)`,
+    ),
+    `renderer never visibly entered ${kind} cancelling: ${
+      JSON.stringify(postCancel.domTrace)
+    }`,
+  );
+
+  assert.deepEqual(
+    await snapshot(project, { ignoreTopLevel: [".repositories"] }),
+    projectBefore,
+  );
+  const remoteAfter = await Promise.all(
+    remotes.map(({ root }) => snapshot(root)),
+  );
+  assert.deepEqual(remoteAfter, remoteBefore);
+  assert.equal(await pathExists(activeJournal), false);
+  assert.deepEqual(await editorState(client), activeBefore);
+  assert.equal(postCancel.version.version, "6.2.0");
+  assert.equal(postCancel.entryCount, sidecarBefore.entryCount);
+  assert.deepEqual(postCancel.firstEntry, sidecarBefore.firstEntry);
+
+  return {
+    visibleProgress: postCancel.visibleProgress,
+    terminal,
+    requestTrace,
+    protocolErrorCode: cancelledEvent.errorCode,
+    domTrace: postCancel.domTrace,
+    projectRollback: true,
+    remoteRollback: Object.fromEntries(remotes.map(({ name }) => [name, true])),
+    activeJournalRemoved: true,
+    editor: {
+      entry: activeBefore.entry,
+      completeEntryKey: parsedKey,
+      translation: activeBefore.translation,
+      caret: activeBefore.caret,
+    },
+    sidecar: {
+      version: postCancel.version.version,
+      entries: postCancel.entryCount,
+    },
+  };
+}
+
 if (process.platform !== "linux") {
   throw new Error("This E2E exercises long-operation cancellation in a real Linux package");
 }
@@ -280,6 +531,8 @@ const configDir = join(workDir, "config");
 const project = join(workDir, "project");
 const sourceDir = join(project, "source");
 const targetDir = join(project, "target");
+const mainRemote = join(workDir, "main-file-remote");
+const mappingRemote = join(workDir, "mapping-file-remote");
 await mkdir(configDir, { recursive: true });
 await rpcOnce(configDir, "project.create", {
   root: project,
@@ -288,6 +541,8 @@ await rpcOnce(configDir, "project.create", {
   sentence_seg: false,
 });
 await writeSources(sourceDir);
+await mkdir(mainRemote, { recursive: true });
+await writeRemoteSources(join(mappingRemote, "source"));
 await mkdir(join(targetDir, "nested"), { recursive: true });
 await Promise.all([
   writeFile(join(targetDir, "0000.txt"), "PREEXISTING TARGET", "utf8"),
@@ -351,6 +606,7 @@ try {
         phase: event.phase,
         stage: event.stage ?? "",
         error: event.error ?? "",
+        errorCode: event.errorCode ?? null,
       });
     });
     const app = document.querySelector(".app");
@@ -619,6 +875,107 @@ try {
   assert.equal(reloadPostCancel.firstEntry.translation, reloadBefore.translation);
   assert.equal(reloadPostCancel.version.version, "6.2.0");
 
+  const repositories = [
+    {
+      repo_type: "file",
+      url: mainRemote,
+      branch: null,
+      mappings: [{
+        local: "/",
+        repository: "/",
+        includes: ["main-repository-only.marker"],
+        excludes: [],
+      }],
+    },
+    {
+      repo_type: "file",
+      url: mappingRemote,
+      branch: null,
+      mappings: [{
+        local: "/source/",
+        repository: "/source/",
+        includes: [],
+        excludes: [],
+      }],
+    },
+  ];
+  const configured = await client.evaluate(
+    `window.omegat.rpc("team.mapping", ${JSON.stringify({ repositories })})`,
+    true,
+  );
+  assert.equal(configured.ok, true);
+  assert.equal(configured.repositories.length, 2);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+    "packaged editor did not focus its native input proxy",
+  );
+  const dirtyTeamTranslation = "unsaved team transaction draft 😀";
+  await client.command("Input.insertText", { text: dirtyTeamTranslation });
+  await waitFor("dirty team-cancellation Document3", async () => {
+    const state = await editorState(client);
+    return state.translation === dirtyTeamTranslation ? state : undefined;
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+  }
+  const dirtyEditor = await editorState(client);
+  assert.equal(dirtyEditor.translation, dirtyTeamTranslation);
+  assert.equal(dirtyEditor.caret, dirtyTeamTranslation.length - 6);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-window"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible team action was unavailable",
+  );
+  await waitFor("team transaction window", async () =>
+    await client.evaluate(
+      `Boolean(document.querySelector('[data-operation-action="team-sync"]'))`,
+    )
+      ? true
+      : undefined
+  );
+
+  const teamRemotes = [
+    { name: "main", root: mainRemote },
+    { name: "mapping", root: mappingRemote },
+  ];
+  const teamSync = await cancelTeamOperation(client, {
+    kind: "teamSync",
+    action: "team-sync",
+    cancelledMessage: "sync cancelled",
+    project,
+    remotes: teamRemotes,
+  });
+  const teamCommit = await cancelTeamOperation(client, {
+    kind: "teamCommit",
+    action: "team-commit-source",
+    cancelledMessage: "commit source cancelled",
+    project,
+    remotes: teamRemotes,
+  });
+  assert.deepEqual(await editorState(client), dirtyEditor);
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
@@ -652,6 +1009,15 @@ try {
         translationPreserved:
           reloadCancelled.translation === reloadBefore.translation,
       },
+    },
+    team: {
+      repositories: repositories.map(({ repo_type, url, mappings }) => ({
+        repo_type,
+        url,
+        mappings,
+      })),
+      sync: teamSync,
+      commitSource: teamCommit,
     },
     sidecarResponsive: postCancel.version.version,
   }));
