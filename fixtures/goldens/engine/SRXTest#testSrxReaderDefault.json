@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.segmentation.SRXTest#testSrxReaderDefault",
+  "maps": 18,
+  "version": "2.0",
+  "cascade": true,
+  "subflows": true,
+  "keys": [
+    "org.omegat.core.segmentation.SRXTest#testSrxReaderDefault"
+  ]
+}
