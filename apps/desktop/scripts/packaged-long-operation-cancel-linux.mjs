@@ -1231,7 +1231,6 @@ try {
         && state.stage === "project.external-refresh.sources"
         && state.operationStatus
           === "externalRefresh: cancelled (project.external-refresh.sources)"
-        && state.editorStatus.includes("external refresh cancelled")
         && !state.cancelVisible
       ) {
         return state;
