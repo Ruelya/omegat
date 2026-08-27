@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 137
+native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 140
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -310,6 +310,16 @@ undo selection retention. The exporter calls Java `EditorUtils.doChangeCase`
 for **17** inputs across lower/upper/sentence/title/cycle plus a five-step
 cycle sequence; strict desktop equality includes uncased CJK and the
 `Ǉ`/`ǈ`/`ǉ` title-case distinction.
+The renderer now owns its directional UTF-16 caret/selection in Zustand, and
+the `IEditor` command surface inserts or replaces through an
+`EditorTextArea3` over the active `Document3`. Matches, glossary, and machine
+translation docks import and call that product surface instead of appending to
+the draft independently. `commitAndDeactivate` no longer advances to another
+entry, `commitAndLeave` preserves the active entry and relative selection, and
+window deactivation clears the completer rather than spuriously saving the
+project. The IEditor method table is compared by exact equality, not a minimum
+method count. The Linux XTEST/Chromium IME and decorated-pointer packaged path
+remains green with this shared selection state.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
@@ -419,6 +429,14 @@ older result cannot publish after a newer selection, and a cancelled multi-step
 load stops before issuing its next sidecar query. Exact tests prove
 stale-result rejection, notification dispatch, disabled popup actions, and the
 store-level two-selection race.
+Project LOAD/CREATE/CLOSE-style boundaries and entry activation now share
+project plus entry generations across every asynchronous dock loader. Opening,
+closing, reloading, or selecting immediately cancels and clears old pane work;
+manual MT, dictionary, and completer publication validates both the project
+and complete EntryKey, so an old result cannot cross into another project at
+the same numeric index or even the same key. Project open also installs the
+new first entry as a clean `Document3` before selection, preventing the old
+draft from being misclassified and written into the newly opened project.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
