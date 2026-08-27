@@ -564,6 +564,11 @@ impl App {
             "align.edit" => {
                 let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("merge");
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let side = params
+                    .get("side")
+                    .and_then(|v| v.as_str())
+                    .map(omegat_core::align::AlignSide::from_name)
+                    .unwrap_or(omegat_core::align::AlignSide::Both);
                 let raw = params.get("pairs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
                 let pairs: Vec<(String, String)> = raw
                     .iter()
@@ -574,10 +579,64 @@ impl App {
                         )
                     })
                     .collect();
-                let next = omegat_core::align::edit_pairs(&pairs, action, index);
+                let next = omegat_core::align::edit_pairs_sided(&pairs, action, index, side);
                 Ok(json!({
                     "pairs": next.iter().map(|(s,t)| json!({"source": s, "target": t})).collect::<Vec<_>>()
                 }))
+            }
+            "align.write" => {
+                let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
+                if dest.is_empty() {
+                    return Err((-32602, "align.write requires dest".into()));
+                }
+                let raw = params
+                    .get("pairs")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let pairs: Vec<(String, String)> = raw
+                    .iter()
+                    .filter(|value| {
+                        value
+                            .get("enabled")
+                            .and_then(|enabled| enabled.as_bool())
+                            .unwrap_or(true)
+                    })
+                    .map(|value| {
+                        (
+                            value
+                                .get("source")
+                                .and_then(|text| text.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            value
+                                .get("target")
+                                .and_then(|text| text.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        )
+                    })
+                    .collect();
+                let source_lang = params
+                    .get("source_lang")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .or_else(|| self.session().ok().map(|s| s.props.source_lang.clone()))
+                    .unwrap_or_else(|| "en".into());
+                let target_lang = params
+                    .get("target_lang")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+                    .or_else(|| self.session().ok().map(|s| s.props.target_lang.clone()))
+                    .unwrap_or_else(|| "fr".into());
+                omegat_core::align::write_aligned_pairs(
+                    &pairs,
+                    std::path::Path::new(dest),
+                    &source_lang,
+                    &target_lang,
+                )
+                .map_err(core_err)?;
+                Ok(json!({"ok": true, "count": pairs.len(), "dest": dest}))
             }
             other => Err((error_code::METHOD_NOT_FOUND, format!("unknown method {other}"))),
         }

@@ -49,6 +49,7 @@ const METHODS: &[&str] = &[
     "script.run",
     "align.run",
     "align.edit",
+    "align.write",
     "aligner.configure",
     "wiki.import",
     "med.open",
@@ -97,5 +98,70 @@ fn every_listed_method_is_known() {
     let unknown = rpc(&mut stdin, &mut stdout, 999, "no.such.method", json!({}));
     assert_eq!(unknown["error"]["code"], -32601);
 
+    let _ = child.kill();
+}
+
+#[test]
+fn alignment_manual_edit_is_written_through_rpc() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let pairs = json!([
+        {"source":"one","target":"un"},
+        {"source":"two","target":"deux"}
+    ]);
+    let edited = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "align.edit",
+        json!({"action":"merge","side":"source","index":0,"pairs":pairs}),
+    );
+    assert_eq!(
+        edited["result"]["pairs"],
+        json!([
+            {"source":"one two","target":"un"},
+            {"source":"","target":"deux"}
+        ])
+    );
+
+    let temp = tempfile::tempdir().unwrap();
+    let dest = temp.path().join("manual.tmx");
+    let written = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "align.write",
+        json!({
+            "dest": dest,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "pairs": edited["result"]["pairs"]
+        }),
+    );
+    assert_eq!(written["result"]["ok"], true);
+    assert_eq!(written["result"]["count"], 2);
+    let parsed = omegat_core::tmx::parse_tmx(
+        &std::fs::read_to_string(dest).unwrap(),
+        "en",
+        "fr",
+    );
+    let actual: Vec<_> = parsed
+        .entries
+        .into_iter()
+        .map(|entry| (entry.source, entry.translation))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            ("one two".to_string(), "un".to_string()),
+            (String::new(), "deux".to_string())
+        ]
+    );
     let _ = child.kill();
 }

@@ -17,13 +17,14 @@ export function AlignWindow() {
   const [algo, setAlgo] = useState("viterbi");
   const [counter, setCounter] = useState("word");
   const [calculator, setCalculator] = useState("normal");
+  const [side, setSide] = useState("both");
   const [pairs, setPairs] = useState<{ source: string; target: string }[]>([]);
   const [sel, setSel] = useState(0);
+  const [message, setMessage] = useState("");
   async function run() {
     const r = (await window.omegat?.rpc("align.run", {
       source: src,
       target: tgt,
-      dest,
       mode,
       algo,
       counter,
@@ -31,14 +32,30 @@ export function AlignWindow() {
     })) as { pairs?: { source: string; target: string }[] };
     setPairs(Array.isArray(r?.pairs) ? r.pairs : []);
     setSel(0);
+    setMessage("");
   }
   async function edit(action: string) {
     const r = (await window.omegat?.rpc("align.edit", {
       action,
       index: sel,
+      side,
       pairs,
     })) as { pairs?: { source: string; target: string }[] };
-    if (r?.pairs) setPairs(r.pairs);
+    if (r?.pairs) {
+      setPairs(r.pairs);
+      setSel((current) => Math.min(current, Math.max(0, r.pairs!.length - 1)));
+      setMessage("");
+    }
+  }
+  async function write() {
+    const props = useApp.getState().props;
+    const r = (await window.omegat?.rpc("align.write", {
+      dest,
+      pairs,
+      source_lang: props?.source_lang ?? "en",
+      target_lang: props?.target_lang ?? "fr",
+    })) as { count?: number };
+    setMessage(`${r?.count ?? pairs.length} → ${dest}`);
   }
   return (
     <Modal id="align" title={t("aligner")} wide>
@@ -63,13 +80,20 @@ export function AlignWindow() {
           <option value="normal">Normal</option>
           <option value="poisson">Poisson</option>
         </select>
+        <select value={side} onChange={(e) => setSide(e.target.value)} aria-label="alignment side">
+          <option value="both">source + target</option>
+          <option value="source">source</option>
+          <option value="target">target</option>
+        </select>
         <div className="btn-row">
           <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
           <button type="button" onClick={() => void edit("merge")}>{t("alignMerge")}</button>
           <button type="button" onClick={() => void edit("split")}>{t("alignSplit")}</button>
           <button type="button" onClick={() => void edit("up")}>{t("alignUp")}</button>
           <button type="button" onClick={() => void edit("down")}>{t("alignDown")}</button>
+          <button type="button" disabled={!dest || !pairs.length} onClick={() => void write()}>{t("save")}</button>
         </div>
+        {message && <div className="meta">{message}</div>}
         <table className="align-table">
           <thead>
             <tr><th>#</th><th>source</th><th>target</th></tr>

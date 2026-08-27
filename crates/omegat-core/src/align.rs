@@ -196,6 +196,23 @@ pub struct Bead {
     pub target: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignSide {
+    Both,
+    Source,
+    Target,
+}
+
+impl AlignSide {
+    pub fn from_name(value: &str) -> Self {
+        match value {
+            "source" => Self::Source,
+            "target" => Self::Target,
+            _ => Self::Both,
+        }
+    }
+}
+
 pub fn extract_units(path: &Path) -> Result<Vec<AlignUnit>> {
     let reg = FilterRegistry::new();
     let ctx = FilterContext::default();
@@ -275,6 +292,20 @@ pub fn align_units(
 }
 
 pub fn edit_pairs(pairs: &[(String, String)], action: &str, index: usize) -> Vec<(String, String)> {
+    edit_pairs_sided(pairs, action, index, AlignSide::Both)
+}
+
+/// Apply one manual-correction operation to either side of the bitext table.
+///
+/// Java's aligner moves/merges cells in the selected column, so a source-only
+/// operation must not reorder or concatenate the corresponding target cell.
+/// `Both` preserves the old whole-row behavior for existing RPC clients.
+pub fn edit_pairs_sided(
+    pairs: &[(String, String)],
+    action: &str,
+    index: usize,
+    side: AlignSide,
+) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = pairs.to_vec();
     if out.is_empty() {
         return out;
@@ -283,21 +314,77 @@ pub fn edit_pairs(pairs: &[(String, String)], action: &str, index: usize) -> Vec
     match action {
         "merge" if i + 1 < out.len() => {
             let (s2, t2) = out.remove(i + 1);
-            out[i].0 = join_bitext(&out[i].0, &s2);
-            out[i].1 = join_bitext(&out[i].1, &t2);
+            match side {
+                AlignSide::Both => {
+                    out[i].0 = join_bitext(&out[i].0, &s2);
+                    out[i].1 = join_bitext(&out[i].1, &t2);
+                }
+                AlignSide::Source => {
+                    out[i].0 = join_bitext(&out[i].0, &s2);
+                    out.insert(i + 1, (String::new(), t2));
+                }
+                AlignSide::Target => {
+                    out[i].1 = join_bitext(&out[i].1, &t2);
+                    out.insert(i + 1, (s2, String::new()));
+                }
+            }
         }
         "split" => {
             let (s, t) = out[i].clone();
-            let (s1, s2) = split_once(&s);
-            let (t1, t2) = split_once(&t);
-            out[i] = (s1, t1);
-            out.insert(i + 1, (s2, t2));
+            match side {
+                AlignSide::Both => {
+                    let (s1, s2) = split_once(&s);
+                    let (t1, t2) = split_once(&t);
+                    out[i] = (s1, t1);
+                    out.insert(i + 1, (s2, t2));
+                }
+                AlignSide::Source => {
+                    let (s1, s2) = split_once(&s);
+                    if !s2.is_empty() {
+                        out[i].0 = s1;
+                        out.insert(i + 1, (s2, String::new()));
+                    }
+                }
+                AlignSide::Target => {
+                    let (t1, t2) = split_once(&t);
+                    if !t2.is_empty() {
+                        out[i].1 = t1;
+                        out.insert(i + 1, (String::new(), t2));
+                    }
+                }
+            }
         }
-        "up" if i > 0 => out.swap(i - 1, i),
-        "down" if i + 1 < out.len() => out.swap(i, i + 1),
+        "up" if i > 0 => move_side(&mut out, i, i - 1, side),
+        "down" if i + 1 < out.len() => move_side(&mut out, i, i + 1, side),
         _ => {}
     }
     out
+}
+
+fn move_side(pairs: &mut [(String, String)], from: usize, to: usize, side: AlignSide) {
+    match side {
+        AlignSide::Both => pairs.swap(from, to),
+        AlignSide::Source => {
+            let source = pairs[from].0.clone();
+            pairs[from].0 = pairs[to].0.clone();
+            pairs[to].0 = source;
+        }
+        AlignSide::Target => {
+            let target = pairs[from].1.clone();
+            pairs[from].1 = pairs[to].1.clone();
+            pairs[to].1 = target;
+        }
+    }
+}
+
+pub fn write_aligned_pairs(
+    pairs: &[(String, String)],
+    dest: &Path,
+    src_lang: &str,
+    tgt_lang: &str,
+) -> Result<()> {
+    let tmx = pairs_to_tmx(pairs, src_lang, tgt_lang);
+    write_aligned_tmx(&tmx, dest, src_lang, tgt_lang)
 }
 
 pub fn write_aligned_tmx(tmx: &ProjectTmx, dest: &Path, src_lang: &str, tgt_lang: &str) -> Result<()> {
@@ -310,12 +397,28 @@ pub fn write_aligned_tmx(tmx: &ProjectTmx, dest: &Path, src_lang: &str, tgt_lang
 }
 
 pub fn do_align(beads: &[(String, String)], algo: Option<AlignAlgo>) -> Result<Vec<(String, String)>> {
-    if algo.is_none() {
+    let Some(algo) = algo else {
         return Err(crate::error::CoreError::InvalidProject(
             "IllegalStateException: required aligner settings are not set".into(),
         ));
-    }
-    Ok(beads.to_vec())
+    };
+    let source: Vec<String> = beads
+        .iter()
+        .map(|(source, _)| source.clone())
+        .filter(|source| !source.is_empty())
+        .collect();
+    let target: Vec<String> = beads
+        .iter()
+        .map(|(_, target)| target.clone())
+        .filter(|target| !target.is_empty())
+        .collect();
+    let cfg = AlignConfig {
+        mode: AlignMode::Heapwise,
+        algo,
+        segment: false,
+        ..AlignConfig::default()
+    };
+    Ok(hmm_align(&source, &target, &cfg))
 }
 
 fn pairs_to_tmx(pairs: &[(String, String)], src_lang: &str, tgt_lang: &str) -> ProjectTmx {
@@ -812,6 +915,57 @@ mod tests {
         assert_eq!(down[0].0, "b");
         let up = edit_pairs(&pairs, "up", 1);
         assert_eq!(up[0].0, "b");
+    }
+
+    #[test]
+    fn manual_edits_respect_the_selected_bitext_side() {
+        let pairs = vec![
+            ("one".into(), "un".into()),
+            ("two".into(), "deux".into()),
+            ("three four".into(), "trois quatre".into()),
+        ];
+        assert_eq!(
+            edit_pairs_sided(&pairs, "merge", 0, AlignSide::Source),
+            vec![
+                ("one two".into(), "un".into()),
+                (String::new(), "deux".into()),
+                ("three four".into(), "trois quatre".into()),
+            ]
+        );
+        assert_eq!(
+            edit_pairs_sided(&pairs, "down", 0, AlignSide::Target),
+            vec![
+                ("one".into(), "deux".into()),
+                ("two".into(), "un".into()),
+                ("three four".into(), "trois quatre".into()),
+            ]
+        );
+        assert_eq!(
+            edit_pairs_sided(&pairs, "split", 2, AlignSide::Source),
+            vec![
+                ("one".into(), "un".into()),
+                ("two".into(), "deux".into()),
+                ("three".into(), "trois quatre".into()),
+                ("four".into(), String::new()),
+            ]
+        );
+    }
+
+    #[test]
+    fn manual_pair_writeback_uses_the_product_tmx_writer() {
+        let pairs = vec![
+            ("Hello".into(), "Bonjour".into()),
+            ("Bye".into(), "Au revoir".into()),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("manual.tmx");
+        write_aligned_pairs(&pairs, &dest, "en", "fr").unwrap();
+        let parsed = crate::tmx::parse_tmx(
+            &std::fs::read_to_string(dest).unwrap(),
+            "en",
+            "fr",
+        );
+        assert_eq!(pairs_from_tmx(&parsed), pairs);
     }
 
     #[test]
