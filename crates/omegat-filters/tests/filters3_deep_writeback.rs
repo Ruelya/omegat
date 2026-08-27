@@ -867,7 +867,7 @@ fn xliff_double_nested_sub_and_content_tags_write_back_in_depth_first_id_order()
             .collect::<Vec<_>>(),
         vec![
             ("nested#0", "Nested <b0/> text"),
-            ("nested#1", "Outer <b0>bold</b0> <s0/> tail"),
+            ("nested#1", "Outer <b0>bold</b0> <s2/> tail"),
             ("nested#2", "Before <s0/> after"),
         ]
     );
@@ -880,7 +880,7 @@ fn xliff_double_nested_sub_and_content_tags_write_back_in_depth_first_id_order()
         ),
         (
             "nested#1".into(),
-            "Extérieur <b0>gras</b0> <s0/> fin".into(),
+            "Extérieur <b0>gras</b0> <s2/> fin".into(),
         ),
     ]);
     filter
@@ -895,7 +895,7 @@ fn xliff_double_nested_sub_and_content_tags_write_back_in_depth_first_id_order()
             .collect::<Vec<_>>(),
         vec![
             ("nested#0", "Imbriqué <b0/> texte"),
-            ("nested#1", "Extérieur <b0>gras</b0> <s0/> fin"),
+            ("nested#1", "Extérieur <b0>gras</b0> <s2/> fin"),
             ("nested#2", "Avant <s0/> après"),
         ]
     );
