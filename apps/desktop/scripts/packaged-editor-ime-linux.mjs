@@ -272,21 +272,25 @@ try {
   const targetInfo = await waitFor("packaged renderer", () => pageTarget(port));
   client = new DevToolsClient(targetInfo.webSocketDebuggerUrl);
   await client.connect();
-  await waitFor("active editor product surface", async () => {
+  const readyEditor = await waitFor("active editor product surface", async () => {
     const ready = await client.evaluate(`(() => {
       document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
       return {
         preload: typeof window.omegat?.rpc,
         source: document.querySelector(".editor-segment.is-active .src")?.textContent,
         surface: Boolean(document.querySelector(".editor-surface")),
+        error: [...document.querySelectorAll(".status")].at(-1)?.textContent ?? null,
+        body: document.body.innerText.slice(0, 500),
       };
     })()`);
-    return ready.preload === "function" &&
-      ready.source === "Editor input selection source." &&
-      ready.surface
-      ? ready
-      : undefined;
+    if (ready.error) throw new Error(JSON.stringify(ready));
+    return ready.preload === "function" && ready.surface ? ready : undefined;
   });
+  assert.equal(
+    readyEditor.source,
+    "Editor input selection source.",
+    JSON.stringify(readyEditor),
+  );
 
   const windowId = (
     await waitFor("OmegaT X11 window", async () => {
