@@ -1626,7 +1626,19 @@ export function connectExternalProjectEvents(): () => void {
     coalesced: boolean;
   }> = [];
   let draining = false;
-  let blocked = false;
+  let blocked: "operation" | "retry" | null = null;
+  let operationResumeTimer: ReturnType<typeof setTimeout> | null = null;
+  const operationIsActive = () => {
+    const operation = useApp.getState().longOperation;
+    return Boolean(
+      operation
+      && (
+        operation.phase === "started"
+        || operation.phase === "progress"
+        || operation.phase === "cancelling"
+      ),
+    );
+  };
 
   const drain = async () => {
     if (draining || blocked) return;
@@ -1641,6 +1653,14 @@ export function connectExternalProjectEvents(): () => void {
         ) {
           pending.shift();
           continue;
+        }
+        if (operationIsActive()) {
+          // Filesystem refreshes never preempt a user-visible long operation.
+          // In particular, a delayed watcher event must not cancel an active
+          // team.resolve transaction through runLongOperation's replacement
+          // semantics.
+          blocked = "operation";
+          return;
         }
         try {
           const refreshed = batch.coalesced
@@ -1663,7 +1683,7 @@ export function connectExternalProjectEvents(): () => void {
                 ? "cancelled"
                 : null;
           if (!outcome) {
-            blocked = true;
+            blocked = "retry";
             return;
           }
           await window.omegat?.completeExternalRefresh?.(
@@ -1694,7 +1714,7 @@ export function connectExternalProjectEvents(): () => void {
           }
           // Keep the durable FIFO head in place. A sidecar restart republishes
           // the same batch id and explicitly unblocks this drain.
-          blocked = true;
+          blocked = "retry";
           return;
         }
       }
@@ -1704,7 +1724,23 @@ export function connectExternalProjectEvents(): () => void {
     }
   };
 
-  return window.omegat?.onProjectExternalChange?.(({
+  const unsubscribeOperation = useApp.subscribe(() => {
+    if (
+      blocked !== "operation"
+      || pending.length === 0
+      || operationIsActive()
+      || operationResumeTimer
+    ) return;
+    // Give the acknowledged operation's own promise/catch and React terminal
+    // render one turn before publishing the next fingerprint transaction.
+    operationResumeTimer = setTimeout(() => {
+      operationResumeTimer = null;
+      if (blocked !== "operation" || operationIsActive()) return;
+      blocked = null;
+      void drain();
+    }, 0);
+  });
+  const unsubscribeExternal = window.omegat?.onProjectExternalChange?.(({
     id,
     root,
     paths,
@@ -1718,7 +1754,7 @@ export function connectExternalProjectEvents(): () => void {
       || state.projectEvent.projectGeneration !== generation
     ) return;
     if (pending.some((batch) => batch.id === id)) {
-      blocked = false;
+      blocked = null;
       void drain();
       return;
     }
@@ -1771,6 +1807,11 @@ export function connectExternalProjectEvents(): () => void {
     }
     void drain();
   }) ?? (() => undefined);
+  return () => {
+    unsubscribeExternal();
+    unsubscribeOperation();
+    if (operationResumeTimer) clearTimeout(operationResumeTimer);
+  };
 }
 
 export function resetAppState() {

@@ -1515,6 +1515,76 @@ describe("app store", () => {
     });
   });
 
+  it("waits for an active long operation before draining fingerprint recovery", async () => {
+    const root = "/active-operation-root";
+    const complete = vi.fn(async () => ({ remaining: [] }));
+    const refresh = vi.fn(async () => true);
+    let notify: ((event: {
+      id: string;
+      root: string;
+      paths: string[];
+      fingerprints: Record<string, string | null>;
+      generation: number;
+      sources: Array<"native" | "sidecar">;
+    }) => void) | undefined;
+    window.omegat!.completeExternalRefresh = complete;
+    window.omegat!.onProjectExternalChange = (listener) => {
+      notify = listener;
+      return () => {
+        notify = undefined;
+      };
+    };
+    projectEvents.publishProject("load", root);
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        has_repositories: true,
+      },
+      refreshEntriesAfterExternalChange: refresh,
+      longOperation: {
+        requestId: "operation-teamResolve-active",
+        kind: "teamResolve",
+        method: "team.resolve",
+        phase: "progress",
+        stage: "team.resolve.snapshot",
+        error: null,
+      },
+    });
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const disconnect = connectExternalProjectEvents();
+
+    notify?.({
+      id: "wait-for-team-resolve",
+      root,
+      paths: [`${root}/source/new.txt`],
+      fingerprints: { [`${root}/source/new.txt`]: "new" },
+      generation,
+      sources: ["native"],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refresh).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+
+    useApp.setState((state) => ({
+      longOperation: state.longOperation
+        ? { ...state.longOperation, phase: "succeeded" }
+        : null,
+    }));
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(complete).toHaveBeenCalledWith(
+        root,
+        generation,
+        "wait-for-team-resolve",
+        "succeeded",
+      )
+    );
+    disconnect();
+  });
+
   it("serializes distinct watcher fingerprints across cancellation and rejects queued stale generations", async () => {
     const root = "/same-root";
     let finishFirst!: (value: boolean) => void;
