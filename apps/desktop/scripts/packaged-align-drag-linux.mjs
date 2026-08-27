@@ -327,6 +327,7 @@ try {
       // the complete inner row viewport before mapping DOM points to XTEST;
       // otherwise its lower edge can exist below the physical Xvfb screen.
       viewport.scrollIntoView({ block: "end" });
+      viewport.scrollTop = 0;
       const start = first.getBoundingClientRect();
       const edge = viewport.getBoundingClientRect();
       if (edge.top < 0 || edge.bottom > window.innerHeight) return null;
