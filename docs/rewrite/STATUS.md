@@ -48,7 +48,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - Java GUI: **297** files / **61510** lines vs desktop source **11982**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **4767**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
-- Unique `java_test` goldens that match those methods: **818** (includes
+- Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
 - **In-scope missing goldens: 0.** Remaining **22** `missing` rows are
   the Java-runtime-only `EXCLUDED_TESTS` (JAR/LT smoke, plugin metadata,

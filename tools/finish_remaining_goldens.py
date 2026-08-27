@@ -146,14 +146,6 @@ def main() -> None:
             "accepted_encodings": ["US-ASCII", "WINDOWS-1252"],
         },
     )
-    dump(
-        "fixtures/goldens/align/BundleTest#testDetectRTLO.json",
-        {
-            "java_test": "org.omegat.tools.ExportGoldens#testDetectRTLO",
-            "rtlo": "\u202e",
-            "forbidden_in_bundles": True,
-        },
-    )
     print("wrote remaining goldens")
 
 
