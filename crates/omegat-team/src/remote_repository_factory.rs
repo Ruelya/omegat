@@ -48,3 +48,35 @@ pub fn prepare(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
 pub fn commit(props: &ProjectProperties, repo: &RepositoryDef) -> Result<()> {
     create(&repo.repo_type)?.commit(props, repo)
 }
+
+pub fn file_version(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    file: &str,
+) -> Result<Option<String>> {
+    create(&repo.repo_type)?.file_version(props, repo, file)
+}
+
+pub fn switch_to_version(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    version: Option<&str>,
+) -> Result<()> {
+    create(&repo.repo_type)?.switch_to_version(props, repo, version)
+}
+
+pub fn recently_deleted_files(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+) -> Result<Vec<String>> {
+    create(&repo.repo_type)?.recently_deleted_files(props, repo)
+}
+
+pub fn commit_after_versions(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    on_versions: &[Option<String>],
+    comment: &str,
+) -> Result<Option<String>> {
+    create(&repo.repo_type)?.commit_after_versions(props, repo, on_versions, comment)
+}

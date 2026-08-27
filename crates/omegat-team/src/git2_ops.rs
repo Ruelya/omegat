@@ -6,8 +6,9 @@
 use crate::error::{Result, TeamError};
 use crate::user_pass_dialog::UserPass;
 use git2::{
-    build::RepoBuilder, Cred, CredentialType, FetchOptions, IndexAddOption, PushOptions,
-    RemoteCallbacks, Repository, ResetType, Signature,
+    build::{CheckoutBuilder, RepoBuilder},
+    Cred, CredentialType, Delta, DiffOptions, FetchOptions, IndexAddOption, PushOptions,
+    RemoteCallbacks, Repository, ResetType, Signature, SubmoduleUpdateOptions,
 };
 use std::path::Path;
 
@@ -61,7 +62,7 @@ pub fn clone(url: &str, dest: &Path, branch: Option<&str>, user: &UserPass) -> R
         std::fs::create_dir_all(parent)?;
     }
     if dest.exists() {
-        let _ = std::fs::remove_dir_all(dest);
+        std::fs::remove_dir_all(dest)?;
     }
     let mut builder = RepoBuilder::new();
     builder.fetch_options(fetch_opts(user));
@@ -82,6 +83,21 @@ pub fn reset_hard(dir: &Path, spec: &str) -> Result<()> {
     let repo = open(dir)?;
     let obj = repo.revparse_single(spec).map_err(map_err)?;
     repo.reset(&obj, ResetType::Hard, None).map_err(map_err)
+}
+
+pub fn checkout_version(dir: &Path, spec: &str, local_branch: &str) -> Result<String> {
+    let repo = open(dir)?;
+    let commit = repo
+        .revparse_single(spec)
+        .and_then(|object| object.peel_to_commit())
+        .map_err(map_err)?;
+    repo.branch(local_branch, &commit, true).map_err(map_err)?;
+    repo.set_head(&format!("refs/heads/{local_branch}"))
+        .map_err(map_err)?;
+    let mut checkout = CheckoutBuilder::new();
+    checkout.force().remove_untracked(true);
+    repo.checkout_head(Some(&mut checkout)).map_err(map_err)?;
+    Ok(commit.id().to_string())
 }
 
 pub fn has_ref(dir: &Path, spec: &str) -> bool {
@@ -108,6 +124,70 @@ pub fn current_version(dir: &Path) -> Result<String> {
         .and_then(|head| head.peel_to_commit())
         .map_err(map_err)?;
     Ok(commit.id().to_string())
+}
+
+pub fn file_version(dir: &Path, file: &str) -> Result<Option<String>> {
+    if !dir.join(file).exists() {
+        return Ok(None);
+    }
+    current_version(dir).map(Some)
+}
+
+/// Return paths deleted between a previously observed HEAD and the current
+/// index/worktree. Diffing endpoints means delete-then-readd is not reported,
+/// matching Java `GITRemoteRepository2.getRecentlyDeletedFiles`.
+pub fn recently_deleted_since(dir: &Path, previous: Option<&str>) -> Result<(String, Vec<String>)> {
+    let repo = open(dir)?;
+    let head = repo
+        .head()
+        .and_then(|reference| reference.peel_to_commit())
+        .map_err(map_err)?;
+    let current = head.id().to_string();
+    let Some(previous) = previous else {
+        return Ok((current, Vec::new()));
+    };
+    let old = repo
+        .find_commit(git2::Oid::from_str(previous).map_err(map_err)?)
+        .map_err(map_err)?;
+    let old_tree = old.tree().map_err(map_err)?;
+    let mut options = DiffOptions::new();
+    options
+        .include_untracked(false)
+        .recurse_untracked_dirs(false);
+    let diff = repo
+        .diff_tree_to_workdir_with_index(Some(&old_tree), Some(&mut options))
+        .map_err(map_err)?;
+    let mut deleted: Vec<String> = diff
+        .deltas()
+        .filter(|delta| delta.status() == Delta::Deleted)
+        .filter_map(|delta| delta.old_file().path())
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    deleted.sort();
+    deleted.dedup();
+    Ok((current, deleted))
+}
+
+/// Initialize and update every configured submodule at the gitlink recorded by
+/// the superproject. This is part of prepare, not a best-effort side action.
+pub fn update_submodules(dir: &Path, user: &UserPass) -> Result<Vec<String>> {
+    let repo = open(dir)?;
+    let mut updated = Vec::new();
+    for mut submodule in repo.submodules().map_err(map_err)? {
+        let name = submodule.name().unwrap_or_default().to_string();
+        let mut options = SubmoduleUpdateOptions::new();
+        options.fetch(fetch_opts(user)).checkout({
+            let mut checkout = CheckoutBuilder::new();
+            checkout.force();
+            checkout
+        });
+        submodule
+            .update(true, Some(&mut options))
+            .map_err(map_err)?;
+        updated.push(name);
+    }
+    updated.sort();
+    Ok(updated)
 }
 
 pub fn add_all(dir: &Path) -> Result<()> {
@@ -235,6 +315,9 @@ mod tests {
         .unwrap();
         assert_eq!(current_branch(&clone_dir).unwrap(), "main");
         assert_eq!(current_version(&clone_dir).unwrap(), first);
+        let (observed, initially_deleted) = recently_deleted_since(&clone_dir, None).unwrap();
+        assert_eq!(observed, first);
+        assert_eq!(initially_deleted, Vec::<String>::new());
 
         std::fs::remove_file(clone_dir.join("tracked.txt")).unwrap();
         let deleted = commit_if_changed(
@@ -250,6 +333,11 @@ mod tests {
         assert!(tree.get_name("tracked.txt").is_none());
         drop(tree);
         drop(cloned);
+        let (checked, deleted_paths) = recently_deleted_since(&clone_dir, Some(&observed)).unwrap();
+        assert_eq!(checked, deleted);
+        assert_eq!(deleted_paths, vec!["tracked.txt"]);
+        let (_, no_repeat) = recently_deleted_since(&clone_dir, Some(&checked)).unwrap();
+        assert_eq!(no_repeat, Vec::<String>::new());
 
         std::fs::write(clone_dir.join("new.txt"), "two").unwrap();
         let err = commit_if_changed(
@@ -260,5 +348,87 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, TeamError::Conflict(_)));
         assert_eq!(current_version(&clone_dir).unwrap(), deleted);
+
+        checkout_version(&clone_dir, &first, "main").unwrap();
+        assert_eq!(current_version(&clone_dir).unwrap(), first);
+        assert_eq!(
+            std::fs::read_to_string(clone_dir.join("tracked.txt")).unwrap(),
+            "one"
+        );
+        assert!(!clone_dir.join("new.txt").exists());
+    }
+
+    #[test]
+    fn update_submodules_checks_out_recorded_gitlink_with_git2() {
+        let temp = tempfile::tempdir().unwrap();
+        let child_seed = temp.path().join("child-seed");
+        let child_remote = temp.path().join("child.git");
+        let parent_seed = temp.path().join("parent-seed");
+        let parent_remote = temp.path().join("parent.git");
+        let clone_dir = temp.path().join("clone");
+
+        let child = init(&child_seed).unwrap();
+        child.set_head("refs/heads/main").unwrap();
+        std::fs::write(child_seed.join("words.txt"), "one\ntwo\n").unwrap();
+        commit(&child_seed, "child").unwrap();
+        let bare_child = Repository::init_bare(&child_remote).unwrap();
+        bare_child.set_head("refs/heads/main").unwrap();
+        drop(bare_child);
+        child
+            .remote("origin", child_remote.to_str().unwrap())
+            .unwrap();
+        push(
+            &child_seed,
+            "origin",
+            "refs/heads/main:refs/heads/main",
+            &anonymous(),
+        )
+        .unwrap();
+
+        let parent = init(&parent_seed).unwrap();
+        parent.set_head("refs/heads/main").unwrap();
+        std::fs::write(parent_seed.join("README"), "parent").unwrap();
+        commit(&parent_seed, "parent").unwrap();
+        let mut submodule = parent
+            .submodule(
+                child_remote.to_str().unwrap(),
+                Path::new("vendor/lexicon"),
+                true,
+            )
+            .unwrap();
+        submodule.clone(None).unwrap();
+        submodule.add_finalize().unwrap();
+        drop(submodule);
+        commit(&parent_seed, "add submodule").unwrap();
+
+        let bare_parent = Repository::init_bare(&parent_remote).unwrap();
+        bare_parent.set_head("refs/heads/main").unwrap();
+        drop(bare_parent);
+        parent
+            .remote("origin", parent_remote.to_str().unwrap())
+            .unwrap();
+        push(
+            &parent_seed,
+            "origin",
+            "refs/heads/main:refs/heads/main",
+            &anonymous(),
+        )
+        .unwrap();
+
+        clone(
+            parent_remote.to_str().unwrap(),
+            &clone_dir,
+            Some("main"),
+            &anonymous(),
+        )
+        .unwrap();
+        assert_eq!(
+            update_submodules(&clone_dir, &anonymous()).unwrap(),
+            vec!["vendor/lexicon"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(clone_dir.join("vendor/lexicon/words.txt")).unwrap(),
+            "one\ntwo\n"
+        );
     }
 }

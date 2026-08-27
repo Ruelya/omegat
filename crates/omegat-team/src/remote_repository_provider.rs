@@ -1,13 +1,13 @@
 //! Java `RemoteRepositoryProvider`.
 
 use crate::error::{Result, TeamError};
-use crate::mapping::{copy_mapped, CopyDir};
+use crate::mapping::{copy_mapped, effective_mappings, propagate_deleted, CopyDir};
 use crate::project_team_settings::prep_dir;
 use crate::rebase_and_commit::rebase_all;
 use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
-use crate::{SyncReport, team_enabled};
+use crate::{team_enabled, SyncReport};
 use omegat_core::properties::ProjectProperties;
 
 pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
@@ -31,7 +31,14 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
     std::fs::create_dir_all(prep_dir(props))?;
     for repo in &props.repositories {
         remote_repository_factory::prepare(props, repo)?;
+        let version_path = effective_mappings(repo)
+            .first()
+            .map(|mapping| mapping.repository.trim_matches(['/', '\\']))
+            .unwrap_or("");
+        let observed = remote_repository_factory::file_version(props, repo, version_path)?;
         copy_mapped(props, repo, CopyDir::RepoToProject)?;
+        let deleted = remote_repository_factory::recently_deleted_files(props, repo)?;
+        propagate_deleted(props, repo, &deleted)?;
         let conflicts = rebase_all(props)?;
         if !conflicts.is_empty() {
             save_conflicts(props, &conflicts)?;
@@ -44,7 +51,12 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             ));
         }
         copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
-        remote_repository_factory::commit(props, repo)?;
+        remote_repository_factory::commit_after_versions(
+            props,
+            repo,
+            &[observed],
+            "OmegaT team sync",
+        )?;
         save_bases(props)?;
         clear_resolved(props);
         report
@@ -77,12 +89,55 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
         remote_repository_factory::commit(props, repo)?;
     }
     if props.repositories.is_empty() && props.root.join(".git").exists() {
-        let _ = crate::git2_ops::add_all(&props.root);
-        let _ = crate::git_remote_repository2::commit(&props.root, &format!("OmegaT commit {label} files"));
+        crate::git2_ops::add_all(&props.root)?;
+        crate::git_remote_repository2::commit(
+            &props.root,
+            &format!("OmegaT commit {label} files"),
+        )?;
     }
     Ok(SyncReport {
         action: format!("commit-{label}"),
         message: format!("committed {label} under {}", dir.display()),
         conflicts: vec![],
     })
+}
+
+pub fn get_version(
+    props: &ProjectProperties,
+    repository_index: usize,
+    file: &str,
+) -> Result<Option<String>> {
+    let repo = props.repositories.get(repository_index).ok_or_else(|| {
+        TeamError::Command(format!(
+            "repository index {repository_index} is out of range"
+        ))
+    })?;
+    remote_repository_factory::file_version(props, repo, file)
+}
+
+pub fn switch_to_version(
+    props: &ProjectProperties,
+    repository_index: usize,
+    version: Option<&str>,
+) -> Result<()> {
+    let repo = props.repositories.get(repository_index).ok_or_else(|| {
+        TeamError::Command(format!(
+            "repository index {repository_index} is out of range"
+        ))
+    })?;
+    remote_repository_factory::switch_to_version(props, repo, version)
+}
+
+pub fn commit_after_version(
+    props: &ProjectProperties,
+    repository_index: usize,
+    versions: &[Option<String>],
+    comment: &str,
+) -> Result<Option<String>> {
+    let repo = props.repositories.get(repository_index).ok_or_else(|| {
+        TeamError::Command(format!(
+            "repository index {repository_index} is out of range"
+        ))
+    })?;
+    remote_repository_factory::commit_after_versions(props, repo, versions, comment)
 }

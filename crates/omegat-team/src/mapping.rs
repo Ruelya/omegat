@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::project_team_settings::repo_work_dir;
 use crate::team_utils::{join_mapped, join_rel, rel_unix, strip_slash};
 use omegat_core::properties::{ProjectProperties, RepositoryDef, RepositoryMapping};
+use std::path::{Component, Path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyDir {
@@ -177,4 +178,59 @@ pub fn copy_mapped_from_worktree(
         }
     }
     Ok(copied)
+}
+
+/// Propagate repository deletions through the same mapping/include/exclude
+/// rules used for copies. Returned paths are project-relative and observable by
+/// the provider, as in Java `Mapping.propagateDeletes`.
+pub fn propagate_deleted(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    deleted: &[String],
+) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for mapping in effective_mappings(repo) {
+        let repository_root = strip_slash(&mapping.repository);
+        let local_root = join_mapped(&props.root, &mapping.local);
+        for remote in deleted {
+            let remote = strip_slash(remote);
+            let relative = if repository_root.is_empty() {
+                remote
+            } else if remote == repository_root {
+                ""
+            } else if let Some(relative) = remote.strip_prefix(&format!("{repository_root}/")) {
+                relative
+            } else {
+                continue;
+            };
+            if !safe_relative(relative)
+                || !mapping_allows(relative, &mapping)
+                || skip_copy(props, remote, CopyDir::RepoToProject)
+            {
+                continue;
+            }
+            let target = if relative.is_empty() {
+                local_root.clone()
+            } else {
+                local_root.join(relative)
+            };
+            if target.is_file() || target.is_symlink() {
+                std::fs::remove_file(&target)?;
+            } else if target.is_dir() {
+                std::fs::remove_dir_all(&target)?;
+            } else {
+                continue;
+            }
+            removed.push(rel_unix(&target, &props.root));
+        }
+    }
+    removed.sort();
+    removed.dedup();
+    Ok(removed)
+}
+
+fn safe_relative(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }

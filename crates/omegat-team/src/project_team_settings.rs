@@ -2,6 +2,8 @@
 
 use crate::team_utils::sanitize_url;
 use omegat_core::properties::{ProjectProperties, RepositoryDef};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub const REPO_SUBDIR: &str = ".repositories";
@@ -44,4 +46,62 @@ pub fn base_glossary_path(props: &ProjectProperties) -> PathBuf {
 
 pub fn credentials_path(props: &ProjectProperties) -> PathBuf {
     prep_dir(props).join("credentials.json")
+}
+
+fn repository_state_path(props: &ProjectProperties) -> PathBuf {
+    prep_dir(props).join("repository-state.json")
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct RepositoryState {
+    last_delete_check: HashMap<String, String>,
+}
+
+fn state_key(props: &ProjectProperties, repo: &RepositoryDef) -> String {
+    if is_inplace(props, repo) {
+        "inplace".into()
+    } else {
+        sanitize_url(&repo.url)
+    }
+}
+
+pub fn last_delete_check(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+) -> crate::Result<Option<String>> {
+    let path = repository_state_path(props);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let state: RepositoryState = serde_json::from_str(&std::fs::read_to_string(path)?)
+        .map_err(|error| crate::error::TeamError::Command(format!("repository state: {error}")))?;
+    Ok(state
+        .last_delete_check
+        .get(&state_key(props, repo))
+        .cloned())
+}
+
+pub fn set_last_delete_check(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    version: &str,
+) -> crate::Result<()> {
+    let path = repository_state_path(props);
+    let mut state = if path.is_file() {
+        serde_json::from_str(&std::fs::read_to_string(&path)?).map_err(|error| {
+            crate::error::TeamError::Command(format!("repository state: {error}"))
+        })?
+    } else {
+        RepositoryState::default()
+    };
+    state
+        .last_delete_check
+        .insert(state_key(props, repo), version.to_string());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(&state)
+        .map_err(|error| crate::error::TeamError::Command(format!("repository state: {error}")))?;
+    std::fs::write(path, json)?;
+    Ok(())
 }

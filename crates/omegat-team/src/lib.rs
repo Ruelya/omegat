@@ -33,20 +33,22 @@ mod user_pass_dialog;
 
 pub use error::{Conflict, SyncReport, TeamError};
 pub use mapping::{
-    copy_mapped, copy_mapped_from_worktree, default_mapping, glob_match, CopyDir,
+    copy_mapped, copy_mapped_from_worktree, default_mapping, glob_match, propagate_deleted, CopyDir,
 };
 pub use passphrase_dialog::Passphrase;
 pub use prepared_file_info::PreparedFileInfo;
 pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
 pub use rebase_and_commit::{rebase_all, rebase_project, resolve};
 pub use remote_repository_factory::detect_repository_type;
-pub use remote_repository_provider::{commit_project_files, sync};
-pub use team_utils::{
-    relative_remote_to_absolute_local, with_leading_slash, with_slashes, without_slashes,
+pub use remote_repository_provider::{
+    commit_after_version, commit_project_files, get_version, switch_to_version, sync,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
 pub use team_tool::init;
+pub use team_utils::{
+    relative_remote_to_absolute_local, with_leading_slash, with_slashes, without_slashes,
+};
 pub use tmx_rebase::rebase_tmx;
 pub use user_pass_dialog::UserPass;
 
@@ -130,8 +132,14 @@ mod tests {
 
     #[test]
     fn factory_detects_url_prefixes() {
-        assert_eq!(detect_repository_type("svn://example.com/repo"), Some("svn"));
-        assert_eq!(detect_repository_type("git://example.com/repo"), Some("git"));
+        assert_eq!(
+            detect_repository_type("svn://example.com/repo"),
+            Some("svn")
+        );
+        assert_eq!(
+            detect_repository_type("git://example.com/repo"),
+            Some("git")
+        );
         assert_eq!(
             detect_repository_type("https://git.example.com/repo"),
             Some("git")
@@ -380,6 +388,8 @@ mod tests {
         write_tmx(&seed.join("omegat").join("project_save.tmx"), &[]);
         std::fs::create_dir_all(seed.join("glossary")).unwrap();
         std::fs::write(seed.join("glossary").join("glossary.txt"), "").unwrap();
+        std::fs::create_dir_all(seed.join("source")).unwrap();
+        std::fs::write(seed.join("source").join("remote.txt"), "remote").unwrap();
         assert!(Command::new("git")
             .args(["init"])
             .current_dir(seed)
@@ -390,7 +400,10 @@ mod tests {
             .args(["checkout", "-B", "main"])
             .current_dir(seed)
             .status();
-        let _ = Command::new("git").args(["add", "-A"]).current_dir(seed).status();
+        let _ = Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(seed)
+            .status();
         crate::git_remote_repository2::commit(seed, "seed").unwrap();
         assert!(Command::new("git")
             .args(["remote", "add", "origin", &bare.to_string_lossy()])
@@ -416,22 +429,12 @@ mod tests {
         seed_bare(&bare, &dir.path().join("seed"));
         let a = dir.path().join("a");
         let b = dir.path().join("b");
-        let props_a = team_props(
-            a,
-            "git",
-            &bare.to_string_lossy(),
-            vec![default_mapping()],
-        );
+        let props_a = team_props(a, "git", &bare.to_string_lossy(), vec![default_mapping()]);
         write_tmx(&props_a.save_tmx_path(), &[("Hi", "Salut")]);
         let r = sync(&props_a).unwrap();
         assert_eq!(r.action, "sync");
 
-        let props_b = team_props(
-            b,
-            "git",
-            &bare.to_string_lossy(),
-            vec![default_mapping()],
-        );
+        let props_b = team_props(b, "git", &bare.to_string_lossy(), vec![default_mapping()]);
         write_tmx(&props_b.save_tmx_path(), &[("Bye", "Au revoir")]);
         sync(&props_b).unwrap();
         let tmx_b = parse_tmx(
@@ -489,6 +492,93 @@ mod tests {
         );
         assert_eq!(tmx.get("Hi").unwrap().translation, "Salut");
         sync(&props_b).unwrap();
+    }
+
+    #[test]
+    fn git_provider_versions_guard_commit_and_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("remote.git");
+        seed_bare(&bare, &dir.path().join("seed"));
+        let props = team_props(
+            dir.path().join("client"),
+            "git",
+            &bare.to_string_lossy(),
+            vec![default_mapping()],
+        );
+        crate::remote_repository_factory::prepare(&props, &props.repositories[0]).unwrap();
+        let observed = get_version(&props, 0, "source/remote.txt")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(
+                crate::project_team_settings::repo_work_dir(&props, &props.repositories[0])
+                    .join("source/remote.txt")
+            )
+            .unwrap(),
+            "remote"
+        );
+
+        std::fs::write(props.root.join("source/remote.txt"), "local").unwrap();
+        copy_mapped(&props, &props.repositories[0], CopyDir::ProjectToRepo).unwrap();
+        let committed =
+            commit_after_version(&props, 0, &[Some(observed.clone())], "guarded update")
+                .unwrap()
+                .unwrap();
+        assert_ne!(committed, observed);
+
+        std::fs::write(props.root.join("source/remote.txt"), "stale").unwrap();
+        copy_mapped(&props, &props.repositories[0], CopyDir::ProjectToRepo).unwrap();
+        let error =
+            commit_after_version(&props, 0, &[Some(observed.clone())], "stale update").unwrap_err();
+        assert!(matches!(error, TeamError::Conflict(_)));
+
+        switch_to_version(&props, 0, Some(&observed)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(
+                crate::project_team_settings::repo_work_dir(&props, &props.repositories[0])
+                    .join("source/remote.txt")
+            )
+            .unwrap(),
+            "remote"
+        );
+    }
+
+    #[test]
+    fn git_sync_propagates_only_new_remote_deletions() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("remote.git");
+        let seed = dir.path().join("seed");
+        seed_bare(&bare, &seed);
+        let props = team_props(
+            dir.path().join("client"),
+            "git",
+            &bare.to_string_lossy(),
+            vec![default_mapping()],
+        );
+        write_tmx(&props.save_tmx_path(), &[]);
+        sync(&props).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("remote.txt")).unwrap(),
+            "remote"
+        );
+
+        std::fs::remove_file(seed.join("source/remote.txt")).unwrap();
+        crate::git_remote_repository2::commit(&seed, "delete remote").unwrap();
+        crate::git2_ops::push(
+            &seed,
+            "origin",
+            "refs/heads/main:refs/heads/main",
+            &crate::user_pass_dialog::UserPass::new("", ""),
+        )
+        .unwrap();
+
+        sync(&props).unwrap();
+        assert!(!props.source_dir.join("remote.txt").exists());
+        assert_eq!(
+            crate::git_remote_repository2::recently_deleted_files(&props, &props.repositories[0])
+                .unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -561,7 +651,8 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/goldens/remaining")
             .join(name);
-        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             v["exported_by"].as_str(),
             Some("org.omegat.tools.ExportGoldens")
@@ -592,14 +683,20 @@ mod tests {
                 pair[1].as_str().unwrap()
             );
         }
-        let rel = remaining_golden("RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json");
+        let rel = remaining_golden(
+            "RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json",
+        );
         let base = std::env::temp_dir();
         let got = relative_remote_to_absolute_local("file.txt", &base, "/", "/");
         assert_eq!(
-            got.strip_prefix(&base).unwrap().to_string_lossy().replace('\\', "/"),
+            got.strip_prefix(&base)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/"),
             rel["file"].as_str().unwrap()
         );
-        let mapped = relative_remote_to_absolute_local("somedir/file.txt", &base, "somedir", "source");
+        let mapped =
+            relative_remote_to_absolute_local("somedir/file.txt", &base, "somedir", "source");
         assert_eq!(
             mapped
                 .strip_prefix(&base)
@@ -612,14 +709,19 @@ mod tests {
 
     #[test]
     fn http_retrieve_file_url_matches_java() {
-        let g = remaining_golden("HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json");
+        let g =
+            remaining_golden("HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json");
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("remote.txt");
         std::fs::write(&src, g["body"].as_str().unwrap()).unwrap();
         let dest = dir.path().join("out.txt");
-        crate::http_remote_repository::download(&format!("file://{}", src.display()), &dest).unwrap();
+        crate::http_remote_repository::download(&format!("file://{}", src.display()), &dest)
+            .unwrap();
         assert_eq!(dest.exists(), g["exists"].as_bool().unwrap());
-        assert_eq!(std::fs::read_to_string(&dest).unwrap(), g["body"].as_str().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(&dest).unwrap(),
+            g["body"].as_str().unwrap()
+        );
     }
 
     #[test]
@@ -627,20 +729,26 @@ mod tests {
         let throws = remaining_golden(
             "HTTPRemoteRepositoryTest-testSwitchToVersionThrowsExceptionWhenVersionIsNotNull.json",
         );
-        let err = crate::http_remote_repository::switch_to_version(throws["version"].as_str()).unwrap_err();
+        let err = crate::http_remote_repository::switch_to_version(throws["version"].as_str())
+            .unwrap_err();
         assert_eq!(throws["throws"].as_bool().unwrap(), true);
         let TeamError::Command(message) = err else {
             panic!("expected command error");
         };
         assert_eq!(message, throws["message"].as_str().unwrap());
-        let ok = remaining_golden("HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json");
+        let ok =
+            remaining_golden("HTTPRemoteRepositoryTest-testSwitchToVersionUpdatesToLatest.json");
         assert_eq!(
             crate::http_remote_repository::switch_to_version(ok["version"].as_str()).is_ok(),
             ok["ok"].as_bool().unwrap()
         );
-        let nm = remaining_golden("HTTPRemoteRepositoryTest-testRetrieveHandlesNotModifiedResponse.json");
+        let nm = remaining_golden(
+            "HTTPRemoteRepositoryTest-testRetrieveHandlesNotModifiedResponse.json",
+        );
         assert_eq!(
-            crate::http_remote_repository::retrieve_skips_write(nm["status"].as_u64().unwrap() as u16),
+            crate::http_remote_repository::retrieve_skips_write(
+                nm["status"].as_u64().unwrap() as u16
+            ),
             nm["skip_write"].as_bool().unwrap()
         );
         let dir = tempfile::tempdir().unwrap();
