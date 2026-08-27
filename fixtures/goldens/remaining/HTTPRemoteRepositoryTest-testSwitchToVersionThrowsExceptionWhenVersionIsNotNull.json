@@ -3,8 +3,5 @@
   "java_test": "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull",
   "version": "1.0",
   "throws": true,
-  "message": "Not supported",
-  "keys": [
-    "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testSwitchToVersionThrowsExceptionWhenVersionIsNotNull"
-  ]
+  "message": "Not supported"
 }
