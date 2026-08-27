@@ -249,6 +249,11 @@ await rpcOnce(configDir, "project.create", {
   target_lang: "ja",
   sentence_seg: false,
 });
+await writeFile(
+  join(projectDir, "glossary", "glossary.txt"),
+  "Editor\tÉditeur\tpackaged decoration E2E\n",
+  "utf8",
+);
 
 const port = await unusedPort();
 const xvfb = await startXvfb();
@@ -665,41 +670,59 @@ try {
   });
   assert.equal(persisted.translation, "日本語失焦 😀 beta");
 
-  await client.evaluate(`(async () => {
-    const prefs = await window.omegat.rpc("prefs.get");
-    await window.omegat.rpc("prefs.set", {
-      ...prefs,
-      marks: {
-        ...prefs.marks,
-        whitespace: true,
-        nbsp: true,
-        bidi: true,
-        glossary: true,
-      },
-    });
-    await window.omegat.rpc("glossary.add", {
-      source: "Editor",
-      target: "Éditeur",
-      comment: "packaged decoration E2E",
-    });
-    setTimeout(() => location.reload(), 0);
-    return true;
-  })()`, true);
-  await waitFor("renderer reload with decoration preferences", async () => {
-    const ready = await client.evaluate(`({
-      surface: Boolean(document.querySelector(".editor-surface")),
-      source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
-      whitespace: Boolean(document.querySelector(".mark-ws")),
-    })`);
-    if (
-      ready.surface
-      && ready.source === "Editor input <x0/> selection source."
-      && ready.whitespace
-    ) {
-      return ready;
-    }
-    throw new Error(JSON.stringify(ready));
+  await client.evaluate(`(() => {
+    const button = [...document.querySelectorAll("button")]
+      .find((candidate) => candidate.getAttribute("aria-label") === "Preferences");
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor("View preferences page", async () => {
+    const ready = await client.evaluate(`(() => {
+      const modal = document.querySelector(".prefs-grid");
+      if (!modal) return false;
+      const row = [...modal.querySelectorAll("nav .row")]
+        .find((candidate) => candidate.textContent?.trim() === "View");
+      row?.click();
+      return Boolean(row);
+    })()`);
+    return ready || undefined;
   });
+  await waitFor("decoration preference controls", async () => {
+    const state = await client.evaluate(`(() => {
+      const labels = [...document.querySelectorAll(".prefs-grid .form label")];
+      const enable = (text) => {
+        const label = labels.find((candidate) => candidate.textContent?.trim() === text);
+        const input = label?.querySelector('input[type="checkbox"]');
+        if (input && !input.checked) input.click();
+        return Boolean(input);
+      };
+      return {
+        whitespace: enable("Mark whitespace"),
+        nbsp: enable("Mark non-breaking spaces"),
+        bidi: enable("Mark bidi marks"),
+        glossary: enable("Mark glossary matches"),
+      };
+    })()`);
+    return Object.values(state).every(Boolean) ? state : undefined;
+  });
+  await client.evaluate(`(() => {
+    const form = document.querySelector(".prefs-grid .form");
+    const save = form?.querySelector("button.primary");
+    save?.click();
+    return Boolean(save);
+  })()`);
+  await waitFor("live decoration preferences", async () => {
+    const active = await client.evaluate(
+      "Boolean(document.querySelector('.editor-surface .mark-ws'))",
+    );
+    return active || undefined;
+  });
+  await client.evaluate(`(() => {
+    const cancel = [...document.querySelectorAll(".modal > button")]
+      .find((button) => button.textContent?.trim() === "Cancel");
+    cancel?.click();
+    return Boolean(cancel);
+  })()`);
 
   const decorationFocus = await client.evaluate(`(() => {
     const rect = document.querySelector(".editor-surface").getBoundingClientRect();
