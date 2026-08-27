@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" xmlns:sdl="http://sdl.com/FileTypes/SdlXliff/1.0" version="1.2" sdl:version="1.0">
+  <file original="hello.txt" source-language="en" target-language="be" datatype="plaintext">
+    <header>
+      <sdl:cmt-defs>
+        <sdl:cmt-def id="c1">
+          <sdl:Comments>
+            <sdl:Comment>A note</sdl:Comment>
+          </sdl:Comments>
+        </sdl:cmt-def>
+      </sdl:cmt-defs>
+    </header>
+    <body>
+      <trans-unit id="1">
+        <source>Hello SDL</source>
+        <target></target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

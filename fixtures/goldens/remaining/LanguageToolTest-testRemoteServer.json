@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.languagetools.LanguageToolTest#testRemoteServer",
+  "path": "/v2/check",
+  "bare_url_fails": true,
+  "keys": [
+    "org.omegat.languagetools.LanguageToolTest#testRemoteServer"
+  ]
+}

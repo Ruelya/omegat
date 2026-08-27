@@ -1,0 +1,85 @@
+//! Example cdylib must appear in `filters.list` and parse a committed fixture.
+
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+fn example_lib() -> PathBuf {
+    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    p.push("../../target/debug");
+    if cfg!(target_os = "windows") {
+        p.push("omegat_example_plugin.dll");
+    } else if cfg!(target_os = "macos") {
+        p.push("libomegat_example_plugin.dylib");
+    } else {
+        p.push("libomegat_example_plugin.so");
+    }
+    if !p.exists() {
+        let st = Command::new("cargo")
+            .args(["build", "-p", "omegat-example-plugin"])
+            .status()
+            .expect("build example plugin");
+        assert!(st.success());
+    }
+    p
+}
+
+fn rpc(child_in: &mut impl Write, child_out: &mut impl BufRead, id: i64, method: &str, params: Value) -> Value {
+    let req = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
+    writeln!(child_in, "{req}").unwrap();
+    child_in.flush().unwrap();
+    let mut line = String::new();
+    child_out.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap()
+}
+
+#[test]
+fn filters_list_includes_example_and_parses_fixture() {
+    let lib = example_lib();
+    assert!(lib.exists(), "missing {}", lib.display());
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join(lib.file_name().unwrap());
+    std::fs::copy(&lib, &dest).unwrap();
+    std::fs::write(
+        dir.path().join("omegat-plugin.toml"),
+        format!(
+            "id = \"example\"\nname = \"Example Filter\"\nversion = \"1.0.0\"\nplugin_type = \"filter\"\nentry = \"{}\"\n",
+            dest.file_name().unwrap().to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .env("OMEGAT_PLUGINS_DIR", dir.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let list = rpc(&mut stdin, &mut stdout, 1, "filters.list", json!({}));
+    let ids: Vec<String> = list["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .collect();
+    assert!(ids.contains(&"example".to_string()), "filters.list missing example: {ids:?}");
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plugin/sample.example");
+    let parsed = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "filters.parse",
+        json!({"path": fixture.to_string_lossy(), "id": "example"}),
+    );
+    assert_eq!(parsed["result"]["id"], "example");
+    assert_eq!(parsed["result"]["segments"][0]["source"], "Hello from plugin");
+    assert_eq!(parsed["result"]["segments"][1]["source"], "Second line");
+
+    let _ = child.kill();
+}

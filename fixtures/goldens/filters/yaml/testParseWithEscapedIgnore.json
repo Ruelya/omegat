@@ -1,0 +1,13 @@
+{
+  "id": "yaml",
+  "java_test": "org.omegat.filters.YamlFilterTest#testParseWithEscapedIgnore",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "exclude_keys": [
+    "key;with;semicolons",
+    "key\\with\\backslashes",
+    "normal/key"
+  ]
+}

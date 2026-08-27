@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.IssueCheckerTest#testFilePatternFiltersEntries",
+  "pattern": "\\Qfile1.txt\\E",
+  "provider_count": 2,
+  "tag_count": 0,
+  "total": 2,
+  "keys": [
+    "org.omegat.gui.issues.IssueCheckerTest#testFilePatternFiltersEntries"
+  ]
+}
