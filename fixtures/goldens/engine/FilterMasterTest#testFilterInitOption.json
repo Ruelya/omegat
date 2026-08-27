@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.master.FilterMasterTest#testFilterInitOption",
+  "ids": [
+    "text",
+    "po",
+    "html"
+  ],
+  "keys": [
+    "org.omegat.filters2.master.FilterMasterTest#testFilterInitOption"
+  ]
+}

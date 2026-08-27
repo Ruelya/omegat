@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.text.LineLengthLimitWriterTest#testGetBreakPosNoBreakPossible",
+  "input": "Supercalifragilisticexpialidocious",
+  "break_pos": 34,
+  "keys": [
+    "org.omegat.filters2.text.LineLengthLimitWriterTest#testGetBreakPosNoBreakPossible"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.cli.CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched",
+  "project_locking": true,
+  "location_save": true,
+  "no_team": false,
+  "keys": [
+    "org.omegat.cli.CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched"
+  ]
+}
