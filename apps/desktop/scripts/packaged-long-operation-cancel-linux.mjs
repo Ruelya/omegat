@@ -248,6 +248,28 @@ async function terminate(child) {
   await Promise.race([exited, sleep(2_000)]);
 }
 
+async function xdotool(display, args) {
+  return new Promise((resolveCommand, reject) => {
+    const child = spawn("xdotool", args, {
+      env: { ...process.env, DISPLAY: display },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolveCommand(stdout.trim());
+      else reject(new Error(`xdotool ${args[0]} failed (${code}): ${stderr}`));
+    });
+  });
+}
+
 if (process.platform !== "linux") {
   throw new Error("This E2E exercises long-operation cancellation in a real Linux package");
 }
@@ -448,17 +470,175 @@ try {
   assert.deepEqual(await snapshot(targetDir), targetBefore);
   assert.deepEqual(await compileResidue(project), []);
 
+  const reloadBefore = await client.evaluate(`(() => {
+    const active = document.querySelector(".editor-segment.is-active");
+    return {
+      entry: Number(active?.getAttribute("data-entry") ?? -1),
+      key: active?.getAttribute("data-entry-key") ?? "",
+      source: active?.querySelector(".src")?.textContent ?? "",
+      translation: active?.querySelector(".editor-surface")?.textContent ?? "",
+    };
+  })()`);
+  assert.equal(reloadBefore.entry, 1);
+  assert(reloadBefore.key, "active EntryKey was unavailable before reload");
+  assert(reloadBefore.source.startsWith("Source 0: "));
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatReloadProgress = null;
+    const app = document.querySelector(".app");
+    window.__omegatReloadCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "reload"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.reload.sources"
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button || window.__omegatReloadProgress) return;
+        window.__omegatReloadProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          operation: app.dataset.operation,
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          cancelVisible: true,
+        };
+        button.click();
+      }
+    });
+    window.__omegatReloadCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const windowId = await waitFor("OmegaT X11 window", async () => {
+    const ids = await xdotool(xvfb.display, [
+      "search",
+      "--sync",
+      "--onlyvisible",
+      "--name",
+      "OmegaT",
+    ]);
+    return ids.split(/\s+/).filter(Boolean).at(-1);
+  });
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "F5"]);
+
+  const reloadCancelled = await waitFor(
+    "protocol-confirmed visible reload cancellation",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const active = document.querySelector(".editor-segment.is-active");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          editorStatus: [...document.querySelectorAll("footer.status span")]
+            .map((node) => node.textContent ?? ""),
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+          entry: Number(active?.getAttribute("data-entry") ?? -1),
+          key: active?.getAttribute("data-entry-key") ?? "",
+          source: active?.querySelector(".src")?.textContent ?? "",
+          translation: active?.querySelector(".editor-surface")?.textContent ?? "",
+        };
+      })()`);
+      if (
+        state.operation === "reload"
+        && state.phase === "cancelled"
+        && state.stage === "project.reload.sources"
+        && state.operationStatus === "reload: cancelled (project.reload.sources)"
+        && state.editorStatus.includes("reload cancelled")
+        && !state.cancelVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const reloadPostCancel = await client.evaluate(`(async () => {
+    window.__omegatReloadCancelObserver?.disconnect();
+    const entries = await window.omegat.rpc("entry.list", {});
+    const version = await window.omegat.rpc("sys.version", {});
+    return {
+      version,
+      entryCount: entries.length,
+      firstEntry: {
+        key: JSON.stringify(entries[0]?.key ?? null),
+        source: entries[0]?.source ?? "",
+        translation: entries[0]?.translation ?? "",
+      },
+      visibleProgress: window.__omegatReloadProgress,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+    };
+  })()`, true);
+  const reloadRequestTrace = reloadPostCancel.rpcTrace
+    .filter((event) => event.requestId === reloadPostCancel.visibleProgress?.requestId)
+    .map((event) => `${event.phase}:${event.stage}`);
+  assert(reloadPostCancel.visibleProgress, "reload progress checkpoint was not observed");
+  assert.deepEqual(reloadPostCancel.visibleProgress, {
+    requestId: reloadPostCancel.visibleProgress.requestId,
+    operation: "reload",
+    phase: "progress",
+    stage: "project.reload.sources",
+    status: "reload: project.reload.sources",
+    cancelVisible: true,
+  });
+  assert(reloadPostCancel.visibleProgress.requestId);
+  assert.deepEqual(reloadRequestTrace, [
+    "started:",
+    "progress:project.reload.sources",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  assert(
+    reloadPostCancel.domTrace.includes(
+      "reload|cancelling|project.reload.sources|reload: cancelling (project.reload.sources)",
+    ),
+    `renderer never visibly entered reload cancelling: ${
+      JSON.stringify(reloadPostCancel.domTrace)
+    }`,
+  );
+  assert.deepEqual(
+    {
+      entry: reloadCancelled.entry,
+      key: reloadCancelled.key,
+      source: reloadCancelled.source,
+      translation: reloadCancelled.translation,
+    },
+    reloadBefore,
+  );
+  assert.equal(reloadPostCancel.entryCount, SOURCE_FILES);
+  assert.equal(reloadPostCancel.firstEntry.key, reloadBefore.key);
+  assert.equal(reloadPostCancel.firstEntry.source, reloadBefore.source);
+  assert.equal(reloadPostCancel.firstEntry.translation, reloadBefore.translation);
+  assert.equal(reloadPostCancel.version.version, "6.2.0");
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
     platform: "linux",
     sourceFiles: SOURCE_FILES,
-    visibleProgress,
-    cancelled,
-    requestTrace,
-    domTrace: postCancel.domTrace,
-    targetRollback: true,
-    compileResidue: [],
+    compile: {
+      visibleProgress,
+      cancelled,
+      requestTrace,
+      domTrace: postCancel.domTrace,
+      targetRollback: true,
+      residue: [],
+    },
+    reload: {
+      visibleProgress: reloadPostCancel.visibleProgress,
+      cancelled: reloadCancelled,
+      requestTrace: reloadRequestTrace,
+      domTrace: reloadPostCancel.domTrace,
+      entryRollback: reloadBefore,
+    },
     sidecarResponsive: postCancel.version.version,
   }));
   await client.evaluate('setTimeout(() => window.omegat.quit(), 0); "quit"');
