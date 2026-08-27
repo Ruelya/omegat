@@ -60,7 +60,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **12 passed** plus
 sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 158
+passed**, and desktop **23 files / 159
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -385,7 +385,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**23 files / 158 tests**, including exact success and
+**23 files / 159 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -399,7 +399,11 @@ default removes only that complete-key override and propagates the new default
 without overwriting other alternatives. Optimistic
 revision failures preserve the dirty `Document3`, expose base/ours/theirs in
 the active editor, and resolve through exact ours/theirs/manual product paths
-using the live remote revision.
+using the live remote revision. The conflict snapshot now retains the complete
+six-field `EntryKey`; resolution re-fetches the authoritative entry list and
+rebinds that key before adopting or writing. An exact product-store test
+reorders two same-source duplicates and proves an ours resolution writes only
+the intended alternative at its new index.
 `MarkerController` caches per-entry generations, maps translation/source marks
 into `Document3` spans, and invalidates those spans after edits. It now also
 registers and unloads named plugin markers, rejects duplicate registrations,
@@ -531,7 +535,14 @@ the renderer shows `cancelled` with the retained stage. The E2E strictly
 observes started/progress/cancelling/cancelled, proves the complete preexisting
 target tree is byte-identical, finds no compile staging residue, and verifies
 the same stateful sidecar still reports version **6.2.0** and all **2400**
-entries. This is Linux package evidence only.
+entries. The same packaged process then invokes reload through native F5,
+clicks the visible cancel control immediately after
+`project.reload.sources`, and observes a second independent
+started/progress/cancelling/cancelled trace. Only the sidecar's protocol
+**-32800** acknowledgement makes reload terminal; the active complete
+`EntryKey`, source, translation, and all **2400** sidecar entries remain exact,
+and the sidecar still answers `sys.version`. This is Linux package evidence
+only.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
 on Linux without relying on recursive-watch support. They now install and
 remove per-directory watchers as nested directories appear or disappear at
