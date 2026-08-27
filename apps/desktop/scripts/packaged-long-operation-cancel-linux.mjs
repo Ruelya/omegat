@@ -1459,7 +1459,7 @@ try {
   await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
   await waitFor("decoy after committing packaged team ours", async () => {
     const state = await editorState(client);
-    return state.key === JSON.stringify(${JSON.stringify(duplicateSetup.decoy.key)})
+    return state.key === JSON.stringify(duplicateSetup.decoy.key)
       ? state
       : undefined;
   });
@@ -1469,8 +1469,8 @@ try {
   await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
   await waitFor("wanted after exact packaged team commit", async () => {
     const state = await editorState(client);
-    return state.key === JSON.stringify(${JSON.stringify(duplicateSetup.wanted.key)})
-      && state.translation === ${JSON.stringify(teamConflictOurs)}
+    return state.key === JSON.stringify(duplicateSetup.wanted.key)
+      && state.translation === teamConflictOurs
       ? state
       : undefined;
   });

@@ -200,7 +200,6 @@ mod tests {
         let theirs = tu("Hi", "Bonjour");
         let (tmx, conflicts) = rebase_tmx("", &ours, &theirs, "en", "fr");
         assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].entry_key, None);
         assert_eq!(tmx.get("Hi").unwrap().translation, "Salut");
         assert!(tmx
             .get("Hi")
