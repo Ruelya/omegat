@@ -506,15 +506,114 @@ try {
   assert.equal(composed.firstUpdate, "に");
   assert.equal(composed.lastUpdate, "日本語");
 
+  await client.evaluate("window.__omegatE2eImeEvents = []");
+  await client.command("Input.imeSetComposition", {
+    text: "失焦",
+    selectionStart: 2,
+    selectionEnd: 2,
+  });
+  await xdotool(xvfb.display, ["key", "Tab"]);
+  const blurred = await waitFor("IME composition committed on native focus loss", async () => {
+    const state = await client.evaluate(`(() => {
+      const events = window.__omegatE2eImeEvents;
+      return {
+        text: document.querySelector(".editor-surface")?.textContent ?? null,
+        focusedProxy: document.activeElement?.classList.contains("ime-proxy") ?? false,
+        compositionStarts: events.filter((event) => event.type === "compositionstart").length,
+        compositionEnds: events.filter((event) => event.type === "compositionend").length,
+        beforeInputTypes: events
+          .filter((event) => event.type === "beforeinput")
+          .map((event) => event.inputType),
+      };
+    })()`);
+    if (state.text === "日本語失焦 😀 beta" && !state.focusedProxy) return state;
+    throw new Error(JSON.stringify(state));
+  });
+  assert.deepEqual(blurred, {
+    text: "日本語失焦 😀 beta",
+    focusedProxy: false,
+    compositionStarts: 1,
+    compositionEnds: 0,
+    beforeInputTypes: ["insertCompositionText"],
+  });
+
+  const endPoint = await client.evaluate(`(() => {
+    const fragments = [...document.querySelectorAll(".editor-surface [data-offset]")];
+    const fragment = fragments.reduce((latest, candidate) => {
+      const latestEnd = Number(latest.dataset.offset) + latest.textContent.length;
+      const candidateEnd = Number(candidate.dataset.offset) + candidate.textContent.length;
+      return candidateEnd > latestEnd ? candidate : latest;
+    });
+    const node = fragment.firstChild;
+    const range = document.createRange();
+    range.setStart(node, node.textContent.length);
+    range.collapse(true);
+    const caret = range.getBoundingClientRect();
+    const bounds = fragment.getBoundingClientRect();
+    return { x: caret.left, y: bounds.top + bounds.height / 2 };
+  })()`);
+  const endScreen = screenPoint(endPoint);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(endScreen.x),
+    String(endScreen.y),
+    "click",
+    "1",
+  ]);
+  assert.equal(
+    await client.evaluate("document.activeElement?.classList.contains('ime-proxy')"),
+    true,
+    "The real surface click did not restore native IME proxy focus",
+  );
+
+  await client.evaluate("window.__omegatE2eImeEvents = []");
+  await client.command("Input.imeSetComposition", {
+    text: "取消中",
+    selectionStart: 3,
+    selectionEnd: 3,
+  });
+  assert.equal(
+    await waitFor("native IME cancellation candidate", async () => {
+      const text = await client.evaluate(
+        "document.querySelector('.editor-surface')?.textContent ?? null",
+      );
+      return text === "日本語失焦 😀 beta取消中" ? text : undefined;
+    }),
+    "日本語失焦 😀 beta取消中",
+  );
+  await xdotool(xvfb.display, ["key", "Escape"]);
+  const cancelled = await waitFor("IME composition restored by native Escape", async () => {
+    const state = await client.evaluate(`(() => {
+      const events = window.__omegatE2eImeEvents;
+      return {
+        text: document.querySelector(".editor-surface")?.textContent ?? null,
+        focusedProxy: document.activeElement?.classList.contains("ime-proxy") ?? false,
+        compositionStarts: events.filter((event) => event.type === "compositionstart").length,
+        beforeInputTypes: events
+          .filter((event) => event.type === "beforeinput")
+          .map((event) => event.inputType),
+      };
+    })()`);
+    if (state.text === "日本語失焦 😀 beta") return state;
+    throw new Error(JSON.stringify(state));
+  });
+  assert.deepEqual(cancelled, {
+    text: "日本語失焦 😀 beta",
+    focusedProxy: true,
+    compositionStarts: 1,
+    beforeInputTypes: ["insertCompositionText"],
+  });
+
   await xdotool(xvfb.display, ["key", "Return"]);
   const persisted = await waitFor("sidecar-backed editor commit", async () => {
     const entry = await client.evaluate(
       "window.omegat.rpc('entry.get', { index: 0 })",
       true,
     );
-    return entry?.translation === "日本語 😀 beta" ? entry : undefined;
+    return entry?.translation === "日本語失焦 😀 beta" ? entry : undefined;
   });
-  assert.equal(persisted.translation, "日本語 😀 beta");
+  assert.equal(persisted.translation, "日本語失焦 😀 beta");
 
   console.log(
     JSON.stringify({
@@ -527,6 +626,12 @@ try {
       compositionStarts: composed.compositionStarts,
       compositionEnds: composed.compositionEnds,
       beforeInputTypes: composed.beforeInputTypes,
+      blurCompositionStarts: blurred.compositionStarts,
+      blurCompositionEnds: blurred.compositionEnds,
+      blurBeforeInputTypes: blurred.beforeInputTypes,
+      cancelCompositionStarts: cancelled.compositionStarts,
+      cancelBeforeInputTypes: cancelled.beforeInputTypes,
+      cancelRestored: cancelled.text === blurred.text,
     }),
   );
   await client.evaluate('setTimeout(() => window.omegat.quit(), 0); "quit"');

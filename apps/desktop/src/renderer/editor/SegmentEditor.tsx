@@ -210,6 +210,7 @@ export function SegmentEditor() {
   });
   const [pageRadius, setPageRadius] = useState(8);
   const composing = useRef(false);
+  const discardCompositionEnd = useRef(false);
   editorController.setPageRadius(pageRadius);
   const loadedPage = editorController.synchronizeRendererProject(entries, activeIndex, document3);
   const loadedPageSignature = loadedPage.map(({ key }) => key).join("\u0000");
@@ -235,7 +236,10 @@ export function SegmentEditor() {
     if (!proxy) return;
     const onBeforeInput = (event: Event) =>
       onNativeBeforeInput(event as InputEvent);
-    const onCompositionStart = () => beginComposition();
+    const onCompositionStart = () => {
+      discardCompositionEnd.current = false;
+      beginComposition();
+    };
     const onCompositionUpdate = (event: Event) =>
       updateComposition((event as CompositionEvent).data);
     const onCompositionEnd = (event: Event) =>
@@ -315,6 +319,11 @@ export function SegmentEditor() {
   }
 
   function finishComposition(data: string) {
+    if (discardCompositionEnd.current) {
+      discardCompositionEnd.current = false;
+      composing.current = false;
+      return;
+    }
     const area = interaction.current;
     const hadNativeComposition = composing.current;
     if (area.isComposing()) {
@@ -343,6 +352,7 @@ export function SegmentEditor() {
     if (interaction.current.isComposing()) {
       if (ev.key === "Escape" && interaction.current.cancelComposition()) {
         ev.preventDefault();
+        discardCompositionEnd.current = true;
         composing.current = false;
         applyDoc(interaction.current.getOmDocument(), interaction.current);
       }
@@ -456,7 +466,10 @@ export function SegmentEditor() {
 
   function onEditorBlur(ev: FocusEvent<HTMLDivElement>) {
     if (ev.relatedTarget && ev.currentTarget.contains(ev.relatedTarget as Node)) return;
-    interaction.current.blur();
+    const area = interaction.current;
+    const wasComposing = area.isComposing();
+    area.blur();
+    if (wasComposing) applyDoc(area.getOmDocument(), area);
   }
 
   function onPageScroll(ev: UIEvent<HTMLDivElement>) {

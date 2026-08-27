@@ -180,6 +180,22 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(area.handleBeforeInput("insertText", "한국어")).toBe(true);
     expect(area.getText()).toBe("a<x0/>bあい日本語한국어");
     expect(area.isComposing()).toBe(false);
+
+    area.focus();
+    expect(area.beginComposition()).toBe(true);
+    expect(area.updateComposition("失焦")).toBe(true);
+    area.blur();
+    expect({
+      text: area.getText(),
+      composing: area.isComposing(),
+      documentComposing: area.getOmDocument().textBeingComposed,
+      focused: area.hasFocus(),
+    }).toEqual({
+      text: "a<x0/>bあい日本語한국어失焦",
+      composing: false,
+      documentComposing: false,
+      focused: false,
+    });
   });
 
   it("EditorTextArea3 models directional selection, clipboard, token and focus events", () => {

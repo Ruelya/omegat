@@ -489,8 +489,8 @@ export class EditorTextArea3 {
   }
 
   blur(): void {
-    if (!this.focused) return;
     if (this.composition) this.commitComposition();
+    if (!this.focused) return;
     this.focused = false;
     for (const listener of this.focusListeners) listener(false);
   }
