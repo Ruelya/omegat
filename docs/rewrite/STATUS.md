@@ -44,9 +44,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 - Java `src/main/java`: **779** files / **157825** lines
 - Rewrite Rust: `crates/**/*.rs` **54145** lines; `apps/desktop/src`
-  TS/TSX/CSS **14100** lines (**~43%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **14100**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5327**
+  TS/TSX/CSS **14523** lines (**~44%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **14523**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5586**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 93
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 97
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
@@ -217,7 +217,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**571** vs **963**, `EditorController` **567** vs **2365**. The headless
+**571** vs **963**, `EditorController` **723** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -255,6 +255,18 @@ sidecar. Entering the
 workspace in that E2E also exposed and fixed a React 19 infinite-update defect
 by keeping the Multiple Translations Zustand snapshot stable. This is Linux
 Electron evidence only, not Windows/macOS evidence.
+Controller navigation now adopts direct `EditorTextArea3` edits, commits an
+active IME composition, synchronizes the old entry, and deactivates its
+`Document3` before opening another segment. New entries start at relative
+caret zero; `commitAndLeave` restores the prior relative caret. Next/previous,
+translated/untranslated, noted, unique, xAUTO, and xENFORCED navigation wrap
+across files through one filtered product path. Undo/redo snapshots retain the
+relative caret or selection while marker spans are recalculated. The live
+Zustand product path persists a changed draft/note through `entry.set` before
+selection, history, or cyclic navigation; an optimistic-write failure leaves
+the original dirty document active instead of discarding it. Desktop
+verification is now **18 files / 97 tests**, including exact success and
+failure-state assertions for these transitions.
 MarkerController caches
 per-entry generations, maps translation/source marks into `Document3` spans,
 and invalidates those spans after edits.
