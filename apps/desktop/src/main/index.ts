@@ -18,6 +18,7 @@ const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 let nextId = 1;
 const watchedProjectWriteMethods = new Set([
   "project.save",
+  "project.compile",
   "project.close",
   "project.update",
   "project.import",

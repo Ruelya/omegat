@@ -1250,6 +1250,7 @@ fn writes_watched_project_input(method: &str) -> bool {
     matches!(
         method,
         "project.save"
+            | "project.compile"
             | "project.close"
             | "project.update"
             | "project.import"
