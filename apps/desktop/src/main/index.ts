@@ -150,7 +150,7 @@ app.whenReady().then(() => {
   });
   registerApplicationLifecycle(
     ipcMain,
-    createApplicationLifecycle(app, stopSidecar, process.argv),
+    createApplicationLifecycle(app, stopSidecar),
   );
   ipcMain.handle("open-path", async (_e, path: string) => {
     if (path) await shell.openPath(path);

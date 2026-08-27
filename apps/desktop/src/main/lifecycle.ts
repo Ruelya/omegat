@@ -1,9 +1,5 @@
-export type RelaunchOptions = {
-  args: string[];
-};
-
 export type LifecycleApp = {
-  relaunch: (options: RelaunchOptions) => void;
+  relaunch: () => void;
   quit: () => void;
   exit: (code: number) => void;
 };
@@ -20,7 +16,6 @@ export type ApplicationLifecycle = {
 export function createApplicationLifecycle(
   app: LifecycleApp,
   stopSidecar: () => void,
-  argv: readonly string[],
 ): ApplicationLifecycle {
   return {
     quit: () => {
@@ -28,7 +23,7 @@ export function createApplicationLifecycle(
       app.quit();
     },
     relaunch: () => {
-      app.relaunch({ args: argv.slice(1) });
+      app.relaunch();
       stopSidecar();
       app.exit(0);
     },

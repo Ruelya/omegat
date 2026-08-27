@@ -22,17 +22,17 @@ describe("packaged application lifecycle", () => {
 
     registerApplicationLifecycle(
       ipc,
-      createApplicationLifecycle(app, vi.fn(), ["/opt/OmegaT/omegat"]),
+      createApplicationLifecycle(app, vi.fn()),
     );
 
     expect([...handlers.keys()]).toEqual(["app-quit", "app-relaunch"]);
   });
 
-  it("preserves packaged arguments, stops the sidecar, and exits after scheduling relaunch", () => {
+  it("lets Electron preserve the original arguments, stops the sidecar, and exits", () => {
     const calls: string[] = [];
     const app: LifecycleApp = {
-      relaunch: vi.fn((options) => {
-        calls.push(`relaunch:${JSON.stringify(options.args)}`);
+      relaunch: vi.fn(() => {
+        calls.push("relaunch");
       }),
       quit: vi.fn(() => {
         calls.push("quit");
@@ -44,18 +44,12 @@ describe("packaged application lifecycle", () => {
     const lifecycle = createApplicationLifecycle(
       app,
       () => calls.push("stop-sidecar"),
-      [
-        "/opt/OmegaT/omegat",
-        "--config-dir=/home/user/.omegat",
-        "--scripts-dir=/home/user/scripts",
-        "/home/user/project",
-      ],
     );
 
     lifecycle.relaunch();
 
     expect(calls).toEqual([
-      'relaunch:["--config-dir=/home/user/.omegat","--scripts-dir=/home/user/scripts","/home/user/project"]',
+      "relaunch",
       "stop-sidecar",
       "exit:0",
     ]);
@@ -72,7 +66,6 @@ describe("packaged application lifecycle", () => {
     const lifecycle = createApplicationLifecycle(
       app,
       () => calls.push("stop-sidecar"),
-      ["/opt/OmegaT/omegat"],
     );
 
     lifecycle.quit();
