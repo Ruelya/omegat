@@ -24,6 +24,7 @@ import { HistoryPredictor } from "./history/HistoryPredictor";
 import { HistoryCompleter } from "./history/HistoryCompleter";
 import { bindMarkerRemark, IEditor } from "./IEditor";
 import { makeFilter } from "./IEditorFilter";
+import { RendererPageProjection } from "./RendererPageProjection";
 import { buildActiveDocument } from "./SegmentBuilder";
 import { TagAutoCompleterView } from "./TagAutoCompleterView";
 import { TranslationUndoManager } from "./TranslationUndoManager";
@@ -845,9 +846,10 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.checkIssuesOnLeave(current, 0, issues, false)).toEqual([]);
   });
 
-  it("EditorController synchronizes immutable renderer snapshots into stable segment pages", () => {
+  it("RendererPageProjection leaves EditorController editing state untouched", () => {
     const controller = new EditorController();
-    controller.setPageRadius(1);
+    const projection = new RendererPageProjection();
+    projection.setPageRadius(1);
     const keys = [
       { file: "a.txt", source_text: "one", id: "first", prev: "", next: "two", path: null },
       { file: "a.txt", source_text: "two", id: "second", prev: "one", next: "", path: null },
@@ -858,10 +860,11 @@ describe("Document3 / IEditor / completer classes", () => {
       { key: keys[1], file: "a.txt", id: "second", source: "two", translation: "deux" },
       { key: keys[2], file: "b.txt", id: "third", source: "three", translation: "trois" },
     ];
-    const page = controller.synchronizeRendererProject(
+    const page = projection.project(
       entries,
       1,
       createDocument3("two", "DEUX"),
+      makeFilter("none"),
     );
     expect(page.map(({ key, entryNumber, translation, active }) => ({
       key,
@@ -887,14 +890,14 @@ describe("Document3 / IEditor / completer classes", () => {
   });
 
   it("filters renderer pages and preserves caret only for the same complete EntryKey", () => {
-    const controller = new EditorController();
-    controller.setPageRadius(4);
+    const projection = new RendererPageProjection();
+    projection.setPageRadius(4);
     const entries = [
       { file: "a.txt", id: "one", source: "one", translation: "" },
       { file: "a.txt", id: "two", source: "two", translation: "deux" },
       { file: "b.txt", id: "three", source: "three", translation: "" },
     ];
-    const page = controller.synchronizeRendererProject(
+    const page = projection.project(
       entries,
       0,
       createDocument3("one", ""),

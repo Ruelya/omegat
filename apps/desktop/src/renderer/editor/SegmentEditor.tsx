@@ -20,10 +20,10 @@ import {
   type Document3State,
 } from "./Document3";
 import {
-  EditorController,
   type EditorScrollAnchor,
   type ScrollAnchorCandidate,
-} from "./EditorController";
+  RendererPageProjection,
+} from "./RendererPageProjection";
 import {
   nextUntranslatedEntryIndex,
   selectionAfterEntryChange,
@@ -37,8 +37,8 @@ import { renderedCaretFromPoint } from "./RenderedTextHitTest";
 import type { EntryPart, Mark } from "./mark/Mark";
 import { NativePluginMarkerBridge } from "./mark/NativePluginMarker";
 
-const editorController = new EditorController();
-const nativePluginMarkers = new NativePluginMarkerBridge(editorController);
+const rendererPage = new RendererPageProjection();
+const nativePluginMarkers = new NativePluginMarkerBridge(rendererPage);
 
 type MarkerTooltipState = {
   entryKey: string;
@@ -157,8 +157,8 @@ export function SegmentEditor() {
   const discardCompositionEnd = useRef(false);
   const dragPointer = useRef<number | null>(null);
   const suppressClick = useRef(false);
-  editorController.setPageRadius(pageRadius);
-  const loadedPage = editorController.synchronizeRendererProject(
+  rendererPage.setPageRadius(pageRadius);
+  const loadedPage = rendererPage.project(
     entries,
     activeIndex,
     document3,
@@ -174,9 +174,9 @@ export function SegmentEditor() {
   useEffect(() => {
     let current = true;
     const unbind = bindMarkerRemark((name) => {
-      editorController.remarkOneMarker(name);
+      rendererPage.remarkOneMarker(name);
       setMarkerRevision((revision) => revision + 1);
-      void editorController.refreshRendererPageMarkersAsync().then((applied) => {
+      void rendererPage.refreshMarkersAsync().then((applied) => {
         if (current && applied) setMarkerRevision((revision) => revision + 1);
       });
     });
@@ -192,7 +192,7 @@ export function SegmentEditor() {
     void connection.ready
       .then((installed) => {
         if (!current || !installed) return;
-        return editorController.refreshRendererPageMarkersAsync().then((applied) => {
+        return rendererPage.refreshMarkersAsync().then((applied) => {
           if (current && applied) setMarkerRevision((revision) => revision + 1);
         });
       })
@@ -233,7 +233,7 @@ export function SegmentEditor() {
 
   useEffect(() => {
     let current = true;
-    void editorController.refreshRendererPageMarkersAsync().then((applied) => {
+    void rendererPage.refreshMarkersAsync().then((applied) => {
       if (current && applied) setMarkerRevision((revision) => revision + 1);
     });
     return () => {
@@ -275,7 +275,7 @@ export function SegmentEditor() {
     const anchor = pendingScrollAnchor.current;
     pendingScrollAnchor.current = null;
     if (!viewport || !anchor) return;
-    const adjustment = editorController.scrollAdjustmentForAnchor(
+    const adjustment = rendererPage.scrollAdjustmentForAnchor(
       anchor,
       viewport.getBoundingClientRect().top,
       scrollCandidates(viewport),
@@ -484,7 +484,7 @@ export function SegmentEditor() {
       setMarkerTooltip(null);
       return;
     }
-    const javaHtml = editorController.markers.getToolTipsOverRange(
+    const javaHtml = rendererPage.getToolTipsOverRange(
       entryKey,
       entryPart,
       hit.fragmentStart,
@@ -499,7 +499,7 @@ export function SegmentEditor() {
       entryPart,
       offset: hit.offset,
       javaHtml,
-      texts: editorController.markers.getTooltipTextsOverRange(
+      texts: rendererPage.getTooltipTextsOverRange(
         entryKey,
         entryPart,
         hit.fragmentStart,
@@ -653,10 +653,10 @@ export function SegmentEditor() {
     if (available <= 0) return;
     const position = el.scrollTop / available;
     if (
-      (position <= 0.2 && editorController.hasMoreBefore())
-      || (position >= 0.8 && editorController.hasMoreAfter())
+      (position <= 0.2 && rendererPage.hasMoreBefore())
+      || (position >= 0.8 && rendererPage.hasMoreAfter())
     ) {
-      pendingScrollAnchor.current = editorController.captureScrollAnchor(
+      pendingScrollAnchor.current = rendererPage.captureScrollAnchor(
         el.getBoundingClientRect().top,
         scrollCandidates(el),
       );
@@ -681,8 +681,8 @@ export function SegmentEditor() {
     <div
       ref={scrollViewport}
       className="editor-doc"
-      data-first-loaded={editorController.getLoadedRange().first}
-      data-last-loaded={editorController.getLoadedRange().last}
+      data-first-loaded={rendererPage.getLoadedRange().first}
+      data-last-loaded={rendererPage.getLoadedRange().last}
       onScroll={onPageScroll}
       onDragOver={onFileDragOver}
       onDrop={(event) => void onFileDrop(event)}

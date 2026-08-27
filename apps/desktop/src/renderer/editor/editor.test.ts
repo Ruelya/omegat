@@ -8,8 +8,10 @@ describe("segment editor source", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const src = readFileSync(join(here, "SegmentEditor.tsx"), "utf8");
     expect(src).not.toMatch(/contentEditable/);
+    expect(src).not.toMatch(/EditorController/);
     expect(src).toMatch(/role="textbox"/);
-    expect(src).toMatch(/synchronizeRendererProject/);
+    expect(src).toMatch(/RendererPageProjection/);
+    expect(src).toMatch(/rendererPage\.project/);
     expect(src).toMatch(/area\.handleBeforeInput\(native\.inputType, native\.data\)/);
     expect(src).toMatch(/renderedCaretFromPoint\(root, ev\.clientX, ev\.clientY\)/);
     expect(src).toMatch(/area\.beginMouseSelection\(hit\.offset, hit\.bias, ev\.shiftKey\)/);

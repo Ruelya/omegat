@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createDocument3 } from "./Document3";
 import { EditorController } from "./EditorController";
+import { makeFilter } from "./IEditorFilter";
 import { javaTooltipAt, MarkerController } from "./MarkerController";
+import { RendererPageProjection } from "./RendererPageProjection";
 import { AltTranslationsMarker } from "./mark/AltTranslationsMarker";
 import { BidiMarkers } from "./mark/BidiMarkers";
 import { NBSPMarker } from "./mark/NBSPMarker";
@@ -482,6 +484,75 @@ describe("editor markers vs Java-exported goldens", () => {
         painters: ["active-current"],
       }],
       document: ["marker:active-current"],
+    });
+  });
+
+  it("keeps late renderer page-edge Marker callbacks outside the active projection", async () => {
+    const projection = new RendererPageProjection();
+    const pending: {
+      input: MarkerInput;
+      resolve: (marks: Mark[]) => void;
+    }[] = [];
+    projection.registerPluginMarker("example.RendererPageMarker", {
+      getMarksForEntryAsync: (input) =>
+        new Promise<Mark[]>((resolve) => pending.push({ input, resolve })),
+    });
+    const entries = [
+      { file: "a.txt", id: "first", source: "first", translation: "un" },
+      { file: "a.txt", id: "second", source: "second", translation: "deux" },
+      { file: "b.txt", id: "third", source: "third", translation: "trois" },
+    ];
+    const filter = makeFilter("none");
+    projection.setPageRadius(1);
+    const initial = projection.project(entries, 1, createDocument3("second", "deux"), filter);
+    const stalePage = projection.refreshMarkersAsync();
+    expect(pending.map(({ input }) => ({
+      source: input.sourceText,
+      active: input.isActive,
+    }))).toEqual([
+      { source: "first", active: false },
+      { source: "second", active: true },
+      { source: "third", active: false },
+    ]);
+
+    projection.setPageRadius(0);
+    projection.project(entries, 1, createDocument3("second", "deux"), filter);
+    pending[0]!.resolve([{
+      startOffset: 0,
+      endOffset: 2,
+      painter: "stale-first",
+      entryPart: "TRANSLATION",
+    }]);
+    pending[1]!.resolve([{
+      startOffset: 0,
+      endOffset: 4,
+      painter: "active-current",
+      entryPart: "TRANSLATION",
+    }]);
+    pending[2]!.resolve([{
+      startOffset: 0,
+      endOffset: 5,
+      painter: "stale-third",
+      entryPart: "TRANSLATION",
+    }]);
+
+    expect(await stalePage).toBe(false);
+    expect({
+      first: projection.markers.getCached(initial[0]!.key),
+      active: projection.project(
+        entries,
+        1,
+        createDocument3("second", "deux"),
+        filter,
+      ).map(({ entryNumber, marks }) => ({
+        entryNumber,
+        painters: marks.map(({ painter }) => painter),
+      })),
+      third: projection.markers.getCached(initial[2]!.key),
+    }).toEqual({
+      first: null,
+      active: [{ entryNumber: 2, painters: ["active-current"] }],
+      third: null,
     });
   });
 

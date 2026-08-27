@@ -1,7 +1,6 @@
 /** Executable cdylib Marker bridge: renderer -> NDJSON sidecar -> plugin ABI. */
-import type { EditorController } from "../EditorController";
 import type { PluginMarkerInfoDto } from "../../lib/types";
-import type { IAsyncMarker, MarkerInput } from "./IMarker";
+import type { IAsyncMarker, MarkerInput, MarkerProvider } from "./IMarker";
 import type { EntryPart, Mark } from "./Mark";
 
 export type MarkerRpc = (method: string, params?: unknown) => Promise<unknown>;
@@ -85,6 +84,11 @@ export type NativePluginMarkerConnection = {
   release: () => void;
 };
 
+export type NativePluginMarkerHost = {
+  registerPluginMarker: (name: string, marker: MarkerProvider) => void;
+  unregisterPluginMarker: (name: string) => boolean;
+};
+
 /**
  * Reference-counted lifecycle for React StrictMode. Stale `markers.list`
  * responses cannot register providers after an unmount or a newer connection.
@@ -95,7 +99,7 @@ export class NativePluginMarkerBridge {
   private installedNames: string[] = [];
 
   constructor(
-    private readonly controller: EditorController,
+    private readonly controller: NativePluginMarkerHost,
     private readonly rpc: MarkerRpc = sidecarRpc,
   ) {}
 
