@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -84,26 +84,6 @@ async function startXvfb() {
   return { child, display };
 }
 
-async function mainProcesses(marker) {
-  const processes = [];
-  for (const entry of await readdir("/proc", { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue;
-    try {
-      const raw = await readFile(`/proc/${entry.name}/cmdline`);
-      const argv = raw.toString().split("\0").filter(Boolean);
-      if (
-        argv.includes(marker) &&
-        !argv.some((arg) => arg.startsWith("--type="))
-      ) {
-        processes.push({ pid: Number(entry.name), argv });
-      }
-    } catch {
-      // The process may exit while /proc is being inspected.
-    }
-  }
-  return processes;
-}
-
 async function sidecarChildren(pid) {
   try {
     const raw = await readFile(`/proc/${pid}/task/${pid}/children`, "utf8");
@@ -135,20 +115,28 @@ async function pageTarget(port) {
   );
 }
 
-async function evaluate(webSocketDebuggerUrl, expression, awaitPromise = false) {
-  return new Promise((resolveEvaluation, reject) => {
+async function browserTarget(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+    signal: AbortSignal.timeout(1_000),
+  });
+  if (!response.ok) throw new Error(`DevTools endpoint returned ${response.status}`);
+  return response.json();
+}
+
+async function devtoolsCommand(webSocketDebuggerUrl, method, params = {}) {
+  return new Promise((resolveCommand, reject) => {
     const socket = new WebSocket(webSocketDebuggerUrl);
     const timeout = setTimeout(() => {
       socket.close();
-      reject(new Error(`DevTools evaluation timed out: ${expression}`));
+      reject(new Error(`DevTools command timed out: ${method}`));
     }, 5_000);
     timeout.unref();
     socket.addEventListener("open", () => {
       socket.send(
         JSON.stringify({
           id: 1,
-          method: "Runtime.evaluate",
-          params: { expression, awaitPromise, returnByValue: true },
+          method,
+          params,
         }),
       );
     });
@@ -159,15 +147,8 @@ async function evaluate(webSocketDebuggerUrl, expression, awaitPromise = false) 
       socket.close();
       if (message.error) {
         reject(new Error(message.error.message));
-      } else if (message.result?.exceptionDetails) {
-        reject(
-          new Error(
-            message.result.exceptionDetails.exception?.description ??
-              "Renderer evaluation failed",
-          ),
-        );
       } else {
-        resolveEvaluation(message.result?.result?.value);
+        resolveCommand(message.result);
       }
     });
     socket.addEventListener("error", () => {
@@ -175,6 +156,45 @@ async function evaluate(webSocketDebuggerUrl, expression, awaitPromise = false) 
       reject(new Error("DevTools WebSocket failed"));
     });
   });
+}
+
+async function evaluate(webSocketDebuggerUrl, expression, awaitPromise = false) {
+  const result = await devtoolsCommand(
+    webSocketDebuggerUrl,
+    "Runtime.evaluate",
+    { expression, awaitPromise, returnByValue: true },
+  );
+  if (result.exceptionDetails) {
+    throw new Error(
+      result.exceptionDetails.exception?.description ??
+        "Renderer evaluation failed",
+    );
+  }
+  return result.result?.value;
+}
+
+async function browserPid(webSocketDebuggerUrl) {
+  const { processInfo } = await devtoolsCommand(
+    webSocketDebuggerUrl,
+    "SystemInfo.getProcessInfo",
+  );
+  const browser = processInfo.find(({ type }) => type === "browser");
+  assert(browser, "DevTools did not report the packaged browser process");
+  return browser.id;
+}
+
+async function processArgv(pid) {
+  const raw = await readFile(`/proc/${pid}/cmdline`);
+  return raw.toString().split("\0").filter(Boolean);
+}
+
+async function processExited(pid) {
+  try {
+    await access(`/proc/${pid}`);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function terminate(pid, signal = "SIGTERM") {
@@ -226,6 +246,14 @@ try {
   const initialPid = launched.pid;
   assert(initialPid, "Packaged Electron process did not start");
 
+  const firstBrowser = await waitFor("initial packaged browser", () =>
+    browserTarget(port),
+  );
+  assert.equal(
+    await browserPid(firstBrowser.webSocketDebuggerUrl),
+    initialPid,
+    "DevTools attached to a different Electron main process",
+  );
   const firstTarget = await waitFor("initial packaged renderer", () =>
     pageTarget(port),
   );
@@ -247,27 +275,24 @@ try {
     "relaunch-requested",
   );
 
-  await waitFor("original Electron process to exit", async () => {
-    const processes = await mainProcesses(marker);
-    return !processes.some(({ pid }) => pid === initialPid);
+  await waitFor("original Electron process to exit", () =>
+    processExited(initialPid),
+  );
+  const secondBrowser = await waitFor("restarted Electron browser", async () => {
+    const browser = await browserTarget(port);
+    return browser.webSocketDebuggerUrl !== firstBrowser.webSocketDebuggerUrl
+      ? browser
+      : undefined;
   });
-  const restarted = await waitFor("restarted Electron main process", async () => {
-    const processes = await mainProcesses(marker);
-    return processes.find(({ pid }) => pid !== initialPid);
-  });
-  restartedPid = restarted.pid;
-  assert(restarted.argv.includes(`--remote-debugging-port=${port}`));
-  assert(restarted.argv.includes(marker));
+  restartedPid = await browserPid(secondBrowser.webSocketDebuggerUrl);
+  const restartedArgv = await processArgv(restartedPid);
+  assert(restartedArgv.includes(`--remote-debugging-port=${port}`));
+  assert(restartedArgv.includes(marker));
   assert.notEqual(restartedPid, initialPid);
 
-  await waitFor("original packaged sidecar to exit", async () => {
-    try {
-      await access(`/proc/${initialSidecar}`);
-      return false;
-    } catch {
-      return true;
-    }
-  });
+  await waitFor("original packaged sidecar to exit", () =>
+    processExited(initialSidecar),
+  );
   [restartedSidecar] = await waitFor("restarted packaged sidecar", async () => {
     const children = await sidecarChildren(restartedPid);
     return children.length ? children : undefined;
@@ -290,10 +315,9 @@ try {
     secondTarget.webSocketDebuggerUrl,
     'window.omegat.quit(); "quit-requested"',
   );
-  await waitFor("restarted Electron process to quit", async () => {
-    const processes = await mainProcesses(marker);
-    return !processes.some(({ pid }) => pid === restartedPid);
-  });
+  await waitFor("restarted Electron process to quit", () =>
+    processExited(restartedPid),
+  );
 
   console.log(
     JSON.stringify({
