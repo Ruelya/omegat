@@ -8,7 +8,7 @@ export type EditorFilter = { kind: "untranslated" | "unique" | "noted" | "none";
 let filter: EditorFilter = { kind: "none" };
 let selectedText = "";
 const popupConstructors: Array<(x: number, y: number) => void> = [];
-let remarkMarker = (_name: string) => undefined;
+let remarkMarker: (name: string) => void = (_name) => undefined;
 
 export function bindMarkerRemark(fn: (name: string) => void): () => void {
   remarkMarker = fn;
