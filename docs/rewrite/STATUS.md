@@ -60,6 +60,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **62 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **3 passed**, and desktop **18 files / 90
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
+The real Linux unpacked package restart E2E also passes; Windows and macOS
+packaged restart were not run in this Linux-only environment.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
 `test*` (`util/` `search/` `engine/` `glossary/` `gui/` `mt/` `finder/`
@@ -222,10 +224,15 @@ accelerators pass through the same normalizer.
 `IssueCheckerTest` **3/3**, `GlossaryTextAreaTest` **3/3**, and
 `NotesTextAreaTest` **2/2** now use toolkit-independent Rust/desktop product
 models and strict Java-exported values. Packaged restart is assembled through
-the actual main-process IPC registration: it preserves `process.argv.slice(1)`,
-schedules `app.relaunch`, stops the sidecar, then calls `app.exit(0)`.
-**3/3** lifecycle tests assert registration and exact call order; this is
-reproducible assembly coverage, not a real packaged GUI E2E claim.
+the actual main-process IPC registration: Electron's native no-argument
+`app.relaunch()` preserves the original command line, then the handler stops
+the sidecar and calls `app.exit(0)`. **3/3** lifecycle tests assert registration
+and exact call order. The Linux E2E builds the release sidecar and real
+`linux-unpacked` application, launches it under Xvfb, invokes the packaged
+preload's `window.omegat.relaunch()`, and strictly verifies distinct old/new
+browser and sidecar PIDs, preserved debug-port and unique-marker arguments,
+and a ready renderer after restart. This is Linux package evidence only, not a
+Windows or macOS E2E claim.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
 live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
