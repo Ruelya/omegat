@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 140
+native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 141
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -320,6 +320,12 @@ window deactivation clears the completer rather than spuriously saving the
 project. The IEditor method table is compared by exact equality, not a minimum
 method count. The Linux XTEST/Chromium IME and decorated-pointer packaged path
 remains green with this shared selection state.
+The renderer store no longer keeps a second `draft` string alongside
+`Document3.translation`: native input, `IEditor`, menu actions, Finder, and all
+inserting docks read or publish the same document snapshot. `IEditor` also no
+longer keeps module-global selected-text or filter mirrors; source selection
+and the serializable editor filter live in the store, while
+`EditorController` remains the paging/Marker projection over that snapshot.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
@@ -341,7 +347,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**21 files / 137 tests**, including exact success and
+**21 files / 141 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -437,6 +443,13 @@ and complete EntryKey, so an old result cannot cross into another project at
 the same numeric index or even the same key. Project open also installs the
 new first entry as a clean `Document3` before selection, preventing the old
 draft from being misclassified and written into the newly opened project.
+Those boundaries are now explicit events on one subscribable renderer bus:
+LOAD, CREATE, CLOSE, RELOAD, ENTRY, and EXTERNAL_REFRESH publish before their
+asynchronous work. External mutations from replace/script paths fetch the
+authoritative entry list without committing the stale live document, rebind by
+all six `EntryKey` fields, clamp the retained selection, and only then activate
+new Dock loaders. Exact tests assert event order, changed-key payloads, no
+`entry.set` during an external fix, and same-key cross-project cancellation.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
@@ -447,6 +460,13 @@ preload's `window.omegat.relaunch()`, and strictly verifies distinct old/new
 browser and sidecar PIDs, preserved debug-port and unique-marker arguments,
 and a ready renderer after restart. This is Linux package evidence only, not a
 Windows or macOS E2E claim.
+The Linux packaged editor/drop E2E now also blocks the first project's real
+`mt.query` on a FIFO-backed recorded HTTP response, publishes the second
+project's LOAD boundary while that request is pending, and switches through a
+real dropped `omegat.project`. Releasing the old response cannot populate the
+new project's MT Dock. The same packaged process then imports a real file,
+commits a missing-tag translation, opens its file-scoped issue, and navigates
+back to the exact entry. This is Linux Electron/CDP file-path evidence only.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
 live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
