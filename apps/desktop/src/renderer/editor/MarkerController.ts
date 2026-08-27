@@ -1,7 +1,6 @@
 /** Java `org.omegat.gui.editor.MarkerController`. */
 import { AltTranslationsMarker } from "./mark/AltTranslationsMarker";
 import { BidiMarkers } from "./mark/BidiMarkers";
-import { calcMarkers } from "./mark/CalcMarkersThread";
 import { ComesFromAutoTMMarker } from "./mark/ComesFromAutoTMMarker";
 import { ComesFromMTMarker } from "./mark/ComesFromMTMarker";
 import { FontFallbackMarker } from "./mark/FontFallbackMarker";
@@ -22,49 +21,129 @@ export type MarkerSnapshot = {
 
 type CachedMarkers = MarkerSnapshot & {
   fingerprint: string;
+  byMarker: Map<string, {
+    registration: number;
+    marks: Mark[];
+  }>;
+};
+
+type RegisteredMarker = {
+  name: string;
+  marker: IMarker;
+  plugin: boolean;
+  registration: number;
 };
 
 export class MarkerController {
-  markers: IMarker[] = [
-    new WhitespaceMarker(),
-    new NBSPMarker(),
-    new BidiMarkers(),
-    new ProtectedPartsMarker(),
-    new AltTranslationsMarker(),
-    new ComesFromAutoTMMarker(),
-    new ComesFromMTMarker(),
-    new FontFallbackMarker(),
-    new RemoveTagMarker(),
-    new ReplaceMarker(),
-  ];
+  private readonly registered: RegisteredMarker[];
   private generation = 0;
+  private registration = 0;
   private readonly cache = new Map<string, CachedMarkers>();
 
+  constructor() {
+    this.registered = [
+      new WhitespaceMarker(),
+      new NBSPMarker(),
+      new BidiMarkers(),
+      new ProtectedPartsMarker(),
+      new AltTranslationsMarker(),
+      new ComesFromAutoTMMarker(),
+      new ComesFromMTMarker(),
+      new FontFallbackMarker(),
+      new RemoveTagMarker(),
+      new ReplaceMarker(),
+    ].map((marker) => ({
+      name: `org.omegat.gui.editor.mark.${marker.constructor.name}`,
+      marker,
+      plugin: false,
+      registration: ++this.registration,
+    }));
+  }
+
+  get markers(): IMarker[] {
+    return this.registered.map(({ marker }) => marker);
+  }
+
+  getMarkerNames(): string[] {
+    return this.registered.map(({ name }) => name);
+  }
+
+  registerPluginMarker(name: string, marker: IMarker): void {
+    const normalized = name.trim();
+    if (!normalized) throw new Error("marker name is required");
+    if (this.resolveMarkerName(normalized)) {
+      throw new Error(`marker already registered: ${normalized}`);
+    }
+    this.registered.push({
+      name: normalized,
+      marker,
+      plugin: true,
+      registration: ++this.registration,
+    });
+    this.invalidate();
+  }
+
+  unregisterPluginMarker(name: string): boolean {
+    const resolved = this.resolveMarkerName(name);
+    if (!resolved) return false;
+    const index = this.registered.findIndex(
+      (registration) => registration.name === resolved && registration.plugin,
+    );
+    if (index < 0) return false;
+    this.registered.splice(index, 1);
+    this.invalidate();
+    return true;
+  }
+
   process(input: MarkerInput): Mark[] {
-    return calcMarkers(this.markers, input);
+    return this.registered.flatMap(({ marker }) =>
+      marker.getMarksForEntry(input)?.map((mark) => ({ ...mark })) ?? [],
+    );
   }
 
   processEntry(entryKey: string, input: MarkerInput): MarkerSnapshot {
     const fingerprint = JSON.stringify(input);
-    const cached = this.cache.get(entryKey);
-    if (cached?.fingerprint === fingerprint) {
-      return {
-        entryKey,
-        generation: cached.generation,
-        marks: cached.marks.map((mark) => ({ ...mark })),
-      };
+    const previous = this.cache.get(entryKey);
+    const cached: CachedMarkers = previous?.fingerprint === fingerprint
+      ? previous
+      : {
+          entryKey,
+          generation: 0,
+          marks: [],
+          fingerprint,
+          byMarker: new Map(),
+        };
+    let changed = cached !== previous;
+    const liveNames = new Set(this.registered.map(({ name }) => name));
+    for (const name of cached.byMarker.keys()) {
+      if (!liveNames.has(name)) {
+        cached.byMarker.delete(name);
+        changed = true;
+      }
     }
-    const snapshot: CachedMarkers = {
-      entryKey,
-      generation: ++this.generation,
-      marks: this.process(input),
-      fingerprint,
-    };
-    this.cache.set(entryKey, snapshot);
+    for (const registration of this.registered) {
+      const prior = cached.byMarker.get(registration.name);
+      if (prior?.registration === registration.registration) continue;
+      cached.byMarker.set(registration.name, {
+        registration: registration.registration,
+        marks:
+          registration.marker
+            .getMarksForEntry(input)
+            ?.map((mark) => ({ ...mark })) ?? [],
+      });
+      changed = true;
+    }
+    if (changed) {
+      cached.generation = ++this.generation;
+      cached.marks = this.registered.flatMap(({ name }) =>
+        cached.byMarker.get(name)?.marks.map((mark) => ({ ...mark })) ?? [],
+      );
+    }
+    this.cache.set(entryKey, cached);
     return {
       entryKey,
-      generation: snapshot.generation,
-      marks: snapshot.marks.map((mark) => ({ ...mark })),
+      generation: cached.generation,
+      marks: cached.marks.map((mark) => ({ ...mark })),
     };
   }
 
@@ -116,11 +195,37 @@ export class MarkerController {
       : null;
   }
 
-  invalidate(entryKey?: string): void {
-    if (entryKey === undefined) {
+  /**
+   * Invalidate all marker output, one entry, or one marker across cached
+   * entries. The latter is Java's `remarkOneMarker` lifecycle.
+   */
+  invalidate(entryKey?: string, markerName?: string): void {
+    const resolved = markerName ? this.resolveMarkerName(markerName) : null;
+    if (markerName && !resolved) return;
+    if (resolved) {
+      const entries = entryKey === undefined
+        ? [...this.cache.values()]
+        : [this.cache.get(entryKey)].filter((entry): entry is CachedMarkers => Boolean(entry));
+      for (const entry of entries) {
+        entry.byMarker.delete(resolved);
+      }
+    } else if (entryKey === undefined) {
       this.cache.clear();
     } else {
       this.cache.delete(entryKey);
     }
+  }
+
+  remarkOneMarker(markerName: string, entryKey?: string): void {
+    this.invalidate(entryKey, markerName);
+  }
+
+  private resolveMarkerName(name: string): string | null {
+    const exact = this.registered.find(({ name: registered }) => registered === name);
+    if (exact) return exact.name;
+    const simple = this.registered.find(({ name: registered }) =>
+      registered.endsWith(`.${name}`),
+    );
+    return simple?.name ?? null;
   }
 }

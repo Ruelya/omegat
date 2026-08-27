@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { createDocument3 } from "./Document3";
 import { MarkerController } from "./MarkerController";
 import { AltTranslationsMarker } from "./mark/AltTranslationsMarker";
 import { BidiMarkers } from "./mark/BidiMarkers";
@@ -184,5 +185,86 @@ describe("editor markers vs Java-exported goldens", () => {
     });
     expect(marks.some((m) => m.painter === "nbsp" || m.toolTipText === "NBSP")).toBe(true);
     expect(marks.some((m) => m.painter === "protected" || m.toolTipText === "<x0/>")).toBe(true);
+  });
+
+  it("registers, invalidates, recomputes, and unloads a plugin marker", () => {
+    const ctrl = new MarkerController();
+    let enabled = true;
+    let calls = 0;
+    const plugin = {
+      getMarksForEntry(input: MarkerInput): Mark[] {
+        calls += 1;
+        return enabled && input.translationText
+          ? [{
+              startOffset: 0,
+              endOffset: 1,
+              painter: "plugin",
+              toolTipText: "plugin marker",
+              entryPart: "TRANSLATION",
+            }]
+          : [];
+      },
+    };
+    const input: MarkerInput = {
+      sourceText: "source",
+      translationText: "x",
+      isActive: true,
+    };
+
+    ctrl.registerPluginMarker("example.PluginMarker", plugin);
+    expect(ctrl.getMarkerNames().at(-1)).toBe("example.PluginMarker");
+    const first = ctrl.applyToDocument(
+      "entry",
+      createDocument3("source", "x"),
+      input,
+    );
+    expect({
+      calls,
+      marks: first.snapshot.marks.filter((mark) => mark.painter === "plugin"),
+      spans: first.document.spans.filter((span) => span.style === "marker:plugin"),
+    }).toEqual({
+      calls: 1,
+      marks: [{
+        startOffset: 0,
+        endOffset: 1,
+        painter: "plugin",
+        toolTipText: "plugin marker",
+        entryPart: "TRANSLATION",
+      }],
+      spans: [{
+        start: first.document.translationStart,
+        end: first.document.translationStart + 1,
+        style: "marker:plugin",
+      }],
+    });
+
+    const cached = ctrl.processEntry("entry", input);
+    expect({ calls, generation: cached.generation }).toEqual({
+      calls: 1,
+      generation: first.snapshot.generation,
+    });
+
+    enabled = false;
+    ctrl.remarkOneMarker("example.PluginMarker");
+    const recomputed = ctrl.applyToDocument("entry", first.document, input);
+    expect({
+      calls,
+      generationAdvanced: recomputed.snapshot.generation > cached.generation,
+      pluginMarks: recomputed.snapshot.marks.filter((mark) => mark.painter === "plugin"),
+      pluginSpans: recomputed.document.spans.filter((span) => span.style === "marker:plugin"),
+    }).toEqual({
+      calls: 2,
+      generationAdvanced: true,
+      pluginMarks: [],
+      pluginSpans: [],
+    });
+
+    expect(ctrl.unregisterPluginMarker("example.PluginMarker")).toBe(true);
+    expect(ctrl.unregisterPluginMarker("example.PluginMarker")).toBe(false);
+    expect(ctrl.getMarkerNames()).not.toContain("example.PluginMarker");
+    expect(ctrl.unregisterPluginMarker("NBSPMarker")).toBe(false);
+    expect(() => ctrl.registerPluginMarker("NBSPMarker", plugin)).toThrow(
+      "marker already registered: NBSPMarker",
+    );
   });
 });
