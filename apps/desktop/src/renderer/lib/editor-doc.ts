@@ -226,7 +226,13 @@ export function prefsFromMarks(marks: ViewMarks): MarkPrefs {
   };
 }
 
-export type MarkSpan = { text: string; cls: string[] };
+export type MarkSpan = {
+  /** Rendered text; visible marker glyphs may be longer than the source. */
+  text: string;
+  cls: string[];
+  /** Number of UTF-16 units consumed from the undecorated model text. */
+  sourceLength: number;
+};
 
 export function decorateText(text: string, marks: ViewMarks, glossary: string[] = []): MarkSpan[] {
   const spans: MarkSpan[] = [];
@@ -235,12 +241,16 @@ export function decorateText(text: string, marks: ViewMarks, glossary: string[] 
   while (i < text.length) {
     const ch = text[i]!;
     if (marks.nbsp && ch === "\u00a0") {
-      spans.push({ text: "⍽", cls: ["mark-nbsp"] });
+      spans.push({ text: "⍽", cls: ["mark-nbsp"], sourceLength: 1 });
       i += 1;
       continue;
     }
     if (marks.bidi && "\u200e\u200f\u202a\u202b\u202c".includes(ch)) {
-      spans.push({ text: ch === "\u200e" ? "LRM" : ch === "\u200f" ? "RLM" : "BIDI", cls: ["mark-bidi"] });
+      spans.push({
+        text: ch === "\u200e" ? "LRM" : ch === "\u200f" ? "RLM" : "BIDI",
+        cls: ["mark-bidi"],
+        sourceLength: 1,
+      });
       i += 1;
       continue;
     }
@@ -248,6 +258,7 @@ export function decorateText(text: string, marks: ViewMarks, glossary: string[] 
       spans.push({
         text: ch === " " ? "·" : ch === "\t" ? "→" : "¶\n",
         cls: ["mark-ws"],
+        sourceLength: 1,
       });
       i += 1;
       continue;
@@ -256,12 +267,16 @@ export function decorateText(text: string, marks: ViewMarks, glossary: string[] 
       const rest = text.slice(i);
       const hit = terms.find((t) => rest.toLowerCase().startsWith(t.toLowerCase()));
       if (hit) {
-        spans.push({ text: text.slice(i, i + hit.length), cls: ["mark-glossary"] });
+        spans.push({
+          text: text.slice(i, i + hit.length),
+          cls: ["mark-glossary"],
+          sourceLength: hit.length,
+        });
         i += hit.length;
         continue;
       }
     }
-    spans.push({ text: ch, cls: [] });
+    spans.push({ text: ch, cls: [], sourceLength: 1 });
     i += 1;
   }
   return mergeSpans(spans);
@@ -271,7 +286,10 @@ function mergeSpans(spans: MarkSpan[]): MarkSpan[] {
   const out: MarkSpan[] = [];
   for (const s of spans) {
     const last = out[out.length - 1];
-    if (last && last.cls.join() === s.cls.join()) last.text += s.text;
+    if (last && last.cls.join() === s.cls.join()) {
+      last.text += s.text;
+      last.sourceLength += s.sourceLength;
+    }
     else out.push({ ...s });
   }
   return out;

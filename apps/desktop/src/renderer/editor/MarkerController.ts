@@ -40,16 +40,46 @@ export function tooltipTextsAt(
   );
 }
 
+export function tooltipTextsOverRange(
+  marks: readonly Mark[],
+  entryPart: EntryPart,
+  start: number,
+  end: number,
+): string[] {
+  if (end <= start) return tooltipTextsAt(marks, entryPart, start);
+  return marks.flatMap((mark) =>
+    mark.entryPart === entryPart
+    && mark.toolTipText
+    && mark.startOffset < end
+    && mark.endOffset > start
+      ? [mark.toolTipText]
+      : []
+  );
+}
+
+function asJavaTooltip(texts: readonly string[]): string | null {
+  const text = texts
+    .join("<br>")
+    .replaceAll("<suggestion>", "<b>")
+    .replaceAll("</suggestion>", "</b>");
+  return text ? `<html>${text}</html>` : null;
+}
+
 export function javaTooltipAt(
   marks: readonly Mark[],
   entryPart: EntryPart,
   offset: number,
 ): string | null {
-  const text = tooltipTextsAt(marks, entryPart, offset)
-    .join("<br>")
-    .replaceAll("<suggestion>", "<b>")
-    .replaceAll("</suggestion>", "</b>");
-  return text ? `<html>${text}</html>` : null;
+  return asJavaTooltip(tooltipTextsAt(marks, entryPart, offset));
+}
+
+export function javaTooltipOverRange(
+  marks: readonly Mark[],
+  entryPart: EntryPart,
+  start: number,
+  end: number,
+): string | null {
+  return asJavaTooltip(tooltipTextsOverRange(marks, entryPart, start, end));
 }
 
 type CachedMarkers = MarkerSnapshot & {
@@ -324,6 +354,31 @@ export class MarkerController {
   getToolTips(entryKey: string, entryPart: EntryPart, offset: number): string | null {
     const cached = this.cache.get(entryKey);
     return cached ? javaTooltipAt(cached.marks, entryPart, offset) : null;
+  }
+
+  getTooltipTexts(entryKey: string, entryPart: EntryPart, offset: number): string[] {
+    const cached = this.cache.get(entryKey);
+    return cached ? tooltipTextsAt(cached.marks, entryPart, offset) : [];
+  }
+
+  getToolTipsOverRange(
+    entryKey: string,
+    entryPart: EntryPart,
+    start: number,
+    end: number,
+  ): string | null {
+    const cached = this.cache.get(entryKey);
+    return cached ? javaTooltipOverRange(cached.marks, entryPart, start, end) : null;
+  }
+
+  getTooltipTextsOverRange(
+    entryKey: string,
+    entryPart: EntryPart,
+    start: number,
+    end: number,
+  ): string[] {
+    const cached = this.cache.get(entryKey);
+    return cached ? tooltipTextsOverRange(cached.marks, entryPart, start, end) : [];
   }
 
   /**

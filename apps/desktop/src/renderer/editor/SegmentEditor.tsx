@@ -12,7 +12,6 @@ import {
   type ReactNode,
   type UIEvent,
 } from "react";
-import { decorateText, parseDocument } from "../lib/editor-doc";
 import { t } from "../i18n";
 import { useApp } from "../store/app";
 import {
@@ -26,85 +25,25 @@ import {
   type ScrollAnchorCandidate,
 } from "./EditorController";
 import { bindMarkerRemark } from "./IEditor";
-import { tooltipTextsAt } from "./MarkerController";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
+import { buildRenderedTextFragments } from "./RenderedText";
+import { renderedCaretFromPoint } from "./RenderedTextHitTest";
 import type { EntryPart, Mark } from "./mark/Mark";
 import { NativePluginMarkerBridge } from "./mark/NativePluginMarker";
 
 const editorController = new EditorController();
 const nativePluginMarkers = new NativePluginMarkerBridge(editorController);
 
-type NativeCaretHit = {
-  node: Node;
+type MarkerTooltipState = {
+  entryKey: string;
+  entryPart: EntryPart;
   offset: number;
+  javaHtml: string;
+  texts: string[];
+  x: number;
+  y: number;
 };
-
-type CaretCapableDocument = Document & {
-  caretPositionFromPoint?: (
-    x: number,
-    y: number,
-  ) => { offsetNode: Node; offset: number } | null;
-  caretRangeFromPoint?: (x: number, y: number) => Range | null;
-};
-
-function caretHitFromPoint(doc: Document, x: number, y: number): NativeCaretHit | null {
-  const native = doc as CaretCapableDocument;
-  const position = native.caretPositionFromPoint?.(x, y);
-  if (position) return { node: position.offsetNode, offset: position.offset };
-  const range = native.caretRangeFromPoint?.(x, y);
-  if (range) return { node: range.startContainer, offset: range.startOffset };
-  return null;
-}
-
-function renderedCaretFromPoint(
-  root: HTMLElement,
-  x: number,
-  y: number,
-): { offset: number; bias: "before" | "after" } | null {
-  const doc = root.ownerDocument;
-  const hit = caretHitFromPoint(doc, x, y);
-  if (hit) {
-    const origin =
-      hit.node.nodeType === Node.ELEMENT_NODE
-        ? hit.node as Element
-        : hit.node.parentElement;
-    const fragment = origin?.closest<HTMLElement>("[data-offset]");
-    if (fragment && root.contains(fragment)) {
-      const start = Number(fragment.dataset.offset);
-      if (Number.isFinite(start)) {
-        const limit =
-          hit.node.nodeType === Node.TEXT_NODE
-            ? hit.node.textContent?.length ?? 0
-            : hit.node.childNodes.length;
-        const range = doc.createRange();
-        range.selectNodeContents(fragment);
-        try {
-          range.setEnd(hit.node, Math.max(0, Math.min(hit.offset, limit)));
-          const local = range.toString().length;
-          const length = fragment.textContent?.length ?? 0;
-          const bias =
-            fragment.dataset.tag && local * 2 < length ? "before" : "after";
-          return { offset: start + local, bias };
-        } catch {
-          // Fall through to an element-boundary hit when Chromium gives a
-          // transient node that was replaced during the same layout pass.
-        }
-      }
-    }
-  }
-
-  const fragment = doc.elementFromPoint(x, y)?.closest<HTMLElement>("[data-offset]");
-  if (!fragment || !root.contains(fragment)) return null;
-  const start = Number(fragment.dataset.offset);
-  if (!Number.isFinite(start)) return null;
-  const rect = fragment.getBoundingClientRect();
-  const after = x >= rect.left + rect.width / 2;
-  return {
-    offset: start + (after ? fragment.textContent?.length ?? 0 : 0),
-    bias: after ? "after" : "before",
-  };
-}
 
 function scrollCandidates(container: HTMLElement): ScrollAnchorCandidate[] {
   return [...container.querySelectorAll<HTMLElement>("[data-entry-key]")].map((element) => {
@@ -126,63 +65,26 @@ function renderRichText(
   productMarks: Mark[] = [],
   entryPart: EntryPart = "TRANSLATION",
 ): ReactNode[] {
-  let cursor = offset;
-  return parseDocument(text).flatMap((tok, i) => {
-    const start = cursor;
-    cursor += tok.value.length;
-    if (tok.kind === "tag") {
-      return (
-        <span
-          key={`${keyPrefix}-tag-${i}`}
-          className="tag tag-protected"
-          data-tag={tok.value}
-          data-offset={start}
-        >
-          {tok.value}
-        </span>
-      );
-    }
-    const relevant = productMarks.filter((mark) =>
-      mark.entryPart === entryPart
-      && mark.startOffset < start + tok.value.length
-      && mark.endOffset > start
-    );
-    const boundaries = new Set([0, tok.value.length]);
-    for (const mark of relevant) {
-      boundaries.add(Math.max(0, mark.startOffset - start));
-      boundaries.add(Math.min(tok.value.length, mark.endOffset - start));
-    }
-    const points = [...boundaries].sort((a, b) => a - b);
-    return points.slice(0, -1).flatMap((sliceStart, sliceIndex) => {
-      const sliceEnd = points[sliceIndex + 1]!;
-      const raw = tok.value.slice(sliceStart, sliceEnd);
-      const sliceMarks = relevant.filter((mark) =>
-        mark.startOffset < start + sliceEnd
-        && mark.endOffset > start + sliceStart
-      );
-      const markerClasses = sliceMarks
-        .map((mark) =>
-          mark.painter === "spell"
-            ? "mark-spell"
-            : `product-marker-${mark.painter.replace(/[^a-z0-9_-]/gi, "-")}`,
-        );
-      const markerTooltip = tooltipTextsAt(
-        sliceMarks,
-        entryPart,
-        start + sliceStart,
-      ).join("\n");
-      return decorateText(raw, marks, terms).map((span, decoratedIndex) => (
-        <span
-          key={`${keyPrefix}-text-${i}-${sliceIndex}-${decoratedIndex}`}
-          className={[...span.cls, ...markerClasses].join(" ")}
-          data-offset={start + sliceStart}
-          title={markerTooltip || undefined}
-        >
-          {span.text}
-        </span>
-      ));
-    });
-  });
+  return buildRenderedTextFragments(
+    text,
+    offset,
+    marks,
+    terms,
+    productMarks,
+    entryPart,
+  ).map((fragment, index) => (
+    <span
+      key={`${keyPrefix}-${index}-${fragment.offset}`}
+      className={fragment.classes.join(" ")}
+      data-tag={fragment.tag}
+      data-offset={fragment.offset}
+      data-source-length={fragment.sourceLength}
+      data-atomic={fragment.atomic ? "true" : undefined}
+      title={fragment.tooltipTexts.join("\n") || undefined}
+    >
+      {fragment.text}
+    </span>
+  ));
 }
 
 export function SegmentSource({ productMarks = [] }: { productMarks?: Mark[] }) {
@@ -193,7 +95,10 @@ export function SegmentSource({ productMarks = [] }: { productMarks?: Mark[] }) 
   if (!e || !marks.displaySource) return null;
   const terms = glossary.map((g) => g.source);
   return (
-    <div className={`src ${sourceClass(e, marks)} ${selected === e.source ? "is-selected-source" : ""}`}>
+    <div
+      className={`src ${sourceClass(e, marks)} ${selected === e.source ? "is-selected-source" : ""}`}
+      data-entry-part="SOURCE"
+    >
       {renderRichText(e.source, 0, marks, terms, "active-source", productMarks, "SOURCE")}
     </div>
   );
@@ -238,6 +143,7 @@ export function SegmentEditor() {
   });
   const [pageRadius, setPageRadius] = useState(8);
   const [manualConflict, setManualConflict] = useState("");
+  const [markerTooltip, setMarkerTooltip] = useState<MarkerTooltipState | null>(null);
   const [, setMarkerRevision] = useState(0);
   const composing = useRef(false);
   const discardCompositionEnd = useRef(false);
@@ -527,6 +433,62 @@ export function SegmentEditor() {
     readSelection(area);
   }
 
+  function onMarkerPointerMove(ev: PointerEvent<HTMLDivElement>) {
+    const target = ev.target instanceof Element ? ev.target : null;
+    const partRoot = target?.closest<HTMLElement>("[data-entry-part]");
+    const segment = partRoot?.closest<HTMLElement>("[data-entry-key]");
+    const entryPart = partRoot?.dataset.entryPart;
+    const entryKey = segment?.dataset.entryKey;
+    if (
+      !partRoot
+      || !entryKey
+      || (entryPart !== "SOURCE" && entryPart !== "TRANSLATION")
+    ) {
+      setMarkerTooltip(null);
+      return;
+    }
+    const hit = renderedCaretFromPoint(partRoot, ev.clientX, ev.clientY);
+    if (!hit) {
+      setMarkerTooltip(null);
+      return;
+    }
+    const javaHtml = editorController.markers.getToolTipsOverRange(
+      entryKey,
+      entryPart,
+      hit.fragmentStart,
+      hit.fragmentEnd,
+    );
+    if (!javaHtml) {
+      setMarkerTooltip(null);
+      return;
+    }
+    const next: MarkerTooltipState = {
+      entryKey,
+      entryPart,
+      offset: hit.offset,
+      javaHtml,
+      texts: editorController.markers.getTooltipTextsOverRange(
+        entryKey,
+        entryPart,
+        hit.fragmentStart,
+        hit.fragmentEnd,
+      ),
+      x: ev.clientX + 12,
+      y: ev.clientY + 18,
+    };
+    setMarkerTooltip((current) =>
+      current
+      && current.entryKey === next.entryKey
+      && current.entryPart === next.entryPart
+      && current.offset === next.offset
+      && current.javaHtml === next.javaHtml
+      && current.x === next.x
+      && current.y === next.y
+        ? current
+        : next
+    );
+  }
+
   function onPointerDown(ev: PointerEvent<HTMLDivElement>) {
     if (ev.button !== 0 || !ev.isPrimary) return;
     const root = surface.current;
@@ -549,15 +511,6 @@ export function SegmentEditor() {
     const hit = root
       ? renderedCaretFromPoint(root, ev.clientX, ev.clientY)
       : null;
-    const tooltip = hit && activeLoadedEntry
-      ? editorController.markers.getToolTips(
-          activeLoadedEntry.key,
-          "TRANSLATION",
-          hit.offset,
-        )
-      : null;
-    if (tooltip) ev.currentTarget.dataset.markerTooltip = tooltip;
-    else delete ev.currentTarget.dataset.markerTooltip;
 
     if (dragPointer.current !== ev.pointerId || !interaction.current.isMouseSelecting()) return;
     if ((ev.buttons & 1) === 0) {
@@ -701,6 +654,8 @@ export function SegmentEditor() {
       onScroll={onPageScroll}
       onDragOver={onFileDragOver}
       onDrop={(event) => void onFileDrop(event)}
+      onPointerMove={onMarkerPointerMove}
+      onPointerLeave={() => setMarkerTooltip(null)}
     >
       {editConflict?.index === activeIndex && (
         <div className="hit" role="alert" data-editor-conflict>
@@ -750,6 +705,7 @@ export function SegmentEditor() {
           <div
             ref={surface}
             className="tgt editor-surface"
+            data-entry-part="TRANSLATION"
             tabIndex={0}
             role="textbox"
             aria-multiline="true"
@@ -818,7 +774,7 @@ export function SegmentEditor() {
           }}
         >
           <div className="segment-meta">{entry.file} · #{entry.entryNumber}</div>
-          <div className="src">
+          <div className="src" data-entry-part="SOURCE">
             {renderRichText(
               entry.source,
               0,
@@ -829,7 +785,7 @@ export function SegmentEditor() {
               "SOURCE",
             )}
           </div>
-          <div className="tgt">
+          <div className="tgt" data-entry-part="TRANSLATION">
             {entry.translation
               ? renderRichText(
                   entry.translation,
@@ -854,6 +810,21 @@ export function SegmentEditor() {
             >
               <span className="score">{c.kind}</span> {c.text}
             </button>
+          ))}
+        </div>
+      )}
+      {markerTooltip && (
+        <div
+          className="marker-tooltip"
+          role="tooltip"
+          data-entry-key={markerTooltip.entryKey}
+          data-entry-part={markerTooltip.entryPart}
+          data-offset={markerTooltip.offset}
+          data-java-tooltip={markerTooltip.javaHtml}
+          style={{ left: markerTooltip.x, top: markerTooltip.y }}
+        >
+          {markerTooltip.texts.map((text, index) => (
+            <span key={`${index}-${text}`}>{text}</span>
           ))}
         </div>
       )}
