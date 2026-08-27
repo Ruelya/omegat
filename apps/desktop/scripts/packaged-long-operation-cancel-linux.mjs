@@ -1455,17 +1455,35 @@ try {
     return state.translation === teamConflictOurs ? state : undefined;
   });
 
-  await client.evaluate(`(() => {
-    window.prompt = () => ${JSON.stringify(String(orderedDecoy.index + 1))};
-  })()`);
   await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
-  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
-  await waitFor("decoy after committing packaged team ours", async () => {
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "alt+e"]);
+  await xdotool(xvfb.display, ["key", "End"]);
+  for (let index = 0; index < 3; index += 1) {
+    await xdotool(xvfb.display, ["key", "Up"]);
+  }
+  await xdotool(xvfb.display, ["key", "Return"]);
+  await waitFor("decoy after visible alternative-translation commit", async () => {
     const state = await editorState(client);
     return state.key === JSON.stringify(duplicateSetup.decoy.key)
       ? state
       : undefined;
   });
+  const entriesAfterAlternativeCommit = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  assert.equal(
+    entriesAfterAlternativeCommit.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+    )?.default_translation,
+    false,
+  );
+  assert.equal(
+    entriesAfterAlternativeCommit.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    "",
+  );
   assert.equal(
     await client.evaluate(`(() => {
       const button = document.querySelector(".topbar button");
