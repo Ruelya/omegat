@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultMappingRulesHas18",
+  "count": 18,
+  "keys": [
+    "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultMappingRulesHas18"
+  ]
+}

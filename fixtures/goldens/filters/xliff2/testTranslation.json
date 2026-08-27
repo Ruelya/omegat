@@ -1,0 +1,47 @@
+{
+  "id": "xliff2",
+  "fixture": "xliff/filters4-xliff2/ex.9.5.xlf",
+  "java_test": "org.omegat.filters4.Xliff2FilterTest#testTranslation",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Birds in Oregon",
+    "Oregon is a mostly temperate state. There are\n            many different kinds of birds that thrive",
+    "<t0>High Altitude Birds",
+    "Birds that thrive in the high altitude\n              include the Whitetailed Ptarmigan, Sharp-tailed\n              Grouse, Yellow-billed Loon, Cattle Egret, Gyrfalcon,\n              Snowy Owl, Yellow-billed Cuckoo, and Boreal\n              Owl.",
+    "Ocean Birds",
+    "Common ocean birds are Brandt's Cormorant,\n              Double-crested Cormorant, Pelagic Cormorant, Pigeon\n              Guillemot, and the Tufted Puffin.",
+    "Desert Birds"
+  ],
+  "ids": [
+    "1",
+    "1",
+    "seg-title5",
+    "1",
+    "1",
+    "1",
+    "1"
+  ],
+  "paths": [
+    "//groups/N65541xdocument/N65541bxmarksection-1/title-2",
+    "//groups/N65541xdocument/N65541bxmarksection-1/paragraph-3",
+    "//groups/N65541xdocument/N65541bxmarksection-1/N65547bxmarksection-4/title-5",
+    "//groups/N65541xdocument/N65541bxmarksection-1/N65547bxmarksection-4/paragraph-6",
+    "//groups/N65541xdocument/N65541bxmarksection-1/N65553bxmarksection-7/title-8",
+    "//groups/N65541xdocument/N65541bxmarksection-1/N65553bxmarksection-7/paragraph-9",
+    "//groups/N65541xdocument/N65541bxmarksection-1/N65559bxmarksection-10/title-11"
+  ],
+  "existing": {
+    "<t0>High Altitude Birds": "<t0>Oiseaux de haute altitude"
+  },
+  "empty_write_text": "<?xml version=\"1.0\"?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:2.0\" xmlns:fs=\"urn:oasis:names:tc:xliff:fs:2.0\" xmlns:mda=\"urn:oasis:names:tc:xliff:metadata:2.0\" version=\"2.0\" srcLang=\"en\">\n  <file id=\"groups\">\n    <group id=\"N65541xdocument\" name=\"document\">\n      <mda:metadata>\n        <mda:metaGroup category=\"XMLattribute\">\n          <mda:meta type=\"status\">draft</mda:meta>\n          <mda:meta type=\"id\">d1</mda:meta>\n        </mda:metaGroup>\n      </mda:metadata>\n      <group id=\"N65541bxmarksection-1\" name=\"section\">\n        <mda:metadata>\n          <mda:metaGroup category=\"XMLattribute\">\n            <mda:meta type=\"id\">s1</mda:meta>\n          </mda:metaGroup>\n        </mda:metadata>\n        <unit id=\"title-2\" name=\"title\">\n          <segment>\n            <source>Birds in Oregon</source>\n          </segment>\n        </unit>\n        <unit id=\"paragraph-3\" name=\"paragraph\">\n          <segment>\n            <source>Oregon is a mostly temperate state. There are\n            many different kinds of birds that thrive</source>\n          </segment>\n        </unit>\n        <group id=\"N65547bxmarksection-4\" name=\"section\">\n          <mda:metadata>\n            <mda:metaGroup category=\"XMLattribute\">\n              <mda:meta type=\"id\">s1a</mda:meta>\n            </mda:metaGroup>\n          </mda:metadata>\n          <unit id=\"title-5\" name=\"title\">\n            <segment id=\"seg-title5\">\n              <source><sc id=\"1\" isolated=\"yes\"/>High Altitude Birds</source>\n              <target><sc id=\"1\" isolated=\"yes\"/>Oiseaux de haute altitude</target>\n            </segment>\n          </unit>\n          <unit id=\"paragraph-6\" name=\"paragraph\">\n            <segment>\n              <source>Birds that thrive in the high altitude\n              include the Whitetailed Ptarmigan, Sharp-tailed\n              Grouse, Yellow-billed Loon, Cattle Egret, Gyrfalcon,\n              Snowy Owl, Yellow-billed Cuckoo, and Boreal\n              Owl.</source>\n            </segment>\n          </unit>\n        </group>\n        <group id=\"N65553bxmarksection-7\" name=\"section\">\n          <mda:metadata>\n            <mda:metaGroup category=\"XMLattribute\">\n              <mda:meta type=\"id\">s1b</mda:meta>\n            </mda:metaGroup>\n          </mda:metadata>\n          <unit id=\"title-8\" name=\"title\">\n            <segment>\n              <source>Ocean Birds</source>\n            </segment>\n          </unit>\n          <unit id=\"paragraph-9\">\n            <segment>\n              <source>Common ocean birds are Brandt's Cormorant,\n              Double-crested Cormorant, Pelagic Cormorant, Pigeon\n              Guillemot, and the Tufted Puffin.</source>\n            </segment>\n          </unit>\n        </group>\n        <group id=\"N65559bxmarksection-10\" name=\"section\">\n          <mda:metadata>\n            <mda:metaGroup category=\"XMLattribute\">\n              <mda:meta type=\"id\">s1c</mda:meta>\n            </mda:metaGroup>\n          </mda:metadata>\n          <unit id=\"title-11\" name=\"title\">\n            <segment>\n              <source>Desert Birds</source>\n            </segment>\n          </unit>\n          <unit id=\"paragraph-12\" name=\"paragraph\" translate=\"no\">\n            <segment>\n              <source>Birds you find in the desert include the Sage\n              Grouse, California Quail, and Prairie\n              Falcon.</source>\n            </segment>\n          </unit>\n        </group>\n      </group>\n    </group>\n  </file>\n</xliff>",
+  "translated": {
+    "source": "Birds in Oregon",
+    "translation": "Oiseaux en Oregon"
+  },
+  "translated_write": "<?xml version=\"1.0\"?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:2.0\" xmlns:fs=\"urn:oasis:names:tc:xliff:fs:2.0\" xmlns:mda=\"urn:oasis:names:tc:xliff:metadata:2.0\" version=\"2.0\" srcLang=\"en\">\n  <file id=\"groups\">\n    <group id=\"N65541xdocument\" name=\"document\">\n      <mda:metadata>\n        <mda:metaGroup category=\"XMLattribute\">\n          <mda:meta type=\"status\">draft</mda:meta>\n          <mda:meta type=\"id\">d1</mda:meta>\n        </mda:metaGroup>\n      </mda:metadata>\n      <group id=\"N65541bxmarksection-1\" name=\"section\">\n        <mda:metadata>\n          <mda:metaGroup category=\"XMLattribute\">\n            <mda:meta type=\"id\">s1</mda:meta>\n          </mda:metaGroup>\n        </mda:metadata>\n        <unit id=\"title-2\" name=\"title\">\n          <segment>\n            <source>Birds in Oregon</source>\n          <target>Oiseaux en Oregon</target></segment>\n        </unit>\n        <unit id=\"paragraph-3\" name=\"paragraph\">\n          <segment>\n            <source>Oregon is a mostly temperate state. There are\n            many different kinds of birds that thrive</source>\n          </segment>\n        </unit>\n        <group id=\"N65547bxmarksection-4\" name=\"section\">\n          <mda:metadata>\n            <mda:metaGroup category=\"XMLattribute\">\n              <mda:meta type=\"id\">s1a</mda:meta>\n            </mda:metaGroup>\n          </mda:metadata>\n          <unit id=\"title-5\" name=\"title\">\n            <segment id=\"seg-title5\">\n              <source><sc id=\"1\" isolated=\"yes\"/>High Altitude Birds</source>\n              <target><sc id=\"1\" isolated=\"yes\"/>Oiseaux de haute altitude</target>\n            </segment>\n          </unit>\n          <unit id=\"paragraph-6\" name=\"paragraph\">\n            <segment>\n              <source>Birds that thrive in the high altitude\n              include the Whitetailed Ptarmigan, Sharp-tailed\n              Grouse, Yellow-billed Loon, Cattle Egret, Gyrfalcon,\n              Snowy Owl, Yellow-billed Cuckoo, and Boreal\n              Owl.</source>\n            </segment>\n          </unit>\n        </group>\n        <group id=\"N65553bxmarksection-7\" name=\"section\">\n          <mda:metadata>\n            <mda:metaGroup category=\"XMLattribute\">\n              <mda:meta type=\"id\">s1b</mda:meta>\n            </mda:metaGroup>\n          </mda:metadata>\n          <unit id=\"title-8\" name=\"title\">\n            <segment>\n              <source>Ocean Birds</source>\n            </segment>\n          </unit>\n          <unit id=\"paragraph-9\">\n            <segment>\n              <source>Common ocean birds are Brandt's Cormorant,\n              Double-crested Cormorant, Pelagic Cormorant, Pigeon\n              Guillemot, and the Tufted Puffin.</source>\n            </segment>\n          </unit>\n        </group>\n        <group id=\"N65559bxmarksection-10\" name=\"section\">\n          <mda:metadata>\n            <mda:metaGroup category=\"XMLattribute\">\n              <mda:meta type=\"id\">s1c</mda:meta>\n            </mda:metaGroup>\n          </mda:metadata>\n          <unit id=\"title-11\" name=\"title\">\n            <segment>\n              <source>Desert Birds</source>\n            </segment>\n          </unit>\n          <unit id=\"paragraph-12\" name=\"paragraph\" translate=\"no\">\n            <segment>\n              <source>Birds you find in the desert include the Sage\n              Grouse, California Quail, and Prairie\n              Falcon.</source>\n            </segment>\n          </unit>\n        </group>\n      </group>\n    </group>\n  </file>\n</xliff>"
+}

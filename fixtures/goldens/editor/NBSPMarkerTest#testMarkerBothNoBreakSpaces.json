@@ -1,0 +1,25 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.NBSPMarkerTest#testMarkerBothNoBreakSpaces",
+  "enabled": true,
+  "source": "a b c",
+  "translation": "x y",
+  "is_active": true,
+  "marks": [
+    {
+      "startOffset": 1,
+      "endOffset": 2,
+      "entryPart": "SOURCE"
+    },
+    {
+      "startOffset": 3,
+      "endOffset": 4,
+      "entryPart": "SOURCE"
+    },
+    {
+      "startOffset": 1,
+      "endOffset": 2,
+      "entryPart": "TRANSLATION"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
