@@ -126,6 +126,7 @@ class DevToolsClient {
     this.socket = new WebSocket(url);
     this.nextId = 1;
     this.pending = new Map();
+    this.events = [];
   }
 
   async connect() {
@@ -135,7 +136,10 @@ class DevToolsClient {
     });
     this.socket.addEventListener("message", (event) => {
       const message = JSON.parse(event.data);
-      if (message.id == null) return;
+      if (message.id == null) {
+        this.events.push(message);
+        return;
+      }
       const pending = this.pending.get(message.id);
       if (!pending) return;
       this.pending.delete(message.id);
@@ -272,6 +276,10 @@ try {
   const targetInfo = await waitFor("packaged renderer", () => pageTarget(port));
   client = new DevToolsClient(targetInfo.webSocketDebuggerUrl);
   await client.connect();
+  await Promise.all([
+    client.command("Runtime.enable"),
+    client.command("Log.enable"),
+  ]);
   const readyEditor = await waitFor("active editor product surface", async () => {
     const ready = await client.evaluate(`(() => {
       document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
@@ -281,11 +289,18 @@ try {
         surface: Boolean(document.querySelector(".editor-surface")),
         error: [...document.querySelectorAll(".status")].at(-1)?.textContent ?? null,
         body: document.body.innerText.slice(0, 500),
+        html: document.body.innerHTML.slice(0, 500),
       };
     })()`);
-    if (ready.error) throw new Error(JSON.stringify(ready));
+    const failures = client.events
+      .filter((event) =>
+        event.method === "Runtime.exceptionThrown" ||
+        event.method === "Log.entryAdded"
+      )
+      .slice(-5);
+    if (ready.error) throw new Error(JSON.stringify({ ready, failures }));
     if (ready.preload === "function" && ready.surface) return ready;
-    throw new Error(JSON.stringify(ready));
+    throw new Error(JSON.stringify({ ready, failures }));
   });
   assert.equal(
     readyEditor.source,
