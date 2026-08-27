@@ -597,8 +597,8 @@ export class EditorController {
         index,
         entryNumber: index + 1,
         file: entry.file,
-        source: input.sourceText,
-        translation: input.translationText,
+        source: input.sourceText ?? "",
+        translation: input.translationText ?? "",
         active: input.isActive,
         marks: this.markers.processEntry(key, input).marks,
       };

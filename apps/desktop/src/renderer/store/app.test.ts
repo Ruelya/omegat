@@ -9,7 +9,7 @@ import { dispatchMenuAction } from "../menus/actions";
 import { resetAppState, useApp } from "./app";
 
 const rpc = vi.fn();
-const cancelRpc = vi.fn(async () => true);
+const cancelRpc = vi.fn(async (_requestId: string) => true);
 
 function installBridge() {
   const mem = new Map<string, string>();
