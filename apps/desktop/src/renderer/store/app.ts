@@ -373,6 +373,8 @@ export const useApp = create<AppState>((set, get) => ({
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
+    const firstEntry = entries[0];
+    const firstTranslation = firstEntry?.translation ?? "";
     set({
       props,
       entries,
@@ -380,7 +382,13 @@ export const useApp = create<AppState>((set, get) => ({
       index: 0,
       stats,
       error: null,
-      editorSelection: { anchor: 0, focus: 0 },
+      draft: firstTranslation,
+      note: firstEntry?.note ?? "",
+      document3: createDocument3(firstEntry?.source ?? "", firstTranslation),
+      editorSelection: {
+        anchor: firstTranslation.length,
+        focus: firstTranslation.length,
+      },
     });
     await get().loadPrefs();
     if (!dockLifecycle.isCurrent(lifecycle)) return;
