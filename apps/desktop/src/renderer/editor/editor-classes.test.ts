@@ -284,6 +284,39 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(area.getOmDocument().dirty).toBe(true);
   });
 
+  it("EditorController inserts at its relative selection through Document3", () => {
+    const controller = new EditorController();
+    controller.loadProject([
+      { file: "editor.txt", source: "source", translation: "alpha 😀 beta" },
+    ]);
+    expect(controller.getOmDocument()?.translationStart).toBe(7);
+
+    controller.setCaretPosition({ selectionStart: 0, selectionEnd: 5 });
+    expect(controller.getCurrentPositionInEntryTranslationInEditor()).toEqual({
+      selectionStart: 0,
+      selectionEnd: 5,
+    });
+    expect(controller.getSelectedText()).toBe("alpha");
+
+    controller.insertText("日本語");
+    expect({
+      translation: controller.getCurrentTranslation(),
+      entryTranslation: controller.entries[0]?.translation,
+      position: controller.getCurrentPositionInEntryTranslationInEditor(),
+      dirty: controller.getOmDocument()?.dirty,
+    }).toEqual({
+      translation: "日本語 😀 beta",
+      entryTranslation: "日本語 😀 beta",
+      position: { position: 3 },
+      dirty: true,
+    });
+
+    expect(controller.undoEdit()).toBe("alpha 😀 beta");
+    controller.setCaretPosition({ position: 6 });
+    controller.insertText("X");
+    expect(controller.getCurrentTranslation()).toBe("alpha X😀 beta");
+  });
+
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {
     const controller = new EditorController();
     controller.loadProject([

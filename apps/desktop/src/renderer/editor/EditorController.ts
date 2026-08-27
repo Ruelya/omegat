@@ -49,6 +49,12 @@ export type EditorScrollAnchor = {
   offset: number;
 };
 
+export type EditorCaretPosition = {
+  position?: number;
+  selectionStart?: number;
+  selectionEnd?: number;
+};
+
 export class EditorController {
   readonly editor = IEditor;
   readonly textArea = new EditorTextArea3();
@@ -93,13 +99,13 @@ export class EditorController {
       this.editor.insertText(text);
       return;
     }
-    this.textArea.setDocument(this.document);
-    this.textArea.setCaretPosition(this.document.translationEnd);
-    this.textArea.insertText(text);
+    this.textArea.setDocument(this.document, true);
+    this.textArea.clampSelectionToTranslation();
+    if (!this.textArea.replaceSelection(text)) return;
     this.document = this.textArea.getOmDocument();
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document);
+    this.textArea.setDocument(this.document, true);
   }
 
   async commitAndDeactivate(): Promise<void> {
@@ -126,6 +132,58 @@ export class EditorController {
 
   getOmDocument(): Document3State | null {
     return this.document;
+  }
+
+  getPositionInEntryTranslation(position: number): number {
+    const doc = this.document;
+    if (!doc?.editMode) return -1;
+    return Math.max(
+      0,
+      Math.min(position, doc.translationEnd) - doc.translationStart,
+    );
+  }
+
+  getCurrentPositionInEntryTranslation(): number {
+    return this.getPositionInEntryTranslation(this.textArea.getCaretPosition());
+  }
+
+  getCurrentPositionInEntryTranslationInEditor(): EditorCaretPosition {
+    const doc = this.document;
+    if (!doc?.editMode) return { position: -1 };
+    const start = this.getPositionInEntryTranslation(this.textArea.getSelectionStart());
+    const end = this.getPositionInEntryTranslation(this.textArea.getSelectionEnd());
+    if (start === end) {
+      return {
+        position: this.getPositionInEntryTranslation(this.textArea.getCaretPosition()),
+      };
+    }
+    return { selectionStart: start, selectionEnd: end };
+  }
+
+  setCaretPosition(position: EditorCaretPosition): void {
+    const doc = this.document;
+    if (!doc?.editMode) return;
+    this.textArea.setDocument(doc, true);
+    if (position.position !== undefined) {
+      this.textArea.setCaretPosition(doc.translationStart + position.position);
+    } else if (
+      position.selectionStart !== undefined
+      && position.selectionEnd !== undefined
+    ) {
+      this.textArea.setSelection(
+        doc.translationStart + position.selectionStart,
+        doc.translationStart + position.selectionEnd,
+      );
+    }
+    this.textArea.clampSelectionToTranslation();
+  }
+
+  getSelectedText(): string {
+    if (!this.document?.editMode) return "";
+    if (this.textArea.getOmDocument() !== this.document) {
+      this.textArea.setDocument(this.document, true);
+    }
+    return this.textArea.getSelectedText();
   }
 
   getCurrentEntry(): LoadedEntry | null {
