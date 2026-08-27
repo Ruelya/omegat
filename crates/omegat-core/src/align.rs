@@ -599,6 +599,155 @@ pub fn move_bead_row_span(
     out
 }
 
+fn real_line_rows(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+) -> Vec<(usize, usize, usize)> {
+    if matches!(side, AlignSide::Both) {
+        return Vec::new();
+    }
+    let rows = bead_rows(beads);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let low = start_row.min(end_row).min(rows.len() - 1);
+    let high = start_row.max(end_row).min(rows.len() - 1);
+    rows[low..=high]
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, row)| {
+            let line_index = match side {
+                AlignSide::Source => row.source_line_index,
+                AlignSide::Target => row.target_line_index,
+                AlignSide::Both => None,
+            }?;
+            let line = match side {
+                AlignSide::Source => &beads[row.bead_index].source_lines,
+                AlignSide::Target => &beads[row.bead_index].target_lines,
+                AlignSide::Both => unreachable!(),
+            }
+            .get(line_index)?;
+            line.as_ref()
+                .map(|_| (low + offset, row.bead_index, line_index))
+        })
+        .collect()
+}
+
+/// Apply Java `AlignTransferHandler.canImport` rules to a visual row span.
+///
+/// A drag has exactly one source/target column, ignores empty cells, must leave
+/// the selected span, and may only move an edge line into a different bead.
+pub fn can_move_bead_row_span_to(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+    target_row: isize,
+) -> bool {
+    let real_rows = real_line_rows(beads, start_row, end_row, side);
+    let (Some(&(first_row, first_bead, first_line)), Some(&(last_row, last_bead, last_line))) =
+        (real_rows.first(), real_rows.last())
+    else {
+        return false;
+    };
+    let rows = bead_rows(beads);
+    let (boundary_row, boundary_bead, boundary_line, moving_up) = if target_row < first_row as isize
+    {
+        (first_row, first_bead, first_line, true)
+    } else if target_row > last_row as isize {
+        (last_row, last_bead, last_line, false)
+    } else {
+        return false;
+    };
+    let side_lines = match side {
+        AlignSide::Source => &beads[boundary_bead].source_lines,
+        AlignSide::Target => &beads[boundary_bead].target_lines,
+        AlignSide::Both => return false,
+    };
+    let opposite_lines = match side {
+        AlignSide::Source => &beads[boundary_bead].target_lines,
+        AlignSide::Target => &beads[boundary_bead].source_lines,
+        AlignSide::Both => unreachable!(),
+    };
+    let movable =
+        if (boundary_row == 0 && moving_up) || (boundary_row + 1 == rows.len() && !moving_up) {
+            !opposite_lines.is_empty()
+        } else if moving_up {
+            boundary_line == 0
+        } else {
+            boundary_line + 1 == side_lines.len()
+        };
+    if !movable {
+        return false;
+    }
+    if let Ok(target) = usize::try_from(target_row) {
+        if let Some(target) = rows.get(target) {
+            return target.bead_index != boundary_bead;
+        }
+    }
+    true
+}
+
+/// Move selected source/target cells into the bead at an arbitrary drop row.
+///
+/// Insertion order follows Java `BeadTableModel.move`: moving upward appends
+/// cells, while moving downward repeatedly inserts at index zero.
+pub fn move_bead_row_span_to(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+    target_row: isize,
+) -> Vec<MutableBead> {
+    if !can_move_bead_row_span_to(beads, start_row, end_row, side, target_row) {
+        return beads.to_vec();
+    }
+    let rows = bead_rows(beads);
+    let locations = real_line_rows(beads, start_row, end_row, side);
+    let moving_up = target_row < locations[0].0 as isize;
+    let mut out = beads.to_vec();
+    let target_bead = if target_row < 0 {
+        out.insert(0, MutableBead::empty());
+        0
+    } else if target_row as usize >= rows.len() {
+        out.push(MutableBead::empty());
+        out.len() - 1
+    } else {
+        rows[target_row as usize].bead_index
+    };
+    let shifted = usize::from(target_row < 0);
+    let locations: Vec<(usize, usize)> = locations
+        .into_iter()
+        .map(|(_, bead, line)| (bead + shifted, line))
+        .collect();
+    let values: Vec<Option<String>> = locations
+        .iter()
+        .map(|&(bead, line)| lines_mut(&mut out[bead], side)[line].clone())
+        .collect();
+    let mut touched: Vec<usize> = locations.iter().map(|(bead, _)| *bead).collect();
+    for &(bead, line) in locations.iter().rev() {
+        lines_mut(&mut out[bead], side).remove(line);
+    }
+    let target = lines_mut(&mut out[target_bead], side);
+    if moving_up {
+        target.extend(values);
+    } else {
+        for value in values {
+            target.insert(0, value);
+        }
+    }
+    touched.push(target_bead);
+    touched.sort_unstable();
+    touched.dedup();
+    for bead in touched {
+        out[bead].status = BeadStatus::Default;
+    }
+    out.retain(|bead| !bead.is_empty());
+    out
+}
+
 pub fn set_bead_status(
     beads: &[MutableBead],
     indexes: &[usize],
@@ -1746,6 +1895,82 @@ mod tests {
         );
         assert_eq!(pinpointed[1].status, BeadStatus::Accepted);
         assert_eq!(pinpointed[2].source_lines, vec![Some("s2".into())]);
+    }
+
+    #[test]
+    fn table_drop_moves_only_java_eligible_real_cells_to_target_bead() {
+        let mut first = MutableBead::from_lines(
+            1.0,
+            vec![Some("a".into()), Some("b".into())],
+            vec![Some("A".into())],
+        );
+        first.status = BeadStatus::Accepted;
+        let mut second = MutableBead::from_lines(
+            2.0,
+            vec![Some("c".into())],
+            vec![Some("C".into()), Some("D".into())],
+        );
+        second.status = BeadStatus::NeedsReview;
+        let beads = vec![first, second, MutableBead::new("e", "E")];
+
+        assert_eq!(
+            can_move_bead_row_span_to(&beads, 1, 2, AlignSide::Source, 4),
+            true
+        );
+        assert_eq!(
+            can_move_bead_row_span_to(&beads, 0, 0, AlignSide::Source, 1),
+            false,
+            "the drop target is in the same bead"
+        );
+        assert_eq!(
+            can_move_bead_row_span_to(&beads, 0, 0, AlignSide::Source, 4),
+            false,
+            "a non-edge line cannot cross a bead"
+        );
+        assert_eq!(
+            can_move_bead_row_span_to(&beads, 3, 3, AlignSide::Source, 4),
+            false,
+            "a nullable visual cell is not transferable"
+        );
+
+        let moved = move_bead_row_span_to(&beads, 1, 2, AlignSide::Source, 4);
+        assert_eq!(moved[0].source_lines, vec![Some("a".into())]);
+        assert_eq!(moved[0].target_lines, vec![Some("A".into())]);
+        assert_eq!(moved[1].source_lines, Vec::<Option<String>>::new());
+        assert_eq!(
+            moved[1].target_lines,
+            vec![Some("C".into()), Some("D".into())]
+        );
+        assert_eq!(
+            moved[2].source_lines,
+            vec![Some("c".into()), Some("b".into()), Some("e".into())],
+            "downward Java drops repeatedly insert at index zero"
+        );
+        assert_eq!(
+            moved.iter().map(|bead| bead.status).collect::<Vec<_>>(),
+            vec![
+                BeadStatus::Default,
+                BeadStatus::Default,
+                BeadStatus::Default
+            ]
+        );
+
+        assert_eq!(
+            can_move_bead_row_span_to(&beads, 2, 2, AlignSide::Target, 0),
+            true
+        );
+        let upward = move_bead_row_span_to(&beads, 2, 2, AlignSide::Target, 0);
+        assert_eq!(
+            upward[0].target_lines,
+            vec![Some("A".into()), Some("C".into())]
+        );
+        assert_eq!(upward[1].target_lines, vec![Some("D".into())]);
+
+        let new_top = move_bead_row_span_to(&beads, 0, 0, AlignSide::Source, -1);
+        assert_eq!(new_top[0].source_lines, vec![Some("a".into())]);
+        assert_eq!(new_top[0].target_lines, Vec::<Option<String>>::new());
+        assert_eq!(new_top[1].source_lines, vec![Some("b".into())]);
+        assert_eq!(new_top[1].target_lines, vec![Some("A".into())]);
     }
 
     #[test]

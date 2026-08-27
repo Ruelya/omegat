@@ -816,6 +816,16 @@ impl App {
                             (index + 1).min(beads.len().saturating_sub(1)),
                             side,
                         ),
+                        "move-to-row" => omegat_core::align::move_bead_row_span_to(
+                            &beads,
+                            start_row,
+                            end_row,
+                            side,
+                            params
+                                .get("target_row")
+                                .and_then(Value::as_i64)
+                                .unwrap_or(start_row as i64) as isize,
+                        ),
                         "accepted" => omegat_core::align::set_bead_status(
                             &beads,
                             &indexes,

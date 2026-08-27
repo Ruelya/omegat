@@ -49,6 +49,80 @@ export function selectionBounds(anchor: number, focus: number, rowCount: number)
   };
 }
 
+export type AlignTableDrop = {
+  startRow: number;
+  endRow: number;
+  side: Exclude<AlignSide, "both">;
+  targetRow: number;
+  targetSide: Exclude<AlignSide, "both">;
+};
+
+export type AlignTableDropResult = {
+  allowed: boolean;
+  action?: "move-to-row";
+  extra?: {
+    start_row: number;
+    end_row: number;
+    side: Exclude<AlignSide, "both">;
+    target_row: number;
+  };
+};
+
+/**
+ * Apply Java `AlignTransferHandler.canImport` rules before issuing a drop.
+ * Empty cells do not transfer, the drop column must match, and only the
+ * leading/trailing line of a bead can cross into another bead.
+ */
+export function alignTableDrop(
+  beads: AlignBead[],
+  drop: AlignTableDrop,
+): AlignTableDropResult {
+  if (drop.side !== drop.targetSide) return { allowed: false };
+  const rows = alignmentRows(beads);
+  if (!rows.length) return { allowed: false };
+  const bounds = selectionBounds(drop.startRow, drop.endRow, rows.length);
+  const realRows = rows
+    .slice(bounds.start, bounds.end + 1)
+    .filter((row) => (drop.side === "source" ? row.source : row.target) != null);
+  const first = realRows[0];
+  const last = realRows.at(-1);
+  if (!first || !last) return { allowed: false };
+  const movingUp = drop.targetRow < first.rowIndex;
+  const movingDown = drop.targetRow > last.rowIndex;
+  if (!movingUp && !movingDown) return { allowed: false };
+  const boundary = movingUp ? first : last;
+  const bead = beads[boundary.beadIndex];
+  const lineIndex =
+    drop.side === "source" ? boundary.sourceLineIndex : boundary.targetLineIndex;
+  if (lineIndex == null) return { allowed: false };
+  const sideLines = drop.side === "source" ? bead.source_lines : bead.target_lines;
+  const oppositeLines =
+    drop.side === "source" ? bead.target_lines : bead.source_lines;
+  const atTableBoundary =
+    (movingUp && boundary.rowIndex === 0) ||
+    (movingDown && boundary.rowIndex === rows.length - 1);
+  const movable = atTableBoundary
+    ? oppositeLines.length > 0
+    : movingUp
+      ? lineIndex === 0
+      : lineIndex === sideLines.length - 1;
+  if (!movable) return { allowed: false };
+  const target = rows[drop.targetRow];
+  if (target && target.beadIndex === boundary.beadIndex) {
+    return { allowed: false };
+  }
+  return {
+    allowed: true,
+    action: "move-to-row",
+    extra: {
+      start_row: bounds.start,
+      end_row: bounds.end,
+      side: drop.side,
+      target_row: drop.targetRow,
+    },
+  };
+}
+
 export type AlignPinpoint = {
   row: number;
   side: Exclude<AlignSide, "both">;

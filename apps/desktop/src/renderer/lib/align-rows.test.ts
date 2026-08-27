@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   alignmentRows,
+  alignTableDrop,
   alignTableKey,
   selectionBounds,
   type AlignBead,
@@ -153,5 +154,83 @@ describe("alignment visual rows", () => {
       pinpoint: null,
       handled: true,
     });
+  });
+
+  it("models Java one-column drag/drop eligibility and request payloads", () => {
+    const beads: AlignBead[] = [
+      {
+        source: "a b",
+        target: "A",
+        source_lines: ["a", "b"],
+        target_lines: ["A"],
+        score: 1,
+        enabled: true,
+        status: "accepted",
+      },
+      {
+        source: "c",
+        target: "C D",
+        source_lines: ["c"],
+        target_lines: ["C", "D"],
+        score: 2,
+        enabled: true,
+        status: "needs-review",
+      },
+      {
+        source: "e",
+        target: "E",
+        source_lines: ["e"],
+        target_lines: ["E"],
+        score: 3,
+        enabled: true,
+        status: "default",
+      },
+    ];
+
+    expect(
+      alignTableDrop(beads, {
+        startRow: 1,
+        endRow: 2,
+        side: "source",
+        targetRow: 4,
+        targetSide: "source",
+      }),
+    ).toEqual({
+      allowed: true,
+      action: "move-to-row",
+      extra: {
+        start_row: 1,
+        end_row: 2,
+        side: "source",
+        target_row: 4,
+      },
+    });
+    expect(
+      alignTableDrop(beads, {
+        startRow: 1,
+        endRow: 2,
+        side: "source",
+        targetRow: 4,
+        targetSide: "target",
+      }),
+    ).toEqual({ allowed: false });
+    expect(
+      alignTableDrop(beads, {
+        startRow: 0,
+        endRow: 0,
+        side: "source",
+        targetRow: 4,
+        targetSide: "source",
+      }),
+    ).toEqual({ allowed: false });
+    expect(
+      alignTableDrop(beads, {
+        startRow: 3,
+        endRow: 3,
+        side: "source",
+        targetRow: 4,
+        targetSide: "source",
+      }),
+    ).toEqual({ allowed: false });
   });
 });

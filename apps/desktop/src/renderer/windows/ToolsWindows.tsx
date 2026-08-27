@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import {
   alignmentRows,
+  alignTableDrop,
   alignTableKey,
   selectionBounds,
   type AlignBead,
   type AlignPinpoint,
   type AlignSide,
+  type AlignTableDropResult,
 } from "../lib/align-rows";
 import {
   repositoriesFromEditorRows,
@@ -33,6 +35,11 @@ export function AlignWindow() {
   const [spanText, setSpanText] = useState("");
   const [message, setMessage] = useState("");
   const spanEditor = useRef<HTMLTextAreaElement>(null);
+  const draggedRows = useRef<{
+    startRow: number;
+    endRow: number;
+    side: Exclude<AlignSide, "both">;
+  } | null>(null);
   const rows = useMemo(() => alignmentRows(beads), [beads]);
   const selectedRows = selectionBounds(anchor, sel, rows.length);
   useEffect(() => {
@@ -138,6 +145,39 @@ export function AlignWindow() {
     setPinpoint(result.pinpoint);
     if (result.focusEditor) spanEditor.current?.focus();
     if (result.action) void edit(result.action, result.extra);
+  }
+  function startTableDrag(
+    event: React.DragEvent<HTMLTableCellElement>,
+    row: number,
+    dragSide: Exclude<AlignSide, "both">,
+  ) {
+    const inSelection =
+      side === dragSide && row >= selectedRows.start && row <= selectedRows.end;
+    draggedRows.current = {
+      startRow: inSelection ? selectedRows.start : row,
+      endRow: inSelection ? selectedRows.end : row,
+      side: dragSide,
+    };
+    if (!inSelection) {
+      setSel(row);
+      setAnchor(row);
+      setSide(dragSide);
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-omegat-align-rows", dragSide);
+  }
+  function tableDropResult(
+    row: number,
+    targetSide: Exclude<AlignSide, "both">,
+  ): AlignTableDropResult {
+    const dragged = draggedRows.current;
+    return dragged
+      ? alignTableDrop(beads, {
+          ...dragged,
+          targetRow: row,
+          targetSide,
+        })
+      : { allowed: false };
   }
   return (
     <Modal id="align" title={t("aligner")} wide>
@@ -258,8 +298,56 @@ export function AlignWindow() {
                       </>
                     )}
                   </td>
-                  <td onClick={() => setSide("source")}>{row.source ?? ""}</td>
-                  <td onClick={() => setSide("target")}>{row.target ?? ""}</td>
+                  <td
+                    draggable={row.source != null}
+                    onClick={() => setSide("source")}
+                    onDragStart={(event) =>
+                      startTableDrag(event, row.rowIndex, "source")
+                    }
+                    onDragEnd={() => {
+                      draggedRows.current = null;
+                    }}
+                    onDragOver={(event) => {
+                      if (tableDropResult(row.rowIndex, "source").allowed) {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                      }
+                    }}
+                    onDrop={(event) => {
+                      const drop = tableDropResult(row.rowIndex, "source");
+                      draggedRows.current = null;
+                      if (!drop.allowed || !drop.action || !drop.extra) return;
+                      event.preventDefault();
+                      void edit(drop.action, drop.extra);
+                    }}
+                  >
+                    {row.source ?? ""}
+                  </td>
+                  <td
+                    draggable={row.target != null}
+                    onClick={() => setSide("target")}
+                    onDragStart={(event) =>
+                      startTableDrag(event, row.rowIndex, "target")
+                    }
+                    onDragEnd={() => {
+                      draggedRows.current = null;
+                    }}
+                    onDragOver={(event) => {
+                      if (tableDropResult(row.rowIndex, "target").allowed) {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                      }
+                    }}
+                    onDrop={(event) => {
+                      const drop = tableDropResult(row.rowIndex, "target");
+                      draggedRows.current = null;
+                      if (!drop.allowed || !drop.action || !drop.extra) return;
+                      event.preventDefault();
+                      void edit(drop.action, drop.extra);
+                    }}
+                  >
+                    {row.target ?? ""}
+                  </td>
                 </tr>
               );
             })}
