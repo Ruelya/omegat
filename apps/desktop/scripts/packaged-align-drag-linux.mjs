@@ -263,30 +263,38 @@ try {
     client.evaluate(
       "Boolean(document.querySelector('table[aria-label=\"manual alignment table\"]'))",
     );
-  const menuSequences = [
-    ["alt+t", "a", "Return"],
-    ["alt+t", "Home", "Down", "Down", "Down", "Down", "Down", "Return"],
-    [
-      "F10",
-      "Right",
-      "Right",
-      "Right",
-      "Right",
-      "Down",
-      "Down",
-      "Down",
-      "Down",
-      "Down",
-      "Down",
-      "Return",
-    ],
-  ];
-  for (const sequence of menuSequences) {
-    await xdotool(xvfb.display, ["key", "--delay", "80", ...sequence]);
-    await sleep(500);
-    if (await alignerIsOpen()) break;
-    await xdotool(xvfb.display, ["key", "Escape", "Escape"]);
-  }
+  const geometry = Object.fromEntries(
+    (
+      await xdotool(xvfb.display, [
+        "getwindowgeometry",
+        "--shell",
+        windowId,
+      ])
+    )
+      .split("\n")
+      .map((line) => line.split("=")),
+  );
+  const windowX = Number(geometry.X);
+  const windowY = Number(geometry.Y);
+  // Electron's Linux menu is native chrome, outside the DevTools page target.
+  // Exercise it through XTEST at deterministic coordinates in the fixed
+  // 1440x900 package window: Tools, then its Aligner row.
+  await xdotool(xvfb.display, [
+    "mousemove",
+    String(windowX + 230),
+    String(windowY + 10),
+    "click",
+    "1",
+  ]);
+  await sleep(200);
+  await xdotool(xvfb.display, [
+    "mousemove",
+    String(windowX + 250),
+    String(windowY + 225),
+    "click",
+    "1",
+  ]);
+  await sleep(200);
   assert.equal(
     await alignerIsOpen(),
     true,
