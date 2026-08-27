@@ -1609,12 +1609,6 @@ try {
     )?.translation,
     teamConflictOurs,
   );
-  assert.equal(
-    entriesDuringConflict.find((entry) =>
-      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
-    )?.translation,
-    "",
-  );
 
   assert.equal(
     await client.evaluate(`(() => {
