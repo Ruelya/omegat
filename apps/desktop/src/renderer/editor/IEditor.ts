@@ -8,6 +8,14 @@ export type EditorFilter = { kind: "untranslated" | "unique" | "noted" | "none";
 let filter: EditorFilter = { kind: "none" };
 let selectedText = "";
 const popupConstructors: Array<(x: number, y: number) => void> = [];
+let remarkMarker = (_name: string) => undefined;
+
+export function bindMarkerRemark(fn: (name: string) => void): () => void {
+  remarkMarker = fn;
+  return () => {
+    if (remarkMarker === fn) remarkMarker = () => undefined;
+  };
+}
 
 export const IEditor = {
   activateEntry() {
@@ -147,7 +155,8 @@ export const IEditor = {
   async registerUntranslated() {
     await useApp.getState().registerUntranslated();
   },
-  remarkOneMarker(_name: string) {
+  remarkOneMarker(name: string) {
+    remarkMarker(name);
     this.refreshView();
   },
   removeFilter() {

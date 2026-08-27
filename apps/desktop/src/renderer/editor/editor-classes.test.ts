@@ -15,7 +15,7 @@ import { EditorController } from "./EditorController";
 import { EditorTextArea3 } from "./EditorTextArea3";
 import { HistoryPredictor } from "./history/HistoryPredictor";
 import { HistoryCompleter } from "./history/HistoryCompleter";
-import { IEditor } from "./IEditor";
+import { bindMarkerRemark, IEditor } from "./IEditor";
 import { makeFilter } from "./IEditorFilter";
 import { buildActiveDocument } from "./SegmentBuilder";
 import { TagAutoCompleterView } from "./TagAutoCompleterView";
@@ -55,6 +55,15 @@ describe("Document3 / IEditor / completer classes", () => {
     const c = new EditorController();
     c.replaceEditText("hello");
     expect(c.getCurrentTranslation()).toBe("hello");
+  });
+
+  it("IEditor routes one-marker refreshes into the live marker controller", () => {
+    const names: string[] = [];
+    const unbind = bindMarkerRemark((name) => names.push(name));
+    IEditor.remarkOneMarker("org.example.PluginMarker");
+    unbind();
+    IEditor.remarkOneMarker("org.example.DetachedMarker");
+    expect(names).toEqual(["org.example.PluginMarker"]);
   });
 
   it("five autocompleter views return insertable items", () => {

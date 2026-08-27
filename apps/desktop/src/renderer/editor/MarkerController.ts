@@ -41,19 +41,20 @@ export class MarkerController {
   private readonly cache = new Map<string, CachedMarkers>();
 
   constructor() {
-    this.registered = [
-      new WhitespaceMarker(),
-      new NBSPMarker(),
-      new BidiMarkers(),
-      new ProtectedPartsMarker(),
-      new AltTranslationsMarker(),
-      new ComesFromAutoTMMarker(),
-      new ComesFromMTMarker(),
-      new FontFallbackMarker(),
-      new RemoveTagMarker(),
-      new ReplaceMarker(),
-    ].map((marker) => ({
-      name: `org.omegat.gui.editor.mark.${marker.constructor.name}`,
+    const builtins: [string, IMarker][] = [
+      ["WhitespaceMarker", new WhitespaceMarker()],
+      ["NBSPMarker", new NBSPMarker()],
+      ["BidiMarkers", new BidiMarkers()],
+      ["ProtectedPartsMarker", new ProtectedPartsMarker()],
+      ["AltTranslationsMarker", new AltTranslationsMarker()],
+      ["ComesFromAutoTMMarker", new ComesFromAutoTMMarker()],
+      ["ComesFromMTMarker", new ComesFromMTMarker()],
+      ["FontFallbackMarker", new FontFallbackMarker()],
+      ["RemoveTagMarker", new RemoveTagMarker()],
+      ["ReplaceMarker", new ReplaceMarker()],
+    ];
+    this.registered = builtins.map(([simpleName, marker]) => ({
+      name: `org.omegat.gui.editor.mark.${simpleName}`,
       marker,
       plugin: false,
       registration: ++this.registration,

@@ -261,7 +261,7 @@ describe("editor markers vs Java-exported goldens", () => {
 
     expect(ctrl.unregisterPluginMarker("example.PluginMarker")).toBe(true);
     expect(ctrl.unregisterPluginMarker("example.PluginMarker")).toBe(false);
-    expect(ctrl.getMarkerNames()).not.toContain("example.PluginMarker");
+    expect(ctrl.getMarkerNames().includes("example.PluginMarker")).toBe(false);
     expect(ctrl.unregisterPluginMarker("NBSPMarker")).toBe(false);
     expect(() => ctrl.registerPluginMarker("NBSPMarker", plugin)).toThrow(
       "marker already registered: NBSPMarker",

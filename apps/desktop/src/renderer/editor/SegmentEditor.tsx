@@ -24,10 +24,12 @@ import {
   type EditorScrollAnchor,
   type ScrollAnchorCandidate,
 } from "./EditorController";
+import { bindMarkerRemark } from "./IEditor";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
 
 const editorController = new EditorController();
+bindMarkerRemark((name) => editorController.remarkOneMarker(name));
 
 type NativeCaretHit = {
   node: Node;
