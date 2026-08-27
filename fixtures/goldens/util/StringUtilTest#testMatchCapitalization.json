@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testMatchCapitalization",
+  "upper": "FOO",
+  "title": "Foo",
+  "lower": "foo",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testMatchCapitalization"
+  ]
+}

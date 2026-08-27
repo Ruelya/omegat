@@ -1,0 +1,14 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testLoadBundled",
+  "strokes": {
+    "TEST_SAVE": "ctrl pressed S",
+    "TEST_CUT": "ctrl pressed X",
+    "TEST_DELETE": null,
+    "TEST_USER_1": "ctrl pressed P",
+    "TEST_USER_2": "ctrl pressed L"
+  },
+  "keys": [
+    "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testLoadBundled"
+  ]
+}

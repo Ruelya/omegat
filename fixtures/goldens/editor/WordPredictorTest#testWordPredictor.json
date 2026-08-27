@@ -1,0 +1,35 @@
+{
+  "java_test": "org.omegat.gui.editor.history.WordPredictorTest#testWordPredictor",
+  "train": [
+    [
+      "a",
+      "big",
+      "brown",
+      "bear"
+    ],
+    [
+      "a",
+      "big",
+      "brown",
+      "bench"
+    ]
+  ],
+  "predict": {
+    "a": [
+      {
+        "word": "big",
+        "frequency": 100.0
+      }
+    ],
+    "big": [
+      {
+        "word": "brown",
+        "frequency": 100.0
+      }
+    ],
+    "brown": [],
+    "bear": [],
+    "foo": []
+  },
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

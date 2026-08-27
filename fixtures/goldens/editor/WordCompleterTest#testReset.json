@@ -1,0 +1,5 @@
+{
+  "java_test": "org.omegat.gui.editor.history.WordCompleterTest#testReset",
+  "after_reset": [],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

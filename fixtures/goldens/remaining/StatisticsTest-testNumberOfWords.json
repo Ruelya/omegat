@@ -1,0 +1,21 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.statistics.StatisticsTest#testNumberOfWords",
+  "cases": [
+    {
+      "text": "one two three",
+      "words": 3
+    },
+    {
+      "text": "one , \b two three",
+      "words": 3
+    },
+    {
+      "text": "o\bne <b>two</b>",
+      "words": 5
+    }
+  ],
+  "keys": [
+    "org.omegat.core.statistics.StatisticsTest#testNumberOfWords"
+  ]
+}
