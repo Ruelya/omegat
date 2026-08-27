@@ -1,0 +1,22 @@
+//! Java `LuceneGreekTokenizer`.
+use super::engine;
+use super::stems;
+use super::stopwords;
+use super::{StemmingMode, Token, Tokenizer};
+
+pub struct LuceneGreekTokenizer;
+
+impl Tokenizer for LuceneGreekTokenizer {
+    fn id(&self) -> &'static str {
+        "org.omegat.tokenizer.LuceneGreekTokenizer"
+    }
+    fn languages(&self) -> &'static [&'static str] {
+        &["el"]
+    }
+    fn tokenize_words(&self, text: &str, mode: StemmingMode) -> Vec<String> {
+        engine::lucene_words_to_strings(text, mode, |w, _full| stems::greek(w), stopwords::EL)
+    }
+    fn tokenize_tokens(&self, text: &str, mode: StemmingMode) -> Vec<Token> {
+        engine::lucene_tokens(text, mode, |w, _full| stems::greek(w), stopwords::EL)
+    }
+}

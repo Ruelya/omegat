@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ExternalTMFactoryTest#testLoadMozillaLang",
+  "supported": true,
+  "count": 33,
+  "src0": "Download %s for Android in your language",
+  "tgt0": "Laden Sie %s für Android in Ihrer Sprache herunter",
+  "src1": "Download %s in your language",
+  "tgt1": "Laden Sie %s in Ihrer Sprache herunter",
+  "keys": [
+    "org.omegat.core.data.ExternalTMFactoryTest#testLoadMozillaLang"
+  ]
+}

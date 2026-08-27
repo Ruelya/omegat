@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testFilenamePatternsEditor",
+  "window": "filename-patterns",
+  "title": "Filename Patterns",
+  "constructs": true,
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testFilenamePatternsEditor"
+  ]
+}

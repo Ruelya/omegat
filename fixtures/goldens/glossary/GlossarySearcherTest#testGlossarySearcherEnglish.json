@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherEnglish",
+  "count": 1,
+  "source": "source",
+  "target": "translation",
+  "comment": "comment",
+  "keys": [
+    "org.omegat.gui.glossary.GlossarySearcherTest#testGlossarySearcherEnglish"
+  ]
+}

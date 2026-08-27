@@ -1,0 +1,48 @@
+build
+
+# Gradle
+.gradle
+.settings
+.project
+.classpath
+bin
+.nb-gradle
+local.properties
+
+# IDE
+.replit
+.idea/
+.vscode/
+.fleet
+.run
+out
+.venv
+
+# Docs
+.fop
+src/docs/site
+
+# emacs backup files
+*~
+
+# MacOS system file
+.DS_Store
+
+# AI related files
+AGENTS.md
+.codex/
+.claude/
+CLAUDE.md
+.gemini/
+GEMINI.md
+.cursor/
+.windsurf/
+.agents/
+.aiconfig
+.aider*
+.codeium/
+.continue/
+.gateway/
+.github/copilot-instructions.md
+.supermaven/
+.idx/

@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.BiDiUtilsTest#testGetOrientationType_noProjectLocaleLtr_allLtr",
+  "orientation": "ALL_LTR",
+  "rtl": false,
+  "keys": [
+    "org.omegat.util.BiDiUtilsTest#testGetOrientationType_noProjectLocaleLtr_allLtr"
+  ]
+}

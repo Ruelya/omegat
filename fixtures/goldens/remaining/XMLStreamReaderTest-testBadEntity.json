@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.XMLStreamReaderTest#testBadEntity",
+  "files": [
+    "data/xml/test-badDecimalEntity.xml",
+    "data/xml/test-badHexEntity.xml"
+  ],
+  "error_class": "TranslationException",
+  "keys": [
+    "org.omegat.util.XMLStreamReaderTest#testBadEntity"
+  ]
+}
