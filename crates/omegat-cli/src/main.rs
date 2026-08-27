@@ -6,7 +6,7 @@ use omegat_core::session::ProjectSession;
 use omegat_ipc::SearchParams;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Parser, Debug)]
 #[command(name = "omegat", version = omegat_ipc::APP_VERSION, about = "OmegaT computer-assisted translation")]
@@ -549,6 +549,9 @@ fn launch_desktop(project: Option<PathBuf>, quiet: bool) -> Result<()> {
         .args(args)
         .env("OMEGAT_CONFIG_DIR", config_dir)
         .env("OMEGAT_SCRIPTS_DIR", scripts_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
         .map_err(Into::into)
