@@ -141,7 +141,17 @@ function scheduleSidecarRecovery() {
     // the stateful process.
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
     const client = startSidecar();
-    await client.request("project.open", { root: watched.root });
+    const endRecoveryWrite = projectFileWatcher.beginWriteSource(
+      "project.open.recovery",
+    );
+    try {
+      await client.request("project.open", { root: watched.root });
+    } finally {
+      // Reopening recreates internal project directories and omegat/.lock.
+      // Those writes belong to recovery and must not become a new fingerprint
+      // batch behind the one this process is about to replay.
+      endRecoveryWrite();
+    }
     if (
       projectFileWatcher.currentProject()?.root === watched.root
       && projectFileWatcher.currentProject()?.generation === watched.generation
