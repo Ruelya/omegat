@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **50268** lines; `apps/desktop/src`
-  TS/TSX/CSS **12510** lines (**~40%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **12510**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **4767**
+- Rewrite Rust: `crates/**/*.rs` **51331** lines; `apps/desktop/src`
+  TS/TSX/CSS **12688** lines (**~41%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **12688**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5023**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -55,6 +55,11 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   language-module Bundle, SVN plugin pack, Swing Styles/StaticUIUtils).
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
+
+**2026-08-27 verification:** core selected suites **143 passed**, filters
+**56 passed**, team **25 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 87
+tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
 `test*` (`util/` `search/` `engine/` `glossary/` `gui/` `mt/` `finder/`
@@ -126,9 +131,12 @@ broken tag cannot hide a later paragraph, including through the public
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported. OpenDoc/OpenXML now assign
 part-qualified segment IDs (`content.xml#0`, `word/header1.xml#0`) during both
-parse and write. **2/2** deep ZIP write-back tests strictly distinguish
+parse and write. **3/3** deep ZIP write-back tests strictly distinguish
 same-source segments across parts, retain OpenXML protected nested tags, and
-leave OpenDocument intact `office:styles` content unchanged.
+leave OpenDocument intact `office:styles` content unchanged. OpenDocument
+attribute translation and out-of-turn note translation share the same
+part-qualified ID stream; translated notes retain the original
+`text:note-body` / paragraph structure around the translated span.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -227,8 +235,14 @@ tracked deletion and observed-version guards are exercised without a product
 `git` subprocess. Persistent HEAD checkpoints now make recently deleted paths
 one-shot and mapping-aware; prepare/switch initialize and update submodules at
 the recorded gitlink. Provider APIs expose file version, guarded commit, and
-version switching through `IRemoteRepository2`. The suite is **23 passed /
-1 ignored** (the preserved SVN binary prerequisite).
+version switching through `IRemoteRepository2`. Multi-repository sync and
+explicit project-file commits now prepare and stage all mappings before
+publishing. A later repository failure restores the project/prep snapshots and
+unpublished checkouts; already-published Git repositories receive a
+fast-forward compensating commit with the pre-transaction tree instead of a
+history rewrite. Prepare failure and second-repository commit failure have
+deterministic product-path tests. The suite is **25 passed / 1 ignored** (the
+preserved SVN binary prerequisite).
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -250,8 +264,12 @@ instead of returning its input unchanged. The product state now retains
 `MutableBead` score, nullable source/target line lists, enabled flag, and
 accepted/needs-review status across split, pinpoint, bulk keep, and
 realign-pending RPCs; the renderer edits and writes that state rather than
-flattened pairs. The sidecar contract is **3/3**, including strict multiline
-split/review/pinpoint output.
+flattened pairs. Source/target selection now addresses contiguous visual row
+spans across bead boundaries. Merge, move, replace, and pinpoint mutate the
+exact selected line range, reset touched review state, and preserve the
+shorter-side empty cells; React renders those rows and sends the row bounds to
+the sidecar. The sidecar contract is **3/3**, including strict multiline
+split/review/span-merge/span-replace/pinpoint output.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
