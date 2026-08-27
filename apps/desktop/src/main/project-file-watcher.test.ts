@@ -41,6 +41,10 @@ describe("ProjectFileWatcher", () => {
         resolve(root, "omegat.project"),
         resolve(root, "source", "nested", "chapter.txt"),
       ],
+      fingerprints: {
+        [resolve(root, "omegat.project")]: null,
+        [resolve(root, "source", "nested", "chapter.txt")]: null,
+      },
       sources: ["native"],
     });
     watcher.close();
@@ -92,6 +96,10 @@ describe("ProjectFileWatcher", () => {
         resolve(root, "source"),
         resolve(root, "source", "runtime", "deeper", "created.txt"),
       ],
+      fingerprints: {
+        [resolve(root, "source")]: null,
+        [resolve(root, "source", "runtime", "deeper", "created.txt")]: null,
+      },
       sources: ["native", "sidecar"],
     });
     watcher.close();
@@ -130,6 +138,9 @@ describe("ProjectFileWatcher", () => {
       root: resolve(root),
       generation: 21,
       paths: [resolve(root, "omegat", "project_save.tmx")],
+      fingerprints: {
+        [resolve(root, "omegat", "project_save.tmx")]: null,
+      },
       sources: ["native"],
     });
     watcher.close();
@@ -171,6 +182,9 @@ describe("ProjectFileWatcher", () => {
       root: resolve(root),
       generation: 41,
       paths: [resolve(source)],
+      fingerprints: {
+        [resolve(source)]: expect.any(String),
+      },
       sources: ["native"],
     });
     watcher.close();
@@ -202,6 +216,9 @@ describe("ProjectFileWatcher", () => {
       root: resolve(root),
       generation: 33,
       paths: [resolve(source)],
+      fingerprints: {
+        [resolve(source)]: expect.any(String),
+      },
       sources: ["native"],
     });
     watcher.close();

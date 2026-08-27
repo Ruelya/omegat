@@ -1290,12 +1290,13 @@ describe("app store", () => {
     expect(rpc.mock.calls.some(([method]) => method === "entry.set")).toBe(false);
   });
 
-  it("rejects queued proactive events from an older same-root generation", async () => {
+  it("rejects stale generations and coalesces duplicate watcher fingerprints", async () => {
     const root = "/same-root";
     const refresh = vi.fn(async () => true);
     let notify: ((event: {
       root: string;
       paths: string[];
+      fingerprints: Record<string, string | null>;
       generation: number;
       sources: Array<"native" | "sidecar">;
     }) => void) | undefined;
@@ -1322,19 +1323,41 @@ describe("app store", () => {
     notify?.({
       root,
       paths: [`${root}/source/stale.txt`],
+      fingerprints: { [`${root}/source/stale.txt`]: "stale" },
       generation: generation - 1,
       sources: ["sidecar"],
     });
     expect(refresh).not.toHaveBeenCalled();
 
+    const currentPath = `${root}/source/current.txt`;
     notify?.({
       root,
-      paths: [`${root}/source/current.txt`],
+      paths: [currentPath],
+      fingerprints: { [currentPath]: "revision-1" },
       generation,
-      sources: ["native", "sidecar"],
+      sources: ["native"],
     });
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     expect(refresh).toHaveBeenCalledWith(undefined, true);
+
+    notify?.({
+      root,
+      paths: [currentPath],
+      fingerprints: { [currentPath]: "revision-1" },
+      generation,
+      sources: ["sidecar"],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    notify?.({
+      root,
+      paths: [currentPath],
+      fingerprints: { [currentPath]: "revision-2" },
+      generation,
+      sources: ["sidecar"],
+    });
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
     disconnect();
   });
 

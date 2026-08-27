@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld("omegat", {
     fn: (event: {
       root: string;
       paths: string[];
+      fingerprints: Record<string, string | null>;
       generation: number;
       sources: Array<"native" | "sidecar">;
     }) => void,

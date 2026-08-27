@@ -1576,9 +1576,12 @@ export function connectRpcOperationEvents(): () => void {
 }
 
 export function connectExternalProjectEvents(): () => void {
+  let observedProject = "";
+  const observedFingerprints = new Map<string, string | null>();
   return window.omegat?.onProjectExternalChange?.(({
     root,
     paths,
+    fingerprints,
     generation,
     sources,
   }) => {
@@ -1587,6 +1590,25 @@ export function connectExternalProjectEvents(): () => void {
       state.props?.root !== root
       || state.projectEvent.projectGeneration !== generation
     ) return;
+    const project = `${generation}\0${root}`;
+    if (observedProject !== project) {
+      observedProject = project;
+      observedFingerprints.clear();
+    }
+    const changed = paths.some((path) => {
+      const fingerprint = fingerprints[path] ?? null;
+      return !observedFingerprints.has(path)
+        || observedFingerprints.get(path) !== fingerprint;
+    });
+    paths.forEach((path) => {
+      observedFingerprints.set(path, fingerprints[path] ?? null);
+    });
+    if (!changed) {
+      state.logLine(
+        `coalesced external project change (${paths.length} path(s), ${sources.join("+")})`,
+      );
+      return;
+    }
     void state
       .refreshEntriesAfterExternalChange(undefined, true)
       .then(() => state.logLine(

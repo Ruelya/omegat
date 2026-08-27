@@ -12,6 +12,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 export type ExternalProjectChange = {
   root: string;
   paths: string[];
+  fingerprints: Record<string, string | null>;
   generation: number;
   sources: ProjectChangeSource[];
 };
@@ -234,7 +235,15 @@ export class ProjectFileWatcher {
       this.sources.clear();
       this.timer = null;
       if (root && paths.length > 0) {
-        this.publish({ root, paths, generation, sources });
+        this.publish({
+          root,
+          paths,
+          fingerprints: Object.fromEntries(
+            paths.map((path) => [path, fileFingerprint(path)]),
+          ),
+          generation,
+          sources,
+        });
       }
     }, this.debounceMs);
   }
