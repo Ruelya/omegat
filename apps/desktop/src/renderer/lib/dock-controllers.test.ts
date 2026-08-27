@@ -5,6 +5,7 @@ import {
   DictionaryController,
   DockNotificationController,
   DockPopupController,
+  DockProjectLifecycle,
   entryComment,
   GlossaryController,
   LatestDockRequest,
@@ -276,6 +277,33 @@ describe("Swing-depth desktop dock controllers", () => {
     expect(await first).toBe(false);
     expect(requests.isPending()).toBe(false);
     expect(published).toEqual(["new"]);
+  });
+
+  it("invalidates every dock at project and entry event boundaries", () => {
+    const cancelled = [0, 0];
+    const lifecycle = new DockProjectLifecycle([
+      { cancel: () => { cancelled[0] += 1; } },
+      { cancel: () => { cancelled[1] += 1; } },
+    ]);
+
+    const opening = lifecycle.beginProject("/first");
+    expect(opening).toEqual({
+      projectGeneration: 1,
+      entryGeneration: 1,
+      projectId: "/first",
+      entryKey: null,
+    });
+    const first = lifecycle.activateEntry("/first", "same-entry-key");
+    expect(lifecycle.isCurrent(first)).toBe(true);
+    expect(lifecycle.isCurrent(lifecycle.captureEntry("/first", "same-entry-key"))).toBe(true);
+
+    const switching = lifecycle.beginProject("/second");
+    expect(lifecycle.isCurrent(first)).toBe(false);
+    expect(lifecycle.isCurrent(switching)).toBe(true);
+    const second = lifecycle.activateEntry("/second", "same-entry-key");
+    expect(lifecycle.isCurrent(second)).toBe(true);
+    expect(lifecycle.isCurrent(lifecycle.captureEntry("/first", "same-entry-key"))).toBe(false);
+    expect(cancelled).toEqual([4, 4]);
   });
 
   it("dispatches hit/miss notifications and popup actions through dock controllers", () => {

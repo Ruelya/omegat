@@ -124,6 +124,8 @@ export function SegmentEditor() {
   const activeIndex = useApp((s) => s.index);
   const document3 = useApp((s) => s.document3);
   const setDraft = useApp((s) => s.setDraft);
+  const selection = useApp((s) => s.editorSelection);
+  const setSelection = useApp((s) => s.setEditorSelection);
   const commit = useApp((s) => s.commit);
   const select = useApp((s) => s.select);
   const open = useApp((s) => s.open);
@@ -143,10 +145,6 @@ export function SegmentEditor() {
   const ime = useRef<HTMLTextAreaElement>(null);
   const interaction = useRef(new EditorTextArea3());
   const pendingScrollAnchor = useRef<EditorScrollAnchor | null>(null);
-  const [selection, setSelection] = useState({
-    anchor: document3.translation.length,
-    focus: document3.translation.length,
-  });
   const [pageRadius, setPageRadius] = useState(8);
   const [manualConflict, setManualConflict] = useState("");
   const [markerTooltip, setMarkerTooltip] = useState<MarkerTooltipState | null>(null);

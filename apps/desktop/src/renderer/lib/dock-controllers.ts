@@ -64,6 +64,83 @@ export class LatestDockRequest<T> {
   }
 }
 
+export type DockLifecycleToken = {
+  projectGeneration: number;
+  entryGeneration: number;
+  projectId: string | null;
+  entryKey: string | null;
+};
+
+type CancellableDockRequest = {
+  cancel(): void;
+};
+
+/**
+ * Project/entry event boundary shared by every asynchronous dock loader.
+ *
+ * Request-local generations are insufficient when two projects expose the
+ * same numeric entry index (or even the same EntryKey). Java's CoreEvents
+ * invalidates panes on LOAD/CREATE/CLOSE before the next entry activation; the
+ * renderer mirrors that ordering with a project generation plus an entry
+ * generation.
+ */
+export class DockProjectLifecycle {
+  private projectGeneration = 0;
+  private entryGeneration = 0;
+  private projectId: string | null = null;
+  private entryKey: string | null = null;
+
+  constructor(private readonly requests: readonly CancellableDockRequest[]) {}
+
+  beginProject(projectId: string | null): DockLifecycleToken {
+    this.cancelRequests();
+    this.projectGeneration += 1;
+    this.entryGeneration += 1;
+    this.projectId = projectId;
+    this.entryKey = null;
+    return this.snapshot();
+  }
+
+  activateEntry(projectId: string | null, entryKey: string): DockLifecycleToken {
+    this.cancelRequests();
+    if (projectId !== this.projectId) {
+      this.projectGeneration += 1;
+      this.projectId = projectId;
+    }
+    this.entryGeneration += 1;
+    this.entryKey = entryKey;
+    return this.snapshot();
+  }
+
+  captureEntry(projectId: string | null, entryKey: string): DockLifecycleToken {
+    return {
+      ...this.snapshot(),
+      projectId,
+      entryKey,
+    };
+  }
+
+  isCurrent(token: DockLifecycleToken): boolean {
+    return token.projectGeneration === this.projectGeneration
+      && token.entryGeneration === this.entryGeneration
+      && token.projectId === this.projectId
+      && token.entryKey === this.entryKey;
+  }
+
+  private cancelRequests(): void {
+    this.requests.forEach((request) => request.cancel());
+  }
+
+  private snapshot(): DockLifecycleToken {
+    return {
+      projectGeneration: this.projectGeneration,
+      entryGeneration: this.entryGeneration,
+      projectId: this.projectId,
+      entryKey: this.entryKey,
+    };
+  }
+}
+
 export type DockNotificationTone = "hit" | "miss";
 
 export class DockNotificationController {

@@ -14,7 +14,7 @@ import {
   type ViewMarks,
 } from "../lib/editor-doc";
 import { DEFAULT_DOCK_LAYOUT, layoutFromPrefs, layoutToPrefs, serializeDockLayout, type DockLayout } from "../lib/layout";
-import { LatestDockRequest } from "../lib/dock-controllers";
+import { DockProjectLifecycle, LatestDockRequest } from "../lib/dock-controllers";
 import { applyColorVars, defaultPreferences } from "../lib/preferences";
 import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchForm } from "../lib/search-params";
 import type {
@@ -83,18 +83,34 @@ type SelectedDockData = {
   previousIndex: number;
   navBack: number[];
   recordHistory: boolean;
+  selection: { anchor: number; focus: number };
 };
 
 const selectedDockRequest = new LatestDockRequest<SelectedDockData>();
 const mtDockRequest = new LatestDockRequest<MtSuggestionDto>();
 const dictionaryDockRequest = new LatestDockRequest<DictHitDto[]>();
 const completerDockRequest = new LatestDockRequest<CompleterItemDto[]>();
+const dockLifecycle = new DockProjectLifecycle([
+  selectedDockRequest,
+  mtDockRequest,
+  dictionaryDockRequest,
+  completerDockRequest,
+]);
 
-function cancelDockRequests(): void {
-  selectedDockRequest.cancel();
-  mtDockRequest.cancel();
-  dictionaryDockRequest.cancel();
-  completerDockRequest.cancel();
+function entryLifecycleKey(key: EntryDto["key"]): string {
+  return JSON.stringify(key);
+}
+
+function clearedDockData() {
+  return {
+    matches: [] as MatchDto[],
+    glossary: [] as GlossaryHitDto[],
+    issues: [] as IssueDto[],
+    mt: [] as MtSuggestionDto[],
+    dict: [] as DictHitDto[],
+    completer: [] as CompleterItemDto[],
+    selectedMatch: 0,
+  };
 }
 
 function normalizeEntrySetResult(result: EntrySetResult | EntryDto): EntrySetResult {
@@ -143,6 +159,7 @@ export type AppState = {
   error: string | null;
   draft: string;
   document3: Document3State;
+  editorSelection: { anchor: number; focus: number };
   note: string;
   firstRun: boolean;
   locale: string;
@@ -184,6 +201,11 @@ export type AppState = {
   reloadProject: () => Promise<void>;
   select: (index: number, recordHistory?: boolean) => Promise<void>;
   setDraft: (v: string) => void;
+  setEditorSelection: (
+    selection:
+      | { anchor: number; focus: number }
+      | ((current: { anchor: number; focus: number }) => { anchor: number; focus: number }),
+  ) => void;
   setNote: (v: string) => void;
   commitCurrent: (opts?: { default_translation?: boolean }) => Promise<EntryDto | null>;
   commit: (opts?: { default_translation?: boolean }) => Promise<void>;
@@ -255,6 +277,7 @@ const initialState = {
   error: null as string | null,
   draft: "",
   document3: createDocument3("", ""),
+  editorSelection: { anchor: 0, focus: 0 },
   note: "",
   mt: [] as MtSuggestionDto[],
   dict: [] as DictHitDto[],
@@ -341,13 +364,28 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   open: async (root) => {
+    const lifecycle = dockLifecycle.beginProject(root);
+    set({ ...clearedDockData(), error: null, status: "" });
     const props = await rpc<ProjectPropsDto>("project.open", { root });
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     const listed = await rpc<EntryDto[]>("entry.list");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
-    set({ props, entries, screen: "workspace", index: 0, stats, error: null });
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
+    set({
+      props,
+      entries,
+      screen: "workspace",
+      index: 0,
+      stats,
+      error: null,
+      editorSelection: { anchor: 0, focus: 0 },
+    });
     await get().loadPrefs();
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     await get().select(0, false);
+    if (get().props?.root !== root) return;
     const rec = JSON.parse(readLocal("omegat.recent") || "[]") as string[];
     writeLocal("omegat.recent", JSON.stringify([root, ...rec.filter((r) => r !== root)].slice(0, 8)));
     writeLocal("omegat.first", "1");
@@ -363,17 +401,27 @@ export const useApp = create<AppState>((set, get) => ({
     await get().open(root);
   },
   closeProject: async () => {
-    cancelDockRequests();
+    dockLifecycle.beginProject(null);
+    const { locale, theme, version } = get();
+    set({
+      ...initialState,
+      locale,
+      theme,
+      version,
+      firstRun: false,
+      screen: "welcome",
+    });
     try {
       await rpc("project.close");
     } catch {
       /* ignore */
     }
-    set({ ...initialState, locale: get().locale, theme: get().theme, version: get().version, firstRun: false, screen: "welcome" });
   },
   reloadProject: async () => {
     const root = get().props?.root;
     if (!root) return;
+    const lifecycle = dockLifecycle.beginProject(root);
+    set({ ...clearedDockData(), status: "" });
     const before = get();
     const previous = before.entries[before.index];
     if (
@@ -381,14 +429,19 @@ export const useApp = create<AppState>((set, get) => ({
       && (before.draft !== previous.translation || before.note !== previous.note)
     ) {
       await get().commitCurrent();
+      if (!dockLifecycle.isCurrent(lifecycle)) return;
     }
     const committed = get();
     const committedEntry = committed.entries[committed.index];
     await rpc("project.save");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     const reloaded = await rpc<{ props?: ProjectPropsDto }>("project.reload");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     const listed = await rpc<EntryDto[]>("entry.list");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     const index = reloadedEntryIndex(entries, committedEntry, committed.index);
     if (index < 0) {
       set({
@@ -408,9 +461,18 @@ export const useApp = create<AppState>((set, get) => ({
         navForward: [],
         editConflict: null,
         status: "",
+        editorSelection: { anchor: 0, focus: 0 },
       });
     } else {
       const entry = entries[index]!;
+      const sameEntry = sameCompleteEntryKey(entry.key, committedEntry?.key);
+      const limit = entry.translation.length;
+      const editorSelection = sameEntry
+        ? {
+            anchor: Math.max(0, Math.min(committed.editorSelection.anchor, limit)),
+            focus: Math.max(0, Math.min(committed.editorSelection.focus, limit)),
+          }
+        : { anchor: limit, focus: limit };
       // Install a clean target snapshot before querying entry details. This
       // prevents `select` from mistaking a reordered entry at the old numeric
       // index for the dirty pre-reload document.
@@ -426,6 +488,7 @@ export const useApp = create<AppState>((set, get) => ({
         navBack: [],
         navForward: [],
         editConflict: null,
+        editorSelection,
       });
       await get().select(index, false);
     }
@@ -447,13 +510,16 @@ export const useApp = create<AppState>((set, get) => ({
       index: prev,
       navBack,
       prefs,
+      editorSelection,
     } = get();
     const insert_best = prefs?.insert_best_match ?? true;
     const e = entries[index];
     if (!e) return;
-    mtDockRequest.cancel();
-    dictionaryDockRequest.cancel();
-    completerDockRequest.cancel();
+    const lifecycle = dockLifecycle.activateEntry(
+      get().props?.root ?? null,
+      entryLifecycleKey(e.key),
+    );
+    set({ ...clearedDockData(), selectedText: "" });
     await selectedDockRequest.run(async (signal) => {
       const matches = await rpc<MatchDto[]>("matches.query", { index });
       stopIfCancelled(signal);
@@ -479,6 +545,13 @@ export const useApp = create<AppState>((set, get) => ({
       stopIfCancelled(signal);
       let draft = e.translation;
       if (!draft && insert_best && matches[0]) draft = matches[0].translation;
+      const sameEntry = sameCompleteEntryKey(entries[prev]?.key, e.key);
+      const selection = sameEntry
+        ? {
+            anchor: Math.max(0, Math.min(editorSelection.anchor, draft.length)),
+            focus: Math.max(0, Math.min(editorSelection.focus, draft.length)),
+          }
+        : { anchor: draft.length, focus: draft.length };
       const completer = get().completerAuto
         ? await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "", text: draft })
         : [];
@@ -499,8 +572,10 @@ export const useApp = create<AppState>((set, get) => ({
         previousIndex: prev,
         navBack,
         recordHistory,
+        selection,
       };
     }, (loaded) => {
+      if (!dockLifecycle.isCurrent(lifecycle)) return;
       const current = get().entries[loaded.index];
       if (!current || !sameCompleteEntryKey(current.key, loaded.key)) return;
       set({
@@ -516,6 +591,7 @@ export const useApp = create<AppState>((set, get) => ({
         note: loaded.note,
         history: { undo: [], redo: [] },
         selectedMatch: 0,
+        editorSelection: loaded.selection,
         status: `${loaded.file} #${loaded.index + 1}`,
         ...(loaded.recordHistory && loaded.previousIndex !== loaded.index
           ? { navBack: [...loaded.navBack, loaded.previousIndex], navForward: [] }
@@ -525,11 +601,18 @@ export const useApp = create<AppState>((set, get) => ({
   },
   queryMt: async (engine = "mymemory") => {
     try {
-      const index = get().index;
+      const state = get();
+      const index = state.index;
+      const entry = state.entries[index];
+      if (!entry) return;
+      const lifecycle = dockLifecycle.captureEntry(
+        state.props?.root ?? null,
+        entryLifecycleKey(entry.key),
+      );
       await mtDockRequest.run(
         () => rpc<MtSuggestionDto>("mt.query", { index, engine }),
         (one) => {
-          if (get().index !== index) return;
+          if (!dockLifecycle.isCurrent(lifecycle)) return;
           set({ mt: [one, ...get().mt.filter((m) => m.engine !== engine)] });
         },
       );
@@ -538,12 +621,19 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   queryDict: async (word) => {
-    const index = get().index;
+    const state = get();
+    const index = state.index;
+    const entry = state.entries[index];
+    if (!entry) return;
+    const lifecycle = dockLifecycle.captureEntry(
+      state.props?.root ?? null,
+      entryLifecycleKey(entry.key),
+    );
     await dictionaryDockRequest.run(() => rpc<DictHitDto[]>("dict.query", {
         word,
-        fuzzy: get().prefs?.dictionary_fuzzy_matching,
+        fuzzy: state.prefs?.dictionary_fuzzy_matching,
       }), (dict) => {
-        if (get().index === index) set({ dict });
+        if (dockLifecycle.isCurrent(lifecycle)) set({ dict });
       });
   },
   queryCompleter: async (prefix) => {
@@ -551,13 +641,20 @@ export const useApp = create<AppState>((set, get) => ({
       set({ completer: [] });
       return;
     }
-    const index = get().index;
+    const state = get();
+    const index = state.index;
+    const entry = state.entries[index];
+    if (!entry) return;
+    const lifecycle = dockLifecycle.captureEntry(
+      state.props?.root ?? null,
+      entryLifecycleKey(entry.key),
+    );
     await completerDockRequest.run(() => rpc<CompleterItemDto[]>("completer.query", {
-        index: get().index,
+        index,
         prefix,
-        text: get().draft,
+        text: state.draft,
       }), (completer) => {
-        if (get().index === index) set({ completer });
+        if (dockLifecycle.isCurrent(lifecycle)) set({ completer });
       });
   },
   loadFilters: async () => set({ filters: await rpc<FilterInfoDto[]>("filters.list") }),
@@ -726,6 +823,12 @@ export const useApp = create<AppState>((set, get) => ({
       history: pushUndo(get().history, prev, v),
     });
   },
+  setEditorSelection: (selection) => set({
+    editorSelection: typeof selection === "function"
+      ? selection(get().editorSelection)
+      : selection,
+    selectedText: "",
+  }),
   setNote: (v) => set({ note: v }),
   undo: () => {
     const { draft, stacks } = undoDraft(get().history, get().draft);
@@ -1030,7 +1133,7 @@ export const useApp = create<AppState>((set, get) => ({
 }));
 
 export function resetAppState() {
-  cancelDockRequests();
+  dockLifecycle.beginProject(null);
   useApp.setState({
     ...initialState,
     firstRun: true,

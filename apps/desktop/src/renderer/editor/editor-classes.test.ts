@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { AutoCompleter } from "./autocompleter/AutoCompleter";
 import { GlossaryAutoCompleterView } from "./autocompleter/GlossaryAutoCompleterView";
@@ -45,14 +48,12 @@ describe("Document3 / IEditor / completer classes", () => {
   });
 
   it("IEditor method table is complete (no empty break)", () => {
-    const names = Object.keys(IEditor).sort();
-    expect(names).toContain("commitAndDeactivate");
-    expect(names).toContain("replaceEditTextAndMark");
-    expect(names).toContain("registerUntranslated");
-    expect(names).toContain("gotoEntry");
-    expect(names).toContain("insertTag");
-    expect(names).toContain("setFilter");
-    expect(names.length).toBeGreaterThanOrEqual(50);
+    const here = dirname(fileURLToPath(import.meta.url));
+    const golden = JSON.parse(readFileSync(
+      join(here, "../../../../../fixtures/goldens/engine/ieditor_methods.json"),
+      "utf8",
+    )) as { methods: string[] };
+    expect(Object.keys(IEditor).sort()).toEqual([...golden.methods].sort());
   });
 
   it("EditorController writes through IEditor", () => {

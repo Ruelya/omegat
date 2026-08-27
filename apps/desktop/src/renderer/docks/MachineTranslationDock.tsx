@@ -3,26 +3,19 @@ import { t } from "../i18n";
 import {
   DockNotificationController,
   MachineTranslateController,
-  type DockEditTarget,
 } from "../lib/dock-controllers";
+import { IEditor } from "../editor/IEditor";
 import { useApp } from "../store/app";
 import { DockFrame } from "./DockFrame";
 
 export function MachineTranslationDock() {
   const mt = useApp((s) => s.mt);
   const queryMt = useApp((s) => s.queryMt);
-  const draft = useApp((s) => s.draft);
-  const setDraft = useApp((s) => s.setDraft);
   const openWindow = useApp((s) => s.openWindow);
   const [selected, setSelected] = useState(-1);
   const [notifyHits, setNotifyHits] = useState(true);
   const controller = new MachineTranslateController(mt, selected);
   const notifications = new DockNotificationController(notifyHits);
-  const editor: DockEditTarget = {
-    getCurrentTranslation: () => draft,
-    replaceEditText: setDraft,
-    insertText: (text) => setDraft(draft + text),
-  };
   return (
     <DockFrame
       title={t("mt")}
@@ -37,13 +30,13 @@ export function MachineTranslationDock() {
           id: "insert",
           label: t("insertTranslation"),
           disabled: controller.getSelected() === null,
-          action: () => controller.apply(editor, "insert"),
+          action: () => controller.apply(IEditor, "insert"),
         },
         {
           id: "replace",
           label: t("replace"),
           disabled: controller.getSelected() === null,
-          action: () => controller.apply(editor, "overwrite"),
+          action: () => controller.apply(IEditor, "overwrite"),
         },
         {
           id: "notifications",
@@ -78,13 +71,13 @@ export function MachineTranslationDock() {
           className={`hit ${i === controller.selectedIndex ? "active" : ""}`}
           tabIndex={0}
           onClick={() => setSelected(controller.select(i))}
-          onDoubleClick={() => controller.apply(editor, "overwrite", i)}
+          onDoubleClick={() => controller.apply(IEditor, "overwrite", i)}
         >
           <span className="score">{m.engine}</span> {m.text}
           {i === controller.selectedIndex && (
             <div>
-              <button type="button" onClick={() => controller.apply(editor, "insert", i)}>Insert</button>
-              <button type="button" onClick={() => controller.apply(editor, "overwrite", i)}>{t("replace")}</button>
+              <button type="button" onClick={() => controller.apply(IEditor, "insert", i)}>Insert</button>
+              <button type="button" onClick={() => controller.apply(IEditor, "overwrite", i)}>{t("replace")}</button>
             </div>
           )}
         </div>

@@ -4,25 +4,18 @@ import {
   decodeGlossaryComment,
   DockNotificationController,
   GlossaryController,
-  type DockEditTarget,
 } from "../lib/dock-controllers";
+import { IEditor } from "../editor/IEditor";
 import { useApp } from "../store/app";
 import { DockFrame } from "./DockFrame";
 
 export function GlossaryDock() {
   const glossary = useApp((s) => s.glossary);
-  const setDraft = useApp((s) => s.setDraft);
-  const draft = useApp((s) => s.draft);
   const openWindow = useApp((s) => s.openWindow);
   const [selected, setSelected] = useState(0);
   const [notifyHits, setNotifyHits] = useState(true);
   const controller = new GlossaryController(glossary);
   const notifications = new DockNotificationController(notifyHits);
-  const editor: DockEditTarget = {
-    getCurrentTranslation: () => draft,
-    replaceEditText: setDraft,
-    insertText: (text) => setDraft(draft + text),
-  };
   return (
     <DockFrame
       title={t("glossary")}
@@ -32,7 +25,7 @@ export function GlossaryDock() {
           id: "insert",
           label: t("insertTranslation"),
           disabled: controller.entries[selected] === undefined,
-          action: () => controller.insertTarget(editor, selected),
+          action: () => controller.insertTarget(IEditor, selected),
         },
         {
           id: "add",
@@ -57,7 +50,7 @@ export function GlossaryDock() {
         >
           <b>{g.source}</b> → {g.target}
           {g.comment && <div className="muted">{decodeGlossaryComment(g.comment)}</div>}
-          <button type="button" onClick={() => controller.insertTarget(editor, i)}>Insert</button>
+          <button type="button" onClick={() => controller.insertTarget(IEditor, i)}>Insert</button>
         </div>
       ))}
     </DockFrame>

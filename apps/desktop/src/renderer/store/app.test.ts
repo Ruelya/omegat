@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDocument3 } from "../editor/Document3";
-import { bindMarkerRemark } from "../editor/IEditor";
+import { bindMarkerRemark, IEditor } from "../editor/IEditor";
 import { marksFromPrefs, prefsFromMarks } from "../lib/editor-doc";
 import { defaultPreferences } from "../lib/preferences";
 import { toSearchParams } from "../lib/search-params";
@@ -160,6 +160,93 @@ describe("app store", () => {
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")[0]).toBe("/p");
   });
 
+  it("routes IEditor selection commands through Document3 without advancing the entry", async () => {
+    const props = {
+      root: "/p",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: true,
+      has_repositories: false,
+    };
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.set") {
+        const input = params as { translation: string; revision: number };
+        const updated = {
+          ...useApp.getState().entries[0]!,
+          translation: input.translation,
+          revision: input.revision + 1,
+          translated: input.translation.length > 0,
+        };
+        return { entry: updated, updated: [updated] };
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    const entry = {
+      ...sampleEntry,
+      translation: "alpha beta",
+      translated: true,
+    };
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [entry],
+      index: 0,
+      draft: entry.translation,
+      document3: createDocument3(entry.source, entry.translation),
+      editorSelection: { anchor: 6, focus: 10 },
+      completer: [{ kind: "history", text: "beta", detail: "" }],
+      prefs: defaultPreferences({ tag_validation: "none" }),
+    });
+
+    IEditor.insertText("X");
+    expect({
+      draft: useApp.getState().draft,
+      selected: IEditor.getSelectedText(),
+      position: IEditor.getCurrentPositionInEntryTranslationInEditor(),
+    }).toEqual({
+      draft: "alpha X",
+      selected: "",
+      position: { position: 7 },
+    });
+
+    useApp.getState().setEditorSelection({ anchor: 5, focus: 0 });
+    expect(IEditor.getSelectedText()).toBe("alpha");
+    expect(IEditor.getCurrentPositionInEntryTranslationInEditor()).toEqual({
+      selectionStart: 0,
+      selectionEnd: 5,
+    });
+    IEditor.changeCase("upper");
+    expect(useApp.getState().draft).toBe("ALPHA X");
+
+    await IEditor.commitAndDeactivate();
+    expect({
+      index: useApp.getState().index,
+      editMode: useApp.getState().document3.editMode,
+      position: IEditor.getCurrentPositionInEntryTranslationInEditor(),
+      completer: useApp.getState().completer,
+    }).toEqual({
+      index: 0,
+      editMode: false,
+      position: { position: -1 },
+      completer: [],
+    });
+
+    IEditor.activateEntry();
+    useApp.getState().setEditorSelection({ anchor: 2, focus: 2 });
+    await IEditor.commitAndLeave();
+    expect({
+      index: useApp.getState().index,
+      editMode: useApp.getState().document3.editMode,
+      selection: useApp.getState().editorSelection,
+      calls: rpc.mock.calls.map(([method]) => method),
+    }).toEqual({
+      index: 0,
+      editMode: true,
+      selection: { anchor: 2, focus: 2 },
+      calls: ["entry.set", "entry.set"],
+    });
+  });
+
   it("cancels an older dock load when a newer segment selection wins", async () => {
     let resolveOldMatches!: (value: unknown[]) => void;
     const oldMatches = new Promise<unknown[]>((resolve) => {
@@ -220,6 +307,96 @@ describe("app store", () => {
       draft: "deux",
       matches: [{ source: "second", translation: "new result", score: 99, comes_from: "tm/new" }],
       staleGlossaryRequest: false,
+    });
+  });
+
+  it("cancels same-key dock work across project switch and close events", async () => {
+    let activeRoot = "";
+    let resolveOldMt!: (value: { engine: string; text: string }) => void;
+    let resolveOldDict!: (value: unknown[]) => void;
+    const oldMt = new Promise<{ engine: string; text: string }>((resolve) => {
+      resolveOldMt = resolve;
+    });
+    const oldDict = new Promise<unknown[]>((resolve) => {
+      resolveOldDict = resolve;
+    });
+    rpc.mockImplementation(async (
+      method: string,
+      params?: { root?: string; engine?: string; word?: string },
+    ) => {
+      if (method === "project.open") {
+        activeRoot = params?.root ?? "";
+        return {
+          root: activeRoot,
+          source_lang: "en",
+          target_lang: "fr",
+          sentence_seg: true,
+          has_repositories: false,
+        };
+      }
+      if (method === "entry.list") {
+        return [{
+          ...sampleEntry,
+          translation: activeRoot === "/second" ? "second project" : "first project",
+          translated: true,
+        }];
+      }
+      if (method === "stats.get") {
+        return { files: 1, segments: 1, translated: 1, unique_segments: 1, source_words: 2, target_words: 2 };
+      }
+      if (method === "prefs.get") {
+        return defaultPreferences({
+          insert_best_match: false,
+          dictionary_auto_search: false,
+          mt_auto_fetch: false,
+        });
+      }
+      if (method === "prefs.set") return params;
+      if (method === "matches.query" || method === "glossary.query" || method === "issues.list") return [];
+      if (method === "completer.query") return [];
+      if (method === "mt.query" && params?.engine === "slow") return oldMt;
+      if (method === "dict.query" && params?.word === "slow") return oldDict;
+      if (method === "project.close") return { ok: true };
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+
+    await useApp.getState().open("/first");
+    const staleMt = useApp.getState().queryMt("slow");
+    await useApp.getState().open("/second");
+    resolveOldMt({ engine: "slow", text: "stale first-project MT" });
+    await staleMt;
+    expect({
+      root: useApp.getState().props?.root,
+      draft: useApp.getState().draft,
+      mt: useApp.getState().mt,
+    }).toEqual({
+      root: "/second",
+      draft: "second project",
+      mt: [],
+    });
+
+    const staleDict = useApp.getState().queryDict("slow");
+    await useApp.getState().closeProject();
+    resolveOldDict([{ word: "stale", definition: "old project", source: "old.dsl" }]);
+    await staleDict;
+    expect({
+      screen: useApp.getState().screen,
+      props: useApp.getState().props,
+      entries: useApp.getState().entries,
+      matches: useApp.getState().matches,
+      glossary: useApp.getState().glossary,
+      mt: useApp.getState().mt,
+      dict: useApp.getState().dict,
+      completer: useApp.getState().completer,
+    }).toEqual({
+      screen: "welcome",
+      props: null,
+      entries: [],
+      matches: [],
+      glossary: [],
+      mt: [],
+      dict: [],
+      completer: [],
     });
   });
 
