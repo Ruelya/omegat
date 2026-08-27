@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCompareFileProgress",
+  "lower_vs_higher": -1,
+  "higher_vs_lower": 1,
+  "keys": [
+    "org.omegat.gui.filelist.ProjectFilesListControllerTest#testCompareFileProgress"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.NBSPMarkerTest#testMarkerNarrowNBSP",
+  "enabled": true,
+  "source": "narrow space before !",
+  "translation": null,
+  "is_active": true,
+  "marks": [
+    {
+      "startOffset": 19,
+      "endOffset": 20,
+      "entryPart": "SOURCE"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

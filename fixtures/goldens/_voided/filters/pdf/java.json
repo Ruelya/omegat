@@ -1,0 +1,15 @@
+{
+  "id": "pdf",
+  "fixture": "pdf/simple.pdf",
+  "java_test": "org.omegat.filters dialect/table for pdf",
+  "options": {},
+  "sources": [
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Hello",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}
