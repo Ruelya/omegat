@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorControllerTest#testEditorControllerLoadEmptyProject",
+  "orientation_all_ltr": true,
+  "document": null,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

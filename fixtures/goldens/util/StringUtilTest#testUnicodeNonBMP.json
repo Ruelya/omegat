@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testUnicodeNonBMP",
+  "titleA": true,
+  "titleAa": true,
+  "boldALower": "𝐚",
+  "boldA": "𝐀",
+  "upperA": true,
+  "keys": [
+    "org.omegat.util.StringUtilTest#testUnicodeNonBMP"
+  ]
+}

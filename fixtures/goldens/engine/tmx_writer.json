@@ -1,0 +1,95 @@
+{
+  "java_test": "org.omegat.util.TMXWriterTest#testLevel2write",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testWriteInvalidChars",
+      "name": "testWriteInvalidChars",
+      "sanitized_source": "        ",
+      "read_sources": [
+        "        "
+      ]
+    },
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testLevel2write",
+      "name": "testLevel2write",
+      "sources": [
+        "source",
+        "1<a1/>2",
+        "3<a1>4</a1>5",
+        "6<a1>7"
+      ],
+      "targets": [
+        "target",
+        "zz",
+        "zz",
+        "zz"
+      ],
+      "xml": "<?xml version='1.0' encoding='UTF-8'?>\n<!DOCTYPE tmx SYSTEM \"tmx14.dtd\">\n<tmx version=\"1.4\">\n  <header creationtool=\"OmegaT\" o-tmf=\"OmegaT TMX\" adminlang=\"EN-US\" datatype=\"plaintext\" creationtoolversion=\"6.2.0_0_05b98cf05b6a870f4676998bd236bdf2b4e97861\" segtype=\"paragraph\" srclang=\"en-US\"/>\n  <body>\n    <tu>\n      <tuv xml:lang=\"en-US\">\n        <seg>source</seg>\n      </tuv>\n      <tuv xml:lang=\"be-BY\">\n        <seg>target</seg>\n      </tuv>\n    </tu>\n    <tu>\n      <tuv xml:lang=\"en-US\">\n        <seg>1<ph x=\"1\">&lt;a1/&gt;</ph>2</seg>\n      </tuv>\n      <tuv xml:lang=\"be-BY\">\n        <seg>zz</seg>\n      </tuv>\n    </tu>\n    <tu>\n      <tuv xml:lang=\"en-US\">\n        <seg>3<bpt i=\"1\" x=\"1\">&lt;a1&gt;</bpt>4<ept i=\"1\">&lt;/a1&gt;</ept>5</seg>\n      </tuv>\n      <tuv xml:lang=\"be-BY\">\n        <seg>zz</seg>\n      </tuv>\n    </tu>\n    <tu>\n      <tuv xml:lang=\"en-US\">\n        <seg>6<it pos=\"begin\" x=\"1\">&lt;a1&gt;</it>7</seg>\n      </tuv>\n      <tuv xml:lang=\"be-BY\">\n        <seg>zz</seg>\n      </tuv>\n    </tu>\n  </body>\n</tmx>\n",
+      "level2_fragments": [
+        "source",
+        "1<ph x=\"1\"><a1/></ph>2",
+        "3<bpt i=\"1\" x=\"1\"><a1></bpt>4<ept i=\"1\"></a1></ept>5",
+        "6<it pos=\"begin\" x=\"1\"><a1></it>7"
+      ]
+    },
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testLevel2reads",
+      "name": "testLevel2reads",
+      "mode": "omegat",
+      "ext_level2": true,
+      "use_slash": false,
+      "sources": [
+        "source",
+        "1<a1/>2",
+        "3<a1>4</a1>5",
+        "6<a1>7"
+      ]
+    },
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testLevel2reads",
+      "name": "testLevel2reads",
+      "mode": "ext_l1",
+      "ext_level2": false,
+      "use_slash": false,
+      "sources": [
+        "source",
+        "12",
+        "345",
+        "67"
+      ]
+    },
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testLevel2reads",
+      "name": "testLevel2reads",
+      "mode": "ext_l2",
+      "ext_level2": true,
+      "use_slash": false,
+      "sources": [
+        "source",
+        "1<a0>2",
+        "3<a0>4</a0>5",
+        "6<a0>7"
+      ]
+    },
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testLevel2reads",
+      "name": "testLevel2reads",
+      "mode": "ext_l2_slash",
+      "ext_level2": true,
+      "use_slash": true,
+      "sources": [
+        "source",
+        "1<a0/>2",
+        "3<a0>4</a0>5",
+        "6<a0>7"
+      ]
+    },
+    {
+      "java_test": "org.omegat.util.TMXWriterTest#testEOLwrite",
+      "name": "testEOLwrite",
+      "contains_platform_eol": true,
+      "read_translation": "tar\nget"
+    }
+  ]
+}

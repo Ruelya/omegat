@@ -1,0 +1,17 @@
+{
+  "java_source": "org.omegat.core.statistics.writer.StatisticsTextWriter / Json / Xml",
+  "entries": [
+    { "file": "a.txt", "source": "Hello world", "translation": "Bonjour le monde", "exact": true },
+    { "file": "a.txt", "source": "Second line", "translation": "" },
+    { "file": "b.txt", "source": "Hello world", "translation": "" }
+  ],
+  "expect": {
+    "total_segments": 3,
+    "remaining_segments": 2,
+    "unique_segments": 2,
+    "unique_remaining_segments": 2,
+    "files": 2,
+    "text_contains": ["Project Statistics", "Total:", "Remaining:", "Unique:", "Individual File Statistics:"],
+    "xml_contains": ["<omegat-stats>", "<total ", "characters-without-spaces", "<unique-remaining "]
+  }
+}

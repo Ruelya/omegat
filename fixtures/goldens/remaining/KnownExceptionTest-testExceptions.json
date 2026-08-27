@@ -1,0 +1,14 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.KnownExceptionTest#testExceptions",
+  "code": "TF_ERROR",
+  "params": [
+    "param1",
+    "param2"
+  ],
+  "localized": "Error",
+  "cause": "Cause",
+  "keys": [
+    "org.omegat.core.KnownExceptionTest#testExceptions"
+  ]
+}

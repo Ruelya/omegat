@@ -1,0 +1,24 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithMultipleWords",
+  "input": "Hello, world! This is a test.",
+  "tokens": [
+    "Hello",
+    ",",
+    " ",
+    "world",
+    "!",
+    " ",
+    "This",
+    " ",
+    "is",
+    " ",
+    "a",
+    " ",
+    "test",
+    "."
+  ],
+  "keys": [
+    "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithMultipleWords"
+  ]
+}
