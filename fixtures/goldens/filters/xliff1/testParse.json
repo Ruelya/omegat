@@ -1,0 +1,48 @@
+{
+  "id": "xliff1",
+  "fixture": "xliff/filters4-xliff1/en-xx.xlf",
+  "java_test": "org.omegat.filters4.Xliff1FilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "This is the source text.",
+    "foo",
+    "Should translate in result.",
+    "Are you satisfied?",
+    "Are you satisfied?",
+    "Are you satisfied?",
+    "Added and translated"
+  ],
+  "ids": [
+    "example_01",
+    "example_02",
+    "example_03",
+    "satisfaction_00_masc",
+    "satisfaction_01_masc",
+    "satisfaction_01_fem",
+    "Added_1"
+  ],
+  "paths": [
+    "//interface.po",
+    "//interface.po",
+    "//interface.po",
+    "//interface.po",
+    "//interface.po",
+    "//interface.po",
+    "//interface.po/Group 3"
+  ],
+  "existing": {
+    "foo": "bar",
+    "Are you satisfied?": "Satisfaite?"
+  },
+  "empty_write_text": "<?xml version=\"1.0\"?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" version=\"1.2\">\r\n  <file original=\"interface.po\" source-language=\"en\" target-language=\"xx\" datatype=\"plaintext\" xml:space=\"preserve\">\r\n    <body>    \r\n      <trans-unit xml:space=\"preserve\" id=\"example_01\" approved=\"yes\">\r\n        <source xml:lang=\"en\">This is the source text.</source>\r\n      </trans-unit>\r\n      <trans-unit xml:space=\"preserve\" id=\"example_02\" approved=\"yes\">\r\n        <source xml:lang=\"en\">foo</source>\r\n        <target xml:lang=\"xx\">bar</target>\r\n      </trans-unit>\r\n      \r\n      <trans-unit xml:space=\"preserve\" id=\"example_03\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Should translate in result.</source>\r\n      </trans-unit>\r\n\r\n      <trans-unit xml:space=\"preserve\" id=\"satisfaction_00_masc\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Are you satisfied?</source>\r\n        <target xml:lang=\"xx\"/>\r\n        <note>Adressed to ALL respondents.</note>\r\n      </trans-unit>\r\n\r\n      <trans-unit xml:space=\"preserve\" id=\"satisfaction_01_masc\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Are you satisfied?</source>\r\n        <target xml:lang=\"xx\">Satisfait?</target>\r\n        <note>Adressed to male respondents.</note>\r\n      </trans-unit>\r\n\r\n      <trans-unit xml:space=\"preserve\" id=\"satisfaction_01_fem\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Are you satisfied?</source>\r\n        <target xml:lang=\"xx\">Satisfaite?</target>\r\n        <note>Adressed to female respondents.</note>\r\n      </trans-unit>\r\n\r\n    <group id=\"Group 3\">\r\n      \r\n      <trans-unit xml:space=\"preserve\" id=\"Added_1\" translate=\"yes\">\r\n        <source xml:lang=\"en\">Added and translated</source>\r\n        <target xml:lang=\"xx\"/>\r\n      </trans-unit>\r\n      <trans-unit xml:space=\"preserve\" id=\"Added_2\" translate=\"no\">\r\n        <source xml:lang=\"en\">Added and NOT translated</source>\r\n        \r\n      </trans-unit>\r\n    </group>\r\n    \r\n    </body>\r\n  </file>\r\n</xliff>",
+  "translated": {
+    "source": "Should translate in result.",
+    "translation": "Devrait traduire dans le résultat."
+  },
+  "translated_write": "<?xml version=\"1.0\"?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" version=\"1.2\">\r\n  <file original=\"interface.po\" source-language=\"en\" target-language=\"xx\" datatype=\"plaintext\" xml:space=\"preserve\">\r\n    <body>    \r\n      <trans-unit xml:space=\"preserve\" id=\"example_01\" approved=\"yes\">\r\n        <source xml:lang=\"en\">This is the source text.</source>\r\n      </trans-unit>\r\n      <trans-unit xml:space=\"preserve\" id=\"example_02\" approved=\"yes\">\r\n        <source xml:lang=\"en\">foo</source>\r\n        <target xml:lang=\"xx\">bar</target>\r\n      </trans-unit>\r\n      \r\n      <trans-unit xml:space=\"preserve\" id=\"example_03\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Should translate in result.</source>\r\n      <target state=\"translated\">Devrait traduire dans le résultat.</target></trans-unit>\r\n\r\n      <trans-unit xml:space=\"preserve\" id=\"satisfaction_00_masc\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Are you satisfied?</source>\r\n        <target xml:lang=\"xx\"/>\r\n        <note>Adressed to ALL respondents.</note>\r\n      </trans-unit>\r\n\r\n      <trans-unit xml:space=\"preserve\" id=\"satisfaction_01_masc\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Are you satisfied?</source>\r\n        <target xml:lang=\"xx\">Satisfait?</target>\r\n        <note>Adressed to male respondents.</note>\r\n      </trans-unit>\r\n\r\n      <trans-unit xml:space=\"preserve\" id=\"satisfaction_01_fem\" approved=\"yes\">\r\n        <source xml:lang=\"en\">Are you satisfied?</source>\r\n        <target xml:lang=\"xx\">Satisfaite?</target>\r\n        <note>Adressed to female respondents.</note>\r\n      </trans-unit>\r\n\r\n    <group id=\"Group 3\">\r\n      \r\n      <trans-unit xml:space=\"preserve\" id=\"Added_1\" translate=\"yes\">\r\n        <source xml:lang=\"en\">Added and translated</source>\r\n        <target xml:lang=\"xx\"/>\r\n      </trans-unit>\r\n      <trans-unit xml:space=\"preserve\" id=\"Added_2\" translate=\"no\">\r\n        <source xml:lang=\"en\">Added and NOT translated</source>\r\n        \r\n      </trans-unit>\r\n    </group>\r\n    \r\n    </body>\r\n  </file>\r\n</xliff>"
+}

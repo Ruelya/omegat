@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.scripting.ScriptingTest#testDefaultScriptFolderOnScriptWindow",
+  "config_dir": "/tmp/omegat-config",
+  "scripts": "/tmp/omegat-config/scripts",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptingTest#testDefaultScriptFolderOnScriptWindow"
+  ]
+}

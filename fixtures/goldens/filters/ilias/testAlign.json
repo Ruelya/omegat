@@ -1,0 +1,21 @@
+{
+  "id": "ilias",
+  "fixture": "ilias/ILIASFilterAlign.lang",
+  "java_test": "org.omegat.filters.ILIASFilterTest#testAlign",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "original"
+  ],
+  "ids": [
+    "module_name#:#variable_name"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "/* Copyright (c) 1998-2014 ILIAS open source eLearning e.V., Extended GPL, see docs/LICENSE */\n/**\n* ILIAS language file\n*\n* @module\t\tlanguage file English\n* @modulegroup\tlanguage\n* @author \t\tMatthias Kunkel <mkunkel@me.com>\n* @version\t\t$Id$\n*/\n// The language file starts beyond the HTML-comment below. DO NOT modify this line!\n// To edit your language file with a spreadsheet (i.e. Excel or StarCalc) remove all lines\n// from the first line to the HTML-comment. After editing paste the lines in place again.\n// NOTICE: Character coding of all ILIAS lang files is UTF-8! Please set your editor\n// to the corresponding mode!\n// Language file names refer to ISO 639, see: http://www.oasis-open.org/cover/iso639a.html\n<!-- language file start -->\nmodule_name#:#variable_name#:#original\n\n"
+}

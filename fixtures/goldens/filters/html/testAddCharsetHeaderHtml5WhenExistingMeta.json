@@ -1,0 +1,27 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2-HTML5-headerdifferentcharset.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testAddCharsetHeaderHtml5WhenExistingMeta",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "rewriteEncoding": "ALWAYS"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "en",
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<html lang=\"en\">\n<HEAD>\n  <meta charset=\"UTF-8\">\n</HEAD>\n<body>\n<p>This is first line.</p>\n<p>This is second line.</p>\n</body>\n</html>"
+}

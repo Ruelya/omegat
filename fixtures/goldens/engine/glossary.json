@@ -1,0 +1,79 @@
+{
+  "java_test": "org.omegat.gui.glossary.GlossaryReaderTSVTest#testRead",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "fixture": "src/test/resources/data/glossaries/test.tab",
+  "entries": [
+    {
+      "source": "kde",
+      "target": "koo moo",
+      "comment": ""
+    },
+    {
+      "source": "question",
+      "target": "qqqqq",
+      "comment": ""
+    },
+    {
+      "source": "地球システム",
+      "target": "System Terre",
+      "comment": "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre"
+    },
+    {
+      "source": "손가락",
+      "target": "Korean Term",
+      "comment": ""
+    }
+  ],
+  "cases": [
+    {
+      "segment": "I use kde daily",
+      "ignore_case": true,
+      "use_stem": false,
+      "src_lang": "en",
+      "tgt_lang": "fr",
+      "targets": [
+        "koo moo"
+      ]
+    },
+    {
+      "segment": "The CAT sat",
+      "ignore_case": true,
+      "use_stem": false,
+      "src_lang": "en",
+      "tgt_lang": "fr",
+      "targets": [
+        "chat"
+      ]
+    },
+    {
+      "segment": "The CAT sat",
+      "ignore_case": false,
+      "use_stem": false,
+      "src_lang": "en",
+      "tgt_lang": "fr",
+      "targets": [
+        "chat"
+      ]
+    },
+    {
+      "segment": "I was running yesterday",
+      "ignore_case": true,
+      "use_stem": true,
+      "src_lang": "en",
+      "tgt_lang": "fr",
+      "targets": [
+        "courir"
+      ]
+    },
+    {
+      "segment": "I was running yesterday",
+      "ignore_case": true,
+      "use_stem": false,
+      "src_lang": "en",
+      "tgt_lang": "fr",
+      "targets": [
+        "courir"
+      ]
+    }
+  ]
+}

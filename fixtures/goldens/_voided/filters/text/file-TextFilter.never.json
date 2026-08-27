@@ -1,0 +1,10 @@
+{
+  "id": "text",
+  "fixture": "text/file-TextFilter.txt",
+  "java_test": "org.omegat.filters.TextFilterTest#testParseNeverBreak",
+  "options": { "segmentOn": "NEVER" },
+  "sources": [
+    "This test file for test TextFilter.\n\nIt should be second entry for empty-line separator or third line for line-break separator.\n\nIt should be third entry for empty-line separator or fifth line for line-break separator."
+  ],
+  "empty_write": "preserve_source"
+}
