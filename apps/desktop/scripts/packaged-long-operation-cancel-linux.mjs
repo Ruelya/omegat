@@ -2444,48 +2444,73 @@ try {
   client = new DevToolsClient(fingerprintRestartTarget.webSocketDebuggerUrl);
   await client.connect();
   await client.command("Runtime.enable");
-  const electronRestartRecovered = await waitFor(
+  await waitFor(
     "fingerprint FIFO recovery after Electron restart",
     async () => {
-      const state = await client.evaluate(`(async () => {
+      const state = await client.evaluate(`(() => {
         document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
         const app = document.querySelector(".app");
-        const entries = await window.omegat.rpc("entry.list", {});
-        const wanted = entries.find((entry) =>
-          JSON.stringify(entry.key) === ${
-            JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))
-          }
-        );
-        const decoy = entries.find((entry) =>
-          JSON.stringify(entry.key) === ${
-            JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))
-          }
-        );
         return {
           project: app?.dataset.projectId ?? "",
           operation: app?.dataset.operation ?? "",
           phase: app?.dataset.operationPhase ?? "",
-          entries: entries.length,
-          wanted,
-          decoy,
-          recoveredSource: entries.some((entry) =>
-            entry.key.file === "zzzy-electron-restart.yaml"
-          ),
           conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
         };
-      })()`, true);
+      })()`);
       if (
         state.project === project
         && state.operation === "externalRefresh"
         && state.phase === "succeeded"
-        && state.entries === electronRestartBefore.entries + 1
-        && state.recoveredSource
         && state.conflicts === 0
-        && state.wanted?.translation === electronRestartBefore.wanted.translation
-        && state.decoy?.translation === electronRestartBefore.decoy.translation
       ) return state;
       throw new Error(JSON.stringify(state));
     },
+  );
+  await waitFor("completed Electron-recovered refresh journal removal", async () =>
+    await pathExists(refreshJournal) ? undefined : true
+  );
+  const electronRestartRecovered = await client.evaluate(`(async () => {
+    const app = document.querySelector(".app");
+    const entries = await window.omegat.rpc("entry.list", {});
+    const wanted = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${
+        JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))
+      }
+    );
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${
+        JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))
+      }
+    );
+    return {
+      project: app?.dataset.projectId ?? "",
+      operation: app?.dataset.operation ?? "",
+      phase: app?.dataset.operationPhase ?? "",
+      entries: entries.length,
+      wanted,
+      decoy,
+      recoveredSource: entries.some((entry) =>
+        entry.key.file === "zzzy-electron-restart.yaml"
+      ),
+      conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+    };
+  })()`, true);
+  assert.equal(electronRestartRecovered.project, project);
+  assert.equal(electronRestartRecovered.operation, "externalRefresh");
+  assert.equal(electronRestartRecovered.phase, "succeeded");
+  assert.equal(
+    electronRestartRecovered.entries,
+    electronRestartBefore.entries + 1,
+  );
+  assert.equal(electronRestartRecovered.recoveredSource, true);
+  assert.equal(electronRestartRecovered.conflicts, 0);
+  assert.equal(
+    electronRestartRecovered.wanted?.translation,
+    electronRestartBefore.wanted.translation,
+  );
+  assert.equal(
+    electronRestartRecovered.decoy?.translation,
+    electronRestartBefore.decoy.translation,
   );
   assert.deepEqual(
     Object.keys(electronRestartRecovered.wanted.key).sort(),
@@ -2494,9 +2519,6 @@ try {
   assert.deepEqual(
     Object.keys(electronRestartRecovered.decoy.key).sort(),
     ["file", "id", "next", "path", "prev", "source_text"],
-  );
-  await waitFor("completed Electron-recovered refresh journal removal", async () =>
-    await pathExists(refreshJournal) ? undefined : true
   );
   const [electronRestartNewSidecar] = await waitFor(
     "new sidecar after Electron fingerprint recovery",
