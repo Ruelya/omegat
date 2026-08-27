@@ -1,5 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { t } from "../i18n";
+import {
+  alignmentRows,
+  selectionBounds,
+  type AlignBead,
+} from "../lib/align-rows";
 import {
   repositoriesFromEditorRows,
   repositoryEditorRows,
@@ -8,16 +13,6 @@ import {
 import type { FilterOptionsDto } from "../lib/types";
 import { useApp } from "../store/app";
 import { Modal } from "./Modal";
-
-type AlignBead = {
-  source: string;
-  target: string;
-  source_lines: (string | null)[];
-  target_lines: (string | null)[];
-  score: number;
-  enabled: boolean;
-  status: "default" | "accepted" | "needs-review";
-};
 
 export function AlignWindow() {
   const [src, setSrc] = useState("");
@@ -30,8 +25,25 @@ export function AlignWindow() {
   const [side, setSide] = useState("both");
   const [beads, setBeads] = useState<AlignBead[]>([]);
   const [sel, setSel] = useState(0);
-  const [pinpoint, setPinpoint] = useState<{ index: number; side: string } | null>(null);
+  const [anchor, setAnchor] = useState(0);
+  const [pinpoint, setPinpoint] = useState<{ row: number; side: string } | null>(null);
+  const [spanText, setSpanText] = useState("");
   const [message, setMessage] = useState("");
+  const rows = useMemo(() => alignmentRows(beads), [beads]);
+  const selectedRows = selectionBounds(anchor, sel, rows.length);
+  useEffect(() => {
+    if (side === "both") {
+      setSpanText("");
+      return;
+    }
+    setSpanText(
+      rows
+        .slice(selectedRows.start, selectedRows.end + 1)
+        .map((row) => (side === "source" ? row.source : row.target))
+        .filter((line): line is string => line != null)
+        .join("\n"),
+    );
+  }, [side, rows, selectedRows.start, selectedRows.end]);
   async function run() {
     const r = (await window.omegat?.rpc("align.run", {
       source: src,
@@ -53,22 +65,43 @@ export function AlignWindow() {
         }));
     setBeads(next);
     setSel(0);
+    setAnchor(0);
     setPinpoint(null);
     setMessage("");
   }
   async function edit(action: string, extra: Record<string, unknown> = {}) {
+    const activeRow = rows[sel];
+    const beadIndexes = [
+      ...new Set(
+        rows
+          .slice(selectedRows.start, selectedRows.end + 1)
+          .map((row) => row.beadIndex),
+      ),
+    ];
+    const rowSpan =
+      side === "both"
+        ? {}
+        : { start_row: selectedRows.start, end_row: selectedRows.end };
     const r = (await window.omegat?.rpc("align.edit", {
       action,
-      index: sel,
+      index: activeRow?.beadIndex ?? 0,
+      line_index:
+        side === "target"
+          ? activeRow?.targetLineIndex ?? 0
+          : activeRow?.sourceLineIndex ?? 0,
+      indexes: beadIndexes,
       side,
       beads,
       source_lang: useApp.getState().props?.source_lang ?? "en",
       target_lang: useApp.getState().props?.target_lang ?? "fr",
+      ...rowSpan,
       ...extra,
     })) as { beads?: AlignBead[] };
     if (r?.beads) {
       setBeads(r.beads);
-      setSel((current) => Math.min(current, Math.max(0, r.beads!.length - 1)));
+      const rowCount = alignmentRows(r.beads).length;
+      setSel((current) => Math.min(current, Math.max(0, rowCount - 1)));
+      setAnchor((current) => Math.min(current, Math.max(0, rowCount - 1)));
       setMessage("");
     }
   }
@@ -110,12 +143,25 @@ export function AlignWindow() {
           <option value="source">source</option>
           <option value="target">target</option>
         </select>
+        <textarea
+          aria-label="selected alignment lines"
+          disabled={side === "both" || rows.length === 0}
+          value={spanText}
+          onChange={(event) => setSpanText(event.target.value)}
+        />
         <div className="btn-row">
           <button type="button" className="primary" onClick={() => void run()}>{t("create")}</button>
           <button type="button" onClick={() => void edit("merge")}>{t("alignMerge")}</button>
           <button type="button" onClick={() => void edit("split")}>{t("alignSplit")}</button>
           <button type="button" onClick={() => void edit("up")}>{t("alignUp")}</button>
           <button type="button" onClick={() => void edit("down")}>{t("alignDown")}</button>
+          <button
+            type="button"
+            disabled={side === "both" || rows.length === 0}
+            onClick={() => void edit("replace-span", { lines: spanText.split(/\r?\n/) })}
+          >
+            apply row span
+          </button>
           <button type="button" onClick={() => void edit("accepted")}>✓ accepted</button>
           <button type="button" onClick={() => void edit("needs-review")}>! review</button>
           <button type="button" onClick={() => void edit("clear-status")}>clear mark</button>
@@ -124,12 +170,12 @@ export function AlignWindow() {
             disabled={side === "both"}
             onClick={() => {
               if (!pinpoint) {
-                setPinpoint({ index: sel, side });
+                setPinpoint({ row: sel, side });
               } else {
                 void edit("pinpoint", {
-                  index: pinpoint.index,
+                  start_row: pinpoint.row,
+                  end_row: sel,
                   side: pinpoint.side,
-                  end_index: sel,
                   end_side: side,
                 }).then(() => setPinpoint(null));
               }
@@ -146,25 +192,42 @@ export function AlignWindow() {
             <tr><th>#</th><th>source</th><th>target</th></tr>
           </thead>
           <tbody>
-            {beads.map((bead, i) => (
-              <tr
-                key={i}
-                className={`${i === sel ? "sel " : ""}${bead.status}`}
-                onClick={() => setSel(i)}
-              >
-                <td>
-                  <input
-                    aria-label={`keep alignment ${i + 1}`}
-                    type="checkbox"
-                    checked={bead.enabled}
-                    onChange={(event) => void edit("keep", { indexes: [i], enabled: event.target.checked })}
-                  />
-                  {i + 1}
-                </td>
-                <td>{bead.source_lines.map((line) => line ?? "").join("\n")}</td>
-                <td>{bead.target_lines.map((line) => line ?? "").join("\n")}</td>
-              </tr>
-            ))}
+            {rows.map((row) => {
+              const bead = beads[row.beadIndex];
+              const selected =
+                row.rowIndex >= selectedRows.start && row.rowIndex <= selectedRows.end;
+              return (
+                <tr
+                  key={`${row.beadIndex}-${row.rowInBead}`}
+                  className={`${selected ? "sel " : ""}${bead.status}`}
+                  onClick={(event) => {
+                    setSel(row.rowIndex);
+                    if (!event.shiftKey) setAnchor(row.rowIndex);
+                  }}
+                >
+                  <td>
+                    {row.rowInBead === 0 && (
+                      <>
+                        <input
+                          aria-label={`keep alignment ${row.beadIndex + 1}`}
+                          type="checkbox"
+                          checked={bead.enabled}
+                          onChange={(event) =>
+                            void edit("keep", {
+                              indexes: [row.beadIndex],
+                              enabled: event.target.checked,
+                            })
+                          }
+                        />
+                        {row.beadIndex + 1}
+                      </>
+                    )}
+                  </td>
+                  <td onClick={() => setSide("source")}>{row.source ?? ""}</td>
+                  <td onClick={() => setSide("target")}>{row.target ?? ""}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

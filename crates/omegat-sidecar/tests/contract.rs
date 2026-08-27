@@ -217,31 +217,71 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
     );
     assert_eq!(review["result"]["beads"][1]["status"], "needs-review");
 
-    let pinpoint = rpc(
+    let merged_span = rpc(
         &mut stdin,
         &mut stdout,
         3,
         "align.edit",
         json!({
-            "action":"pinpoint",
-            "side":"source",
-            "index":0,
-            "end_index":2,
-            "end_side":"target",
+            "action":"merge",
+            "side":"target",
+            "start_row":1,
+            "end_row":2,
+            "source_lang":"en",
+            "target_lang":"fr",
             "beads":review["result"]["beads"]
         }),
     );
     assert_eq!(
-        pinpoint["result"]["beads"][2]["source_lines"],
-        json!(["one", "two", "words", "three"])
+        merged_span["result"]["beads"][1]["target_lines"],
+        json!(["deux mots"])
     );
-    assert_eq!(pinpoint["result"]["beads"][2]["status"], "accepted");
+    assert_eq!(merged_span["result"]["row_count"], 4);
+
+    let replaced_span = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "align.edit",
+        json!({
+            "action":"replace-span",
+            "side":"source",
+            "start_row":1,
+            "end_row":2,
+            "lines":["two revised","words revised"],
+            "beads":merged_span["result"]["beads"]
+        }),
+    );
+    assert_eq!(
+        replaced_span["result"]["beads"][1]["source_lines"],
+        json!(["two revised", "words revised"])
+    );
+
+    let pinpoint = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "align.edit",
+        json!({
+            "action":"pinpoint",
+            "side":"source",
+            "start_row":0,
+            "end_row":2,
+            "end_side":"target",
+            "beads":replaced_span["result"]["beads"]
+        }),
+    );
+    assert_eq!(
+        pinpoint["result"]["beads"][1]["source_lines"],
+        json!(["one", "two revised", "words revised"])
+    );
+    assert_eq!(pinpoint["result"]["beads"][1]["status"], "accepted");
     assert_eq!(
         pinpoint["result"]["pairs"],
         json!([
             {"source":"","target":"un"},
-            {"source":"","target":"deux mots"},
-            {"source":"one two words three","target":"trois"}
+            {"source":"one two revised words revised","target":"deux mots"},
+            {"source":"three","target":"trois"}
         ])
     );
 

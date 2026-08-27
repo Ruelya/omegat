@@ -778,13 +778,37 @@ impl App {
                                 .collect()
                         })
                         .unwrap_or_else(|| vec![index]);
+                    let has_row_span = params.get("start_row").is_some();
+                    let start_row =
+                        params.get("start_row").and_then(Value::as_u64).unwrap_or(0) as usize;
+                    let end_row = params
+                        .get("end_row")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(start_row as u64) as usize;
                     let next = match action {
+                        "merge" if has_row_span => omegat_core::align::merge_bead_row_span(
+                            &beads,
+                            start_row,
+                            end_row,
+                            side,
+                            if matches!(side, omegat_core::align::AlignSide::Target) {
+                                target_language
+                            } else {
+                                source_language
+                            },
+                        ),
                         "merge" => omegat_core::align::merge_beads(&beads, index, side),
+                        "up" if has_row_span => omegat_core::align::move_bead_row_span(
+                            &beads, start_row, end_row, side, -1,
+                        ),
                         "up" => omegat_core::align::move_bead_side(
                             &beads,
                             index,
                             index.saturating_sub(1),
                             side,
+                        ),
+                        "down" if has_row_span => omegat_core::align::move_bead_row_span(
+                            &beads, start_row, end_row, side, 1,
                         ),
                         "down" => omegat_core::align::move_bead_side(
                             &beads,
@@ -853,22 +877,49 @@ impl App {
                                 &beads, index, side, line_index, &parts,
                             )
                         }
+                        "replace-span" => {
+                            let replacement = params
+                                .get("lines")
+                                .and_then(Value::as_array)
+                                .map(|values| {
+                                    values
+                                        .iter()
+                                        .map(|value| value.as_str().map(str::to_string))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            omegat_core::align::replace_bead_row_span(
+                                &beads,
+                                start_row,
+                                end_row,
+                                side,
+                                replacement,
+                            )
+                        }
                         "pinpoint" => {
-                            let end_index = params
-                                .get("end_index")
-                                .and_then(Value::as_u64)
-                                .unwrap_or(index as u64)
-                                as usize;
                             let end_side = params
                                 .get("end_side")
                                 .and_then(Value::as_str)
                                 .map(omegat_core::align::AlignSide::from_name)
                                 .unwrap_or(omegat_core::align::AlignSide::Both);
-                            omegat_core::align::pinpoint_align(
-                                &beads,
-                                (index, side),
-                                (end_index, end_side),
-                            )
+                            if has_row_span {
+                                omegat_core::align::pinpoint_align_rows(
+                                    &beads,
+                                    (start_row, side),
+                                    (end_row, end_side),
+                                )
+                            } else {
+                                let end_index = params
+                                    .get("end_index")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(index as u64)
+                                    as usize;
+                                omegat_core::align::pinpoint_align(
+                                    &beads,
+                                    (index, side),
+                                    (end_index, end_side),
+                                )
+                            }
                         }
                         "realign-pending" => omegat_core::align::realign_pending(
                             &beads,
@@ -895,7 +946,11 @@ impl App {
                         .iter()
                         .map(|bead| mutable_bead_json(bead, source_language, target_language))
                         .collect();
-                    return Ok(json!({"pairs": pairs, "beads": response_beads}));
+                    return Ok(json!({
+                        "pairs": pairs,
+                        "beads": response_beads,
+                        "row_count": omegat_core::align::bead_rows(&next).len()
+                    }));
                 }
                 let raw = params
                     .get("pairs")

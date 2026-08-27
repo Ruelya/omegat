@@ -406,6 +406,199 @@ pub fn split_bead_line(
     out
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BeadRow {
+    pub bead_index: usize,
+    pub row_in_bead: usize,
+    pub source_line_index: Option<usize>,
+    pub target_line_index: Option<usize>,
+}
+
+/// Flatten mutable beads into the visual rows used by the manual aligner.
+///
+/// A bead occupies the maximum of its source/target line counts. The shorter
+/// side is represented by `None`, which lets selection APIs address complete
+/// row spans without flattening the underlying `MutableBead` state.
+pub fn bead_rows(beads: &[MutableBead]) -> Vec<BeadRow> {
+    let mut rows = Vec::new();
+    for (bead_index, bead) in beads.iter().enumerate() {
+        let count = bead.source_lines.len().max(bead.target_lines.len());
+        for row_in_bead in 0..count {
+            rows.push(BeadRow {
+                bead_index,
+                row_in_bead,
+                source_line_index: (row_in_bead < bead.source_lines.len()).then_some(row_in_bead),
+                target_line_index: (row_in_bead < bead.target_lines.len()).then_some(row_in_bead),
+            });
+        }
+    }
+    rows
+}
+
+fn line_locations(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+) -> Vec<(usize, usize)> {
+    if matches!(side, AlignSide::Both) {
+        return Vec::new();
+    }
+    let rows = bead_rows(beads);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let low = start_row.min(end_row).min(rows.len() - 1);
+    let high = start_row.max(end_row).min(rows.len() - 1);
+    rows[low..=high]
+        .iter()
+        .filter_map(|row| {
+            let line_index = match side {
+                AlignSide::Source => row.source_line_index,
+                AlignSide::Target => row.target_line_index,
+                AlignSide::Both => None,
+            }?;
+            let lines = match side {
+                AlignSide::Source => &beads[row.bead_index].source_lines,
+                AlignSide::Target => &beads[row.bead_index].target_lines,
+                AlignSide::Both => unreachable!(),
+            };
+            lines
+                .get(line_index)
+                .and_then(Option::as_ref)
+                .map(|_| (row.bead_index, line_index))
+        })
+        .collect()
+}
+
+fn lines_mut(bead: &mut MutableBead, side: AlignSide) -> &mut Vec<Option<String>> {
+    match side {
+        AlignSide::Source => &mut bead.source_lines,
+        AlignSide::Target => &mut bead.target_lines,
+        AlignSide::Both => unreachable!(),
+    }
+}
+
+/// Replace every non-empty cell in a visual row span with the supplied lines.
+///
+/// The replacement is anchored at the first selected cell. All touched beads
+/// lose accepted/review state, matching Java's destructive table edits.
+pub fn replace_bead_row_span(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+    replacement: Vec<Option<String>>,
+) -> Vec<MutableBead> {
+    let locations = line_locations(beads, start_row, end_row, side);
+    let Some(&(anchor_bead, anchor_line)) = locations.first() else {
+        return beads.to_vec();
+    };
+    let mut out = beads.to_vec();
+    let mut touched: Vec<usize> = locations.iter().map(|(bead, _)| *bead).collect();
+    touched.sort_unstable();
+    touched.dedup();
+    for &(bead_index, line_index) in locations.iter().rev() {
+        lines_mut(&mut out[bead_index], side).remove(line_index);
+    }
+    lines_mut(&mut out[anchor_bead], side).splice(anchor_line..anchor_line, replacement);
+    for bead_index in touched {
+        out[bead_index].status = BeadStatus::Default;
+    }
+    out.retain(|bead| !bead.is_empty());
+    out
+}
+
+pub fn merge_bead_row_span(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+    language: &str,
+) -> Vec<MutableBead> {
+    let locations = line_locations(beads, start_row, end_row, side);
+    if locations.len() < 2 {
+        return beads.to_vec();
+    }
+    let selected: Vec<Option<String>> = locations
+        .iter()
+        .map(|&(bead_index, line_index)| {
+            let lines = match side {
+                AlignSide::Source => &beads[bead_index].source_lines,
+                AlignSide::Target => &beads[bead_index].target_lines,
+                AlignSide::Both => unreachable!(),
+            };
+            lines[line_index].clone()
+        })
+        .collect();
+    let merged = join_bead_lines(language, &selected);
+    replace_bead_row_span(beads, start_row, end_row, side, vec![Some(merged)])
+}
+
+/// Move a complete selected row span to the adjacent bead.
+pub fn move_bead_row_span(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+    direction: isize,
+) -> Vec<MutableBead> {
+    if direction == 0 {
+        return beads.to_vec();
+    }
+    let mut locations = line_locations(beads, start_row, end_row, side);
+    let (Some(&(first_bead, _)), Some(&(last_bead, _))) = (locations.first(), locations.last())
+    else {
+        return beads.to_vec();
+    };
+    let values: Vec<Option<String>> = locations
+        .iter()
+        .map(|&(bead_index, line_index)| {
+            let lines = match side {
+                AlignSide::Source => &beads[bead_index].source_lines,
+                AlignSide::Target => &beads[bead_index].target_lines,
+                AlignSide::Both => unreachable!(),
+            };
+            lines[line_index].clone()
+        })
+        .collect();
+    let mut out = beads.to_vec();
+    let target_bead = if direction < 0 {
+        if first_bead == 0 {
+            out.insert(0, MutableBead::empty());
+            for (bead_index, _) in &mut locations {
+                *bead_index += 1;
+            }
+            0
+        } else {
+            first_bead - 1
+        }
+    } else if last_bead + 1 >= out.len() {
+        out.push(MutableBead::empty());
+        out.len() - 1
+    } else {
+        last_bead + 1
+    };
+    let mut touched: Vec<usize> = locations.iter().map(|(bead, _)| *bead).collect();
+    for &(bead_index, line_index) in locations.iter().rev() {
+        lines_mut(&mut out[bead_index], side).remove(line_index);
+    }
+    let target = lines_mut(&mut out[target_bead], side);
+    if direction < 0 {
+        target.extend(values);
+    } else {
+        target.splice(0..0, values);
+    }
+    touched.push(target_bead);
+    touched.sort_unstable();
+    touched.dedup();
+    for bead_index in touched {
+        out[bead_index].status = BeadStatus::Default;
+    }
+    out.retain(|bead| !bead.is_empty());
+    out
+}
+
 pub fn set_bead_status(
     beads: &[MutableBead],
     indexes: &[usize],
@@ -477,6 +670,61 @@ pub fn pinpoint_align(
         AlignSide::Both => unreachable!(),
     }
     out[high].status = BeadStatus::Accepted;
+    out.retain(|bead| !bead.is_empty());
+    out
+}
+
+/// Pinpoint-align exact visual rows instead of relocating whole endpoint beads.
+pub fn pinpoint_align_rows(
+    beads: &[MutableBead],
+    first: (usize, AlignSide),
+    second: (usize, AlignSide),
+) -> Vec<MutableBead> {
+    if first.0 == second.0
+        || first.1 == second.1
+        || matches!(first.1, AlignSide::Both)
+        || matches!(second.1, AlignSide::Both)
+    {
+        return beads.to_vec();
+    }
+    let rows = bead_rows(beads);
+    if first.0 >= rows.len() || second.0 >= rows.len() {
+        return beads.to_vec();
+    }
+    let (low, high, relocate) = if first.0 < second.0 {
+        (first.0, second.0, first.1)
+    } else {
+        (second.0, first.0, second.1)
+    };
+    let locations = line_locations(beads, low, high, relocate);
+    if locations.is_empty() {
+        return beads.to_vec();
+    }
+    let values: Vec<Option<String>> = locations
+        .iter()
+        .map(|&(bead_index, line_index)| {
+            let lines = match relocate {
+                AlignSide::Source => &beads[bead_index].source_lines,
+                AlignSide::Target => &beads[bead_index].target_lines,
+                AlignSide::Both => unreachable!(),
+            };
+            lines[line_index].clone()
+        })
+        .collect();
+    let target_bead = rows[high].bead_index;
+    let mut out = beads.to_vec();
+    let mut touched: Vec<usize> = locations.iter().map(|(bead, _)| *bead).collect();
+    for &(bead_index, line_index) in locations.iter().rev() {
+        lines_mut(&mut out[bead_index], relocate).remove(line_index);
+    }
+    lines_mut(&mut out[target_bead], relocate).extend(values);
+    touched.push(target_bead);
+    touched.sort_unstable();
+    touched.dedup();
+    for bead_index in touched {
+        out[bead_index].status = BeadStatus::Default;
+    }
+    out[target_bead].status = BeadStatus::Accepted;
     out.retain(|bead| !bead.is_empty());
     out
 }
@@ -1382,6 +1630,101 @@ mod tests {
                 ("one two words three".into(), "trois".into())
             ]
         );
+    }
+
+    #[test]
+    fn mutable_bead_visual_row_spans_edit_exact_lines() {
+        let beads = vec![
+            MutableBead::from_lines(
+                1.0,
+                vec![Some("s0a".into()), Some("s0b".into())],
+                vec![Some("t0".into())],
+            ),
+            MutableBead::from_lines(
+                2.0,
+                vec![Some("s1".into())],
+                vec![Some("t1a".into()), Some("t1b".into())],
+            ),
+            MutableBead::new("s2", "t2"),
+        ];
+        assert_eq!(
+            bead_rows(&beads),
+            vec![
+                BeadRow {
+                    bead_index: 0,
+                    row_in_bead: 0,
+                    source_line_index: Some(0),
+                    target_line_index: Some(0),
+                },
+                BeadRow {
+                    bead_index: 0,
+                    row_in_bead: 1,
+                    source_line_index: Some(1),
+                    target_line_index: None,
+                },
+                BeadRow {
+                    bead_index: 1,
+                    row_in_bead: 0,
+                    source_line_index: Some(0),
+                    target_line_index: Some(0),
+                },
+                BeadRow {
+                    bead_index: 1,
+                    row_in_bead: 1,
+                    source_line_index: None,
+                    target_line_index: Some(1),
+                },
+                BeadRow {
+                    bead_index: 2,
+                    row_in_bead: 0,
+                    source_line_index: Some(0),
+                    target_line_index: Some(0),
+                },
+            ]
+        );
+
+        let merged = merge_bead_row_span(&beads, 1, 3, AlignSide::Source, "en");
+        assert_eq!(
+            merged[0].source_lines,
+            vec![Some("s0a".into()), Some("s0b s1".into())]
+        );
+        assert_eq!(merged[1].source_lines, Vec::<Option<String>>::new());
+        assert_eq!(
+            merged[1].target_lines,
+            vec![Some("t1a".into()), Some("t1b".into())]
+        );
+
+        let replaced = replace_bead_row_span(
+            &beads,
+            0,
+            3,
+            AlignSide::Target,
+            vec![Some("left".into()), Some("right".into())],
+        );
+        assert_eq!(
+            replaced[0].target_lines,
+            vec![Some("left".into()), Some("right".into())]
+        );
+        assert_eq!(replaced[1].target_lines, Vec::<Option<String>>::new());
+        assert_eq!(replaced[1].source_lines, vec![Some("s1".into())]);
+
+        let moved = move_bead_row_span(&beads, 1, 2, AlignSide::Source, 1);
+        assert_eq!(moved[0].source_lines, vec![Some("s0a".into())]);
+        assert_eq!(moved[1].source_lines, Vec::<Option<String>>::new());
+        assert_eq!(
+            moved[2].source_lines,
+            vec![Some("s0b".into()), Some("s1".into()), Some("s2".into())]
+        );
+
+        let pinpointed =
+            pinpoint_align_rows(&beads, (1, AlignSide::Source), (3, AlignSide::Target));
+        assert_eq!(pinpointed[0].source_lines, vec![Some("s0a".into())]);
+        assert_eq!(
+            pinpointed[1].source_lines,
+            vec![Some("s0b".into()), Some("s1".into())]
+        );
+        assert_eq!(pinpointed[1].status, BeadStatus::Accepted);
+        assert_eq!(pinpointed[2].source_lines, vec![Some("s2".into())]);
     }
 
     #[test]
