@@ -1044,6 +1044,19 @@ try {
     })()`),
     true,
   );
+  assert.equal(
+    (await editorState(client)).translation,
+    duplicateSetup.translation,
+    "packaged duplicate translation was not loaded before editing",
+  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await waitFor("selected duplicated-source translation", async () =>
+    await client.evaluate(
+      `Boolean(document.querySelector(".editor-segment.is-active .editor-selection"))`,
+    )
+      ? true
+      : undefined
+  );
   await client.command("Input.insertText", {
     text: duplicateSetup.translation,
   });
