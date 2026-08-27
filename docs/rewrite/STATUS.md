@@ -603,6 +603,23 @@ event occurs strictly after that cancelled terminal event; it succeeds
 automatically, grows the project to **2401** entries, moves the wanted segment
 from **#1001 to #1002**, and preserves the same key/translation/caret. This is
 Linux package evidence only.
+Fingerprint batches are now persisted before renderer delivery in a sidecar
+journal beside team transactions, with a config-scoped active-project pointer.
+The journal records the Electron instance, renderer generation, project root,
+ordered batch IDs, paths, fingerprints, and native/sidecar origins. A replacement
+sidecar reopens the watched root and republishes the same FIFO head; a replacement
+Electron process may adopt only the formerly active same-root queue and re-stamps
+its new generation. Same-process generation changes, different roots, and
+completed heads are discarded. The renderer acknowledges a head only after its
+six-field rebind transaction succeeds, is coalesced, or the sidecar returns
+**-32800**; process-exit errors leave it pending. Sidecar contract coverage kills
+and replaces the process twice while checking FIFO order and stale-root/
+generation rejection. The Linux packaged long-operation run kills a sidecar
+during an external refresh while two complete-key conflicts remain visible,
+then verifies the replacement sidecar refreshes and rebinds both conflict rows.
+It separately kills Electron and its sidecar during another persisted refresh,
+relaunches the package, and verifies same-project recovery without reviving
+completed conflicts. This remains Linux-only evidence.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and

@@ -1763,6 +1763,138 @@ try {
     secondConflictOurs,
   );
 
+  const sidecarRestartBefore = {
+    editor: await editorState(client),
+    entries: entriesDuringConflict.length,
+  };
+  await client.evaluate(`(() => {
+    window.__omegatRestartRefreshProgress = null;
+    window.__omegatRestartRefreshObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatRestartRefreshObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.external-refresh.sources"
+        && !window.__omegatRestartRefreshProgress
+      ) {
+        window.__omegatRestartRefreshProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+        };
+      }
+    });
+    window.__omegatRestartRefreshObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const sidecarRestartSource = join(sourceDir, "zzzz-sidecar-restart.yaml");
+  await writeFile(
+    sidecarRestartSource,
+    'sidecar_restart: "Recovered after a killed sidecar"\n',
+    "utf8",
+  );
+  const sidecarRestartProgress = await waitFor(
+    "persisted fingerprint refresh before sidecar kill",
+    async () => {
+      const progress = await client.evaluate(
+        "window.__omegatRestartRefreshProgress",
+      );
+      return progress?.stage === "project.external-refresh.sources"
+        ? progress
+        : undefined;
+    },
+  );
+  const refreshJournal = join(
+    project,
+    ".repositories",
+    "transactions",
+    "external-refresh.json",
+  );
+  assert.equal(
+    await pathExists(refreshJournal),
+    true,
+    "fingerprint FIFO was not durable before killing the sidecar",
+  );
+  const beforeSidecarKill = await descendantProcesses(application.pid);
+  const killedRefreshSidecar = beforeSidecarKill.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(
+    killedRefreshSidecar,
+    `refresh sidecar process not found: ${JSON.stringify(beforeSidecarKill)}`,
+  );
+  process.kill(killedRefreshSidecar.pid, "SIGKILL");
+  const replacementRefreshSidecar = await waitFor(
+    "replacement sidecar after fingerprint interruption",
+    async () => {
+      const children = await descendantProcesses(application.pid);
+      return children.find(({ pid, command }) =>
+        pid !== killedRefreshSidecar.pid && command.includes("omegat-sidecar")
+      );
+    },
+  );
+  const sidecarRestartRecovered = await waitFor(
+    "fingerprint FIFO recovery in replacement sidecar",
+    async () => {
+      const state = await editorState(client);
+      const product = await client.evaluate(`(async () => {
+        const app = document.querySelector(".app");
+        const entries = await window.omegat.rpc("entry.list", {});
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          entries: entries.length,
+          conflictKeys: rows.map((row) =>
+            row.getAttribute("data-team-conflict-key") ?? ""
+          ),
+        };
+      })()`, true);
+      if (
+        product.operation === "externalRefresh"
+        && product.phase === "succeeded"
+        && product.entries === sidecarRestartBefore.entries + 1
+        && product.conflictKeys.length === 2
+        && state.key === sidecarRestartBefore.editor.key
+        && state.translation === sidecarRestartBefore.editor.translation
+        && state.caret === sidecarRestartBefore.editor.caret
+      ) {
+        return { product, editor: state };
+      }
+      throw new Error(JSON.stringify({ product, state }));
+    },
+  );
+  assert.deepEqual(
+    new Set(sidecarRestartRecovered.product.conflictKeys),
+    new Set([
+      JSON.stringify(duplicateSetup.wanted.key),
+      JSON.stringify(duplicateSetup.decoy.key),
+    ]),
+    "recovered refresh did not rebind unresolved conflicts by complete key",
+  );
+  assert.equal(
+    await pathExists(refreshJournal),
+    false,
+    "completed sidecar-recovered fingerprint batch stayed pending",
+  );
+  const sidecarFingerprintRecovery = {
+    progress: sidecarRestartProgress,
+    killedPid: killedRefreshSidecar.pid,
+    replacementPid: replacementRefreshSidecar.pid,
+    journalPresentBeforeKill: true,
+    journalRemovedAfterCommit: true,
+    entries: sidecarRestartRecovered.product.entries,
+    completeEntryKey: JSON.parse(sidecarRestartRecovered.editor.key),
+    conflictKeys: sidecarRestartRecovered.product.conflictKeys.map((key) =>
+      JSON.parse(key)
+    ),
+  };
+
   const resolveTmxBeforeCancel = await readFile(
     join(project, "omegat", "project_save.tmx"),
   );
@@ -2210,6 +2342,192 @@ try {
   assert.equal(retainedWanted?.translation, teamConflictTheirs);
   assert.equal(resolvedDecoy?.translation, secondConflictOurs);
 
+  const electronRestartBefore = {
+    pid: application.pid,
+    entries: entriesAfterResolution.length,
+    wanted: retainedWanted,
+    decoy: resolvedDecoy,
+  };
+  await client.evaluate(`(() => {
+    window.__omegatElectronRestartRefreshProgress = null;
+    window.__omegatElectronRestartRefreshObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatElectronRestartRefreshObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.external-refresh.sources"
+        && !window.__omegatElectronRestartRefreshProgress
+      ) {
+        window.__omegatElectronRestartRefreshProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+        };
+      }
+    });
+    window.__omegatElectronRestartRefreshObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const electronRestartSource = join(sourceDir, "zzzy-electron-restart.yaml");
+  await writeFile(
+    electronRestartSource,
+    'electron_restart: "Recovered after killed Electron and sidecar processes"\n',
+    "utf8",
+  );
+  const electronRestartProgress = await waitFor(
+    "persisted fingerprint refresh before Electron kill",
+    async () => {
+      const progress = await client.evaluate(
+        "window.__omegatElectronRestartRefreshProgress",
+      );
+      return progress?.stage === "project.external-refresh.sources"
+        ? progress
+        : undefined;
+    },
+  );
+  assert.equal(
+    await pathExists(refreshJournal),
+    true,
+    "fingerprint FIFO was not durable before killing Electron",
+  );
+  const electronRestartChildren = await descendantProcesses(application.pid);
+  const electronRestartOldSidecar = electronRestartChildren.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(
+    electronRestartOldSidecar,
+    `Electron refresh sidecar not found: ${JSON.stringify(electronRestartChildren)}`,
+  );
+  process.kill(electronRestartOldSidecar.pid, "SIGKILL");
+  const killedElectron = new Promise((resolveExit) =>
+    application.once("exit", resolveExit)
+  );
+  application.kill("SIGKILL");
+  await killedElectron;
+  client.close();
+  client = undefined;
+
+  const fingerprintRestartPort = await unusedPort();
+  application = spawn(
+    executable,
+    [
+      `--remote-debugging-port=${fingerprintRestartPort}`,
+      "--disable-gpu",
+      "--no-sandbox",
+    ],
+    {
+      env: {
+        ...process.env,
+        DISPLAY: xvfb.display,
+        OMEGAT_CONFIG_DIR: configDir,
+        OMEGAT_PROJECT: project,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  application.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const fingerprintRestartTarget = await waitFor(
+    "renderer after Electron fingerprint interruption",
+    () => pageTarget(fingerprintRestartPort),
+  );
+  client = new DevToolsClient(fingerprintRestartTarget.webSocketDebuggerUrl);
+  await client.connect();
+  await client.command("Runtime.enable");
+  const electronRestartRecovered = await waitFor(
+    "fingerprint FIFO recovery after Electron restart",
+    async () => {
+      const state = await client.evaluate(`(async () => {
+        document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
+        const app = document.querySelector(".app");
+        const entries = await window.omegat.rpc("entry.list", {});
+        const wanted = entries.find((entry) =>
+          JSON.stringify(entry.key) === ${
+            JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))
+          }
+        );
+        const decoy = entries.find((entry) =>
+          JSON.stringify(entry.key) === ${
+            JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))
+          }
+        );
+        return {
+          project: app?.dataset.projectId ?? "",
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          entries: entries.length,
+          wanted,
+          decoy,
+          recoveredSource: entries.some((entry) =>
+            entry.key.file === "zzzy-electron-restart.yaml"
+          ),
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+        };
+      })()`, true);
+      if (
+        state.project === project
+        && state.operation === "externalRefresh"
+        && state.phase === "succeeded"
+        && state.entries === electronRestartBefore.entries + 1
+        && state.recoveredSource
+        && state.conflicts === 0
+        && state.wanted?.translation === electronRestartBefore.wanted.translation
+        && state.decoy?.translation === electronRestartBefore.decoy.translation
+      ) return state;
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  assert.deepEqual(
+    Object.keys(electronRestartRecovered.wanted.key).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+  );
+  assert.deepEqual(
+    Object.keys(electronRestartRecovered.decoy.key).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+  );
+  await waitFor("completed Electron-recovered refresh journal removal", async () =>
+    await pathExists(refreshJournal) ? undefined : true
+  );
+  const [electronRestartNewSidecar] = await waitFor(
+    "new sidecar after Electron fingerprint recovery",
+    async () => {
+      const children = await descendantProcesses(application.pid);
+      const matching = children.filter(({ command }) =>
+        command.includes("omegat-sidecar")
+      );
+      return matching.length ? matching : undefined;
+    },
+  );
+  const electronFingerprintRecovery = {
+    progress: electronRestartProgress,
+    killedElectronPid: electronRestartBefore.pid,
+    restartedElectronPid: application.pid,
+    killedSidecarPid: electronRestartOldSidecar.pid,
+    restartedSidecarPid: electronRestartNewSidecar.pid,
+    journalPresentBeforeKill: true,
+    journalRemovedAfterCommit: true,
+    entries: electronRestartRecovered.entries,
+    completeEntryKeys: {
+      wanted: electronRestartRecovered.wanted.key,
+      decoy: electronRestartRecovered.decoy.key,
+    },
+    completedConflictsRevived: electronRestartRecovered.conflicts,
+  };
+  assert.notEqual(
+    electronFingerprintRecovery.restartedElectronPid,
+    electronFingerprintRecovery.killedElectronPid,
+  );
+  assert.notEqual(
+    electronFingerprintRecovery.restartedSidecarPid,
+    electronFingerprintRecovery.killedSidecarPid,
+  );
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
@@ -2268,6 +2586,8 @@ try {
         externalSuccessPost.events.flatMap((event) => event.sources),
       )].sort(),
       decoyTranslation: externalSuccessPost.decoy.translation,
+      sidecarRestartRecovery: sidecarFingerprintRecovery,
+      electronRestartRecovery: electronFingerprintRecovery,
     },
     teamConflict: {
       remoteInsertion: "source/0998-team-order.yaml",

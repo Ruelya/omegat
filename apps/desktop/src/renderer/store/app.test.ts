@@ -1529,6 +1529,7 @@ describe("app store", () => {
       .mockImplementationOnce(() => first)
       .mockImplementationOnce(() => second);
     let notify: ((event: {
+      id: string;
       root: string;
       paths: string[];
       fingerprints: Record<string, string | null>;
@@ -1556,6 +1557,7 @@ describe("app store", () => {
     const disconnect = connectExternalProjectEvents();
 
     notify?.({
+      id: "stale",
       root,
       paths: [`${root}/source/stale.txt`],
       fingerprints: { [`${root}/source/stale.txt`]: "stale" },
@@ -1566,6 +1568,7 @@ describe("app store", () => {
 
     const currentPath = `${root}/source/current.txt`;
     notify?.({
+      id: "revision-1-native",
       root,
       paths: [currentPath],
       fingerprints: { [currentPath]: "revision-1" },
@@ -1577,6 +1580,7 @@ describe("app store", () => {
 
     const sourceDirectory = `${root}/source`;
     notify?.({
+      id: "revision-1-sidecar",
       root,
       paths: [sourceDirectory, currentPath],
       fingerprints: {
@@ -1590,6 +1594,7 @@ describe("app store", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
 
     notify?.({
+      id: "revision-2",
       root,
       paths: [currentPath],
       fingerprints: { [currentPath]: "revision-2" },
@@ -1599,11 +1604,22 @@ describe("app store", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(refresh).toHaveBeenCalledTimes(1);
 
+    useApp.setState({
+      longOperation: {
+        requestId: "operation-externalRefresh-cancelled",
+        kind: "externalRefresh",
+        method: "project.external-refresh",
+        phase: "cancelled",
+        stage: "project.external-refresh.sources",
+        error: null,
+      },
+    });
     finishFirst(false);
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
     expect(refresh).toHaveBeenNthCalledWith(2, undefined, true);
 
     notify?.({
+      id: "revision-3",
       root,
       paths: [currentPath],
       fingerprints: { [currentPath]: "revision-3" },
@@ -1617,6 +1633,78 @@ describe("app store", () => {
     finishSecond(true);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(refresh).toHaveBeenCalledTimes(2);
+    disconnect();
+  });
+
+  it("retries the durable FIFO head by batch id after a sidecar restart", async () => {
+    const root = "/restart-root";
+    const complete = vi.fn(async () => ({ remaining: [] }));
+    window.omegat!.completeExternalRefresh = complete;
+    const refresh = vi.fn()
+      .mockRejectedValueOnce(new Error("sidecar exited (SIGKILL)"))
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true);
+    let notify: ((event: {
+      id: string;
+      root: string;
+      paths: string[];
+      fingerprints: Record<string, string | null>;
+      generation: number;
+      sources: Array<"native" | "sidecar">;
+    }) => void) | undefined;
+    window.omegat!.onProjectExternalChange = (listener) => {
+      notify = listener;
+      return () => {
+        notify = undefined;
+      };
+    };
+    projectEvents.publishProject("load", root);
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        has_repositories: false,
+      },
+      refreshEntriesAfterExternalChange: refresh,
+    });
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const disconnect = connectExternalProjectEvents();
+    const first = {
+      id: "persisted-first",
+      root,
+      paths: [`${root}/source/first.txt`],
+      fingerprints: { [`${root}/source/first.txt`]: "one" },
+      generation,
+      sources: ["native"] as Array<"native" | "sidecar">,
+    };
+    const second = {
+      id: "persisted-second",
+      root,
+      paths: [`${root}/source/second.txt`],
+      fingerprints: { [`${root}/source/second.txt`]: "two" },
+      generation,
+      sources: ["sidecar"] as Array<"native" | "sidecar">,
+    };
+
+    notify?.(first);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    notify?.(second);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(complete).not.toHaveBeenCalled();
+
+    // The main process republishes every pending batch after reopening the
+    // project in its replacement sidecar. The duplicate id unblocks, while
+    // the distinct second fingerprint stays behind the durable FIFO head.
+    notify?.(first);
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
+    expect(complete.mock.calls).toEqual([
+      [root, generation, "persisted-first", "succeeded"],
+      [root, generation, "persisted-second", "succeeded"],
+    ]);
     disconnect();
   });
 

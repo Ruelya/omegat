@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
@@ -9,12 +10,18 @@ import {
   registerApplicationLifecycle,
 } from "./lifecycle";
 import { buildApplicationMenu } from "./menu";
-import { ProjectFileWatcher } from "./project-file-watcher";
+import {
+  ProjectFileWatcher,
+  type ExternalProjectChange,
+} from "./project-file-watcher";
 import { SidecarRpcClient } from "./sidecar-rpc";
 
 let sidecar: ChildProcessWithoutNullStreams | null = null;
 let rpcClient: SidecarRpcClient | null = null;
+let sidecarRecovery: Promise<void> | null = null;
+let stoppingSidecar = false;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
+const appInstance = randomUUID();
 let nextId = 1;
 const watchedProjectWriteMethods = new Set([
   "project.save",
@@ -32,9 +39,7 @@ const watchedProjectWriteMethods = new Set([
   "wiki.import",
 ]);
 const projectFileWatcher = new ProjectFileWatcher((event) => {
-  BrowserWindow.getAllWindows().forEach((window) => {
-    window.webContents.send("project:external-change", event);
-  });
+  void persistExternalProjectChange(event);
 });
 
 if (process.env.OMEGAT_CONFIG_DIR) {
@@ -85,12 +90,83 @@ function inspectDroppedPaths(paths: unknown) {
   return { kind: "files" as const, paths: safe };
 }
 
-function startSidecar() {
+type RefreshBatch = {
+  id: string;
+  paths: string[];
+  fingerprints: Record<string, string | null>;
+  sources: Array<"native" | "sidecar">;
+};
+
+function publishRefreshBatch(
+  root: string,
+  generation: number,
+  batch: RefreshBatch,
+) {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send("project:external-change", {
+      root,
+      generation,
+      ...batch,
+    });
+  });
+}
+
+async function pendingRefreshBatches(
+  client: SidecarRpcClient,
+  root: string,
+  generation: number,
+): Promise<RefreshBatch[]> {
+  const result = await client.request("project.refresh.pending", {
+    root,
+    generation,
+    app_instance: appInstance,
+  }) as { batches?: RefreshBatch[] };
+  return Array.isArray(result.batches) ? result.batches : [];
+}
+
+async function publishPendingRefreshBatches(
+  client: SidecarRpcClient,
+  root: string,
+  generation: number,
+) {
+  const batches = await pendingRefreshBatches(client, root, generation);
+  batches.forEach((batch) => publishRefreshBatch(root, generation, batch));
+}
+
+function scheduleSidecarRecovery() {
+  const watched = projectFileWatcher.currentProject();
+  if (stoppingSidecar || !watched || sidecarRecovery) return;
+  sidecarRecovery = (async () => {
+    // Let the child exit and pipe close notifications settle before replacing
+    // the stateful process.
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+    const client = startSidecar();
+    await client.request("project.open", { root: watched.root });
+    if (
+      projectFileWatcher.currentProject()?.root === watched.root
+      && projectFileWatcher.currentProject()?.generation === watched.generation
+    ) {
+      await publishPendingRefreshBatches(
+        client,
+        watched.root,
+        watched.generation,
+      );
+    }
+  })().catch((error) => {
+    process.stderr.write(`sidecar recovery failed: ${String(error)}\n`);
+  }).finally(() => {
+    sidecarRecovery = null;
+    if (!stoppingSidecar && !rpcClient) scheduleSidecarRecovery();
+  });
+}
+
+function startSidecar(): SidecarRpcClient {
+  if (rpcClient && sidecar) return rpcClient;
   const bin = sidecarPath();
-  sidecar = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
-  rpcClient = new SidecarRpcClient(
+  const child = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
+  const client = new SidecarRpcClient(
     (line) => {
-      sidecar?.stdin.write(`${line}\n`);
+      child.stdin.write(`${line}\n`);
     },
     (method, params) => {
       if (
@@ -117,22 +193,71 @@ function startSidecar() {
       });
     },
   );
-  sidecar.stdout.setEncoding("utf8");
-  sidecar.stdout.on("data", (chunk: string) => {
-    rpcClient?.acceptChunk(chunk);
+  sidecar = child;
+  rpcClient = client;
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    client.acceptChunk(chunk);
   });
-  sidecar.stderr.on("data", (d: Buffer) => {
+  child.stderr.on("data", (d: Buffer) => {
     process.stderr.write(d);
   });
+  child.once("error", (error) => {
+    if (sidecar !== child) return;
+    client.rejectAll(`sidecar error: ${error.message}`);
+  });
+  child.once("exit", (code, signal) => {
+    if (sidecar !== child) return;
+    client.rejectAll(
+      `sidecar exited${signal ? ` (${signal})` : ` (${code ?? "unknown"})`}`,
+    );
+    sidecar = null;
+    rpcClient = null;
+    scheduleSidecarRecovery();
+  });
+  return client;
 }
 
 function stopSidecar() {
+  stoppingSidecar = true;
   rpcClient?.rejectAll("sidecar stopped");
   rpcClient = null;
-  sidecar?.kill();
+  const child = sidecar;
   sidecar = null;
+  child?.kill();
   for (const child of isolatedMarkerSidecars) child.kill();
   isolatedMarkerSidecars.clear();
+}
+
+async function statefulClient(): Promise<SidecarRpcClient> {
+  if (sidecarRecovery) await sidecarRecovery;
+  return rpcClient ?? startSidecar();
+}
+
+async function persistExternalProjectChange(event: ExternalProjectChange) {
+  const persist = async () => {
+    const client = await statefulClient();
+    return client.request("project.refresh.enqueue", {
+      ...event,
+      app_instance: appInstance,
+    }) as Promise<{ batch?: RefreshBatch }>;
+  };
+  try {
+    let result: { batch?: RefreshBatch };
+    try {
+      result = await persist();
+    } catch {
+      if (sidecarRecovery) await sidecarRecovery;
+      result = await persist();
+    }
+    if (result.batch) {
+      publishRefreshBatch(event.root, event.generation, result.batch);
+    }
+  } catch (error) {
+    process.stderr.write(
+      `cannot persist external refresh fingerprint: ${String(error)}\n`,
+    );
+  }
 }
 
 function isolatedMarkerRpc(method: string, params: unknown): Promise<unknown> {
@@ -184,7 +309,7 @@ function isolatedMarkerRpc(method: string, params: unknown): Promise<unknown> {
   });
 }
 
-function rpc(
+async function rpc(
   method: string,
   params: unknown = {},
   clientRequestId: string | null = null,
@@ -193,11 +318,11 @@ function rpc(
   // navigation RPCs responsive while each Marker runs in its own sidecar,
   // which in turn retains the cdylib crash/timeout worker boundary.
   if (method === "markers.query") return isolatedMarkerRpc(method, params);
-  if (!sidecar) startSidecar();
+  const client = await statefulClient();
   const endWrite = watchedProjectWriteMethods.has(method)
     ? projectFileWatcher.beginWriteSource(method)
     : () => undefined;
-  return rpcClient!.request(method, params, clientRequestId).finally(endWrite);
+  return client.request(method, params, clientRequestId).finally(endWrite);
 }
 
 function createWindow() {
@@ -232,6 +357,7 @@ function applyMenuLocale(locale: string) {
 }
 
 app.whenReady().then(() => {
+  stoppingSidecar = false;
   startSidecar();
   ipcMain.handle(
     "rpc",
@@ -259,15 +385,57 @@ app.whenReady().then(() => {
     return r.canceled ? null : r.filePaths;
   });
   ipcMain.handle("inspect-drop", (_e, paths: unknown) => inspectDroppedPaths(paths));
-  ipcMain.handle("project-watch", (_e, root: string, generation?: number) => {
+  ipcMain.handle("project-watch", async (_e, root: string, generation?: number) => {
     if (typeof root === "string" && root.trim()) {
-      projectFileWatcher.watch(
+      const activeGeneration = projectFileWatcher.watch(
         root,
         typeof generation === "number" ? generation : undefined,
       );
+      const client = await statefulClient();
+      await publishPendingRefreshBatches(client, root, activeGeneration);
     }
   });
-  ipcMain.handle("project-unwatch", () => projectFileWatcher.close());
+  ipcMain.handle(
+    "project-refresh-complete",
+    async (
+      _e,
+      root: string,
+      generation: number,
+      batchId: string,
+      outcome: "succeeded" | "cancelled" | "coalesced",
+    ) => {
+      const active = projectFileWatcher.currentProject();
+      if (
+        !active
+        || active.root !== root
+        || active.generation !== generation
+      ) {
+        return { remaining: [] };
+      }
+      return rpc("project.refresh.complete", {
+        root,
+        generation,
+        batch_id: batchId,
+        outcome,
+        app_instance: appInstance,
+      });
+    },
+  );
+  ipcMain.handle("project-unwatch", async () => {
+    const active = projectFileWatcher.currentProject();
+    if (active) {
+      try {
+        await rpc("project.refresh.discard", {
+          root: active.root,
+          generation: active.generation,
+          app_instance: appInstance,
+        });
+      } catch {
+        // A terminated process leaves the queue for crash recovery.
+      }
+    }
+    projectFileWatcher.close();
+  });
   ipcMain.handle("save-text", async (_e, name: string, text: string) => {
     const r = await dialog.showSaveDialog({ defaultPath: name });
     if (r.canceled || !r.filePath) return null;

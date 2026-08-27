@@ -331,8 +331,15 @@ declare global {
       >;
       watchProject?: (root: string, generation: number) => Promise<void>;
       unwatchProject?: () => Promise<void>;
+      completeExternalRefresh?: (
+        root: string,
+        generation: number,
+        batchId: string,
+        outcome: "succeeded" | "cancelled" | "coalesced",
+      ) => Promise<{ remaining: unknown[] }>;
       onProjectExternalChange?: (
         fn: (event: {
+          id: string;
           root: string;
           paths: string[];
           fingerprints: Record<string, string | null>;

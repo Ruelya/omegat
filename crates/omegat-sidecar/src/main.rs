@@ -1,15 +1,16 @@
 //! NDJSON JSON-RPC sidecar. One request per stdin line, one response per stdout line.
 
 mod project_watcher;
+mod refresh_journal;
 
+use omegat_core::cancellation::CancellationToken;
 use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_core::{capabilities, version};
-use omegat_core::cancellation::CancellationToken;
 use omegat_ipc::*;
 use omegat_plugin::PluginRegistry;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -122,10 +123,7 @@ impl App {
         cancellation: &CancellationToken,
     ) -> std::result::Result<Value, (i32, String)> {
         if cancellation.is_cancelled() {
-            return Err((
-                error_code::REQUEST_CANCELLED,
-                "request cancelled".into(),
-            ));
+            return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
         }
         match method {
             "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
@@ -178,10 +176,9 @@ impl App {
             }
             "project.open" => {
                 let p: OpenProjectParams = serde_json::from_value(params).map_err(invalid)?;
-                let recovery_props = omegat_core::properties::ProjectProperties::load(
-                    std::path::Path::new(&p.root),
-                )
-                .map_err(core_err)?;
+                let recovery_props =
+                    omegat_core::properties::ProjectProperties::load(std::path::Path::new(&p.root))
+                        .map_err(core_err)?;
                 omegat_team::recover_interrupted_sync(&recovery_props).map_err(|error| {
                     (
                         error_code::INTERNAL_ERROR,
@@ -326,10 +323,7 @@ impl App {
                 let hits = self
                     .session()?
                     .search_cancellable(&p, cancellation)
-                    .ok_or((
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    ))?;
+                    .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(hits).unwrap())
             }
             "search.replace" => {
@@ -378,10 +372,7 @@ impl App {
                     "",
                     cancellation,
                 )
-                .ok_or((
-                    error_code::REQUEST_CANCELLED,
-                    "request cancelled".into(),
-                ))?;
+                .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(issues).unwrap())
             }
             "finder.run" => {
@@ -427,9 +418,9 @@ impl App {
                     .transpose()
                     .map_err(invalid)?;
                 if rebind_key.as_ref().is_some_and(|key| {
-                    !self
-                        .session()
-                        .is_ok_and(|session| session.entries.iter().any(|entry| entry.key() == *key))
+                    !self.session().is_ok_and(|session| {
+                        session.entries.iter().any(|entry| entry.key() == *key)
+                    })
                 }) {
                     return Err((
                         error_code::INVALID_PARAMS,
@@ -450,10 +441,9 @@ impl App {
                     cancellation,
                 )
                 .map_err(|error| match error {
-                    omegat_team::TeamError::Cancelled => (
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    ),
+                    omegat_team::TeamError::Cancelled => {
+                        (error_code::REQUEST_CANCELLED, "request cancelled".into())
+                    }
                     other => (error_code::TEAM_CONFLICT, other.to_string()),
                 })?;
                 Ok(json!({"conflicts": left, "rebind_key": rebind_key}))
@@ -548,10 +538,7 @@ impl App {
                 let issues = self
                     .session()?
                     .issues_cancellable(cancellation)
-                    .ok_or((
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    ))?;
+                    .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(issues).unwrap())
             }
             "filters.options" => {
@@ -655,10 +642,9 @@ impl App {
                         &|| cancellation.is_cancelled(),
                     )
                     .map_err(|error| match error {
-                        omegat_filters::FilterError::Cancelled => (
-                            error_code::REQUEST_CANCELLED,
-                            "request cancelled".into(),
-                        ),
+                        omegat_filters::FilterError::Cancelled => {
+                            (error_code::REQUEST_CANCELLED, "request cancelled".into())
+                        }
                         other => core_err(other.into()),
                     })?;
                 let segments: Vec<_> = parsed
@@ -685,10 +671,7 @@ impl App {
                 let hits = self
                     .session()?
                     .dict_cancellable(word, cancellation)
-                    .ok_or((
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    ))?;
+                    .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(hits).unwrap())
             }
             "completer.query" => {
@@ -715,10 +698,9 @@ impl App {
                     Ok(r) => Ok(
                         json!({"action": r.action, "message": r.message, "conflicts": r.conflicts}),
                     ),
-                    Err(omegat_team::TeamError::Cancelled) => Err((
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    )),
+                    Err(omegat_team::TeamError::Cancelled) => {
+                        Err((error_code::REQUEST_CANCELLED, "request cancelled".into()))
+                    }
                     Err(omegat_team::TeamError::Conflict(msg)) => {
                         Err((error_code::TEAM_CONFLICT, msg))
                     }
@@ -736,10 +718,9 @@ impl App {
                     cancellation,
                 )
                 .map_err(|error| match error {
-                    omegat_team::TeamError::Cancelled => (
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    ),
+                    omegat_team::TeamError::Cancelled => {
+                        (error_code::REQUEST_CANCELLED, "request cancelled".into())
+                    }
                     other => (error_code::INTERNAL_ERROR, other.to_string()),
                 })?;
                 Ok(json!({"action": r.action, "message": r.message}))
@@ -873,10 +854,7 @@ impl App {
                 )
                 .map_err(core_err)?;
                 if cancellation.is_cancelled() {
-                    return Err((
-                        error_code::REQUEST_CANCELLED,
-                        "request cancelled".into(),
-                    ));
+                    return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
                 }
                 if !dest.is_empty() {
                     omegat_core::align::write_aligned_tmx_cancellable(
@@ -1246,6 +1224,7 @@ impl App {
             .as_mut()
             .ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
     }
+
 }
 
 fn invalid(e: serde_json::Error) -> (i32, String) {
@@ -1263,6 +1242,158 @@ fn core_err(e: omegat_core::CoreError) -> (i32, String) {
         _ => error_code::INTERNAL_ERROR,
     };
     (code, e.to_string())
+}
+
+fn refresh_journal_err(error: String) -> (i32, String) {
+    (
+        error_code::INTERNAL_ERROR,
+        format!("external refresh journal: {error}"),
+    )
+}
+
+fn refresh_scope(
+    params: &Value,
+    open_root: Option<&std::path::Path>,
+) -> std::result::Result<(std::path::PathBuf, String, u64), (i32, String)> {
+    let session_root = open_root.ok_or((
+        error_code::PROJECT_NOT_OPEN,
+        "no project".into(),
+    ))?;
+    let root = params
+        .get("root")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .ok_or((
+            error_code::INVALID_PARAMS,
+            "refresh journal requires root".into(),
+        ))?;
+    let normalized =
+        |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if normalized(&root) != normalized(session_root) {
+        return Err((
+            error_code::INVALID_PARAMS,
+            "refresh journal root is not the open project".into(),
+        ));
+    }
+    let app_instance = params
+        .get("app_instance")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or((
+            error_code::INVALID_PARAMS,
+            "refresh journal requires app_instance".into(),
+        ))?
+        .to_string();
+    let generation = params.get("generation").and_then(Value::as_u64).ok_or((
+        error_code::INVALID_PARAMS,
+        "refresh journal requires generation".into(),
+    ))?;
+    Ok((root, app_instance, generation))
+}
+
+fn dispatch_refresh_journal(
+    method: &str,
+    params: Value,
+    config_dir: &std::path::Path,
+    open_root: Option<&std::path::Path>,
+) -> Option<std::result::Result<Value, (i32, String)>> {
+    if !method.starts_with("project.refresh.") {
+        return None;
+    }
+    Some((|| {
+        let (root, app_instance, generation) = refresh_scope(&params, open_root)?;
+        match method {
+            "project.refresh.enqueue" => {
+                let paths = params
+                    .get("paths")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+                    .filter(|paths| !paths.is_empty())
+                    .ok_or((
+                        error_code::INVALID_PARAMS,
+                        "refresh enqueue requires paths".into(),
+                    ))?;
+                let fingerprints = params
+                    .get("fingerprints")
+                    .cloned()
+                    .and_then(|value| {
+                        serde_json::from_value::<BTreeMap<String, Option<String>>>(value).ok()
+                    })
+                    .ok_or((
+                        error_code::INVALID_PARAMS,
+                        "refresh enqueue requires fingerprints".into(),
+                    ))?;
+                let sources = params
+                    .get("sources")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<Vec<String>>(value).ok())
+                    .filter(|sources| {
+                        !sources.is_empty()
+                            && sources
+                                .iter()
+                                .all(|source| matches!(source.as_str(), "native" | "sidecar"))
+                    })
+                    .ok_or((
+                        error_code::INVALID_PARAMS,
+                        "refresh enqueue requires native/sidecar sources".into(),
+                    ))?;
+                let batch = refresh_journal::enqueue(
+                    config_dir,
+                    &root,
+                    &app_instance,
+                    generation,
+                    paths,
+                    fingerprints,
+                    sources,
+                )
+                .map_err(refresh_journal_err)?;
+                Ok(json!({ "batch": batch }))
+            }
+            "project.refresh.pending" => {
+                let batches =
+                    refresh_journal::pending(config_dir, &root, &app_instance, generation)
+                        .map_err(refresh_journal_err)?;
+                Ok(json!({ "batches": batches }))
+            }
+            "project.refresh.complete" => {
+                let batch_id = params
+                    .get("batch_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.is_empty())
+                    .ok_or((
+                        error_code::INVALID_PARAMS,
+                        "refresh completion requires batch_id".into(),
+                    ))?;
+                let outcome = params
+                    .get("outcome")
+                    .and_then(Value::as_str)
+                    .filter(|value| matches!(*value, "succeeded" | "cancelled" | "coalesced"))
+                    .ok_or((
+                        error_code::INVALID_PARAMS,
+                        "refresh completion requires a terminal outcome".into(),
+                    ))?;
+                let remaining = refresh_journal::complete(
+                    config_dir,
+                    &root,
+                    &app_instance,
+                    generation,
+                    batch_id,
+                )
+                .map_err(refresh_journal_err)?;
+                Ok(json!({ "outcome": outcome, "remaining": remaining }))
+            }
+            "project.refresh.discard" => {
+                refresh_journal::discard(config_dir, &root, &app_instance)
+                    .map_err(refresh_journal_err)?;
+                Ok(json!({ "discarded": true }))
+            }
+            _ => Err((
+                error_code::METHOD_NOT_FOUND,
+                format!("unknown method {method}"),
+            )),
+        }
+    })())
 }
 
 fn request_key(id: &Value) -> String {
@@ -1326,10 +1457,12 @@ fn main() {
         return;
     }
     let _ = env_logger::try_init();
-    let app = Arc::new(Mutex::new(App::new()));
-    let cancellations = Arc::new(Mutex::new(
-        HashMap::<String, CancellationToken>::new(),
-    ));
+    let app_state = App::new();
+    let refresh_config_dir = app_state.prefs.config_dir.clone();
+    let app = Arc::new(Mutex::new(app_state));
+    let open_project = Arc::new(Mutex::new(None::<std::path::PathBuf>));
+    let refresh_journal_lock = Arc::new(Mutex::new(()));
+    let cancellations = Arc::new(Mutex::new(HashMap::<String, CancellationToken>::new()));
     let (responses, response_lines) = std::sync::mpsc::channel::<String>();
     let (watch_commands, watch_worker) = project_watcher::spawn(responses.clone());
     let writer = thread::spawn(move || {
@@ -1356,11 +1489,8 @@ fn main() {
         };
         if req.id.is_none() && req.method == "$/cancelRequest" {
             if let Some(id) = req.params.get("id") {
-                if let Some(cancellation) = cancellations
-                    .lock()
-                    .unwrap()
-                    .get(&request_key(id))
-                    .cloned()
+                if let Some(cancellation) =
+                    cancellations.lock().unwrap().get(&request_key(id)).cloned()
                 {
                     cancellation.cancel();
                 }
@@ -1372,9 +1502,7 @@ fn main() {
         }
         let id = req.id.clone().unwrap_or(Value::Null);
         let key = request_key(&id);
-        let cancellation = if let Some(progress_token) =
-            req.params.get("progress_token").cloned()
-        {
+        let cancellation = if let Some(progress_token) = req.params.get("progress_token").cloned() {
             let progress_responses = responses.clone();
             CancellationToken::with_checkpoint_observer(move |stage| {
                 let notification = RpcNotification::new(
@@ -1393,6 +1521,9 @@ fn main() {
             .unwrap()
             .insert(key.clone(), cancellation.clone());
         let app = Arc::clone(&app);
+        let open_project = Arc::clone(&open_project);
+        let refresh_journal_lock = Arc::clone(&refresh_journal_lock);
+        let refresh_config_dir = refresh_config_dir.clone();
         let cancellations = Arc::clone(&cancellations);
         let responses = responses.clone();
         let watch_commands = watch_commands.clone();
@@ -1404,7 +1535,21 @@ fn main() {
                 let _ = watch_commands.send(project_watcher::WatchCommand::BeginWrite(ready));
                 let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(2));
             }
-            let resp = app.lock().unwrap().handle(req, &cancellation);
+            let refresh_result = {
+                let _journal = refresh_journal_lock.lock().unwrap();
+                let active = open_project.lock().unwrap();
+                dispatch_refresh_journal(
+                    &req.method,
+                    req.params.clone(),
+                    &refresh_config_dir,
+                    active.as_deref(),
+                )
+            };
+            let resp = match refresh_result {
+                Some(Ok(result)) => RpcResponse::ok(id, result),
+                Some(Err((code, message))) => RpcResponse::err(id, code, message),
+                None => app.lock().unwrap().handle(req, &cancellation),
+            };
             if project_input_write {
                 let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
                 let _ = watch_commands.send(project_watcher::WatchCommand::EndWrite(ready));
@@ -1420,6 +1565,8 @@ fn main() {
                             .and_then(|result| result.get("root"))
                             .and_then(Value::as_str)
                         {
+                            *open_project.lock().unwrap() =
+                                Some(std::path::PathBuf::from(root));
                             let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
                             let _ = watch_commands.send(project_watcher::WatchCommand::Watch(
                                 std::path::PathBuf::from(root),
@@ -1429,6 +1576,7 @@ fn main() {
                         }
                     }
                     "project.close" => {
+                        *open_project.lock().unwrap() = None;
                         let _ = watch_commands.send(project_watcher::WatchCommand::Close);
                     }
                     _ => {}

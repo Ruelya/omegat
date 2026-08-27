@@ -22,6 +22,10 @@ const METHODS: &[&str] = &[
     "project.compile",
     "project.reload",
     "project.external-refresh",
+    "project.refresh.enqueue",
+    "project.refresh.pending",
+    "project.refresh.complete",
+    "project.refresh.discard",
     "project.props",
     "entry.list",
     "entry.get",
@@ -239,11 +243,7 @@ fn blocking_http_endpoint() -> (String, mpsc::Receiver<()>, std::thread::JoinHan
             }
         }
     });
-    (
-        format!("http://{address}/v2/check"),
-        accepted_rx,
-        worker,
-    )
+    (format!("http://{address}/v2/check"), accepted_rx, worker)
 }
 
 #[test]
@@ -310,13 +310,7 @@ fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(root.join("source/many.txt"), source).unwrap();
-    let reloaded = rpc(
-        &mut stdin,
-        &mut stdout,
-        2,
-        "project.reload",
-        json!({}),
-    );
+    let reloaded = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
     assert!(
         reloaded["result"]["entries"].as_u64().unwrap_or(0) > 10_000,
         "{reloaded}"
@@ -355,13 +349,7 @@ fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
     assert_eq!(cancelled["error"]["code"], -32800);
     assert_eq!(cancelled["error"]["message"], "request cancelled");
 
-    let responsive = rpc(
-        &mut stdin,
-        &mut stdout,
-        4,
-        "sys.version",
-        json!({}),
-    );
+    let responsive = rpc(&mut stdin, &mut stdout, 4, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
     let _ = child.kill();
 }
@@ -392,13 +380,7 @@ fn cancellation_reaches_languagetool_issues_and_filter_product_paths() {
     );
     assert!(created["result"].is_object(), "{created}");
     std::fs::write(root.join("source/input.txt"), "Source").unwrap();
-    let reloaded = rpc(
-        &mut stdin,
-        &mut stdout,
-        2,
-        "project.reload",
-        json!({}),
-    );
+    let reloaded = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
     assert_eq!(reloaded["result"]["entries"], 1);
     let listed = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
     let entry = &listed["result"][0];
@@ -478,13 +460,7 @@ fn cancellation_reaches_languagetool_issues_and_filter_product_paths() {
         cancelled_filter["error"],
         json!({"code": -32800, "message": "request cancelled"})
     );
-    let responsive = rpc(
-        &mut stdin,
-        &mut stdout,
-        12,
-        "sys.version",
-        json!({}),
-    );
+    let responsive = rpc(&mut stdin, &mut stdout, 12, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
     let _ = child.kill();
 }
@@ -560,8 +536,7 @@ fn protocol_cancellation_rolls_back_reload_and_compile_state() {
         cancelled_external_refresh["error"],
         json!({"code": -32800, "message": "request cancelled"})
     );
-    let after_external_refresh =
-        rpc(&mut stdin, &mut stdout, 51, "entry.list", json!({}));
+    let after_external_refresh = rpc(&mut stdin, &mut stdout, 51, "entry.list", json!({}));
     assert_eq!(after_external_refresh["result"], before_reload);
 
     let first = &after_reload["result"][0];
@@ -744,9 +719,8 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     );
     assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
 
-    let mut tmx = String::from(
-        r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body>"#,
-    );
+    let mut tmx =
+        String::from(r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body>"#);
     tmx.push_str(
         r#"<tu><tuv xml:lang="en"><seg>cancel me</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu>"#,
     );
@@ -915,7 +889,10 @@ fn project_open_recovers_only_its_interrupted_resolution_generation() {
         json!({"root": root}),
     );
     assert_eq!(opened["result"]["root"], root.to_string_lossy().as_ref());
-    assert_eq!(std::fs::read_to_string(props.save_tmx_path()).unwrap(), ours_tmx);
+    assert_eq!(
+        std::fs::read_to_string(props.save_tmx_path()).unwrap(),
+        ours_tmx
+    );
     assert_eq!(
         std::fs::read(prep.join("conflicts.json")).unwrap(),
         conflicts_before
@@ -923,13 +900,7 @@ fn project_open_recovers_only_its_interrupted_resolution_generation() {
     assert!(!prep.join("resolved.json").exists());
     assert!(!transactions.join("active.json").exists());
     assert!(!snapshot.exists());
-    let restored_conflicts = rpc(
-        &mut stdin,
-        &mut stdout,
-        2,
-        "team.conflicts",
-        json!({}),
-    );
+    let restored_conflicts = rpc(&mut stdin, &mut stdout, 2, "team.conflicts", json!({}));
     assert_eq!(
         restored_conflicts["result"]["conflicts"]
             .as_array()
@@ -953,8 +924,276 @@ fn project_open_recovers_only_its_interrupted_resolution_generation() {
         std::fs::read_to_string(other_props.save_tmx_path()).unwrap(),
         ours_tmx.replace("same source", "new generation")
     );
-    assert!(!other_root.join(".repositories/transactions/active.json").exists());
+    assert!(!other_root
+        .join(".repositories/transactions/active.json")
+        .exists());
     let _ = child.kill();
+}
+
+#[test]
+fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
+    fn create_project(root: &std::path::Path, source: &str) {
+        let props = omegat_core::properties::ProjectProperties::create(
+            root.to_path_buf(),
+            "en".into(),
+            "fr".into(),
+            false,
+        );
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        std::fs::write(props.source_dir.join("source.txt"), source).unwrap();
+    }
+
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("current-project");
+    let other = temp.path().join("other-project");
+    create_project(&root, "current source");
+    create_project(&other, "other source");
+
+    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&config);
+    let opened = rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.open",
+        json!({ "root": root }),
+    );
+    assert!(opened["error"].is_null());
+    let first = rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "electron-before-kill",
+            "generation": 7,
+            "paths": [root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "fingerprint-one" },
+            "sources": ["native"]
+        }),
+    );
+    let second = rpc(
+        &mut first_in,
+        &mut first_out,
+        3,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "electron-before-kill",
+            "generation": 7,
+            "paths": [root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "fingerprint-two" },
+            "sources": ["sidecar"]
+        }),
+    );
+    let first_id = first["result"]["batch"]["id"].as_str().unwrap().to_string();
+    let second_id = second["result"]["batch"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(first_id, second_id);
+    first_child.kill().unwrap();
+    first_child.wait().unwrap();
+
+    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&config);
+    rpc(
+        &mut second_in,
+        &mut second_out,
+        4,
+        "project.open",
+        json!({ "root": root }),
+    );
+    let recovered = rpc(
+        &mut second_in,
+        &mut second_out,
+        5,
+        "project.refresh.pending",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 1
+        }),
+    );
+    assert_eq!(
+        recovered["result"]["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|batch| batch["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![first_id.as_str(), second_id.as_str()]
+    );
+    let completed = rpc(
+        &mut second_in,
+        &mut second_out,
+        6,
+        "project.refresh.complete",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 1,
+            "batch_id": first_id,
+            "outcome": "cancelled"
+        }),
+    );
+    assert_eq!(completed["result"]["outcome"], "cancelled");
+    assert_eq!(
+        completed["result"]["remaining"][0]["id"],
+        second_id.as_str()
+    );
+    second_child.kill().unwrap();
+    second_child.wait().unwrap();
+
+    let (mut third_child, mut third_in, mut third_out) = spawn_sidecar(&config);
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        7,
+        "project.open",
+        json!({ "root": root }),
+    );
+    let still_pending = rpc(
+        &mut third_in,
+        &mut third_out,
+        8,
+        "project.refresh.pending",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 1
+        }),
+    );
+    assert_eq!(
+        still_pending["result"]["batches"][0]["id"],
+        second_id.as_str()
+    );
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        9,
+        "project.refresh.complete",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 1,
+            "batch_id": second_id,
+            "outcome": "succeeded"
+        }),
+    );
+    let completed_stays_gone = rpc(
+        &mut third_in,
+        &mut third_out,
+        10,
+        "project.refresh.pending",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 1
+        }),
+    );
+    assert_eq!(completed_stays_gone["result"]["batches"], json!([]));
+
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        11,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 1,
+            "paths": [root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "stale-generation" },
+            "sources": ["native"]
+        }),
+    );
+    let stale_generation = rpc(
+        &mut third_in,
+        &mut third_out,
+        12,
+        "project.refresh.pending",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 2
+        }),
+    );
+    assert_eq!(stale_generation["result"]["batches"], json!([]));
+
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        13,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 2,
+            "paths": [root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "wrong-project" },
+            "sources": ["sidecar"]
+        }),
+    );
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        14,
+        "project.open",
+        json!({ "root": other }),
+    );
+    let other_pending = rpc(
+        &mut third_in,
+        &mut third_out,
+        15,
+        "project.refresh.pending",
+        json!({
+            "root": other,
+            "app_instance": "electron-after-kill",
+            "generation": 3
+        }),
+    );
+    assert_eq!(other_pending["result"]["batches"], json!([]));
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        16,
+        "project.open",
+        json!({ "root": root }),
+    );
+    let old_root_does_not_revive = rpc(
+        &mut third_in,
+        &mut third_out,
+        17,
+        "project.refresh.pending",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-kill",
+            "generation": 4
+        }),
+    );
+    assert_eq!(old_root_does_not_revive["result"]["batches"], json!([]));
+    let _ = third_child.kill();
 }
 
 #[test]
@@ -1103,13 +1342,7 @@ fn external_refresh_reloads_source_and_glossary_over_ndjson() {
     );
     let glossary = created["result"]["glossary_file"].as_str().unwrap();
     std::fs::write(root.join("source/input.txt"), "Before").unwrap();
-    let _ = rpc(
-        &mut stdin,
-        &mut stdout,
-        2,
-        "project.reload",
-        json!({}),
-    );
+    let _ = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
     std::fs::write(root.join("source/input.txt"), "After term").unwrap();
     std::fs::write(glossary, "term\tterme\texternal\n").unwrap();
 
@@ -1121,13 +1354,7 @@ fn external_refresh_reloads_source_and_glossary_over_ndjson() {
         json!({}),
     );
     assert_eq!(refreshed["result"]["entries"], 1);
-    let entries = rpc(
-        &mut stdin,
-        &mut stdout,
-        4,
-        "entry.list",
-        json!({}),
-    );
+    let entries = rpc(&mut stdin, &mut stdout, 4, "entry.list", json!({}));
     assert_eq!(entries["result"][0]["source"], "After term");
     let glossary_hits = rpc(
         &mut stdin,

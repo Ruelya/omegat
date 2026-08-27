@@ -129,6 +129,12 @@ export class ProjectFileWatcher {
     return this.generation;
   }
 
+  currentProject(): { root: string; generation: number } | null {
+    return this.root
+      ? { root: this.root, generation: this.generation }
+      : null;
+  }
+
   /**
    * Merge a sidecar-originated filesystem notification into the same debounce
    * window as native `fs.watch` events.

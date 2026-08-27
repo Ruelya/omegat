@@ -1618,37 +1618,70 @@ export function connectExternalProjectEvents(): () => void {
     { fingerprint: string | null; sources: Set<"native" | "sidecar"> }
   >();
   const pending: Array<{
+    id: string;
     root: string;
     generation: number;
     paths: string[];
     sources: Array<"native" | "sidecar">;
+    coalesced: boolean;
   }> = [];
   let draining = false;
+  let blocked = false;
 
   const drain = async () => {
-    if (draining) return;
+    if (draining || blocked) return;
     draining = true;
     try {
       while (pending.length > 0) {
-        const batch = pending.shift()!;
+        const batch = pending[0]!;
         const state = useApp.getState();
         if (
           state.props?.root !== batch.root
           || state.projectEvent.projectGeneration !== batch.generation
         ) {
+          pending.shift();
           continue;
         }
         try {
-          await state.refreshEntriesAfterExternalChange(undefined, true);
+          const refreshed = batch.coalesced
+            ? null
+            : await state.refreshEntriesAfterExternalChange(undefined, true);
           const current = useApp.getState();
           if (
-            current.props?.root === batch.root
-            && current.projectEvent.projectGeneration === batch.generation
+            current.props?.root !== batch.root
+            || current.projectEvent.projectGeneration !== batch.generation
           ) {
+            pending.shift();
+            continue;
+          }
+          const outcome = batch.coalesced
+            ? "coalesced"
+            : refreshed
+              ? "succeeded"
+              : current.longOperation?.kind === "externalRefresh"
+                  && current.longOperation.phase === "cancelled"
+                ? "cancelled"
+                : null;
+          if (!outcome) {
+            blocked = true;
+            return;
+          }
+          await window.omegat?.completeExternalRefresh?.(
+            batch.root,
+            batch.generation,
+            batch.id,
+            outcome,
+          );
+          pending.shift();
+          if (outcome === "succeeded") {
             current.logLine(
               `external project refresh (${
                 batch.paths.length
               } path(s), ${batch.sources.join("+")})`,
+            );
+          } else if (outcome === "coalesced") {
+            current.logLine(
+              `coalesced external project change (${batch.paths.length} path(s), ${batch.sources.join("+")})`,
             );
           }
         } catch (error) {
@@ -1659,15 +1692,20 @@ export function connectExternalProjectEvents(): () => void {
           ) {
             useApp.setState({ error: String(error) });
           }
+          // Keep the durable FIFO head in place. A sidecar restart republishes
+          // the same batch id and explicitly unblocks this drain.
+          blocked = true;
+          return;
         }
       }
     } finally {
       draining = false;
-      if (pending.length > 0) void drain();
+      if (pending.length > 0 && !blocked) void drain();
     }
   };
 
   return window.omegat?.onProjectExternalChange?.(({
+    id,
     root,
     paths,
     fingerprints,
@@ -1679,6 +1717,11 @@ export function connectExternalProjectEvents(): () => void {
       state.props?.root !== root
       || state.projectEvent.projectGeneration !== generation
     ) return;
+    if (pending.some((batch) => batch.id === id)) {
+      blocked = false;
+      void drain();
+      return;
+    }
     const project = `${generation}\0${root}`;
     if (observedProject !== project) {
       observedProject = project;
@@ -1708,17 +1751,24 @@ export function connectExternalProjectEvents(): () => void {
       }
     });
     if (changedPaths.length === 0) {
-      state.logLine(
-        `coalesced external project change (${paths.length} path(s), ${sources.join("+")})`,
-      );
-      return;
+      pending.push({
+        id,
+        root,
+        generation,
+        paths: [...paths],
+        sources: [...sources],
+        coalesced: true,
+      });
+    } else {
+      pending.push({
+        id,
+        root,
+        generation,
+        paths: changedPaths,
+        sources: [...sources],
+        coalesced: false,
+      });
     }
-    pending.push({
-      root,
-      generation,
-      paths: changedPaths,
-      sources: [...sources],
-    });
     void drain();
   }) ?? (() => undefined);
 }

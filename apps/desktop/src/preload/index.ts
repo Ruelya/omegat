@@ -29,8 +29,21 @@ contextBridge.exposeInMainWorld("omegat", {
   watchProject: (root: string, generation: number) =>
     ipcRenderer.invoke("project-watch", root, generation) as Promise<void>,
   unwatchProject: () => ipcRenderer.invoke("project-unwatch") as Promise<void>,
+  completeExternalRefresh: (
+    root: string,
+    generation: number,
+    batchId: string,
+    outcome: "succeeded" | "cancelled" | "coalesced",
+  ) => ipcRenderer.invoke(
+    "project-refresh-complete",
+    root,
+    generation,
+    batchId,
+    outcome,
+  ) as Promise<{ remaining: unknown[] }>,
   onProjectExternalChange: (
     fn: (event: {
+      id: string;
       root: string;
       paths: string[];
       fingerprints: Record<string, string | null>;
@@ -41,6 +54,7 @@ contextBridge.exposeInMainWorld("omegat", {
     const listener = (
       _: unknown,
       event: {
+        id: string;
         root: string;
         paths: string[];
         fingerprints: Record<string, string | null>;
