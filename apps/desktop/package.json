@@ -14,6 +14,7 @@
     "test:e2e:restart:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-restart-linux.mjs",
     "test:e2e:align-drag:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-align-drag-linux.mjs",
     "test:e2e:editor-ime:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-editor-ime-linux.mjs",
+    "test:e2e:native-marker:linux": "cargo build --release -p omegat-sidecar -p omegat-example-plugin && npm run build && electron-builder --dir --linux dir && node scripts/packaged-native-marker-linux.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },

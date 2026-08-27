@@ -233,6 +233,13 @@ pub extern "C" fn omegat_plugin_marker_marks(
     let Ok(input) = serde_json::from_slice::<Value>(input.to_bytes()) else {
         return -1;
     };
+    if input
+        .get("crash_worker")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        std::process::abort();
+    }
     let output = example_marker_output(&input).to_string();
     write_cstr(out, cap, &output)
 }

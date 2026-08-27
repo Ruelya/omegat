@@ -147,5 +147,53 @@ fn filters_list_includes_example_and_parses_fixture() {
         })
     );
 
+    let crashed = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "markers.query",
+        json!({
+            "id": "example.native-marker",
+            "entry_key": {
+                "file": "source/sample.example",
+                "source_text": "Hello from plugin",
+                "id": "0",
+                "prev": "",
+                "next": "Second line",
+                "path": null
+            },
+            "source_text": "Hello from plugin",
+            "translation_text": "plugin",
+            "is_active": true,
+            "crash_worker": true
+        }),
+    );
+    assert_eq!(crashed["error"]["code"], -32603);
+    assert_eq!(crashed["id"], 5);
+
+    let alive = rpc(&mut stdin, &mut stdout, 6, "sys.version", json!({}));
+    assert_eq!(alive["result"]["version"], "6.2.0");
+    let marked_again = rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "markers.query",
+        json!({
+            "id": "example.native-marker",
+            "entry_key": {
+                "file": "source/sample.example",
+                "source_text": "Hello from plugin",
+                "id": "0",
+                "prev": "",
+                "next": "Second line",
+                "path": null
+            },
+            "source_text": "Hello from plugin",
+            "translation_text": "😀 plugin and plugin",
+            "is_active": true
+        }),
+    );
+    assert_eq!(marked_again["result"], marked["result"]);
+
     let _ = child.kill();
 }

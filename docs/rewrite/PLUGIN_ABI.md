@@ -43,7 +43,11 @@ void omegat_plugin_register(const omegat_plugin_host* host);
   `{"marks":[{"start_offset":3,"end_offset":9,"painter":"native-plugin",
   "entry_part":"TRANSLATION"}]}`。offset 是 UTF-16 单元，区间为半开区间。
   host 会拒绝越界/空区间、空 painter、非 UTF-8 或畸形 JSON。
-- sidecar 用 `libloading` 加载。失败隔离，不阻断项目打开。
+- sidecar 用 `libloading` 发现注册项；每次原生 Marker 回调由同一 sidecar
+  可执行文件的短生命周期 worker 子进程加载并执行。回调 abort、信号崩溃、
+  非零退出或 5 秒超时只会令当前 `markers.query` 返回 JSON-RPC 内部错误，
+  不会终止长期运行的 sidecar 或 renderer。清单/加载失败仍按插件隔离，
+  不阻断项目打开。
 - 注册到的过滤器出现在 `filters.list`，并参与 `project.open` 抽段。`filters.parse` 可对单个文件试跑。
 - 注册到的 Marker 出现在 `markers.list`；renderer 把它注册为异步 Marker，
   通过 `markers.query` 执行 cdylib，并沿用逐 EntryKey/逐 Marker request token

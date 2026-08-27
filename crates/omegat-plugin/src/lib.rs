@@ -11,8 +11,11 @@ use omegat_ipc::PluginManifest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::io::{Read, Write};
 use std::os::raw::{c_char, c_int, c_void};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -176,6 +179,7 @@ extern "C" fn host_register_marker(
         id: cstr(id).to_string(),
         name: cstr(name).to_string(),
         mark_fn: mark,
+        library_path: None,
     });
 }
 
@@ -205,7 +209,7 @@ pub struct PluginMark {
     pub entry_part: PluginEntryPart,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct PluginMarks {
     marks: Vec<PluginMark>,
 }
@@ -215,6 +219,7 @@ struct DynamicMarker {
     id: String,
     name: String,
     mark_fn: MarkFn,
+    library_path: Option<PathBuf>,
 }
 
 impl DynamicMarker {
@@ -227,8 +232,6 @@ impl DynamicMarker {
     }
 
     fn marks(&self, input: &serde_json::Value) -> Result<Vec<PluginMark>, PluginError> {
-        let source_len = input_text_utf16_len(input, "source_text");
-        let translation_len = input_text_utf16_len(input, "translation_text");
         let json = serde_json::to_string(input).map_err(|e| self.error(e.to_string()))?;
         let input = CString::new(json).map_err(|e| self.error(e.to_string()))?;
         let mut buf = vec![0u8; 1 << 20];
@@ -242,8 +245,109 @@ impl DynamicMarker {
         }
         let raw = std::str::from_utf8(&buf[..n as usize])
             .map_err(|e| self.error(format!("output is not UTF-8: {e}")))?;
+        self.parse_and_validate(raw, input.as_bytes())
+    }
+
+    fn marks_isolated(
+        &self,
+        executable: &Path,
+        input: &serde_json::Value,
+    ) -> Result<Vec<PluginMark>, PluginError> {
+        let Some(library_path) = &self.library_path else {
+            return self.marks(input);
+        };
+        let mut child = Command::new(executable)
+            .arg("--plugin-marker-worker")
+            .arg(library_path)
+            .arg(&self.id)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| self.error(format!("cannot start isolated worker: {error}")))?;
+        let serialized =
+            serde_json::to_vec(input).map_err(|error| self.error(error.to_string()))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(&serialized)
+                .map_err(|error| self.error(format!("cannot write isolated worker input: {error}")))?;
+        }
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| self.error("isolated worker stdout unavailable"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| self.error("isolated worker stderr unavailable"))?;
+        let stdout_reader = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let mut stdout = stdout;
+            stdout.read_to_end(&mut output).map(|_| output)
+        });
+        let stderr_reader = std::thread::spawn(move || {
+            let mut output = Vec::new();
+            let mut stderr = stderr;
+            stderr.read_to_end(&mut output).map(|_| output)
+        });
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if started.elapsed() < Duration::from_secs(5) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err(self.error("isolated worker timed out"));
+                }
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err(self.error(format!("cannot wait for isolated worker: {error}")));
+                }
+            }
+        };
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| self.error("isolated worker stdout reader panicked"))?
+            .map_err(|error| self.error(format!("cannot read isolated worker output: {error}")))?;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| self.error("isolated worker stderr reader panicked"))?
+            .map_err(|error| self.error(format!("cannot read isolated worker error: {error}")))?;
+        if !status.success() {
+            let detail = String::from_utf8_lossy(&stderr);
+            return Err(self.error(format!(
+                "isolated worker exited {status}{}",
+                if detail.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", detail.trim())
+                }
+            )));
+        }
+        let raw = std::str::from_utf8(&stdout)
+            .map_err(|error| self.error(format!("worker output is not UTF-8: {error}")))?;
+        self.parse_and_validate(raw, &serialized)
+    }
+
+    fn parse_and_validate(
+        &self,
+        raw: &str,
+        input_json: &[u8],
+    ) -> Result<Vec<PluginMark>, PluginError> {
         let output: PluginMarks = serde_json::from_str(raw)
             .map_err(|e| self.error(format!("invalid marks JSON: {e}")))?;
+        let input: serde_json::Value = serde_json::from_slice(input_json)
+            .map_err(|error| self.error(format!("invalid marker input JSON: {error}")))?;
+        let source_len = input_text_utf16_len(&input, "source_text");
+        let translation_len = input_text_utf16_len(&input, "translation_text");
         for mark in &output.marks {
             let limit = match mark.entry_part {
                 PluginEntryPart::Source => source_len,
@@ -390,12 +494,64 @@ impl Filter for DynamicFilter {
     }
 }
 
+fn load_dynamic_registration(
+    library_path: &Path,
+) -> Result<(libloading::Library, Registration), PluginError> {
+    // Safety: plugins are trusted local cdylibs explicitly named by a manifest.
+    let library = unsafe { libloading::Library::new(library_path) }
+        .map_err(|error| PluginError::Manifest(error.to_string()))?;
+    type AbiFn = unsafe extern "C" fn() -> *const c_char;
+    type RegisterFn = unsafe extern "C" fn(*const OmegatPluginHost);
+    if let Ok(symbol) = unsafe { library.get::<AbiFn>(b"omegat_plugin_abi\0") } {
+        let pointer = unsafe { symbol() };
+        if !pointer.is_null() {
+            let _ = unsafe { CStr::from_ptr(pointer) }.to_string_lossy();
+        }
+    }
+    let mut pending = Registration {
+        filters: Vec::new(),
+        mt: Vec::new(),
+        tokenizers: Vec::new(),
+        markers: Vec::new(),
+    };
+    if let Ok(symbol) = unsafe { library.get::<RegisterFn>(b"omegat_plugin_register\0") } {
+        let host = OmegatPluginHost {
+            ctx: &mut pending as *mut Registration as *mut c_void,
+            register_filter: Some(host_register_filter),
+            register_mt: Some(host_register_mt),
+            register_tokenizer: Some(host_register_tokenizer),
+            register_marker: Some(host_register_marker),
+        };
+        unsafe { symbol(&host) };
+    }
+    Ok((library, pending))
+}
+
+/// Execute one registered Marker callback inside the current helper process.
+///
+/// Product callers use [`PluginRegistry::enable_marker_isolation`] so this is
+/// reached only after the sidecar has spawned itself in worker mode.
+pub fn run_marker_worker(
+    library_path: &Path,
+    marker_id: &str,
+    input: &serde_json::Value,
+) -> Result<Vec<PluginMark>, PluginError> {
+    let (_library, pending) = load_dynamic_registration(library_path)?;
+    pending
+        .markers
+        .iter()
+        .find(|marker| marker.id == marker_id)
+        .ok_or_else(|| PluginError::NotFound(marker_id.to_string()))?
+        .marks(input)
+}
+
 pub struct PluginRegistry {
     by_type: HashMap<PluginType, Vec<PluginManifest>>,
     dyn_filters: Vec<DynamicFilter>,
     mt: Vec<(String, String)>,
     tokenizers: Vec<(String, String)>,
     markers: Vec<DynamicMarker>,
+    marker_worker_executable: Option<PathBuf>,
     _libs: Vec<libloading::Library>,
 }
 
@@ -413,6 +569,7 @@ impl PluginRegistry {
             mt: Vec::new(),
             tokenizers: Vec::new(),
             markers: Vec::new(),
+            marker_worker_executable: None,
             _libs: Vec::new(),
         };
         reg.register_builtin();
@@ -451,16 +608,24 @@ impl PluginRegistry {
         self.markers.iter().map(DynamicMarker::info).collect()
     }
 
+    pub fn enable_marker_isolation(&mut self, executable: impl Into<PathBuf>) {
+        self.marker_worker_executable = Some(executable.into());
+    }
+
     pub fn marker_marks(
         &self,
         id: &str,
         input: &serde_json::Value,
     ) -> Result<Vec<PluginMark>, PluginError> {
-        self.markers
+        let marker = self
+            .markers
             .iter()
             .find(|marker| marker.id == id)
-            .ok_or_else(|| PluginError::NotFound(id.to_string()))?
-            .marks(input)
+            .ok_or_else(|| PluginError::NotFound(id.to_string()))?;
+        match &self.marker_worker_executable {
+            Some(executable) => marker.marks_isolated(executable, input),
+            None => marker.marks(input),
+        }
     }
 
     pub fn filter_registry(&self) -> FilterRegistry {
@@ -502,35 +667,7 @@ impl PluginRegistry {
             if m.entry != "builtin" && !m.entry.is_empty() {
                 let lib = manifest_path.parent().unwrap_or(dir).join(&m.entry);
                 if lib.exists() {
-                    // Safety: plugins are trusted local cdylibs listed in the manifest.
-                    let dynlib = unsafe { libloading::Library::new(&lib) }
-                        .map_err(|e| PluginError::Manifest(e.to_string()))?;
-                    type AbiFn = unsafe extern "C" fn() -> *const c_char;
-                    type RegisterFn = unsafe extern "C" fn(*const OmegatPluginHost);
-                    if let Ok(sym) = unsafe { dynlib.get::<AbiFn>(b"omegat_plugin_abi\0") } {
-                        let ptr = unsafe { sym() };
-                        if !ptr.is_null() {
-                            let _ = unsafe { CStr::from_ptr(ptr) }.to_string_lossy();
-                        }
-                    }
-                    let mut pending = Registration {
-                        filters: Vec::new(),
-                        mt: Vec::new(),
-                        tokenizers: Vec::new(),
-                        markers: Vec::new(),
-                    };
-                    if let Ok(sym) =
-                        unsafe { dynlib.get::<RegisterFn>(b"omegat_plugin_register\0") }
-                    {
-                        let host = OmegatPluginHost {
-                            ctx: &mut pending as *mut Registration as *mut c_void,
-                            register_filter: Some(host_register_filter),
-                            register_mt: Some(host_register_mt),
-                            register_tokenizer: Some(host_register_tokenizer),
-                            register_marker: Some(host_register_marker),
-                        };
-                        unsafe { sym(&host) };
-                    }
+                    let (dynlib, mut pending) = load_dynamic_registration(&lib)?;
                     for marker in &pending.markers {
                         if marker.id.trim().is_empty() || marker.name.trim().is_empty() {
                             return Err(PluginError::Manifest(
@@ -550,6 +687,7 @@ impl PluginRegistry {
                     }
                     for marker in &mut pending.markers {
                         marker.plugin_id.clone_from(&m.id);
+                        marker.library_path = Some(lib.clone());
                     }
                     self.dyn_filters.extend(pending.filters);
                     self.mt.extend(pending.mt);

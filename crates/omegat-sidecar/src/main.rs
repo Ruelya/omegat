@@ -6,7 +6,7 @@ use omegat_core::{capabilities, version};
 use omegat_ipc::*;
 use omegat_plugin::PluginRegistry;
 use serde_json::{json, Value};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::sync::Mutex;
 
 fn mutable_bead_from_json(value: &Value) -> omegat_core::align::MutableBead {
@@ -90,6 +90,9 @@ impl App {
         let _ = std::fs::create_dir_all(&scripts);
         prefs.script_dir = scripts.to_string_lossy().into_owned();
         let mut plugins = PluginRegistry::new();
+        if let Ok(executable) = std::env::current_exe() {
+            plugins.enable_marker_isolation(executable);
+        }
         plugins.load_default_dirs(&prefs.config_dir);
         Self {
             session: None,
@@ -1124,7 +1127,43 @@ fn core_err(e: omegat_core::CoreError) -> (i32, String) {
     (code, e.to_string())
 }
 
+fn plugin_marker_worker_main(
+    library_path: &std::path::Path,
+    marker_id: &str,
+) -> std::result::Result<(), String> {
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| format!("cannot read marker worker input: {error}"))?;
+    let input: Value = serde_json::from_str(&input)
+        .map_err(|error| format!("invalid marker worker input: {error}"))?;
+    let marks = omegat_plugin::run_marker_worker(library_path, marker_id, &input)
+        .map_err(|error| error.to_string())?;
+    serde_json::to_writer(io::stdout(), &json!({ "marks": marks }))
+        .map_err(|error| format!("cannot write marker worker output: {error}"))
+}
+
 fn main() {
+    let mut args = std::env::args_os();
+    let _program = args.next();
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--plugin-marker-worker")) {
+        let Some(library_path) = args.next() else {
+            eprintln!("missing plugin library path");
+            std::process::exit(2);
+        };
+        let Some(marker_id) = args.next() else {
+            eprintln!("missing plugin marker id");
+            std::process::exit(2);
+        };
+        if let Err(error) = plugin_marker_worker_main(
+            std::path::Path::new(&library_path),
+            &marker_id.to_string_lossy(),
+        ) {
+            eprintln!("{error}");
+            std::process::exit(3);
+        }
+        return;
+    }
     let _ = env_logger::try_init();
     let app = Mutex::new(App::new());
     let stdin = io::stdin();
