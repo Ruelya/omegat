@@ -1,0 +1,25 @@
+{
+  "id": "srt",
+  "fixture": "srt/file-SrtFilter.srt",
+  "java_test": "org.omegat.filters.SrtFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "First title",
+    "Second title",
+    "Third title\nand again"
+  ],
+  "ids": [
+    "00:00:11,201 --> 00:01:00,005",
+    "00:01:00,407 --> 00:01:02,300",
+    "00:01:04,002 --> 00:01:05,200"
+  ],
+  "empty_write_text": "1\r\n00:00:11,201 --> 00:01:00,005\r\nFirst title\r\n\r\n2\r\n00:01:00,407 --> 00:01:02,300\r\nSecond title\r\n\r\n3\r\n00:01:04,002 --> 00:01:05,200\r\nThird title\r\nand again\r\n",
+  "translated": {
+    "source": "First title",
+    "translation": "GOLDEN_T"
+  },
+  "translated_write": "1\r\n00:00:11,201 --> 00:01:00,005\r\nGOLDEN_T\r\n\r\n2\r\n00:01:00,407 --> 00:01:02,300\r\nSecond title\r\n\r\n3\r\n00:01:04,002 --> 00:01:05,200\r\nThird title\r\nand again\r\n"
+}

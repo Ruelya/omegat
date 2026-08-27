@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.MarkerColorFreshnessTest#testPainterFollowsColorPreferenceChange",
+  "source": "Edit",
+  "translation": "target",
+  "linked": "xAUTO",
+  "before_color": "#1565c0",
+  "after_color": "#123456",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

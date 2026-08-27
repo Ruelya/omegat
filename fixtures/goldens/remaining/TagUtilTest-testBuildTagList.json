@@ -1,0 +1,22 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TagUtilTest#testBuildTagList",
+  "text": "Tag <test> case <b0>one</b0>.<b1>",
+  "omegat": [
+    {
+      "pos": 16,
+      "tag": "<b0>"
+    },
+    {
+      "pos": 23,
+      "tag": "</b0>"
+    },
+    {
+      "pos": 29,
+      "tag": "<b1>"
+    }
+  ],
+  "keys": [
+    "org.omegat.util.TagUtilTest#testBuildTagList"
+  ]
+}

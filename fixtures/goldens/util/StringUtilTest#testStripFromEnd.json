@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testStripFromEnd",
+  "a": "file.txt",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testStripFromEnd"
+  ]
+}

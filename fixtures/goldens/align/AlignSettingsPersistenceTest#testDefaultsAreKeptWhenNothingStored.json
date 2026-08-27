@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored",
+  "algorithm": "viterbi",
+  "calculator": "normal",
+  "counter": "word",
+  "segment": true,
+  "remove_tags": false,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

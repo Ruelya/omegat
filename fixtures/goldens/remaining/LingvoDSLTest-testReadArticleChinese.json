@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleChinese",
+  "word": "一個樣\n一个样",
+  "article": "[yī ge yàng]&nbsp;\nsame as 一樣|一样 yī yàng&nbsp;, the same",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticleChinese"
+  ]
+}

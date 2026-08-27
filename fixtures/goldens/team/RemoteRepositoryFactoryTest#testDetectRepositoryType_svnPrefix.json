@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.team2.RemoteRepositoryFactoryTest#testDetectRepositoryType_svnPrefix",
+  "type": "svn",
+  "keys": [
+    "org.omegat.core.team2.RemoteRepositoryFactoryTest#testDetectRepositoryType_svnPrefix"
+  ]
+}
