@@ -298,7 +298,7 @@ non-null cells only, edge-line movement, a target outside the selected span,
 and a different target bead. The Rust mutation preserves Java's directional
 insertion order and clears review state on every touched bead. The sidecar
 contract is **3/3**, including strict multiline
-split/review/span-merge/span-replace/pinpoint output.
+split/review/span-merge/span-replace/pinpoint/drag output.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
