@@ -723,6 +723,12 @@ try {
     cancel?.click();
     return Boolean(cancel);
   })()`);
+  await waitFor("preferences modal close", async () => {
+    const closed = await client.evaluate(
+      "!document.querySelector('.prefs-grid') && Boolean(document.querySelector('.editor-surface'))",
+    );
+    return closed || undefined;
+  });
 
   const decorationFocus = await client.evaluate(`(() => {
     const rect = document.querySelector(".editor-surface").getBoundingClientRect();
@@ -736,9 +742,20 @@ try {
     String(decorationFocusScreen.y),
     "click",
     "1",
-    "key",
-    "ctrl+a",
   ]);
+  await waitFor("decorated editor native focus", async () => {
+    const focused = await client.evaluate(
+      "document.activeElement?.classList.contains('ime-proxy')",
+    );
+    return focused || undefined;
+  });
+  await xdotool(xvfb.display, ["key", "ctrl+a"]);
+  await waitFor("decorated editor select all", async () => {
+    const selected = await client.evaluate(
+      "Boolean(document.querySelector('.editor-selection'))",
+    );
+    return selected || undefined;
+  });
   const decoratedText = "Editor 😀\u00a0beta\u200egamma <x0/> delta";
   await client.command("Input.insertText", { text: decoratedText });
   const decorated = await waitFor("complex decorated Document3 fragments", async () => {
