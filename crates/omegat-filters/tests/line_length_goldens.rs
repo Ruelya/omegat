@@ -26,7 +26,10 @@ fn is_spaces_and_break_before_match_java() {
     let text = br["text"].as_str().unwrap();
     for c in br["cases"].as_array().unwrap() {
         assert_eq!(
-            LineLengthLimitWriter::is_possible_break_before_in(text, c["pos"].as_u64().unwrap() as usize),
+            LineLengthLimitWriter::is_possible_break_before_in(
+                text,
+                c["pos"].as_u64().unwrap() as usize
+            ),
             c["ok"].as_bool().unwrap(),
             "pos {}",
             c["pos"]
@@ -42,7 +45,10 @@ fn outline_and_break_pos_match_java() {
         out["output"].as_str().unwrap()
     );
     let empty = golden("engine/LineLengthLimitWriterTest#testOutLineWithEmptyBuffer.json");
-    assert_eq!(LineLengthLimitWriter::wrap("", 80, 100).len() as u64, empty["length"].as_u64().unwrap());
+    assert_eq!(
+        LineLengthLimitWriter::wrap("", 80, 100).len() as u64,
+        empty["length"].as_u64().unwrap()
+    );
     let none = golden("engine/LineLengthLimitWriterTest#testGetBreakPosNoBreakPossible.json");
     let input = none["input"].as_str().unwrap();
     assert_eq!(
@@ -51,5 +57,8 @@ fn outline_and_break_pos_match_java() {
     );
     let beyond = golden("engine/LineLengthLimitWriterTest#testGetBreakPosBeyondMaxLength.json");
     let long = "This line contains more characters than allowed by max length restrictions";
-    assert!(LineLengthLimitWriter::break_pos(long, 80, 100) as u64 <= beyond["max_length"].as_u64().unwrap());
+    assert!(
+        LineLengthLimitWriter::break_pos(long, 80, 100) as u64
+            <= beyond["max_length"].as_u64().unwrap()
+    );
 }

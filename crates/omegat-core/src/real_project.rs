@@ -1,7 +1,7 @@
 //! Java `RealProject` — open / save / compile / apply TM / tag validation.
 
-use crate::consts::*;
 use crate::cancellation::CancellationToken;
+use crate::consts::*;
 use crate::error::{CoreError, Result};
 use crate::external_tm::folder_is;
 use crate::glossary::{self, GlossaryEntry};
@@ -367,9 +367,15 @@ impl ProjectSession {
             default_translation: params.default_translation,
             file: (!params.default_translation).then(|| current.file.clone()),
             id: (!params.default_translation).then(|| current.id.clone()),
-            prev: (!params.default_translation).then(|| current.prev.clone()).flatten(),
-            next: (!params.default_translation).then(|| current.next.clone()).flatten(),
-            path: (!params.default_translation).then(|| current.path.clone()).flatten(),
+            prev: (!params.default_translation)
+                .then(|| current.prev.clone())
+                .flatten(),
+            next: (!params.default_translation)
+                .then(|| current.next.clone())
+                .flatten(),
+            path: (!params.default_translation)
+                .then(|| current.path.clone())
+                .flatten(),
             changer: Some("omegat-rewrite".into()),
             changed: Some(changed.clone()),
             ..Default::default()
@@ -377,7 +383,8 @@ impl ProjectSession {
 
         if params.default_translation {
             if !current.default_translation {
-                self.tmx.remove_occurrence_translation_for_key(&current.key());
+                self.tmx
+                    .remove_occurrence_translation_for_key(&current.key());
             }
             self.tmx.insert(tmx_entry);
         } else {

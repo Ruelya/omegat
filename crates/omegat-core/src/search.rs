@@ -1,5 +1,5 @@
-use crate::session::Entry;
 use crate::cancellation::CancellationToken;
+use crate::session::Entry;
 use omegat_ipc::{SearchHitDto, SearchParams};
 use regex::Regex;
 use std::sync::{

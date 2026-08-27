@@ -169,9 +169,9 @@ pub fn lucene_tokens(
 }
 
 fn is_stop(word: &str, stopwords: &[&str]) -> bool {
-    stopwords.iter().any(|s| {
-        s.eq_ignore_ascii_case(word) || *s == word || fold_lower(s) == fold_lower(word)
-    })
+    stopwords
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(word) || *s == word || fold_lower(s) == fold_lower(word))
 }
 
 pub fn fold_lower(s: &str) -> String {
@@ -180,7 +180,10 @@ pub fn fold_lower(s: &str) -> String {
 
 /// DefaultTokenizer / WordIterator: letter-bearing tokens, OmegaT tags skipped.
 pub fn default_words(text: &str) -> Vec<String> {
-    default_word_tokens(text).into_iter().map(|t| t.text).collect()
+    default_word_tokens(text)
+        .into_iter()
+        .map(|t| t.text)
+        .collect()
 }
 
 pub fn default_word_tokens(text: &str) -> Vec<Token> {
@@ -219,7 +222,10 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
                     start,
                     end,
                 });
-                i = chars.iter().position(|(o, _)| *o >= end).unwrap_or(chars.len());
+                i = chars
+                    .iter()
+                    .position(|(o, _)| *o >= end)
+                    .unwrap_or(chars.len());
                 continue;
             }
         }
@@ -232,12 +238,18 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
                     j += 1;
                 }
             } else {
-                while j < chars.len() && chars[j].1.is_whitespace() && !matches!(chars[j].1, '\n' | '\r')
+                while j < chars.len()
+                    && chars[j].1.is_whitespace()
+                    && !matches!(chars[j].1, '\n' | '\r')
                 {
                     j += 1;
                 }
             }
-            let end = if j < chars.len() { chars[j].0 } else { text.len() };
+            let end = if j < chars.len() {
+                chars[j].0
+            } else {
+                text.len()
+            };
             out.push(Surface {
                 text: &text[start..end],
                 start,
@@ -279,7 +291,11 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
                 }
                 break;
             }
-            let end = if j < chars.len() { chars[j].0 } else { text.len() };
+            let end = if j < chars.len() {
+                chars[j].0
+            } else {
+                text.len()
+            };
             out.push(Surface {
                 text: &text[start..end],
                 start,
@@ -288,7 +304,11 @@ pub fn word_iterator_surfaces(text: &str) -> Vec<Surface<'_>> {
             i = j;
             continue;
         }
-        let end = if i + 1 < chars.len() { chars[i + 1].0 } else { text.len() };
+        let end = if i + 1 < chars.len() {
+            chars[i + 1].0
+        } else {
+            text.len()
+        };
         out.push(Surface {
             text: &text[start..end],
             start,
@@ -373,10 +393,7 @@ mod word_iterator_tests {
         assert_eq!(got[got.len() - 3], "\n", "{got:?}");
         assert_eq!(got[got.len() - 2], "        ", "{got:?}");
         assert_eq!(got[got.len() - 1], "already", "{got:?}");
-        assert_eq!(
-            texts("s3_upload_bucket"),
-            ["s3", "_", "upload_bucket"]
-        );
+        assert_eq!(texts("s3_upload_bucket"), ["s3", "_", "upload_bucket"]);
         let flag = "This badge is granted the first time you flag a post. Flagging is how we all help keep this a nice place for everyone. If you notice any posts that require moderator attention for any reason please don’t hesitate to flag. If you see a problem, :flag_black: flag it!\n";
         let words: Vec<_> = texts(flag)
             .into_iter()
@@ -402,7 +419,11 @@ pub fn cjk_bigrams(text: &str, lowercase: bool) -> Vec<Token> {
     let mut cjk: Vec<char> = Vec::new();
     let flush_latin = |buf: &mut String, out: &mut Vec<Token>, lowercase: bool| {
         if !buf.is_empty() {
-            let w = if lowercase { buf.to_lowercase() } else { buf.clone() };
+            let w = if lowercase {
+                buf.to_lowercase()
+            } else {
+                buf.clone()
+            };
             out.push(Token {
                 stem: w.clone(),
                 text: w,
@@ -461,5 +482,9 @@ fn is_cjk(ch: char) -> bool {
 }
 
 fn is_cjk_punct(ch: char) -> bool {
-    ch.is_ascii_punctuation() || matches!(ch, '。' | '、' | '「' | '」' | '（' | '）' | '！' | '？' | '：' | '；')
+    ch.is_ascii_punctuation()
+        || matches!(
+            ch,
+            '。' | '、' | '「' | '」' | '（' | '）' | '！' | '？' | '：' | '；'
+        )
 }

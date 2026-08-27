@@ -76,7 +76,12 @@ impl OpenXmlProc {
     }
 
     fn start_run(&mut self, ev: XmlEvent) {
-        if self.current_buf.is_none() || self.current_para.last().map(|b| !b.is_empty()).unwrap_or(true)
+        if self.current_buf.is_none()
+            || self
+                .current_para
+                .last()
+                .map(|b| !b.is_empty())
+                .unwrap_or(true)
         {
             self.current_para.push(Vec::new());
         }
@@ -155,8 +160,10 @@ impl OpenXmlProc {
                     if prefix != '\0' {
                         res.push_str(&format!("</{prefix}{tc}>"));
                         let end_from = iter.saturating_sub(1);
-                        self.tags_map
-                            .insert(format!("/{prefix}{tc}"), run[end_from.min(run.len())..].to_vec());
+                        self.tags_map.insert(
+                            format!("/{prefix}{tc}"),
+                            run[end_from.min(run.len())..].to_vec(),
+                        );
                         self.tags_count.insert(prefix, tc + 1);
                     }
                 }
@@ -300,8 +307,14 @@ impl OpenXmlProc {
                 continue;
             };
             if dn.local == name.local && dn.uri == name.uri {
-                let mut a: Vec<_> = attrs.iter().map(|x| (x.name.local.as_str(), x.value.as_str())).collect();
-                let mut b: Vec<_> = dattrs.iter().map(|x| (x.name.local.as_str(), x.value.as_str())).collect();
+                let mut a: Vec<_> = attrs
+                    .iter()
+                    .map(|x| (x.name.local.as_str(), x.value.as_str()))
+                    .collect();
+                let mut b: Vec<_> = dattrs
+                    .iter()
+                    .map(|x| (x.name.local.as_str(), x.value.as_str()))
+                    .collect();
                 a.sort();
                 b.sort();
                 return if a == b { 2 } else { 1 };
@@ -641,10 +654,12 @@ fn compact_built_tags(
     static START: OnceLock<Regex> = OnceLock::new();
     static END: OnceLock<Regex> = OnceLock::new();
     let start = START.get_or_init(|| {
-        Regex::new(r"((?:<[a-zA-Z]+[0-9]+/>)*)<([a-zA-Z]+[0-9]+)>((?:<[a-zA-Z]+[0-9]+/>)*)").unwrap()
+        Regex::new(r"((?:<[a-zA-Z]+[0-9]+/>)*)<([a-zA-Z]+[0-9]+)>((?:<[a-zA-Z]+[0-9]+/>)*)")
+            .unwrap()
     });
     let end = END.get_or_init(|| {
-        Regex::new(r"((?:<[a-zA-Z]+[0-9]+/>)*)<(/[a-zA-Z]+[0-9]+)>((?:<[a-zA-Z]+[0-9]+/>)*)").unwrap()
+        Regex::new(r"((?:<[a-zA-Z]+[0-9]+/>)*)<(/[a-zA-Z]+[0-9]+)>((?:<[a-zA-Z]+[0-9]+/>)*)")
+            .unwrap()
     });
     compact_one(res, start, tags_map);
     compact_one(res, end, tags_map);
@@ -725,9 +740,7 @@ impl StaxFilter for OpenXmlProc {
             if main.uri.contains("presentation") {
                 // drawingml `a` prefix for p
                 if let Some(a_uri) = ev.as_start().and_then(|(_, _, ns)| {
-                    ns.iter()
-                        .find(|(p, _)| p == "a")
-                        .map(|(_, u)| u.clone())
+                    ns.iter().find(|(p, _)| p == "a").map(|(_, u)| u.clone())
                 }) {
                     self.main_para = Some(QName::new("a", &main.local, a_uri));
                 }
@@ -833,7 +846,11 @@ impl StaxFilter for OpenXmlProc {
     }
 }
 
-pub fn parse_openxml_part(raw: &str, ctx: &FilterContext, with_comments: bool) -> Result<Vec<ExtractedSegment>> {
+pub fn parse_openxml_part(
+    raw: &str,
+    ctx: &FilterContext,
+    with_comments: bool,
+) -> Result<Vec<ExtractedSegment>> {
     let mut proc = OpenXmlProc::new(ctx, with_comments, false);
     let (segments, _) = process_xml_string_ex(raw, &mut proc, false, XmlDeclStyle::AbstractXml)?;
     Ok(segments)

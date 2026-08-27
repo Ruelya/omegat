@@ -60,14 +60,26 @@ fn process(raw: &str, translations: Option<&HashMap<String, String>>) -> Outcome
         i += 1;
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            flush_text(&mut text, translations, &mut segments, &mut written, Some(last_br));
+            flush_text(
+                &mut text,
+                translations,
+                &mut segments,
+                &mut written,
+                Some(last_br),
+            );
             written.push_str(line);
             written.push_str(br);
             continue;
         }
         let heading = heading_level(trimmed);
         if heading > 0 {
-            flush_text(&mut text, translations, &mut segments, &mut written, Some(last_br));
+            flush_text(
+                &mut text,
+                translations,
+                &mut segments,
+                &mut written,
+                Some(last_br),
+            );
             let header = trimmed[heading..trimmed.len() - heading].trim();
             let mut out_line = line.to_string();
             if !header.is_empty() {
@@ -79,22 +91,46 @@ fn process(raw: &str, translations: Option<&HashMap<String, String>>) -> Outcome
             continue;
         }
         if line.starts_with("  *") || line.starts_with("  -") {
-            flush_text(&mut text, translations, &mut segments, &mut written, Some(last_br));
+            flush_text(
+                &mut text,
+                translations,
+                &mut segments,
+                &mut written,
+                Some(last_br),
+            );
             written.push_str(&line[..3]);
             written.push(' ');
-            write_value(&line[3..], translations, &mut segments, &mut written, Some(last_br));
+            write_value(
+                &line[3..],
+                translations,
+                &mut segments,
+                &mut written,
+                Some(last_br),
+            );
             continue;
         }
         if (trimmed.starts_with("{{") && trimmed.ends_with("}}"))
             || (trimmed.starts_with("~~") && trimmed.ends_with("~~") && trimmed.len() > 5)
         {
-            flush_text(&mut text, translations, &mut segments, &mut written, Some(last_br));
+            flush_text(
+                &mut text,
+                translations,
+                &mut segments,
+                &mut written,
+                Some(last_br),
+            );
             written.push_str(line);
             written.push_str(br);
             continue;
         }
         if line.starts_with('|') || line.starts_with('^') {
-            flush_text(&mut text, translations, &mut segments, &mut written, Some(last_br));
+            flush_text(
+                &mut text,
+                translations,
+                &mut segments,
+                &mut written,
+                Some(last_br),
+            );
             let mut start = 0usize;
             let mut brace = 0i32;
             for (byte_i, cp) in line.char_indices() {
@@ -142,7 +178,13 @@ fn process(raw: &str, translations: Option<&HashMap<String, String>>) -> Outcome
             }
         }
     }
-    flush_text(&mut text, translations, &mut segments, &mut written, Some(last_br));
+    flush_text(
+        &mut text,
+        translations,
+        &mut segments,
+        &mut written,
+        Some(last_br),
+    );
 
     Outcome {
         parsed: ParsedFile {

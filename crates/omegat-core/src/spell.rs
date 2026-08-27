@@ -4,9 +4,9 @@
 //! Full language-module dictionaries stay in `reference/java` and are copied into
 //! `config/spell` on first use when that tree is present.
 
+use omegat_ipc::SpellTokenDto;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use omegat_ipc::SpellTokenDto;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpellBackend {
@@ -112,8 +112,11 @@ impl SpellChecker {
         for rules in self.affix.suffixes.values() {
             for rule in rules {
                 if let Some(stem) = unapply_suffix(word, rule) {
-                    if flags_contain(self.stems.get(&stem).map(String::as_str).unwrap_or(""), &rule.flag, self.affix.kind)
-                    {
+                    if flags_contain(
+                        self.stems.get(&stem).map(String::as_str).unwrap_or(""),
+                        &rule.flag,
+                        self.affix.kind,
+                    ) {
                         return true;
                     }
                 }
@@ -122,8 +125,11 @@ impl SpellChecker {
         for rules in self.affix.prefixes.values() {
             for rule in rules {
                 if let Some(stem) = unapply_prefix(word, rule) {
-                    if flags_contain(self.stems.get(&stem).map(String::as_str).unwrap_or(""), &rule.flag, self.affix.kind)
-                    {
+                    if flags_contain(
+                        self.stems.get(&stem).map(String::as_str).unwrap_or(""),
+                        &rule.flag,
+                        self.affix.kind,
+                    ) {
                         return true;
                     }
                 }
@@ -198,9 +204,13 @@ fn language_dirs(project_root: &Path, config_dir: &Path, backend: SpellBackend) 
         project_root.join("omegat").join("spell").join(sub),
         config_dir.join("spell").join(sub),
         PathBuf::from("fixtures/spell").join(sub),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/spell").join(sub),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/spell")
+            .join(sub),
         PathBuf::from("resources/languages").join(sub),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../resources/languages").join(sub),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../resources/languages")
+            .join(sub),
         // Hunspell also reads the legacy flat folder (project + config).
         project_root.join("omegat").join("spell"),
         config_dir.join("spell"),
@@ -216,19 +226,27 @@ fn load_hunspell_dir(
     stems: &mut HashMap<String, String>,
     affix: &mut AffixTable,
 ) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut affixes: HashMap<String, AffixTable> = HashMap::new();
     for ent in rd.flatten() {
         let p = ent.path();
         if p.extension().and_then(|e| e.to_str()) == Some("aff") {
             if let Some(table) = parse_aff(&p) {
-                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                let stem = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
                 merge_affix(affix, &table);
                 affixes.insert(stem, table);
             }
         }
     }
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for ent in rd.flatten() {
         let p = ent.path();
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -246,10 +264,16 @@ fn load_hunspell_dir(
 fn merge_affix(dest: &mut AffixTable, src: &AffixTable) {
     dest.kind = src.kind;
     for (k, v) in &src.suffixes {
-        dest.suffixes.entry(k.clone()).or_default().extend(v.clone());
+        dest.suffixes
+            .entry(k.clone())
+            .or_default()
+            .extend(v.clone());
     }
     for (k, v) in &src.prefixes {
-        dest.prefixes.entry(k.clone()).or_default().extend(v.clone());
+        dest.prefixes
+            .entry(k.clone())
+            .or_default()
+            .extend(v.clone());
     }
 }
 
@@ -294,8 +318,16 @@ pub fn parse_aff_str(raw: &str) -> AffixTable {
                 }
                 rules.push(AffRule {
                     flag: flag.clone(),
-                    strip: if bp[2] == "0" { String::new() } else { bp[2].to_string() },
-                    append: if bp[3] == "0" { String::new() } else { bp[3].to_string() },
+                    strip: if bp[2] == "0" {
+                        String::new()
+                    } else {
+                        bp[2].to_string()
+                    },
+                    append: if bp[3] == "0" {
+                        String::new()
+                    } else {
+                        bp[3].to_string()
+                    },
                     condition: bp.get(4).copied().unwrap_or(".").to_string(),
                 });
             }
@@ -322,7 +354,9 @@ pub fn load_dic_file_affixed(
     aff: Option<&AffixTable>,
     expand: bool,
 ) {
-    let Ok(raw) = std::fs::read_to_string(path) else { return };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return;
+    };
     for (i, line) in raw.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -376,7 +410,11 @@ fn split_flags(flags: &str, kind: FlagKind) -> Vec<String> {
             .chunks(2)
             .map(|c| c.iter().collect())
             .collect(),
-        FlagKind::Num => flags.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect(),
+        FlagKind::Num => flags
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect(),
         FlagKind::Char => flags.chars().map(|c| c.to_string()).collect(),
     }
 }
@@ -452,12 +490,20 @@ fn condition_matches(word: &str, cond: &str, at_end: bool) -> bool {
     let chars: Vec<char> = word.chars().collect();
     if cond.starts_with("[^") && cond.ends_with(']') {
         let class: HashSet<char> = cond[2..cond.len() - 1].chars().collect();
-        let ch = if at_end { chars.last().copied() } else { chars.first().copied() };
+        let ch = if at_end {
+            chars.last().copied()
+        } else {
+            chars.first().copied()
+        };
         return ch.is_some_and(|c| !class.contains(&c));
     }
     if cond.starts_with('[') && cond.ends_with(']') {
         let class: HashSet<char> = cond[1..cond.len() - 1].chars().collect();
-        let ch = if at_end { chars.last().copied() } else { chars.first().copied() };
+        let ch = if at_end {
+            chars.last().copied()
+        } else {
+            chars.first().copied()
+        };
         return ch.is_some_and(|c| class.contains(&c));
     }
     if at_end {
@@ -515,8 +561,8 @@ pub fn morfologik_dictionary_languages(registered: &[&str]) -> Vec<String> {
 
 /// Language-module stems that must have an `.aff`/`.dic` pair after `ensure_lang`.
 pub const LANGUAGE_MODULE_STEMS: &[&str] = &[
-    "ar", "ast", "be", "br", "ca", "da", "de", "el", "en", "eo", "es", "fa", "fr", "ga", "gl", "it",
-    "ja", "km", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "ta", "tl", "uk", "zh",
+    "ar", "ast", "be", "br", "ca", "da", "de", "el", "en", "eo", "es", "fa", "fr", "ga", "gl",
+    "it", "ja", "km", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "ta", "tl", "uk", "zh",
 ];
 
 fn resources_dict_paths(stem: &str) -> Option<(PathBuf, PathBuf)> {
@@ -535,7 +581,8 @@ fn resources_dict_paths(stem: &str) -> Option<(PathBuf, PathBuf)> {
 }
 
 fn reference_dict_paths(stem: &str) -> Option<(PathBuf, PathBuf)> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/java/language-modules");
+    let root =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../reference/java/language-modules");
     let (aff, dic) = match stem {
         "fr" => (
             root.join("fr/src/main/resources/org/omegat/languages/fr/fr_FR.aff"),
@@ -596,7 +643,10 @@ fn append_word(path: &Path, word: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(p)?;
     }
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     writeln!(f, "{word}")
 }
 
@@ -607,9 +657,8 @@ mod tests {
 
     #[test]
     fn affix_expands_walks_walking() {
-        let aff = parse_aff_str(
-            "SFX S Y 1\nSFX S 0 s .\nSFX G Y 2\nSFX G e ing e\nSFX G 0 ing [^e]\n",
-        );
+        let aff =
+            parse_aff_str("SFX S Y 1\nSFX S 0 s .\nSFX G Y 2\nSFX G e ing e\nSFX G 0 ing [^e]\n");
         let mut set = HashSet::new();
         expand_word("walk", "SG", Some(&aff), &mut set);
         assert!(set.contains("walk"));
@@ -622,16 +671,30 @@ mod tests {
     fn three_backends_use_different_paths() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/spell");
         let cfg = tempfile::tempdir().unwrap();
-        let hun = SpellChecker::load_backend(cfg.path(), root.parent().unwrap_or(cfg.path()), SpellBackend::Hunspell);
+        let hun = SpellChecker::load_backend(
+            cfg.path(),
+            root.parent().unwrap_or(cfg.path()),
+            SpellBackend::Hunspell,
+        );
         // Load directly from fixture dirs
         let mut hun_set = HashSet::new();
         let mut stems = HashMap::new();
         let mut aff = AffixTable::default();
         load_hunspell_dir(&root.join("hunspell"), &mut hun_set, &mut stems, &mut aff);
         let mut luc_set = HashSet::new();
-        load_hunspell_dir(&root.join("lucene"), &mut luc_set, &mut HashMap::new(), &mut AffixTable::default());
+        load_hunspell_dir(
+            &root.join("lucene"),
+            &mut luc_set,
+            &mut HashMap::new(),
+            &mut AffixTable::default(),
+        );
         let mut mor_set = HashSet::new();
-        load_hunspell_dir(&root.join("morfologik"), &mut mor_set, &mut HashMap::new(), &mut AffixTable::default());
+        load_hunspell_dir(
+            &root.join("morfologik"),
+            &mut mor_set,
+            &mut HashMap::new(),
+            &mut AffixTable::default(),
+        );
         assert!(hun_set.contains("colour"), "{hun_set:?}");
         assert!(hun_set.contains("walks"), "affix must form walks");
         assert!(!hun_set.contains("color"));
@@ -670,8 +733,14 @@ mod tests {
             affix: aff,
             ..SpellChecker::default()
         };
-        assert!(s.is_correct("maison") || s.is_correct("bonjour"), "fr stems loaded");
-        assert!(!s.is_correct("xyzzyqqfr"), "real misspelling must be flagged");
+        assert!(
+            s.is_correct("maison") || s.is_correct("bonjour"),
+            "fr stems loaded"
+        );
+        assert!(
+            !s.is_correct("xyzzyqqfr"),
+            "real misspelling must be flagged"
+        );
     }
 
     #[test]

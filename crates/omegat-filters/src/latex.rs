@@ -246,7 +246,8 @@ impl Engine<'_> {
 
     fn process_entry(&mut self, entry: &str) -> String {
         if !entry.is_empty() {
-            self.segments.push(seg(self.segments.len().to_string(), entry));
+            self.segments
+                .push(seg(self.segments.len().to_string(), entry));
         }
         if let Some(map) = self.translations {
             map.get(entry).cloned().unwrap_or_else(|| entry.to_string())
@@ -264,7 +265,8 @@ impl Engine<'_> {
         par = self.replace_one_arg_par(&mut substituted, commands, &par);
         par = self.replace_unknown(&mut substituted, commands, &par);
 
-        let find = Regex::new(r"^((?:\s*</?[nipu]\d+>\s*)*)(.*?)((?:\s*</?[nipu]\d+>\s*)*)$").unwrap();
+        let find =
+            Regex::new(r"^((?:\s*</?[nipu]\d+>\s*)*)(.*?)((?:\s*</?[nipu]\d+>\s*)*)$").unwrap();
         if let Some(m) = find.captures(&par) {
             let mut rebuilt = String::new();
             if let Some(g1) = m.get(1) {
@@ -308,7 +310,14 @@ impl Engine<'_> {
                 let g1 = m.get(1).unwrap();
                 let content = self.process_paragraph(commands, &tmp[..g1.start()]);
                 let replace = format!("<r{counter}>");
-                substituted.push_front((format!("{}{}", content, format!("{}{}", self.line_break, &g1.as_str())), replace.clone()));
+                substituted.push_front((
+                    format!(
+                        "{}{}",
+                        content,
+                        format!("{}{}", self.line_break, &g1.as_str())
+                    ),
+                    replace.clone(),
+                ));
                 sb.push_str(&tmp[last..full.start()]);
                 sb.push_str(&replace);
                 last = full.end();
@@ -346,7 +355,10 @@ impl Engine<'_> {
             let mut last = 0usize;
             for m in p.find_iter(&par) {
                 let replace = format!("<n{counter}>");
-                substituted.push_front((format!("{}{}", self.line_break, m.as_str()), replace.clone()));
+                substituted.push_front((
+                    format!("{}{}", self.line_break, m.as_str()),
+                    replace.clone(),
+                ));
                 sb.push_str(&par[last..m.start()]);
                 sb.push_str(&replace);
                 last = m.end();
@@ -425,7 +437,12 @@ impl Engine<'_> {
                 let inner = m.get(2).map(|g| g.as_str()).unwrap_or("");
                 let content = self.process_paragraph(commands, inner);
                 substituted.push_front((
-                    format!("{}{}{{{}}}", self.line_break, m.get(1).unwrap().as_str(), content),
+                    format!(
+                        "{}{}{{{}}}",
+                        self.line_break,
+                        m.get(1).unwrap().as_str(),
+                        content
+                    ),
                     replace.clone(),
                 ));
                 sb.push_str(&par[last..full.start()]);
@@ -512,7 +529,10 @@ pub fn parse_braced_command(line: &str, prefix: &str) -> Option<String> {
 }
 
 fn substitute_unicode(par: &str) -> String {
-    let mut par = Regex::new(r"\\\\").unwrap().replace_all(par, "<br0>").into_owned();
+    let mut par = Regex::new(r"\\\\")
+        .unwrap()
+        .replace_all(par, "<br0>")
+        .into_owned();
     par = Regex::new(r"\{?\\ss}?")
         .unwrap()
         .replace_all(&par, "ß")
@@ -533,7 +553,10 @@ fn substitute_unicode(par: &str) -> String {
         .unwrap()
         .replace_all(&par, "‘")
         .into_owned();
-    par = Regex::new(r"\\%").unwrap().replace_all(&par, "%").into_owned();
+    par = Regex::new(r"\\%")
+        .unwrap()
+        .replace_all(&par, "%")
+        .into_owned();
     par = Regex::new(r"\\-")
         .unwrap()
         .replace_all(&par, "\u{00ad}")

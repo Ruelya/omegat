@@ -1,7 +1,7 @@
 //! Java `org.omegat.util.HttpConnectionUtils` URL encode/decode.
 
-use regex::Regex;
 use once_cell::sync::Lazy;
+use regex::Regex;
 
 static HTTP_URL: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\bhttps?://\S+").unwrap());
 
@@ -94,7 +94,10 @@ pub fn encode_http_urls(text: &str) -> String {
             let scheme = rest.0;
             let after = rest.1;
             let (auth_path, query) = after.split_once('?').unwrap_or((after, ""));
-            let (auth, path) = auth_path.split_once('/').map(|(a, p)| (a, format!("/{p}"))).unwrap_or((auth_path, String::new()));
+            let (auth, path) = auth_path
+                .split_once('/')
+                .map(|(a, p)| (a, format!("/{p}")))
+                .unwrap_or((auth_path, String::new()));
             result.push_str(scheme);
             result.push_str("://");
             result.push_str(auth);

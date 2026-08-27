@@ -21,7 +21,10 @@ impl IRebaseOperation for GlossaryRebaseOperation {
     }
 }
 
-pub fn rebase_files(props: &ProjectProperties, resolved: &HashSet<String>) -> Result<Vec<Conflict>> {
+pub fn rebase_files(
+    props: &ProjectProperties,
+    resolved: &HashSet<String>,
+) -> Result<Vec<Conflict>> {
     let ours_path = &props.glossary_file;
     let Some(theirs_path) = find_remote_glossary(props) else {
         return Ok(vec![]);
@@ -35,7 +38,8 @@ pub fn rebase_files(props: &ProjectProperties, resolved: &HashSet<String>) -> Re
     }
     let ours = parse_glossary(&std::fs::read_to_string(ours_path)?);
     let theirs = parse_glossary(&std::fs::read_to_string(&theirs_path)?);
-    let base = parse_glossary(&std::fs::read_to_string(base_glossary_path(props)).unwrap_or_default());
+    let base =
+        parse_glossary(&std::fs::read_to_string(base_glossary_path(props)).unwrap_or_default());
     let (merged, conflicts) = rebase(&base, &ours, &theirs, resolved);
     write_glossary(ours_path, &merged)?;
     Ok(conflicts)

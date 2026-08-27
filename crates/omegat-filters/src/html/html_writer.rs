@@ -200,9 +200,7 @@ pub fn rewrite_encoding_header(contents: &str, encoding: &str, options: &HtmlOpt
     }
 
     let html_meta = if xhtml {
-        format!(
-            "<meta http-equiv=\"content-type\" content=\"text/html; charset={encoding}\" />"
-        )
+        format!("<meta http-equiv=\"content-type\" content=\"text/html; charset={encoding}\" />")
     } else {
         format!("<meta http-equiv=\"content-type\" content=\"text/html; charset={encoding}\">")
     };
@@ -238,9 +236,8 @@ pub fn rewrite_encoding_header(contents: &str, encoding: &str, options: &HtmlOpt
                 let repl = format!("$0{eol}<head>{eol}    {html_meta}{eol}</head>");
                 contents = html_re.replace(&contents, repl.as_str()).into_owned();
             } else {
-                contents = format!(
-                    "<html>{eol}<head>{eol}    {html_meta}{eol}</head>{eol}{contents}"
-                );
+                contents =
+                    format!("<html>{eol}<head>{eol}    {html_meta}{eol}</head>{eol}{contents}");
             }
         }
     }

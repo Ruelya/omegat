@@ -105,7 +105,11 @@ fn existing_default() -> Option<std::path::PathBuf> {
 }
 
 fn from_doc(doc: SrxDocument) -> Srx {
-    let mapping_rules = if doc.maps.is_empty() { 0 } else { doc.maps.len() };
+    let mapping_rules = if doc.maps.is_empty() {
+        0
+    } else {
+        doc.maps.len()
+    };
     Srx {
         version: "2.0".into(),
         include_ending_tags: true,

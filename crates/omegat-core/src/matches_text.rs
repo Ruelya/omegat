@@ -156,7 +156,11 @@ mod tests {
     #[test]
     fn fullwidth_source_digit_becomes_halfwidth_in_latin_target() {
         assert_eq!(
-            substitute_numbers("これは例文９です", "これは例文8です", "This is a sample sentence 8"),
+            substitute_numbers(
+                "これは例文９です",
+                "これは例文8です",
+                "This is a sample sentence 8"
+            ),
             "This is a sample sentence 9"
         );
     }

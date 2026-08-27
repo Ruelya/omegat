@@ -28,8 +28,7 @@ impl XmlDialect for SchematronDialect {
     }
 
     fn validate_intact_tag(&self, _tag: &str, atts: &[(String, String)]) -> bool {
-        atts.iter().any(|(n, v)| {
-            n.eq_ignore_ascii_case("translate") && v.eq_ignore_ascii_case("false")
-        })
+        atts.iter()
+            .any(|(n, v)| n.eq_ignore_ascii_case("translate") && v.eq_ignore_ascii_case("false"))
     }
 }

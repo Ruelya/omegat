@@ -105,7 +105,12 @@ impl XliffDialect {
         inner: &[Element],
         handler: &mut InlineTagHandler,
     ) -> (String, i32, i32) {
-        let attr = |name: &str| tag.attrs.iter().find(|a| a.name == name).map(|a| a.value.clone());
+        let attr = |name: &str| {
+            tag.attrs
+                .iter()
+                .find(|a| a.name == name)
+                .map(|a| a.value.clone())
+        };
         match tag.tag.as_str() {
             "bpt" => {
                 handler.start_bpt(&[attr("rid"), attr("id"), attr("i")]);
@@ -150,11 +155,7 @@ impl XliffDialect {
                 handler.start_other();
                 let idx = handler.end_other();
                 let inner_orig: String = inner.iter().map(|e| e.to_original()).collect();
-                (
-                    format!("<m{idx}>{inner_orig}</m{idx}>"),
-                    b'm' as i32,
-                    idx,
-                )
+                (format!("<m{idx}>{inner_orig}</m{idx}>"), b'm' as i32, idx)
             }
             _ => {
                 handler.start_other();
@@ -269,10 +270,7 @@ impl XmlDialect for XliffDialect {
     }
 
     fn validate_content_based_tag(&self, tag: &str, atts: &[(String, String)]) -> bool {
-        tag == "mrk"
-            && atts
-                .iter()
-                .any(|(n, v)| n == "mtype" && v == "protected")
+        tag == "mrk" && atts.iter().any(|(n, v)| n == "mtype" && v == "protected")
     }
 
     fn handle_xml_tag(&self, tag: &mut XmlTag, translated: bool) {

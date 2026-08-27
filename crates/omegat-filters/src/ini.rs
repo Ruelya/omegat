@@ -1,6 +1,8 @@
 //! Java `org.omegat.filters2.text.ini.INIFilter`.
 
-use crate::{ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile, Result};
+use crate::{
+    ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile, Result,
+};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -49,10 +51,7 @@ fn process(raw: &str, translations: Option<&HashMap<String, String>>) -> Outcome
     for (line, br) in crate::text::lines_with_breaks(raw) {
         line_no += 1;
         let trimmed = line.trim();
-        if trimmed.is_empty()
-            || trimmed.starts_with('#')
-            || trimmed.starts_with(';')
-        {
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
             written.push_str(line);
             written.push_str(br);
             contlines = 0;

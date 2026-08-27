@@ -28,7 +28,13 @@ pub const UNCONFIGURED_MESSAGE: &str =
 
 /// LanguageTool HTTP `v2/check`. When `endpoint` is None the checker reports a
 /// degradation issue instead of pretending the text was clean.
-pub fn check(endpoint: Option<&str>, text: &str, lang: &str, index: usize, file: &str) -> Vec<IssueDto> {
+pub fn check(
+    endpoint: Option<&str>,
+    text: &str,
+    lang: &str,
+    index: usize,
+    file: &str,
+) -> Vec<IssueDto> {
     let Some(url) = endpoint.filter(|s| !s.is_empty()) else {
         return vec![IssueDto {
             kind: "languagetool".into(),
@@ -109,13 +115,12 @@ pub fn http_get(url: &str) -> Result<String, String> {
     http_exchange("GET", url, None)
 }
 
-pub fn http_exchange(method: &str, url: &str, body: Option<(&str, &str)>) -> Result<String, String> {
-    http_exchange_cancellable(
-        method,
-        url,
-        body,
-        &CancellationToken::default(),
-    )
+pub fn http_exchange(
+    method: &str,
+    url: &str,
+    body: Option<(&str, &str)>,
+) -> Result<String, String> {
+    http_exchange_cancellable(method, url, body, &CancellationToken::default())
 }
 
 /// Run curl while allowing the NDJSON request that owns it to terminate the
@@ -204,7 +209,8 @@ mod tests {
 
     #[test]
     fn fixture_url_and_degraded_when_unset() {
-        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/lt/check.json");
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/lt/check.json");
         let url = format!("fixture:{}", path.display());
         let hits = check(Some(&url), "teh cat", "en", 0, "a.txt");
         assert_eq!(hits[0].kind, "languagetool");

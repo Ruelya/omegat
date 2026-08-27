@@ -49,7 +49,13 @@ pub fn apply(template: &str, vars: &MatchVars) -> String {
         .replace("${sourceText}", &vars.source_text)
 }
 
-pub fn apply_bidi(template: &str, vars: &MatchVars, source_lang: &str, target_lang: &str, locale: &str) -> String {
+pub fn apply_bidi(
+    template: &str,
+    vars: &MatchVars,
+    source_lang: &str,
+    target_lang: &str,
+    locale: &str,
+) -> String {
     let mut v = vars.clone();
     match bidi::orientation_type(Some(source_lang), Some(target_lang), locale) {
         Orientation::Differ => {

@@ -2,7 +2,8 @@
 
 use super::stax::{
     detect_eol, detect_xml_encoding, detect_xml_standalone, finalize_xml_writer_ex,
-    from_event_to_writer, java_xml_declaration, read_xml_events, StaxWriter, XmlDeclStyle, XmlEvent,
+    from_event_to_writer, java_xml_declaration, read_xml_events, StaxWriter, XmlDeclStyle,
+    XmlEvent,
 };
 use crate::{ensure_parent, ExtractedSegment, FilterError, Result};
 use std::path::Path;

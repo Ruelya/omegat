@@ -2,9 +2,9 @@
 //! Missing or divergent implementations must fail. Red is allowed.
 
 use omegat_filters::{FilterContext, FilterRegistry};
-use std::io::Read;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 fn repo_root() -> PathBuf {
@@ -61,10 +61,8 @@ fn ctx_from(spec: &Value) -> FilterContext {
     }
     if let Some(map) = spec["options"].as_object() {
         for (k, v) in map {
-            ctx.options.insert(
-                k.clone(),
-                v.as_str().unwrap_or(&v.to_string()).to_string(),
-            );
+            ctx.options
+                .insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
         }
     }
     if let Some(b) = spec["remove_tags"].as_bool() {
@@ -353,13 +351,18 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
         let parsed_keep = filter
             .parse(&src, &ctx_keep)
             .unwrap_or_else(|e| panic!("{} remove_tags=false: {e}", path.display()));
-        let got_keep: Vec<String> = parsed_keep.segments.iter().map(|s| s.source.clone()).collect();
+        let got_keep: Vec<String> = parsed_keep
+            .segments
+            .iter()
+            .map(|s| s.source.clone())
+            .collect();
         let exp_keep: Vec<String> = false_src
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
         assert_eq!(
-            got_keep, exp_keep,
+            got_keep,
+            exp_keep,
             "sources_remove_tags_false {}",
             path.display()
         );
@@ -423,9 +426,10 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
         }
         if let Some(exp_review) = spec["translated_write_review"].as_str() {
             let mut ctx_review = ctx.clone();
-            ctx_review
-                .options
-                .insert("changetargetstateneedsreviewtranslation".into(), "true".into());
+            ctx_review.options.insert(
+                "changetargetstateneedsreviewtranslation".into(),
+                "true".into(),
+            );
             let dest_r = tmp.join(format!("tr-{}", src.file_name().unwrap().to_string_lossy()));
             filter
                 .write(&src, &dest_r, &map, &ctx_review)
@@ -452,9 +456,8 @@ fn assert_filter_golden(path: &Path, spec: &Value, tmp: &Path) {
 }
 
 fn zip_xml_part(zip_path: &Path, name: &str) -> String {
-    let file = std::fs::File::open(zip_path).unwrap_or_else(|e| {
-        panic!("open zip {}: {e}", zip_path.display())
-    });
+    let file = std::fs::File::open(zip_path)
+        .unwrap_or_else(|e| panic!("open zip {}: {e}", zip_path.display()));
     let mut zip = zip::ZipArchive::new(file).unwrap();
     let mut idx = None;
     for i in 0..zip.len() {
@@ -501,11 +504,7 @@ fn first_diff(got: &str, exp: &str) -> String {
     )
 }
 
-fn assert_zip_parts(
-    dest: &Path,
-    parts: &serde_json::Map<String, Value>,
-    label: &str,
-) {
+fn assert_zip_parts(dest: &Path, parts: &serde_json::Map<String, Value>, label: &str) {
     for (name, exp) in parts {
         let got = normalize_ws(&zip_xml_part(dest, name));
         let exp = normalize_ws(exp.as_str().unwrap_or(""));
@@ -527,13 +526,32 @@ fn assert_rel(rel: &str, tmp: &Path) {
 fn p2_filters2_all_java_test_goldens() {
     let tmp = tempfile::tempdir().unwrap();
     let inv: Value = serde_json::from_str(
-        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json")).unwrap(),
+        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json"))
+            .unwrap(),
     )
     .unwrap();
     let filters2 = [
-        "text", "latex", "po", "rc", "moodlephp", "mozdtd", "mozlang", "properties", "mozftl",
-        "html", "hhc", "ini", "dokuwiki", "magento", "ilias", "yaml", "pdf", "srt", "sbv",
-        "webvtt", "xtag",
+        "text",
+        "latex",
+        "po",
+        "rc",
+        "moodlephp",
+        "mozdtd",
+        "mozlang",
+        "properties",
+        "mozftl",
+        "html",
+        "hhc",
+        "ini",
+        "dokuwiki",
+        "magento",
+        "ilias",
+        "yaml",
+        "pdf",
+        "srt",
+        "sbv",
+        "webvtt",
+        "xtag",
     ];
     let mut n = 0;
     let mut fails = Vec::new();
@@ -565,7 +583,11 @@ fn p2_filters2_all_java_test_goldens() {
         n += 1;
     }
     if !fails.is_empty() {
-        panic!("{} filters2 goldens failed:\n{}", fails.len(), fails.join("\n"));
+        panic!(
+            "{} filters2 goldens failed:\n{}",
+            fails.len(),
+            fails.join("\n")
+        );
     }
     let expected = inv["tests"]
         .as_array()
@@ -662,7 +684,6 @@ fn g2_properties_dtd_php_lang_ftl_csv_ilias_rc_must_match() {
     }
 }
 
-
 #[test]
 fn g3_android_java_golden_must_match() {
     let tmp = tempfile::tempdir().unwrap();
@@ -702,7 +723,8 @@ fn g3_xml_dialects_java_goldens_must_match() {
 fn p3_filters3_all_java_test_goldens() {
     let tmp = tempfile::tempdir().unwrap();
     let inv: Value = serde_json::from_str(
-        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json")).unwrap(),
+        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json"))
+            .unwrap(),
     )
     .unwrap();
     let filters3 = [
@@ -761,7 +783,11 @@ fn p3_filters3_all_java_test_goldens() {
         n += 1;
     }
     if !fails.is_empty() {
-        panic!("{} filters3 goldens failed:\n{}", fails.len(), fails.join("\n"));
+        panic!(
+            "{} filters3 goldens failed:\n{}",
+            fails.len(),
+            fails.join("\n")
+        );
     }
     let expected = inv["tests"]
         .as_array()
@@ -814,7 +840,8 @@ fn g4_msoffice_java_goldens_must_match() {
 fn p4_filters4_all_java_test_goldens() {
     let tmp = tempfile::tempdir().unwrap();
     let inv: Value = serde_json::from_str(
-        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json")).unwrap(),
+        &std::fs::read_to_string(repo_root().join("fixtures/goldens/engine/filter_tests.json"))
+            .unwrap(),
     )
     .unwrap();
     let mut n = 0;
@@ -847,18 +874,17 @@ fn p4_filters4_all_java_test_goldens() {
         n += 1;
     }
     if !fails.is_empty() {
-        panic!("{} filters4 goldens failed:\n{}", fails.len(), fails.join("\n"));
+        panic!(
+            "{} filters4 goldens failed:\n{}",
+            fails.len(),
+            fails.join("\n")
+        );
     }
     let expected = inv["tests"]
         .as_array()
         .unwrap()
         .iter()
-        .filter(|t| {
-            t["class"]
-                .as_str()
-                .unwrap_or("")
-                .contains("filters4")
-        })
+        .filter(|t| t["class"].as_str().unwrap_or("").contains("filters4"))
         .count();
     assert_eq!(n, expected, "filters4 inventory goldens");
 }
@@ -897,7 +923,10 @@ fn p4_docx_for_path_uses_filters3_openxml() {
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
     let got: Vec<String> = parsed.segments.iter().map(|s| s.source.clone()).collect();
-    assert_eq!(got, expected, "docx for_path parse vs openxml/testParse.json");
+    assert_eq!(
+        got, expected,
+        "docx for_path parse vs openxml/testParse.json"
+    );
     assert!(
         reg.by_id("msoffice").is_some(),
         "filters4 MsOfficeFileFilter remains selectable by id=msoffice"
@@ -941,12 +970,55 @@ fn g4_msoffice_translation_lands_on_wt_node() {
 #[test]
 fn g2_g4_forty_nine_java_ids_have_golden_dirs() {
     let ids = [
-        "text", "latex", "po", "rc", "moodlephp", "mozdtd", "mozlang", "properties", "mozftl",
-        "html", "hhc", "ini", "dokuwiki", "magento", "ilias", "yaml", "pdf", "srt", "sbv",
-        "webvtt", "xtag", "android", "xhtml", "helpandmanual", "propxml", "schematron",
-        "relaxng", "camtasia", "docbook", "opendoc", "openxml", "resx", "wix", "typo3",
-        "l10nmgr", "svg", "infix", "flash", "txml", "visio", "xmlss", "wordpress", "scribus",
-        "xliff", "msoffice", "xliff1", "xliff2", "sdlxliff", "sdlproject",
+        "text",
+        "latex",
+        "po",
+        "rc",
+        "moodlephp",
+        "mozdtd",
+        "mozlang",
+        "properties",
+        "mozftl",
+        "html",
+        "hhc",
+        "ini",
+        "dokuwiki",
+        "magento",
+        "ilias",
+        "yaml",
+        "pdf",
+        "srt",
+        "sbv",
+        "webvtt",
+        "xtag",
+        "android",
+        "xhtml",
+        "helpandmanual",
+        "propxml",
+        "schematron",
+        "relaxng",
+        "camtasia",
+        "docbook",
+        "opendoc",
+        "openxml",
+        "resx",
+        "wix",
+        "typo3",
+        "l10nmgr",
+        "svg",
+        "infix",
+        "flash",
+        "txml",
+        "visio",
+        "xmlss",
+        "wordpress",
+        "scribus",
+        "xliff",
+        "msoffice",
+        "xliff1",
+        "xliff2",
+        "sdlxliff",
+        "sdlproject",
     ];
     assert_eq!(ids.len(), 49);
     let root = goldens_dir();

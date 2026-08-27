@@ -9,8 +9,7 @@ fn golden(relative: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/goldens")
         .join(relative);
-    let value: Value =
-        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(
         value["exported_by"].as_str(),
         Some("org.omegat.tools.ExportGoldens")
@@ -145,10 +144,7 @@ fn java_restart_and_common_argv_reach_the_real_parser() {
     let output = run_argv(&argv);
     assert_eq!(output.status.code(), Some(0));
     assert_eq!(
-        String::from_utf8(output.stdout)
-            .unwrap()
-            .lines()
-            .last(),
+        String::from_utf8(output.stdout).unwrap().lines().last(),
         Some(format!("Project: {}", project["project"].as_str().unwrap()).as_str())
     );
 

@@ -20,9 +20,7 @@ pub fn parse_zip_parts(
     })?;
     let _ = accept("");
     let mut names: Vec<String> = (0..zip.len())
-        .filter_map(|i| {
-            zip.by_index(i).ok().map(|e| e.name().to_string())
-        })
+        .filter_map(|i| zip.by_index(i).ok().map(|e| e.name().to_string()))
         .filter(|n| translate(n))
         .collect();
     if let Some(cmp) = &mut cmp {

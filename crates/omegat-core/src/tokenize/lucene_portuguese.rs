@@ -14,9 +14,19 @@ impl Tokenizer for LucenePortugueseTokenizer {
         &["pt"]
     }
     fn tokenize_words(&self, text: &str, mode: StemmingMode) -> Vec<String> {
-        engine::lucene_words_to_strings(text, mode, |w, _full| stems::portuguese_light(w), stopwords::PT)
+        engine::lucene_words_to_strings(
+            text,
+            mode,
+            |w, _full| stems::portuguese_light(w),
+            stopwords::PT,
+        )
     }
     fn tokenize_tokens(&self, text: &str, mode: StemmingMode) -> Vec<Token> {
-        engine::lucene_tokens(text, mode, |w, _full| stems::portuguese_light(w), stopwords::PT)
+        engine::lucene_tokens(
+            text,
+            mode,
+            |w, _full| stems::portuguese_light(w),
+            stopwords::PT,
+        )
     }
 }

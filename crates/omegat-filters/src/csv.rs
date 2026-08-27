@@ -1,6 +1,6 @@
 use crate::{
-    ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, FilterError, ParsedFile,
-    Result,
+    ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, FilterError,
+    ParsedFile, Result,
 };
 use std::collections::HashMap;
 use std::path::Path;

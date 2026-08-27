@@ -159,7 +159,11 @@ fn process(
         segments.push(seg);
 
         let (trans, found) = if let Some(map) = translations {
-            if let Some(t) = map.get(&key_s).cloned().or_else(|| map.get(&val_s).cloned()) {
+            if let Some(t) = map
+                .get(&key_s)
+                .cloned()
+                .or_else(|| map.get(&val_s).cloned())
+            {
                 (t.replace('\n', br), true)
             } else {
                 (val_s, false)

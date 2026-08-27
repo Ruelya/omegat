@@ -22,9 +22,38 @@ impl XhtmlDialect {
             inner.define_constraint(ConstraintKind::PublicDoctype, r"-//W3C//DTD XHTML.*");
         }
         inner.define_paragraph_tags(&[
-            "html", "head", "title", "body", "address", "blockquote", "center", "div", "h1", "h2",
-            "h3", "h4", "h5", "table", "th", "tr", "td", "p", "ol", "ul", "li", "dl", "dt", "dd",
-            "form", "textarea", "fieldset", "legend", "label", "select", "option", "hr",
+            "html",
+            "head",
+            "title",
+            "body",
+            "address",
+            "blockquote",
+            "center",
+            "div",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "table",
+            "th",
+            "tr",
+            "td",
+            "p",
+            "ol",
+            "ul",
+            "li",
+            "dl",
+            "dt",
+            "dd",
+            "form",
+            "textarea",
+            "fieldset",
+            "legend",
+            "label",
+            "select",
+            "option",
+            "hr",
         ]);
         if flag(options, "paragraphOnBr", false) {
             inner.define_paragraph_tags(&["br"]);
@@ -33,7 +62,13 @@ impl XhtmlDialect {
         inner.define_preformat_tags(&["textarea", "pre"]);
         inner.define_intact_tags(&["style", "script", "object", "embed"]);
         inner.define_translatable_attributes(&[
-            "abbr", "alt", "content", "dir", "summary", "title", "placeholder",
+            "abbr",
+            "alt",
+            "content",
+            "dir",
+            "summary",
+            "title",
+            "placeholder",
         ]);
         if flag(options, "translateHref", true) {
             inner.define_translatable_attribute("href");

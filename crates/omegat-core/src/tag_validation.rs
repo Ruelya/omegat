@@ -101,10 +101,15 @@ pub struct ErrorReport {
 
 impl ErrorReport {
     fn put_src(&mut self, tag: Tag, err: TagError) {
-        if !self.src_errors.iter().any(|(t, _)| t.tag == tag.tag && t.pos == tag.pos) {
+        if !self
+            .src_errors
+            .iter()
+            .any(|(t, _)| t.tag == tag.tag && t.pos == tag.pos)
+        {
             self.src_errors.push((tag, err));
         } else {
-            self.src_errors.retain(|(t, _)| !(t.tag == tag.tag && t.pos == tag.pos));
+            self.src_errors
+                .retain(|(t, _)| !(t.tag == tag.tag && t.pos == tag.pos));
             self.src_errors.push((tag, err));
         }
     }
@@ -275,11 +280,17 @@ fn extract_printf_vars(text: &str) -> HashMap<String, Tag> {
         if let Some(spec) = swap {
             if spec.ends_with('$') {
                 let num = &spec[..spec.len() - 1];
-                map.insert(format!("{num}{last}"), Tag::new(full.start() as i32, variable));
+                map.insert(
+                    format!("{num}{last}"),
+                    Tag::new(full.start() as i32, variable),
+                );
                 continue;
             }
         }
-        map.insert(format!("{index}{last}"), Tag::new(full.start() as i32, variable));
+        map.insert(
+            format!("{index}{last}"),
+            Tag::new(full.start() as i32, variable),
+        );
         index += 1;
     }
     map
@@ -290,7 +301,9 @@ pub fn inspect_printf_variables(source: &str, translation: &str) -> ErrorReport 
     let mut report = ErrorReport::default();
     let src = extract_printf_vars(source);
     let loc = extract_printf_vars(translation);
-    if src.keys().collect::<std::collections::BTreeSet<_>>() != loc.keys().collect::<std::collections::BTreeSet<_>>() {
+    if src.keys().collect::<std::collections::BTreeSet<_>>()
+        != loc.keys().collect::<std::collections::BTreeSet<_>>()
+    {
         for t in src.into_values() {
             report.put_src(t, TagError::Unspecified);
         }

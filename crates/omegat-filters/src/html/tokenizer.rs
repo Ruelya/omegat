@@ -629,7 +629,10 @@ mod tests {
         let raw = r#"<p>shown</p><script>const hidden = "<p>not text";"#;
         let nodes = tokenize_with_protected(raw, true, |_| false);
         assert_eq!(nodes.len(), 4);
-        assert_eq!(nodes[3].to_html(), r#"<script>const hidden = "<p>not text";"#);
+        assert_eq!(
+            nodes[3].to_html(),
+            r#"<script>const hidden = "<p>not text";"#
+        );
     }
 
     #[test]

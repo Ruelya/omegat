@@ -232,7 +232,11 @@ impl XliffState {
     }
 }
 
-pub fn find_key(tags_map: &BTreeMap<String, Vec<XmlEvent>>, find_el: &XmlEvent, is_empty: bool) -> String {
+pub fn find_key(
+    tags_map: &BTreeMap<String, Vec<XmlEvent>>,
+    find_el: &XmlEvent,
+    is_empty: bool,
+) -> String {
     let Some((find_name, find_attrs, _)) = find_el.as_start() else {
         return String::new();
     };
@@ -303,10 +307,7 @@ pub fn to_pair(st: &XmlEvent) -> Vec<XmlEvent> {
     let Some((name, _, _)) = st.as_start() else {
         return vec![st.clone()];
     };
-    vec![
-        st.clone(),
-        XmlEvent::EndElement { name: name.clone() },
-    ]
+    vec![st.clone(), XmlEvent::EndElement { name: name.clone() }]
 }
 
 fn note_text(note: &[XmlEvent]) -> String {

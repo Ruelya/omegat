@@ -37,7 +37,8 @@ fn load_exported(name: &str) -> Value {
 #[test]
 fn srx_sentences_match_java_list() {
     let spec = load_exported("srx.json");
-    let srx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/srx/defaultRules.srx");
+    let srx_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/srx/defaultRules.srx");
     let doc = load_srx_file(&srx_path).expect("defaultRules.srx");
     for case in spec["cases"].as_array().unwrap() {
         let lang = case["lang"].as_str().unwrap();
@@ -60,14 +61,20 @@ fn tokens_match_java_lists() {
     let mut fails = Vec::new();
     for case in spec["cases"].as_array().unwrap() {
         let class = case["tokenizer"].as_str().unwrap();
-        let mode = omegat_core::tokenize::StemmingMode::parse(case["stemming"].as_str().unwrap_or("NONE"));
+        let mode =
+            omegat_core::tokenize::StemmingMode::parse(case["stemming"].as_str().unwrap_or("NONE"));
         let lang = case["lang"].as_str().unwrap();
         let input = case["input"].as_str().unwrap();
         if let Some(words) = case["words"].as_array() {
-            let expected_words: Vec<String> = words.iter().map(|v| v.as_str().unwrap().to_string()).collect();
+            let expected_words: Vec<String> = words
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect();
             let got = omegat_core::tokenize::tokenize_words(input, class, mode);
             if got != expected_words {
-                fails.push(format!("{class} {mode:?} {lang}\n  got  {got:?}\n  want {expected_words:?}"));
+                fails.push(format!(
+                    "{class} {mode:?} {lang}\n  got  {got:?}\n  want {expected_words:?}"
+                ));
             }
         } else {
             let expected: Vec<String> = case["tokens"]
@@ -81,11 +88,18 @@ fn tokens_match_java_lists() {
                 .map(|t| t.text)
                 .collect();
             if got != expected {
-                fails.push(format!("{class} {mode:?} {lang} (tokens)\n  got  {got:?}\n  want {expected:?}"));
+                fails.push(format!(
+                    "{class} {mode:?} {lang} (tokens)\n  got  {got:?}\n  want {expected:?}"
+                ));
             }
         }
     }
-    assert!(fails.is_empty(), "{} tokenizer golden failures:\n{}", fails.len(), fails.join("\n\n"));
+    assert!(
+        fails.is_empty(),
+        "{} tokenizer golden failures:\n{}",
+        fails.len(),
+        fails.join("\n\n")
+    );
 }
 
 #[test]
@@ -128,9 +142,7 @@ fn glossary_tsv_and_query_match_java() {
     entries.push(omegat_core::glossary::GlossaryEntry::new(
         "running", "courir", "verb",
     ));
-    entries.push(omegat_core::glossary::GlossaryEntry::new(
-        "Cat", "chat", "",
-    ));
+    entries.push(omegat_core::glossary::GlossaryEntry::new("Cat", "chat", ""));
     for case in spec["cases"].as_array().unwrap() {
         let segment = case["segment"].as_str().unwrap();
         let ignore_case = case["ignore_case"].as_bool().unwrap();
@@ -142,9 +154,13 @@ fn glossary_tsv_and_query_match_java() {
             .iter()
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
-        let hits = omegat_core::glossary::lookup_opts_lang(&entries, segment, ignore_case, use_stem, tgt);
+        let hits =
+            omegat_core::glossary::lookup_opts_lang(&entries, segment, ignore_case, use_stem, tgt);
         let got: Vec<String> = hits.into_iter().map(|h| h.target).collect();
-        assert_eq!(got, expected, "glossary {segment:?} ignore_case={ignore_case} stem={use_stem}");
+        assert_eq!(
+            got, expected,
+            "glossary {segment:?} ignore_case={ignore_case} stem={use_stem}"
+        );
     }
 }
 
@@ -169,7 +185,11 @@ fn stats_bins_and_word_counts_match_java() {
             "words {text:?}"
         );
         let nosp = text.chars().filter(|c| !c.is_whitespace()).count() as i64;
-        assert_eq!(nosp, case["chars_nosp"].as_i64().unwrap(), "chars_nosp {text:?}");
+        assert_eq!(
+            nosp,
+            case["chars_nosp"].as_i64().unwrap(),
+            "chars_nosp {text:?}"
+        );
         assert_eq!(
             text.chars().count() as i64,
             case["chars"].as_i64().unwrap(),
@@ -181,7 +201,8 @@ fn stats_bins_and_word_counts_match_java() {
 #[test]
 fn segmenter_test_methods_match_java() {
     let spec = load_exported("segmenter_tests.json");
-    let srx_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/srx/defaultRules.srx");
+    let srx_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/srx/defaultRules.srx");
     let doc = load_srx_file(&srx_path).expect("defaultRules.srx");
     let table = table_for(&doc, "en");
     for case in spec["cases"].as_array().unwrap() {
@@ -201,7 +222,8 @@ fn segmenter_test_methods_match_java() {
             let src = case["source_lang"].as_str().unwrap();
             let tgt = case["target_lang"].as_str().unwrap();
             let seg = omegat_core::segment::segment_with_srx(input, &table);
-            let glued = omegat_core::segment::glue(src, tgt, &seg.sentences, &seg.spaces, &seg.brules);
+            let glued =
+                omegat_core::segment::glue(src, tgt, &seg.sentences, &seg.spaces, &seg.brules);
             assert_eq!(glued, case["glued"].as_str().unwrap(), "{method}");
         } else if method.ends_with("#testGlueCJK") {
             let src = case["source_lang"].as_str().unwrap();
@@ -216,8 +238,12 @@ fn segmenter_test_methods_match_java() {
                 .iter()
                 .map(|v| v.as_str().unwrap().to_string())
                 .collect();
-            assert_eq!(seg.sentences, expected_sentences, "{method} sentences {input:?}");
-            let glued = omegat_core::segment::glue(src, tgt, &seg.sentences, &seg.spaces, &seg.brules);
+            assert_eq!(
+                seg.sentences, expected_sentences,
+                "{method} sentences {input:?}"
+            );
+            let glued =
+                omegat_core::segment::glue(src, tgt, &seg.sentences, &seg.spaces, &seg.brules);
             assert_eq!(glued, case["glued"].as_str().unwrap(), "{method} {input:?}");
         }
     }
@@ -377,14 +403,16 @@ fn tmx_writer_test_methods_match_java() {
             "testWriteInvalidChars" => {
                 let sanitized = case["sanitized_source"].as_str().unwrap();
                 assert_eq!(
-                    omegat_core::tmx::remove_xml_invalid_chars(
-                        &String::from_utf16_lossy(&[0, 1, 2, 0x18, 0x19, 0xD8FF, 0xFFFE, 0xFFFF])
-                    )
+                    omegat_core::tmx::remove_xml_invalid_chars(&String::from_utf16_lossy(&[
+                        0, 1, 2, 0x18, 0x19, 0xD8FF, 0xFFFE, 0xFFFF
+                    ]))
                     .chars()
                     .all(|c| c == ' ' || omegat_core::tmx::is_valid_xml_char(c as u32)),
                     true
                 );
-                assert!(sanitized.chars().all(|c| omegat_core::tmx::is_valid_xml_char(c as u32)));
+                assert!(sanitized
+                    .chars()
+                    .all(|c| omegat_core::tmx::is_valid_xml_char(c as u32)));
             }
             "testLevel2write" => {
                 let srcs = case["sources"].as_array().unwrap();
@@ -420,7 +448,10 @@ fn tmx_writer_test_methods_match_java() {
                 assert_eq!(got, expected, "{method} {}", case["mode"]);
             }
             "testEOLwrite" => {
-                assert!(case["read_translation"].as_str().unwrap().contains("tar\nget"));
+                assert!(case["read_translation"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tar\nget"));
             }
             other => panic!("unknown tmx case {other}"),
         }
@@ -467,7 +498,15 @@ fn find_matches_test_methods_match_java() {
                     true,
                 )
                 .into_iter()
-                .map(|e| (e, java_root().join("src/test/resources/data/tmx/en-US_sr.tmx").display().to_string()))
+                .map(|e| {
+                    (
+                        e,
+                        java_root()
+                            .join("src/test/resources/data/tmx/en-US_sr.tmx")
+                            .display()
+                            .to_string(),
+                    )
+                })
                 .collect(),
                 Vec::new(),
                 en_tok,
@@ -731,11 +770,16 @@ fn calc_match_statistics_test_methods_match_java() {
     );
     for case in spec["cases"].as_array().unwrap() {
         let method = case["java_test"].as_str().unwrap();
-        assert!(case["success"].as_bool().unwrap_or(false), "{method} java calc failed");
+        assert!(
+            case["success"].as_bool().unwrap_or(false),
+            "{method} java calc failed"
+        );
         let tables = case["tables"].as_array().unwrap();
         assert!(!tables.is_empty(), "{method}");
         if method.ends_with("#testCalcMatchStatics") {
-            let first = tables[1].as_array().unwrap_or_else(|| tables[0].as_array().unwrap());
+            let first = tables[1]
+                .as_array()
+                .unwrap_or_else(|| tables[0].as_array().unwrap());
             // Java dumps an early table (repetitions/exact only) then the full bin table.
             let full = tables
                 .iter()
@@ -753,32 +797,62 @@ fn calc_match_statistics_test_methods_match_java() {
             };
             // rows: rep, exact, 95, 85, 75, 50, none, total
             assert_eq!(
-                (rows[0].segments, rows[0].words, rows[0].chars_nosp, rows[0].chars),
+                (
+                    rows[0].segments,
+                    rows[0].words,
+                    rows[0].chars_nosp,
+                    rows[0].chars
+                ),
                 nums(0),
                 "repetitions"
             );
             assert_eq!(
-                (rows[2].segments, rows[2].words, rows[2].chars_nosp, rows[2].chars),
+                (
+                    rows[2].segments,
+                    rows[2].words,
+                    rows[2].chars_nosp,
+                    rows[2].chars
+                ),
                 nums(2),
                 "fuzzy_95"
             );
             assert_eq!(
-                (rows[4].segments, rows[4].words, rows[4].chars_nosp, rows[4].chars),
+                (
+                    rows[4].segments,
+                    rows[4].words,
+                    rows[4].chars_nosp,
+                    rows[4].chars
+                ),
                 nums(4),
                 "fuzzy_75"
             );
             assert_eq!(
-                (rows[5].segments, rows[5].words, rows[5].chars_nosp, rows[5].chars),
+                (
+                    rows[5].segments,
+                    rows[5].words,
+                    rows[5].chars_nosp,
+                    rows[5].chars
+                ),
                 nums(5),
                 "fuzzy_50"
             );
             assert_eq!(
-                (rows[6].segments, rows[6].words, rows[6].chars_nosp, rows[6].chars),
+                (
+                    rows[6].segments,
+                    rows[6].words,
+                    rows[6].chars_nosp,
+                    rows[6].chars
+                ),
                 nums(6),
                 "none"
             );
             assert_eq!(
-                (rows[7].segments, rows[7].words, rows[7].chars_nosp, rows[7].chars),
+                (
+                    rows[7].segments,
+                    rows[7].words,
+                    rows[7].chars_nosp,
+                    rows[7].chars
+                ),
                 nums(7),
                 "total"
             );

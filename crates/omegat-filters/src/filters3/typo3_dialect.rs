@@ -11,8 +11,16 @@ impl Typo3Dialect {
         let mut inner = DefaultXmlDialect::new();
         inner.define_constraint(ConstraintKind::Root, "t3_tt_content");
         inner.define_paragraph_tags(&[
-            "title", "subtitle", "p", "br", "header", "li", "td", "abstract",
-            "image_link", "imagecaption",
+            "title",
+            "subtitle",
+            "p",
+            "br",
+            "header",
+            "li",
+            "td",
+            "abstract",
+            "image_link",
+            "imagecaption",
         ]);
         inner.define_intact_tags(&["l18n_diffsource"]);
         inner.closing_tag_required = true;
@@ -32,6 +40,7 @@ impl XmlDialect for Typo3Dialect {
     }
 
     fn validate_translatable_tag(&self, _tag: &str, atts: &[(String, String)]) -> bool {
-        atts.iter().any(|(n, v)| n.eq_ignore_ascii_case("localizable") && v == "1")
+        atts.iter()
+            .any(|(n, v)| n.eq_ignore_ascii_case("localizable") && v == "1")
     }
 }

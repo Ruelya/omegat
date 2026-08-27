@@ -177,12 +177,18 @@ impl GlossarySearcher {
         }
     }
 
-    pub fn search_source_matches(&self, source: &str, entries: &[GlossaryEntry]) -> Vec<GlossaryEntry> {
+    pub fn search_source_matches(
+        &self,
+        source: &str,
+        entries: &[GlossaryEntry],
+    ) -> Vec<GlossaryEntry> {
         let tags = tag_spans(source);
         let tokens = self.tokenize_skipping_tags(source, &tags);
         let mut result = Vec::new();
         for e in entries {
-            if self.is_token_match(&tokens, source, &e.source) || self.is_cjk_match(source, &e.source) {
+            if self.is_token_match(&tokens, source, &e.source)
+                || self.is_cjk_match(source, &e.source)
+            {
                 result.push(e.clone());
             }
         }
@@ -258,7 +264,9 @@ impl GlossarySearcher {
         let toks = self.tokenize_with_offsets(str);
         toks.into_iter()
             .filter(|(tok, off)| {
-                !tags.iter().any(|(pos, tag)| *off >= *pos && *off + tok.len() <= pos + tag.len())
+                !tags
+                    .iter()
+                    .any(|(pos, tag)| *off >= *pos && *off + tok.len() <= pos + tag.len())
             })
             .collect()
     }
@@ -289,7 +297,12 @@ impl GlossarySearcher {
         !self.matching_tokens(full, full_text, term).is_empty()
     }
 
-    fn matching_tokens(&self, full: &[(String, usize)], full_text: &str, term: &str) -> Vec<Vec<String>> {
+    fn matching_tokens(
+        &self,
+        full: &[(String, usize)],
+        full_text: &str,
+        term: &str,
+    ) -> Vec<Vec<String>> {
         let glos = self.tokenize(term);
         if glos.is_empty() {
             return vec![];
@@ -327,7 +340,10 @@ impl GlossarySearcher {
         }
         let mut merged: Vec<GlossaryEntry> = Vec::new();
         for e in result {
-            if let Some(prev) = merged.iter_mut().find(|p| p.source.eq_ignore_ascii_case(&e.source)) {
+            if let Some(prev) = merged
+                .iter_mut()
+                .find(|p| p.source.eq_ignore_ascii_case(&e.source))
+            {
                 if !prev.target.split(" / ").any(|t| t == e.target) {
                     if !prev.target.is_empty() && !e.target.is_empty() {
                         prev.target = format!("{} / {}", prev.target, e.target);
@@ -362,7 +378,9 @@ fn find_from(hay: &str, from: usize, needle: &str) -> Option<usize> {
 
 fn tag_spans(text: &str) -> Vec<(usize, String)> {
     let re = regex::Regex::new(r"<[^>]+>|\{[0-9]+\}").unwrap();
-    re.find_iter(text).map(|m| (m.start(), m.as_str().to_string())).collect()
+    re.find_iter(text)
+        .map(|m| (m.start(), m.as_str().to_string()))
+        .collect()
 }
 
 fn tokenize_verbatim_non_ws(s: &str) -> Vec<String> {
@@ -567,7 +585,11 @@ pub fn parse_glossary(raw: &str) -> Vec<GlossaryEntry> {
         }
         let parts: Vec<&str> = line.split('\t').collect();
         if parts.len() >= 2 {
-            out.push(GlossaryEntry::new(parts[0].trim(), parts[1].trim(), parts.get(2).unwrap_or(&"").trim()));
+            out.push(GlossaryEntry::new(
+                parts[0].trim(),
+                parts[1].trim(),
+                parts.get(2).unwrap_or(&"").trim(),
+            ));
         }
     }
     if out.is_empty() && raw.contains("<term") {
@@ -597,7 +619,12 @@ pub fn lookup(entries: &[GlossaryEntry], segment: &str) -> Vec<GlossaryHitDto> {
     lookup_opts(entries, segment, true, true)
 }
 
-pub fn lookup_opts(entries: &[GlossaryEntry], segment: &str, ignore_case: bool, use_stem: bool) -> Vec<GlossaryHitDto> {
+pub fn lookup_opts(
+    entries: &[GlossaryEntry],
+    segment: &str,
+    ignore_case: bool,
+    use_stem: bool,
+) -> Vec<GlossaryHitDto> {
     lookup_opts_lang(entries, segment, ignore_case, use_stem, "en")
 }
 
@@ -639,7 +666,10 @@ pub fn append_entry(path: &Path, source: &str, target: &str, comment: &str) -> s
     }
     line.push('\n');
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     f.write_all(line.as_bytes())
 }
 
@@ -665,7 +695,8 @@ mod tests {
 
     #[test]
     fn english_exact_source_match() {
-        let searcher = GlossarySearcher::new("en", "fr", "org.omegat.tokenizer.LuceneEnglishTokenizer");
+        let searcher =
+            GlossarySearcher::new("en", "fr", "org.omegat.tokenizer.LuceneEnglishTokenizer");
         let entries = vec![GlossaryEntry::new("dog", "chien", "")];
         let hits = searcher.search_source_matches("The dog barked", &entries);
         assert_eq!(hits.len(), 1);
@@ -674,7 +705,8 @@ mod tests {
 
     #[test]
     fn cjk_contains_when_source_not_space_delimited() {
-        let searcher = GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
+        let searcher =
+            GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
         let entries = vec![GlossaryEntry::new("日本語", "Japanese", "")];
         let hits = searcher.search_source_matches("これは日本語です", &entries);
         assert_eq!(hits.len(), 1);

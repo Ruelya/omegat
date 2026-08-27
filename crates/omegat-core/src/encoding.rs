@@ -34,11 +34,7 @@ pub fn detect_html_encoding(path: &Path, default: Option<&str>) -> String {
 }
 
 fn normalize_charset(raw: &str) -> String {
-    let e = raw
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim();
+    let e = raw.trim().trim_matches('"').trim_matches('\'').trim();
     if e.eq_ignore_ascii_case("x-user-defined") {
         return "windows-1252".into();
     }

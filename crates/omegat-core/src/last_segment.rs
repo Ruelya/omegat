@@ -32,7 +32,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         save_last_index(dir.path(), 7).unwrap();
         assert_eq!(load_last_index(dir.path()), 7);
-        let raw = std::fs::read_to_string(dir.path().join("omegat").join("last_entry.properties")).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join("omegat").join("last_entry.properties"))
+            .unwrap();
         assert_eq!(raw, "last_entry=7\n");
     }
 }

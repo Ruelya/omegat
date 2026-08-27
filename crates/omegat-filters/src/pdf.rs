@@ -144,7 +144,10 @@ fn extract_pdf_lines(bytes: &[u8]) -> Vec<String> {
         let mut data = &bytes[p..p + end_rel];
         if let Some(d) = data.strip_suffix(b"\r\n") {
             data = d;
-        } else if let Some(d) = data.strip_suffix(b"\n").or_else(|| data.strip_suffix(b"\r")) {
+        } else if let Some(d) = data
+            .strip_suffix(b"\n")
+            .or_else(|| data.strip_suffix(b"\r"))
+        {
             data = d;
         }
         if let Some(dec) = inflate(data) {

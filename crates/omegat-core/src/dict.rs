@@ -39,7 +39,11 @@ pub fn lookup_opts_cancellable(
             return None;
         }
         let p = ent.path();
-        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+        let name = p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
         if name.ends_with(".dsl") || name.ends_with(".dsl.dz") {
             hits.extend(lookup_dsl(&p, &needle));
         } else if name.ends_with(".ifo") {
@@ -50,7 +54,10 @@ pub fn lookup_opts_cancellable(
         }
     }
     if hits.is_empty() && fuzzy && needle.chars().count() >= 3 {
-        let prefix: String = needle.chars().take(needle.chars().count().saturating_sub(1)).collect();
+        let prefix: String = needle
+            .chars()
+            .take(needle.chars().count().saturating_sub(1))
+            .collect();
         if !prefix.is_empty() {
             return lookup_opts_cancellable(dir, &prefix, false, cancellation);
         }
@@ -95,7 +102,11 @@ pub fn decode_dsl_bytes(bytes: &[u8]) -> String {
 }
 
 pub fn is_dsl_supported(path: &Path) -> bool {
-    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     (name.ends_with(".dsl") || name.ends_with(".dsl.dz")) && !name.ends_with(".idx")
 }
 
@@ -149,10 +160,7 @@ pub fn read_dsl_exact(raw: &str, word: &str, source: &str) -> Vec<DictHitDto> {
     read_dsl_articles(raw, source)
         .into_iter()
         .filter(|h| {
-            h.word
-                .lines()
-                .any(|l| l.to_lowercase() == needle)
-                || h.word.to_lowercase() == needle
+            h.word.lines().any(|l| l.to_lowercase() == needle) || h.word.to_lowercase() == needle
         })
         .collect()
 }
@@ -161,7 +169,12 @@ pub fn read_dsl_predictive(raw: &str, prefix: &str, source: &str) -> Vec<DictHit
     let needle = prefix.to_lowercase();
     read_dsl_articles(raw, source)
         .into_iter()
-        .filter(|h| h.word.to_lowercase().starts_with(&needle) || h.word.lines().any(|l| l.to_lowercase().starts_with(&needle)))
+        .filter(|h| {
+            h.word.to_lowercase().starts_with(&needle)
+                || h.word
+                    .lines()
+                    .any(|l| l.to_lowercase().starts_with(&needle))
+        })
         .collect()
 }
 
@@ -169,26 +182,72 @@ pub fn read_dsl_predictive(raw: &str, prefix: &str, source: &str) -> Vec<DictHit
 pub fn dsl_markup_to_html(raw: &str) -> String {
     let mut s = raw.to_string();
     s = s.replace("\\[", "[").replace("\\]", "]");
-    s = replace_paired(&s, "[m1]", "[/m]", r#"<div style="text-indent: 30px">"#, "</div>");
-    s = replace_paired(&s, "[m2]", "[/m]", r#"<div style="text-indent: 60px">"#, "</div>");
-    s = replace_paired(&s, "[m3]", "[/m]", r#"<div style="text-indent: 90px">"#, "</div>");
+    s = replace_paired(
+        &s,
+        "[m1]",
+        "[/m]",
+        r#"<div style="text-indent: 30px">"#,
+        "</div>",
+    );
+    s = replace_paired(
+        &s,
+        "[m2]",
+        "[/m]",
+        r#"<div style="text-indent: 60px">"#,
+        "</div>",
+    );
+    s = replace_paired(
+        &s,
+        "[m3]",
+        "[/m]",
+        r#"<div style="text-indent: 90px">"#,
+        "</div>",
+    );
     s = replace_paired(&s, "[m]", "[/m]", "<div>", "</div>");
     s = s.replace("[trn]", "").replace("[/trn]", "");
     s = s.replace("[com]", "").replace("[/com]", "");
     s = s.replace("[ref]", "").replace("[/ref]", "");
-    s = replace_paired(&s, "[i]", "[/i]", "<span style='font-style: italic'>", "</span>");
+    s = replace_paired(
+        &s,
+        "[i]",
+        "[/i]",
+        "<span style='font-style: italic'>",
+        "</span>",
+    );
     s = replace_paired(&s, "[b]", "[/b]", "<strong>", "</strong>");
-    s = replace_paired(&s, "[*][ex]", "[/ex][/*]", r#"<span class="details">"#, "</span>");
-    s = replace_paired(&s, r#"[lang name="English"]"#, "[/lang]", r#"<span class="lang_en">"#, "</span>");
-    s = s.replace("[c][p]", r#"<span style="color: green">"#).replace("[/p][/c]", "</span>");
-    s = s.replace("[c]", r#"<span style="color: green">"#).replace("[/c]", "</span>");
+    s = replace_paired(
+        &s,
+        "[*][ex]",
+        "[/ex][/*]",
+        r#"<span class="details">"#,
+        "</span>",
+    );
+    s = replace_paired(
+        &s,
+        r#"[lang name="English"]"#,
+        "[/lang]",
+        r#"<span class="lang_en">"#,
+        "</span>",
+    );
+    s = s
+        .replace("[c][p]", r#"<span style="color: green">"#)
+        .replace("[/p][/c]", "</span>");
+    s = s
+        .replace("[c]", r#"<span style="color: green">"#)
+        .replace("[/c]", "</span>");
     s = s.replace("[p]", "").replace("[/p]", "");
     s = replace_t_tags(&s);
     s = s.replace("[/*]", "").replace("[*]", "");
     s.trim().to_string()
 }
 
-fn replace_paired(input: &str, open: &str, close: &str, html_open: &str, html_close: &str) -> String {
+fn replace_paired(
+    input: &str,
+    open: &str,
+    close: &str,
+    html_open: &str,
+    html_close: &str,
+) -> String {
     let mut out = String::new();
     let mut rest = input;
     while let Some(s) = rest.find(open) {
@@ -269,7 +328,9 @@ pub fn parse_stardict_all(idx: &[u8]) -> Vec<String> {
     let mut words = Vec::new();
     let mut i = 0;
     while i < idx.len() {
-        let Some(z) = idx[i..].iter().position(|&b| b == 0) else { break };
+        let Some(z) = idx[i..].iter().position(|&b| b == 0) else {
+            break;
+        };
         words.push(String::from_utf8_lossy(&idx[i..i + z]).into_owned());
         i += z + 1;
         if i + 8 > idx.len() {
@@ -295,7 +356,9 @@ pub fn read_stardict_articles(ifo: &Path, word: &str, predictive: bool) -> Vec<D
     let mut hits = Vec::new();
     let mut i = 0;
     while i < idx_bytes.len() {
-        let Some(z) = idx_bytes[i..].iter().position(|&b| b == 0) else { break };
+        let Some(z) = idx_bytes[i..].iter().position(|&b| b == 0) else {
+            break;
+        };
         let w = String::from_utf8_lossy(&idx_bytes[i..i + z]).into_owned();
         i += z + 1;
         if i + 8 > idx_bytes.len() {
@@ -346,7 +409,9 @@ pub fn parse_stardict_idx(idx: &[u8], dict: &[u8], needle: &str, source: &str) -
     let mut hits = Vec::new();
     let mut i = 0;
     while i < idx.len() {
-        let Some(z) = idx[i..].iter().position(|&b| b == 0) else { break };
+        let Some(z) = idx[i..].iter().position(|&b| b == 0) else {
+            break;
+        };
         let word = String::from_utf8_lossy(&idx[i..i + z]).into_owned();
         i += z + 1;
         if i + 8 > idx.len() {
@@ -418,7 +483,11 @@ impl DictionaryData {
         self.do_look_up(word, true)
     }
 
-    fn do_look_up(&self, word: &str, predictive: bool) -> Result<Vec<(String, String)>, &'static str> {
+    fn do_look_up(
+        &self,
+        word: &str,
+        predictive: bool,
+    ) -> Result<Vec<(String, String)>, &'static str> {
         if !self.finalized {
             return Err("not finalized");
         }
@@ -488,13 +557,18 @@ impl DictionariesManager {
 }
 
 fn read_maybe_gzip(path: &Path) -> Option<String> {
-    read_maybe_gzip_bytes(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+    read_maybe_gzip_bytes(path)
+        .ok()
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
 fn read_maybe_gzip_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
     let bytes = std::fs::read(path)?;
     if path.extension().and_then(|e| e.to_str()) == Some("dz")
-        || path.file_name().and_then(|s| s.to_str()).is_some_and(|n| n.ends_with(".dz"))
+        || path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|n| n.ends_with(".dz"))
         || bytes.starts_with(&[0x1f, 0x8b])
     {
         let mut dec = GzDecoder::new(bytes.as_slice());

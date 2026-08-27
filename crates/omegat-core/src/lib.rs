@@ -431,24 +431,20 @@ mod tests {
         .unwrap();
         assert_eq!(
             (
-                loaded
-                    .get_translation_for_key(&first)
-                    .map(|entry| (
-                        entry.translation.as_str(),
-                        entry.note.as_deref(),
-                        entry.prev.as_deref(),
-                        entry.next.as_deref(),
-                        entry.path.as_deref(),
-                    )),
-                loaded
-                    .get_translation_for_key(&second)
-                    .map(|entry| (
-                        entry.translation.as_str(),
-                        entry.note.as_deref(),
-                        entry.prev.as_deref(),
-                        entry.next.as_deref(),
-                        entry.path.as_deref(),
-                    )),
+                loaded.get_translation_for_key(&first).map(|entry| (
+                    entry.translation.as_str(),
+                    entry.note.as_deref(),
+                    entry.prev.as_deref(),
+                    entry.next.as_deref(),
+                    entry.path.as_deref(),
+                )),
+                loaded.get_translation_for_key(&second).map(|entry| (
+                    entry.translation.as_str(),
+                    entry.note.as_deref(),
+                    entry.prev.as_deref(),
+                    entry.next.as_deref(),
+                    entry.path.as_deref(),
+                )),
             ),
             (
                 Some((

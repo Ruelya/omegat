@@ -72,7 +72,12 @@ pub fn is_supported(path: &Path) -> bool {
         || name.ends_with(".xliff")
 }
 
-pub fn load(path: &Path, source_lang: &str, target_lang: &str, keep_foreign: bool) -> Vec<TmxEntry> {
+pub fn load(
+    path: &Path,
+    source_lang: &str,
+    target_lang: &str,
+    keep_foreign: bool,
+) -> Vec<TmxEntry> {
     if !path.exists() {
         return vec![];
     }

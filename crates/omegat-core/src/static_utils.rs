@@ -56,5 +56,7 @@ pub fn glob_to_regex(text: &str, space_match_nbsp: bool) -> String {
 
 pub fn glob_matches(glob: &str, text: &str, space_match_nbsp: bool) -> bool {
     let pat = format!("^{}$", glob_to_regex(glob, space_match_nbsp));
-    regex::Regex::new(&pat).map(|r| r.is_match(text)).unwrap_or(false)
+    regex::Regex::new(&pat)
+        .map(|r| r.is_match(text))
+        .unwrap_or(false)
 }

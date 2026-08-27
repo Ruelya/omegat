@@ -24,8 +24,16 @@ pub fn format_progress_percent(translated: usize, total: usize) -> String {
 }
 
 pub fn compare_file_progress(a: FileProgress, b: FileProgress) -> i32 {
-    let ar = if a.total == 0 { 0.0 } else { a.translated as f64 / a.total as f64 };
-    let br = if b.total == 0 { 0.0 } else { b.translated as f64 / b.total as f64 };
+    let ar = if a.total == 0 {
+        0.0
+    } else {
+        a.translated as f64 / a.total as f64
+    };
+    let br = if b.total == 0 {
+        0.0
+    } else {
+        b.translated as f64 / b.total as f64
+    };
     if ar < br {
         -1
     } else if ar > br {
@@ -57,7 +65,11 @@ pub fn progress_fill_width(p: FileProgress, max: usize) -> usize {
     }
 }
 
-pub fn calculate_file_progress(entries: usize, unique_translated: usize, unique_total: usize) -> FileProgress {
+pub fn calculate_file_progress(
+    entries: usize,
+    unique_translated: usize,
+    unique_total: usize,
+) -> FileProgress {
     let _ = entries;
     FileProgress::new(unique_translated, unique_total)
 }

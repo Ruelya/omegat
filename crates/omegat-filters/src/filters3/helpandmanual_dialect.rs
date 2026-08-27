@@ -10,7 +10,15 @@ impl HelpAndManualDialect {
     pub fn new() -> Self {
         let mut inner = DefaultXmlDialect::new();
         inner.define_constraint(ConstraintKind::Root, "topic|map|helpproject");
-        inner.define_paragraph_tags(&["caption", "config-value", "variable", "para", "title", "keyword", "li"]);
+        inner.define_paragraph_tags(&[
+            "caption",
+            "config-value",
+            "variable",
+            "para",
+            "title",
+            "keyword",
+            "li",
+        ]);
         inner.define_shortcut("link", "li");
         Self { inner }
     }

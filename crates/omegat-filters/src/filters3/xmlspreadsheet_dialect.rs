@@ -12,7 +12,10 @@ impl XMLSpreadsheetDialect {
         inner.define_constraint(ConstraintKind::Root, "Workbook");
         inner.define_paragraph_tags(&["Workbook", "Cell"]);
         inner.define_intact_tags(&[
-            "DocumentProperties", "ExcelWorkbook", "WorksheetOptions", "OfficeDocumentSettings",
+            "DocumentProperties",
+            "ExcelWorkbook",
+            "WorksheetOptions",
+            "OfficeDocumentSettings",
         ]);
         Self { inner }
     }
@@ -33,8 +36,7 @@ impl XmlDialect for XMLSpreadsheetDialect {
         if !tag.eq_ignore_ascii_case("Data") {
             return false;
         }
-        atts.iter().any(|(n, v)| {
-            n.eq_ignore_ascii_case("ss:type") && v.eq_ignore_ascii_case("number")
-        })
+        atts.iter()
+            .any(|(n, v)| n.eq_ignore_ascii_case("ss:type") && v.eq_ignore_ascii_case("number"))
     }
 }

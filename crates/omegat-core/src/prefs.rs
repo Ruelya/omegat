@@ -524,38 +524,127 @@ impl Preferences {
             return;
         }
         take_bool(&extra, "tab_advance", &mut self.tab_advance, false);
-        take_bool(&extra, "always_confirm_quit", &mut self.always_confirm_quit, false);
-        take_bool(&extra, "first_time_wizard_done", &mut self.first_time_wizard_done, true);
+        take_bool(
+            &extra,
+            "always_confirm_quit",
+            &mut self.always_confirm_quit,
+            false,
+        );
+        take_bool(
+            &extra,
+            "first_time_wizard_done",
+            &mut self.first_time_wizard_done,
+            true,
+        );
         take_str(&extra, "export_tm_levels", &mut self.export_tm_levels);
         take_str(&extra, "tag_validation", &mut self.tag_validation);
-        take_bool(&extra, "filter_untranslated", &mut self.filter_untranslated, false);
-        take_bool(&extra, "matches_stemming_full", &mut self.matches_stemming_full, true);
-        take_bool(&extra, "project_files_show_translation_progress", &mut self.project_files_show_translation_progress, true);
-        take_bool(&extra, "project_files_show_on_load", &mut self.project_files_show_on_load, false);
+        take_bool(
+            &extra,
+            "filter_untranslated",
+            &mut self.filter_untranslated,
+            false,
+        );
+        take_bool(
+            &extra,
+            "matches_stemming_full",
+            &mut self.matches_stemming_full,
+            true,
+        );
+        take_bool(
+            &extra,
+            "project_files_show_translation_progress",
+            &mut self.project_files_show_translation_progress,
+            true,
+        );
+        take_bool(
+            &extra,
+            "project_files_show_on_load",
+            &mut self.project_files_show_on_load,
+            false,
+        );
         take_bool(&extra, "remove_tags", &mut self.remove_tags, false);
         take_str(&extra, "spell_backend", &mut self.spell_backend);
         take_str(&extra, "languagetool_url", &mut self.languagetool_url);
         take_str(&extra, "dictionary_dir", &mut self.dictionary_dir);
-        take_bool(&extra, "dictionary_fuzzy_matching", &mut self.dictionary_fuzzy_matching, false);
-        take_bool(&extra, "dictionary_auto_search", &mut self.dictionary_auto_search, true);
+        take_bool(
+            &extra,
+            "dictionary_fuzzy_matching",
+            &mut self.dictionary_fuzzy_matching,
+            false,
+        );
+        take_bool(
+            &extra,
+            "dictionary_auto_search",
+            &mut self.dictionary_auto_search,
+            true,
+        );
         take_bool(&extra, "glossary_stem", &mut self.glossary_stem, true);
-        take_bool(&extra, "glossary_ignore_case", &mut self.glossary_ignore_case, true);
-        take_bool(&extra, "glossary_not_exact_match", &mut self.glossary_not_exact_match, false);
-        take_bool(&extra, "glossary_replace_on_insert", &mut self.glossary_replace_on_insert, false);
+        take_bool(
+            &extra,
+            "glossary_ignore_case",
+            &mut self.glossary_ignore_case,
+            true,
+        );
+        take_bool(
+            &extra,
+            "glossary_not_exact_match",
+            &mut self.glossary_not_exact_match,
+            false,
+        );
+        take_bool(
+            &extra,
+            "glossary_replace_on_insert",
+            &mut self.glossary_replace_on_insert,
+            false,
+        );
         take_bool(&extra, "mt_auto_fetch", &mut self.mt_auto_fetch, false);
         take_bool(&extra, "completer_auto", &mut self.completer_auto, true);
-        take_bool(&extra, "history_completion", &mut self.history_completion, true);
-        take_bool(&extra, "history_prediction", &mut self.history_prediction, true);
-        take_bool(&extra, "completer_glossary", &mut self.completer_glossary, true);
+        take_bool(
+            &extra,
+            "history_completion",
+            &mut self.history_completion,
+            true,
+        );
+        take_bool(
+            &extra,
+            "history_prediction",
+            &mut self.history_prediction,
+            true,
+        );
+        take_bool(
+            &extra,
+            "completer_glossary",
+            &mut self.completer_glossary,
+            true,
+        );
         take_bool(&extra, "completer_tags", &mut self.completer_tags, true);
-        take_bool(&extra, "completer_autotext", &mut self.completer_autotext, true);
-        take_bool(&extra, "completer_chartable", &mut self.completer_chartable, true);
+        take_bool(
+            &extra,
+            "completer_autotext",
+            &mut self.completer_autotext,
+            true,
+        );
+        take_bool(
+            &extra,
+            "completer_chartable",
+            &mut self.completer_chartable,
+            true,
+        );
         take_str(&extra, "autotext", &mut self.autotext);
         take_str(&extra, "chartable", &mut self.chartable);
         take_str(&extra, "team_passphrase", &mut self.team_passphrase);
-        take_str(&extra, "team_conflict_resolution", &mut self.team_conflict_resolution);
+        take_str(
+            &extra,
+            "team_conflict_resolution",
+            &mut self.team_conflict_resolution,
+        );
         take_str(&extra, "plugin_dir", &mut self.plugin_dir);
-        take_bool(&extra, "version_check_enabled", &mut self.version_check_enabled, true);
+        take_bool(
+            &extra,
+            "version_check_enabled",
+            &mut self.version_check_enabled,
+            true,
+        );
         take_str(&extra, "secure_store_key", &mut self.secure_store_key);
         take_str(&extra, "srx_path", &mut self.srx_path);
         take_str(&extra, "srx_xml", &mut self.srx_xml);
@@ -569,41 +658,131 @@ impl Preferences {
         take_bool(&extra, "mark_whitespace", &mut self.marks.whitespace, false);
         take_bool(&extra, "mark_nbsp", &mut self.marks.nbsp, false);
         take_bool(&extra, "mark_bidi", &mut self.marks.bidi, false);
-        take_bool(&extra, "mark_glossary_matches", &mut self.marks.glossary, true);
+        take_bool(
+            &extra,
+            "mark_glossary_matches",
+            &mut self.marks.glossary,
+            true,
+        );
         if extra.get("transtips").map(|s| s.as_str()) == Some("false") {
             self.marks.glossary = false;
         }
         take_bool(&extra, "mark_noted_segments", &mut self.marks.noted, true);
         take_bool(&extra, "mark_translated", &mut self.marks.translated, true);
-        take_bool(&extra, "mark_untranslated", &mut self.marks.untranslated, true);
+        take_bool(
+            &extra,
+            "mark_untranslated",
+            &mut self.marks.untranslated,
+            true,
+        );
         take_bool(&extra, "mark_non_unique", &mut self.marks.non_unique, false);
-        take_bool(&extra, "mark_auto_populated", &mut self.marks.auto_populated, true);
-        take_bool(&extra, "mark_alternative", &mut self.marks.alternative, true);
-        take_bool(&extra, "mark_paragraph_start", &mut self.marks.paragraph_start, false);
-        take_bool(&extra, "display_segment_source", &mut self.marks.display_source, true);
-        take_bool(&extra, "mark_language_checker", &mut self.marks.language_checker, false);
-        take_bool(&extra, "mark_font_fallback", &mut self.marks.font_fallback, false);
+        take_bool(
+            &extra,
+            "mark_auto_populated",
+            &mut self.marks.auto_populated,
+            true,
+        );
+        take_bool(
+            &extra,
+            "mark_alternative",
+            &mut self.marks.alternative,
+            true,
+        );
+        take_bool(
+            &extra,
+            "mark_paragraph_start",
+            &mut self.marks.paragraph_start,
+            false,
+        );
+        take_bool(
+            &extra,
+            "display_segment_source",
+            &mut self.marks.display_source,
+            true,
+        );
+        take_bool(
+            &extra,
+            "mark_language_checker",
+            &mut self.marks.language_checker,
+            false,
+        );
+        take_bool(
+            &extra,
+            "mark_font_fallback",
+            &mut self.marks.font_fallback,
+            false,
+        );
         if let Some(v) = extra.get("display_modification_info") {
             if matches!(v.as_str(), "none" | "selected" | "all") {
                 self.marks.modification = v.clone();
             }
         }
-        take_bool(&extra, "search_window_case_sensitive", &mut self.search_window.case_sensitive, false);
-        take_bool(&extra, "search_window_whole_words", &mut self.search_window.whole_word, false);
-        take_bool(&extra, "search_window_search_source", &mut self.search_window.source, true);
-        take_bool(&extra, "search_window_search_translation", &mut self.search_window.translation, true);
-        take_bool(&extra, "search_window_search_notes", &mut self.search_window.notes, false);
-        take_bool(&extra, "search_window_search_comments", &mut self.search_window.comments, false);
-        take_bool(&extra, "search_window_replace_untranslated", &mut self.search_window.untranslated, false);
-        take_str(&extra, "search_window_author_name", &mut self.search_window.author);
-        take_str(&extra, "search_window_date_from_value", &mut self.search_window.date_from);
-        take_str(&extra, "search_window_date_to_value", &mut self.search_window.date_to);
+        take_bool(
+            &extra,
+            "search_window_case_sensitive",
+            &mut self.search_window.case_sensitive,
+            false,
+        );
+        take_bool(
+            &extra,
+            "search_window_whole_words",
+            &mut self.search_window.whole_word,
+            false,
+        );
+        take_bool(
+            &extra,
+            "search_window_search_source",
+            &mut self.search_window.source,
+            true,
+        );
+        take_bool(
+            &extra,
+            "search_window_search_translation",
+            &mut self.search_window.translation,
+            true,
+        );
+        take_bool(
+            &extra,
+            "search_window_search_notes",
+            &mut self.search_window.notes,
+            false,
+        );
+        take_bool(
+            &extra,
+            "search_window_search_comments",
+            &mut self.search_window.comments,
+            false,
+        );
+        take_bool(
+            &extra,
+            "search_window_replace_untranslated",
+            &mut self.search_window.untranslated,
+            false,
+        );
+        take_str(
+            &extra,
+            "search_window_author_name",
+            &mut self.search_window.author,
+        );
+        take_str(
+            &extra,
+            "search_window_date_from_value",
+            &mut self.search_window.date_from,
+        );
+        take_str(
+            &extra,
+            "search_window_date_to_value",
+            &mut self.search_window.date_to,
+        );
         if let Some(v) = extra.get("search_window_search_type") {
             if matches!(v.as_str(), "exact" | "keyword" | "regex") {
                 self.search_window.search_type = v.clone();
             }
         }
-        if let Some(raw) = extra.get("docking_layout").or_else(|| extra.get("MAINWINDOW_LAYOUT")) {
+        if let Some(raw) = extra
+            .get("docking_layout")
+            .or_else(|| extra.get("MAINWINDOW_LAYOUT"))
+        {
             if let Ok(parsed) = serde_json::from_str::<DockingLayoutPrefs>(raw) {
                 self.docking_layout = parsed;
             }
@@ -681,7 +860,8 @@ impl JavaPreferences {
     }
 
     pub fn get_preference(&self, key: Option<&str>) -> String {
-        key.and_then(|k| self.map.get(k).cloned()).unwrap_or_default()
+        key.and_then(|k| self.map.get(k).cloned())
+            .unwrap_or_default()
     }
 
     pub fn exists_preference(&self, key: &str) -> bool {
@@ -727,7 +907,9 @@ impl JavaPreferences {
         }
         let bak = path.with_file_name(format!(
             "{}.bak",
-            path.file_name().and_then(|s| s.to_str()).unwrap_or("omegat.prefs")
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("omegat.prefs")
         ));
         std::fs::copy(path, bak).is_ok()
     }
@@ -758,9 +940,11 @@ mod tests {
         p.extra.insert("tag_validation".into(), "abort".into());
         p.extra.insert("mark_whitespace".into(), "true".into());
         p.extra.insert("filter.po.skipHeader".into(), "true".into());
-        p.extra.insert("shortcut.project.save".into(), "Ctrl+S".into());
+        p.extra
+            .insert("shortcut.project.save".into(), "Ctrl+S".into());
         p.extra.insert("mt.google.key".into(), "secret".into());
-        p.extra.insert("search_window_search_notes".into(), "true".into());
+        p.extra
+            .insert("search_window_search_notes".into(), "true".into());
         p.extra.insert(
             "docking_layout".into(),
             serde_json::json!({"left": 0.33, "notes": 0.2, "editor_stack": 0.65, "editor_main": 0.75, "props": 0.5, "matches": 0.8, "east": 0.78, "dict_mt": 0.5, "show_dict": true, "show_mt": false}).to_string(),
@@ -769,7 +953,10 @@ mod tests {
         assert_eq!(p.tag_validation, "abort");
         assert!(p.marks.whitespace);
         assert_eq!(p.filter_option("po", "skipHeader"), Some("true"));
-        assert_eq!(p.shortcuts.get("project.save").map(String::as_str), Some("Ctrl+S"));
+        assert_eq!(
+            p.shortcuts.get("project.save").map(String::as_str),
+            Some("Ctrl+S")
+        );
         assert_eq!(p.mt_keys.get("google").map(String::as_str), Some("secret"));
         assert!(p.search_window.notes);
         assert!((p.docking_layout.left - 0.33).abs() < 1e-9);

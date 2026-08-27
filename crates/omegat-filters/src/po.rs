@@ -1,8 +1,8 @@
 //! GNU gettext PO filter. Parse/write follow Java `PoFilter` line state machine.
 
 use crate::{
-    ensure_parent, extract_tags, ExtractedSegment, Filter, FilterContext, ParsedFile, ProtectedPart,
-    Result,
+    ensure_parent, extract_tags, ExtractedSegment, Filter, FilterContext, ParsedFile,
+    ProtectedPart, Result,
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -125,7 +125,10 @@ fn decode_utf8_java_replace(bytes: &[u8]) -> String {
                 | ((b2 as u32 & 0x3f) << 12)
                 | ((b3 as u32 & 0x3f) << 6)
                 | (b4 as u32 & 0x3f);
-            if b2 & 0xc0 != 0x80 || b3 & 0xc0 != 0x80 || b4 & 0xc0 != 0x80 || !(0x10000..=0x10ffff).contains(&uc)
+            if b2 & 0xc0 != 0x80
+                || b3 & 0xc0 != 0x80
+                || b4 & 0xc0 != 0x80
+                || !(0x10000..=0x10ffff).contains(&uc)
             {
                 out.push('\u{FFFD}');
                 i += malformed4_len(lead, b2, b3);
@@ -160,7 +163,9 @@ fn malformed3_len(b1: i8, b2: i8) -> usize {
 }
 
 fn is_malformed4_2(b1: u8, b2: u8) -> bool {
-    (b1 == 0xf0 && !(0x90..=0xbf).contains(&b2)) || (b1 == 0xf4 && b2 & 0xf0 != 0x80) || b2 & 0xc0 != 0x80
+    (b1 == 0xf0 && !(0x90..=0xbf).contains(&b2))
+        || (b1 == 0xf4 && b2 & 0xf0 != 0x80)
+        || b2 & 0xc0 != 0x80
 }
 
 fn malformed4_len(b1: u8, b2: u8, b3: u8) -> usize {
@@ -181,7 +186,7 @@ fn malformed4_len(b1: u8, b2: u8, b3: u8) -> usize {
 enum Mode {
     Msgid,
     MsgidPlural,
-   Msgstr,
+    Msgstr,
     MsgstrPlural,
     Msgctx,
 }
@@ -380,10 +385,7 @@ impl Engine<'_> {
             self.current_plural = 0;
         } else {
             self.current_mode = Some(Mode::MsgstrPlural);
-            self.current_plural = c
-                .get(2)
-                .and_then(|m| m.as_str().parse().ok())
-                .unwrap_or(0);
+            self.current_plural = c.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
             if self.current_plural < self.plurals {
                 while self.targets.len() <= self.current_plural {
                     self.targets.push(String::new());
@@ -525,12 +527,14 @@ impl Engine<'_> {
             self.fuzzy = false;
         } else {
             if self.writing {
-                let q0 = self.format_translation(None, &self.sources[0], self.allow_blank, false, 0);
+                let q0 =
+                    self.format_translation(None, &self.sources[0], self.allow_blank, false, 0);
                 self.out.push_str("msgstr[0] ");
                 self.out.push_str(&q0);
                 self.out.push('\n');
                 for i in 1..self.plurals {
-                    let q = self.format_translation(None, &self.sources[1], self.allow_blank, false, i);
+                    let q =
+                        self.format_translation(None, &self.sources[1], self.allow_blank, false, i);
                     self.out.push_str(&format!("msgstr[{i}] "));
                     self.out.push_str(&q);
                     self.out.push('\n');
@@ -799,7 +803,10 @@ fn escape(translation: &str, nowrap: bool) -> String {
 
 fn plural_info(lang: &str) -> Option<(usize, &'static str)> {
     let lang = lang.to_ascii_lowercase();
-    PLURALS.iter().find(|(l, _, _)| *l == lang).map(|(_, n, e)| (*n, *e))
+    PLURALS
+        .iter()
+        .find(|(l, _, _)| *l == lang)
+        .map(|(_, n, e)| (*n, *e))
 }
 
 static COMMENT_FUZZY: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#, fuzzy$").unwrap());
@@ -819,9 +826,8 @@ static MSG_STR: Lazy<Regex> =
 static MSG_CTX: Lazy<Regex> = Lazy::new(|| Regex::new(r#"^msgctxt\s+"(.*)""#).unwrap());
 static MSG_OTHER: Lazy<Regex> = Lazy::new(|| Regex::new(r#"^"(.*)""#).unwrap());
 static MSG_FUZZY: Lazy<Regex> = Lazy::new(|| Regex::new(r#"^#\|\s"(.*)""#).unwrap());
-static PLURAL_FORMS: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)Plural-Forms: *nplurals= *([0-9]+) *; *plural").unwrap()
-});
+static PLURAL_FORMS: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)Plural-Forms: *nplurals= *([0-9]+) *; *plural").unwrap());
 
 const PLURALS: &[(&str, usize, &str)] = &[
     ("ach", 2, "(n > 1)"),

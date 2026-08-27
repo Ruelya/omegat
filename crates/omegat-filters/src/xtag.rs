@@ -186,7 +186,11 @@ fn convert_to_xtags(s: &str, tags: &[Xtag]) -> String {
 fn find_tag(tag: &str, tags: &[Xtag]) -> String {
     let inner = tag.trim_start_matches('<').trim_end_matches('>');
     for one in tags {
-        if inner == one.to_shortcut().trim_start_matches('<').trim_end_matches('>')
+        if inner
+            == one
+                .to_shortcut()
+                .trim_start_matches('<')
+                .trim_end_matches('>')
             || tag == one.to_shortcut()
         {
             return one.to_original();

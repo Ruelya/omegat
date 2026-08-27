@@ -449,4 +449,3 @@ fn emit(node: &Node, indent: usize, out: &mut String, in_array: bool) {
         }
     }
 }
-
