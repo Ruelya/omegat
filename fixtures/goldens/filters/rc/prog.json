@@ -1,0 +1,28 @@
+{
+  "id": "rc",
+  "fixture": "Rc/prog.rc",
+  "java_test": "org.omegat.filters.RcFilterTest#testLoad",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "&File",
+    "&Import...",
+    "&Export...",
+    "Exit",
+    "Error Import",
+    "Error Output",
+    "Exiting..."
+  ],
+  "ids": [
+    "103/512",
+    "103/601",
+    "103/602",
+    "103/603",
+    "/61",
+    "/62",
+    "/63"
+  ],
+  "empty_write_text": "#pragma code_page(65001)\n#include <resources.h>\n\n103 MENUEX\nLANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US\n{\n  POPUP \"&File\", 512, MFT_STRING, MFS_ENABLED, 0\n  {\n    MENUITEM \"&Import...\", 601, MFT_STRING, MFS_ENABLED\n    MENUITEM \"&Export...\", 602, MFT_STRING, MFS_ENABLED\n    MENUITEM \"\", -1, MFT_SEPARATOR, MFS_ENABLED\n    MENUITEM \"Exit\", 603, MFT_STRING, MFS_ENABLED\n  }\n}\n\nSTRINGTABLE\nLANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US\n{\n  61,  \"Error Import\"\n  62,  \"Error Output\"\n  63,  \"Exiting...\"\n}\n\n"
+}

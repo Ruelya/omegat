@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testIsValidXMLChar",
+  "c09": true,
+  "d800": false,
+  "c10000": true,
+  "c01": false,
+  "keys": [
+    "org.omegat.util.StringUtilTest#testIsValidXMLChar"
+  ]
+}

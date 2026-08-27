@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesCJK",
+  "count": 1,
+  "source": "場所",
+  "target": "place",
+  "keys": [
+    "org.omegat.gui.glossary.GlossarySearcherTest#testSearchSourceMatchesCJK"
+  ]
+}

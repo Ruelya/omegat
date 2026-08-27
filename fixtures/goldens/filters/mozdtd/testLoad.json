@@ -1,0 +1,27 @@
+{
+  "id": "mozdtd",
+  "fixture": "MozillaDTD/file.dtd",
+  "java_test": "org.omegat.filters.MozillaDTDFilterTest#testLoad",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Title",
+    "File",
+    "Edit"
+  ],
+  "ids": [
+    "mainWindow.title",
+    "fileMenu.label",
+    "editMenu.label"
+  ],
+  "paths": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<!ENTITY mainWindow.title \"Title\">\n<!ENTITY fileMenu.label \"File\">\n<!ENTITY editMenu.label 'Edit'>\n"
+}

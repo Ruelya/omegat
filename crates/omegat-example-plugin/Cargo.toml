@@ -1,0 +1,11 @@
+[package]
+name = "omegat-example-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Example cdylib that registers a Filter through omegat_plugin_register"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]

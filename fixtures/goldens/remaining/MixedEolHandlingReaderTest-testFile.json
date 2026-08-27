@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.MixedEolHandlingReaderTest#testFile",
+  "file": "data/filters/text/file-TextFilter.txt",
+  "line0": "This test file for test TextFilter.",
+  "eol": "\r\n",
+  "mixed": false,
+  "keys": [
+    "org.omegat.util.MixedEolHandlingReaderTest#testFile"
+  ]
+}
