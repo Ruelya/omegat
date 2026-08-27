@@ -1283,6 +1283,7 @@ dependencies = [
 name = "omegat-team"
 version = "6.2.0"
 dependencies = [
+ "fs2",
  "git2",
  "globset",
  "log",
