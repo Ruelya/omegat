@@ -73,18 +73,26 @@ function isLetter(char: string): boolean {
   return /^\p{L}$/u.test(char);
 }
 
+function isLowerLetter(char: string): boolean {
+  return /^\p{Ll}$/u.test(char);
+}
+
+function isUpperLetter(char: string): boolean {
+  return /^\p{Lu}$/u.test(char);
+}
+
 function letters(text: string): string[] {
   return [...text].filter(isLetter);
 }
 
 function isLowerCase(text: string): boolean {
   const chars = letters(text);
-  return chars.length > 0 && chars.every((char) => char === char.toLowerCase());
+  return chars.length > 0 && chars.every(isLowerLetter);
 }
 
 function isUpperCase(text: string): boolean {
   const chars = letters(text);
-  return chars.length > 0 && chars.every((char) => char === char.toUpperCase());
+  return chars.length > 0 && chars.every(isUpperLetter);
 }
 
 /** Java Character title-case rule; notably U+01C7 (Ǉ) is not title case. */
@@ -108,10 +116,8 @@ function isMixedCase(text: string): boolean {
   let upperAfterFirst = false;
   chars.forEach((char, index) => {
     if (!isLetter(char)) return;
-    if (char === char.toLowerCase() && char !== char.toUpperCase()) lower = true;
-    if (index > 0 && char === char.toUpperCase() && char !== char.toLowerCase()) {
-      upperAfterFirst = true;
-    }
+    if (isLowerLetter(char)) lower = true;
+    if (index > 0 && isUpperLetter(char)) upperAfterFirst = true;
   });
   return lower && upperAfterFirst;
 }
