@@ -148,7 +148,26 @@ describe("menu actions", () => {
     const observed: string[] = [];
     for (const action of JAVA_MENU_ACTIONS) {
       primedState();
-      rpc.mockResolvedValue({ ok: true, result: "ok" });
+      rpc.mockImplementation(async (method: string, params?: unknown) => {
+        if (method === "entry.set") {
+          const input = params as {
+            index: number;
+            translation: string;
+            note: string;
+            default_translation: boolean;
+          };
+          const entry = useApp.getState().entries[input.index]!;
+          return {
+            ...entry,
+            translation: input.translation,
+            note: input.note,
+            translated: Boolean(input.translation),
+            default_translation: input.default_translation,
+            revision: entry.revision + 1,
+          };
+        }
+        return { ok: true, result: "ok" };
+      });
       const beforeDraft = useApp.getState().draft;
       const beforeMarks = { ...useApp.getState().marks };
       const beforeMatch = useApp.getState().selectedMatch;
