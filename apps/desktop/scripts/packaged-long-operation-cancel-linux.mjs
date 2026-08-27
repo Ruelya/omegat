@@ -937,7 +937,9 @@ try {
   }
   const dirtyEditor = await editorState(client);
   assert.equal(dirtyEditor.translation, dirtyTeamTranslation);
-  assert.equal(dirtyEditor.caret, dirtyTeamTranslation.length - 6);
+  // The first ArrowLeft crosses the terminal emoji's UTF-16 surrogate pair
+  // atomically; the remaining five cross one code unit each.
+  assert.equal(dirtyEditor.caret, dirtyTeamTranslation.length - 7);
 
   assert.equal(
     await client.evaluate(`(() => {
