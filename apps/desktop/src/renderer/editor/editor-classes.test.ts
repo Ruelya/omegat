@@ -578,10 +578,15 @@ describe("Document3 / IEditor / completer classes", () => {
   it("EditorController synchronizes immutable renderer snapshots into stable segment pages", () => {
     const controller = new EditorController();
     controller.setPageRadius(1);
+    const keys = [
+      { file: "a.txt", source_text: "one", id: "first", prev: "", next: "two", path: null },
+      { file: "a.txt", source_text: "two", id: "second", prev: "one", next: "", path: null },
+      { file: "b.txt", source_text: "three", id: "third", prev: "", next: "", path: "/third" },
+    ];
     const entries = [
-      { file: "a.txt", id: "first", source: "one", translation: "un" },
-      { file: "a.txt", id: "second", source: "two", translation: "deux" },
-      { file: "b.txt", id: "third", source: "three", translation: "trois" },
+      { key: keys[0], file: "a.txt", id: "first", source: "one", translation: "un" },
+      { key: keys[1], file: "a.txt", id: "second", source: "two", translation: "deux" },
+      { key: keys[2], file: "b.txt", id: "third", source: "three", translation: "trois" },
     ];
     const page = controller.synchronizeRendererProject(
       entries,
@@ -594,9 +599,9 @@ describe("Document3 / IEditor / completer classes", () => {
       translation,
       active,
     }))).toEqual([
-      { key: "0:a.txt:first", entryNumber: 1, translation: "un", active: false },
-      { key: "1:a.txt:second", entryNumber: 2, translation: "DEUX", active: true },
-      { key: "2:b.txt:third", entryNumber: 3, translation: "trois", active: false },
+      { key: JSON.stringify(keys[0]), entryNumber: 1, translation: "un", active: false },
+      { key: JSON.stringify(keys[1]), entryNumber: 2, translation: "DEUX", active: true },
+      { key: JSON.stringify(keys[2]), entryNumber: 3, translation: "trois", active: false },
     ]);
   });
 });
