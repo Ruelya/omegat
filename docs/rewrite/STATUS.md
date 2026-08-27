@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **19 files / 115
+native plugin RPC/fault isolation **1 passed**, and desktop **20 files / 118
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -240,8 +240,11 @@ entry-relative caret/selection positions, selected text, and insertion at the
 live selection instead of always appending; selection replacement, dirty state,
 caret collapse, entry synchronization, and undo are strictly exercised through
 its `EditorTextArea3` / `Document3` product path. Chromium caret range
-hit-testing maps mouse pixels to UTF-16 offsets, and native `beforeinput`
-operations replace
+hit-testing maps mouse pixels through model-aware fragments to UTF-16 offsets.
+Those fragments retain separate rendered/model lengths, so expanded BiDi and
+whitespace glyphs, glossary decoration, stacked Marker/spell classes, and
+protected tags cannot shift a later caret; protected text and tags choose an
+atomic side from the visual half. Native `beforeinput` operations replace
 printable-key synthesis while still flowing through `Document3`.
 The hidden textarea now subscribes directly to Chromium `beforeinput` and
 composition events instead of relying on React's synthetic `onBeforeInput`.
@@ -278,14 +281,22 @@ relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 original relative selection on undo. Arbitrary `ProtectedPart` intervals now
 snap hit-tested carets, expand selection/replacement/IME ranges atomically,
 delete as one unit, and include the same adjacent BiDi controls as Java's
-double-click selection. Marker hit-testing collects overlapping, entry-part
-scoped tooltips and emits Java-shaped HTML. Electron file drops pass real
-native paths through preload/main-process inspection: an `omegat.project`
+double-click selection. Marker hit-testing collects all ranges overlapping an
+atomic rendered fragment, keeps source/translation and active/context entry
+keys isolated, emits Java-shaped HTML, and displays the same tooltip on source,
+active target, and non-active segments. Electron file drops pass real native
+paths through preload/main-process inspection: an `omegat.project`
 opens its project root, while ordinary files import only into an already-open
 project. Successful leave commits invoke the sidecar issue product path,
 retain issues scoped to the old file, and reveal the issue window without
-discarding a successful commit if checking fails. Desktop verification is now
-**19 files / 115 tests**, including exact success and
+discarding a successful commit if checking fails. A real Linux
+`linux-unpacked` E2E sends Chromium file drags carrying actual filesystem paths:
+it opens a dropped `omegat.project`, imports an ordinary file through
+`project.import`, commits a missing-tag translation, verifies navigation to the
+next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
+to its original entry. This is Linux packaged/CDP drag evidence, not a
+Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
+**20 files / 118 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
