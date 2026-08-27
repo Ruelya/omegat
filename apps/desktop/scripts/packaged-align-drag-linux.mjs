@@ -498,10 +498,10 @@ try {
     if (!rect) return null;
     return {
       clientX: rect.left + rect.width / 2,
-      clientY: rect.top + rect.height / 2,
+      clientY: rect.top + Math.min(2, rect.height / 2),
       hit: document.elementFromPoint(
         rect.left + rect.width / 2,
-        rect.top + rect.height / 2,
+        rect.top + Math.min(2, rect.height / 2),
       )?.id ?? null,
     };
   })()`);
@@ -511,6 +511,13 @@ try {
     String(Math.round(contentLeft + bottomDropPoint.clientX + correctionX)),
     String(Math.round(contentTop + bottomDropPoint.clientY + correctionY)),
   ]);
+  // At maximum scroll the boundary can move under an otherwise stationary
+  // pointer. Jiggle inside the same wide cell so Chromium emits a fresh native
+  // dragover whose real event target is the explicit boundary.
+  await sleep(50);
+  await xdotool(xvfb.display, ["mousemove_relative", "4", "0"]);
+  await sleep(50);
+  await xdotool(xvfb.display, ["mousemove_relative", "--", "-4", "0"]);
   await waitFor("native dragover on bottom drop cell", async () => {
     const events = await client.evaluate("window.__omegatE2eDragEvents");
     return events.some(
