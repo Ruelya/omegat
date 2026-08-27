@@ -163,7 +163,18 @@ input, textarea, select {
 .prop-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 8px; font-family: var(--mono); font-size: 11px; }
 .stats { width: 100%; border-collapse: collapse; }
 .stats td, .stats th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.align-table-scroll {
+  max-height: min(48vh, 520px);
+  overflow: auto;
+  border: 1px solid var(--line);
+}
 .align-table { width: 100%; border-collapse: collapse; }
+.align-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-raised);
+}
 .align-table td, .align-table th {
   border-bottom: 1px solid var(--line);
   padding: 4px 8px;

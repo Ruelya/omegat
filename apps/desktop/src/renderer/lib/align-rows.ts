@@ -49,6 +49,46 @@ export function selectionBounds(anchor: number, focus: number, rowCount: number)
   };
 }
 
+export type AlignVisibleRows = {
+  firstRow: number;
+  lastRow: number;
+};
+
+/**
+ * Return the selected edge that must be brought into the current viewport.
+ * A range taller than the viewport follows its focus/lead row, like JTable.
+ */
+export function alignmentScrollTarget(
+  visible: AlignVisibleRows,
+  anchor: number,
+  focus: number,
+  rowCount: number,
+): number | null {
+  if (rowCount <= 0) return null;
+  const bounds = selectionBounds(anchor, focus, rowCount);
+  const first = Math.max(0, Math.min(visible.firstRow, rowCount - 1));
+  const last = Math.max(first, Math.min(visible.lastRow, rowCount - 1));
+  if (bounds.start >= first && bounds.end <= last) return null;
+  if (bounds.start < first && bounds.end > last) {
+    return Math.max(0, Math.min(focus, rowCount - 1));
+  }
+  return bounds.start < first ? bounds.start : bounds.end;
+}
+
+export function alignmentPointerSelection(
+  current: { anchor: number; focus: number },
+  row: number,
+  rowCount: number,
+  extend: boolean,
+) {
+  if (rowCount <= 0) return { anchor: 0, focus: 0 };
+  const next = Math.max(0, Math.min(row, rowCount - 1));
+  return {
+    anchor: extend ? Math.max(0, Math.min(current.anchor, rowCount - 1)) : next,
+    focus: next,
+  };
+}
+
 export type AlignEditSelection = {
   anchor_row: number;
   focus_row: number;
@@ -188,10 +228,12 @@ export function alignTableKey(
     altKey?: boolean;
     ctrlKey?: boolean;
     metaKey?: boolean;
+    pageRows?: number;
   },
 ): AlignKeyboardResult {
   const base: AlignKeyboardResult = { ...state, handled: false };
   const last = Math.max(0, state.rowCount - 1);
+  const pageRows = Math.max(1, Math.floor(input.pageRows ?? 10));
   const move = (row: number): AlignKeyboardResult => {
     const next = Math.max(0, Math.min(row, last));
     return {
@@ -211,9 +253,9 @@ export function alignTableKey(
     case "End":
       return move(last);
     case "PageUp":
-      return move(state.row - 10);
+      return move(state.row - pageRows);
     case "PageDown":
-      return move(state.row + 10);
+      return move(state.row + pageRows);
     case "ArrowLeft":
       return { ...state, side: "source", handled: true };
     case "ArrowRight":
@@ -227,6 +269,23 @@ export function alignTableKey(
   }
   if (input.altKey || input.ctrlKey || input.metaKey) return base;
   const key = input.key.toLowerCase();
+  // AlignPanelController installs Swing's Emacs-style N/P/F/B table actions.
+  if (key === "n") return move(state.row + 1);
+  if (key === "p") return move(state.row - 1);
+  if (key === "f") {
+    return {
+      ...state,
+      side: state.side === "source" ? "target" : state.side === "both" ? "source" : "target",
+      handled: true,
+    };
+  }
+  if (key === "b") {
+    return {
+      ...state,
+      side: state.side === "target" ? "source" : state.side === "both" ? "target" : "source",
+      handled: true,
+    };
+  }
   if (key === "escape") {
     return { ...state, pinpoint: null, handled: state.pinpoint != null };
   }

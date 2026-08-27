@@ -820,6 +820,28 @@ pub fn set_bead_status(
     out
 }
 
+/// Select the first visual row of the bead after a completed status operation.
+///
+/// Java `AlignPanelController.setStatus` advances from the last selected row
+/// to `nextBeadFromRow`, preserving the selected source/target column.
+pub fn selection_after_bead_status(
+    beads: &[MutableBead],
+    indexes: &[usize],
+) -> Option<BeadRowSelection> {
+    let next_bead = indexes.iter().copied().max()?.checked_add(1)?;
+    if next_bead >= beads.len() {
+        return None;
+    }
+    let next_row = beads[..next_bead]
+        .iter()
+        .map(|bead| bead.source_lines.len().max(bead.target_lines.len()))
+        .sum();
+    Some(BeadRowSelection {
+        anchor_row: next_row,
+        focus_row: next_row,
+    })
+}
+
 pub fn set_beads_enabled(
     beads: &[MutableBead],
     indexes: Option<&[usize]>,
@@ -1811,6 +1833,14 @@ mod tests {
         ];
         let reviewed = set_bead_status(&beads, &[1], BeadStatus::NeedsReview);
         assert_eq!(reviewed[1].status, BeadStatus::NeedsReview);
+        assert_eq!(
+            selection_after_bead_status(&reviewed, &[0, 1, 1]),
+            Some(BeadRowSelection {
+                anchor_row: 3,
+                focus_row: 3,
+            })
+        );
+        assert_eq!(selection_after_bead_status(&reviewed, &[2]), None);
         let mixed = set_beads_enabled(&reviewed, Some(&[1]), false);
         let toggled = toggle_beads_enabled(&mixed, &[0, 1, 1]);
         assert_eq!(
@@ -1991,8 +2021,7 @@ mod tests {
             "a nullable visual cell is not transferable"
         );
 
-        let moved_result =
-            move_bead_row_span_to_with_selection(&beads, 1, 2, AlignSide::Source, 4);
+        let moved_result = move_bead_row_span_to_with_selection(&beads, 1, 2, AlignSide::Source, 4);
         assert_eq!(
             moved_result.selection,
             Some(BeadRowSelection {

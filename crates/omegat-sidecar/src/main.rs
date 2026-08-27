@@ -818,36 +818,47 @@ impl App {
                             side,
                         ),
                         "move-to-row" => {
-                            let result =
-                                omegat_core::align::move_bead_row_span_to_with_selection(
-                                    &beads,
-                                    start_row,
-                                    end_row,
-                                    side,
-                                    params
-                                        .get("target_row")
-                                        .and_then(Value::as_i64)
-                                        .unwrap_or(start_row as i64)
-                                        as isize,
-                                );
+                            let result = omegat_core::align::move_bead_row_span_to_with_selection(
+                                &beads,
+                                start_row,
+                                end_row,
+                                side,
+                                params
+                                    .get("target_row")
+                                    .and_then(Value::as_i64)
+                                    .unwrap_or(start_row as i64)
+                                    as isize,
+                            );
                             restored_selection = result.selection;
                             result.beads
                         }
-                        "accepted" => omegat_core::align::set_bead_status(
-                            &beads,
-                            &indexes,
-                            omegat_core::align::BeadStatus::Accepted,
-                        ),
-                        "needs-review" => omegat_core::align::set_bead_status(
-                            &beads,
-                            &indexes,
-                            omegat_core::align::BeadStatus::NeedsReview,
-                        ),
-                        "clear-status" => omegat_core::align::set_bead_status(
-                            &beads,
-                            &indexes,
-                            omegat_core::align::BeadStatus::Default,
-                        ),
+                        "accepted" => {
+                            restored_selection =
+                                omegat_core::align::selection_after_bead_status(&beads, &indexes);
+                            omegat_core::align::set_bead_status(
+                                &beads,
+                                &indexes,
+                                omegat_core::align::BeadStatus::Accepted,
+                            )
+                        }
+                        "needs-review" => {
+                            restored_selection =
+                                omegat_core::align::selection_after_bead_status(&beads, &indexes);
+                            omegat_core::align::set_bead_status(
+                                &beads,
+                                &indexes,
+                                omegat_core::align::BeadStatus::NeedsReview,
+                            )
+                        }
+                        "clear-status" => {
+                            restored_selection =
+                                omegat_core::align::selection_after_bead_status(&beads, &indexes);
+                            omegat_core::align::set_bead_status(
+                                &beads,
+                                &indexes,
+                                omegat_core::align::BeadStatus::Default,
+                            )
+                        }
                         "keep-all" => omegat_core::align::set_beads_enabled(&beads, None, true),
                         "keep-none" => omegat_core::align::set_beads_enabled(&beads, None, false),
                         "keep" => omegat_core::align::set_beads_enabled(

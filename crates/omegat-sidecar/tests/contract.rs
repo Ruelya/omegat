@@ -216,6 +216,10 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
         }),
     );
     assert_eq!(review["result"]["beads"][1]["status"], "needs-review");
+    assert_eq!(
+        review["result"]["selection"],
+        json!({"anchor_row":3,"focus_row":3})
+    );
 
     let toggled = rpc(
         &mut stdin,

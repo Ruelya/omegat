@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import {
   alignmentRows,
+  alignmentPointerSelection,
+  alignmentScrollTarget,
   alignmentSelectionAfterEdit,
   alignTableDrop,
   alignTableKey,
@@ -36,6 +38,7 @@ export function AlignWindow() {
   const [spanText, setSpanText] = useState("");
   const [message, setMessage] = useState("");
   const spanEditor = useRef<HTMLTextAreaElement>(null);
+  const tableScroll = useRef<HTMLDivElement>(null);
   const draggedRows = useRef<{
     startRow: number;
     endRow: number;
@@ -43,6 +46,20 @@ export function AlignWindow() {
   } | null>(null);
   const rows = useMemo(() => alignmentRows(beads), [beads]);
   const selectedRows = selectionBounds(anchor, sel, rows.length);
+  function visibleTableRows() {
+    const viewport = tableScroll.current;
+    if (!viewport || rows.length === 0) return null;
+    const viewportRect = viewport.getBoundingClientRect();
+    const visible = [...viewport.querySelectorAll<HTMLTableRowElement>("tr[data-align-row]")]
+      .filter((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.bottom > viewportRect.top && rect.top < viewportRect.bottom;
+      })
+      .map((row) => Number(row.dataset.alignRow))
+      .filter(Number.isInteger);
+    if (!visible.length) return null;
+    return { firstRow: visible[0], lastRow: visible[visible.length - 1] };
+  }
   useEffect(() => {
     if (side === "both") {
       setSpanText("");
@@ -56,6 +73,24 @@ export function AlignWindow() {
         .join("\n"),
     );
   }, [side, rows, selectedRows.start, selectedRows.end]);
+  useEffect(() => {
+    const viewport = tableScroll.current;
+    const visible = visibleTableRows();
+    if (!viewport || !visible) return;
+    const target = alignmentScrollTarget(visible, anchor, sel, rows.length);
+    if (target == null) return;
+    const row = viewport.querySelector<HTMLTableRowElement>(
+      `tr[data-align-row="${target}"]`,
+    );
+    if (!row) return;
+    const viewportRect = viewport.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    if (rowRect.top < viewportRect.top) {
+      viewport.scrollTop += rowRect.top - viewportRect.top;
+    } else if (rowRect.bottom > viewportRect.bottom) {
+      viewport.scrollTop += rowRect.bottom - viewportRect.bottom;
+    }
+  }, [anchor, sel, rows]);
   async function run() {
     const r = (await window.omegat?.rpc("align.run", {
       source: src,
@@ -136,6 +171,7 @@ export function AlignWindow() {
     setMessage(`${r?.count ?? beads.filter((bead) => bead.enabled).length} → ${dest}`);
   }
   function tableKeyDown(event: React.KeyboardEvent<HTMLTableElement>) {
+    const visible = visibleTableRows();
     const result = alignTableKey(
       {
         row: sel,
@@ -144,7 +180,14 @@ export function AlignWindow() {
         side,
         pinpoint,
       },
-      event,
+      {
+        key: event.key,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        pageRows: visible ? visible.lastRow - visible.firstRow + 1 : undefined,
+      },
     );
     if (!result.handled) return;
     event.preventDefault();
@@ -287,12 +330,13 @@ export function AlignWindow() {
           <button type="button" disabled={!dest || !beads.length} onClick={() => void write()}>{t("save")}</button>
         </div>
         {message && <div className="meta">{message}</div>}
-        <table
-          className="align-table"
-          aria-label="manual alignment table"
-          tabIndex={0}
-          onKeyDown={tableKeyDown}
-        >
+        <div className="align-table-scroll" ref={tableScroll}>
+          <table
+            className="align-table"
+            aria-label="manual alignment table"
+            tabIndex={0}
+            onKeyDown={tableKeyDown}
+          >
           <thead>
             <tr><th>#</th><th>source</th><th>target</th></tr>
           </thead>
@@ -317,10 +361,17 @@ export function AlignWindow() {
               return (
                 <tr
                   key={`${row.beadIndex}-${row.rowInBead}`}
+                  data-align-row={row.rowIndex}
                   className={`${selected ? "sel " : ""}${bead.status}`}
                   onClick={(event) => {
-                    setSel(row.rowIndex);
-                    if (!event.shiftKey) setAnchor(row.rowIndex);
+                    const next = alignmentPointerSelection(
+                      { anchor, focus: sel },
+                      row.rowIndex,
+                      rows.length,
+                      event.shiftKey,
+                    );
+                    setSel(next.focus);
+                    setAnchor(next.anchor);
                   }}
                 >
                   <td>
@@ -394,7 +445,8 @@ export function AlignWindow() {
               />
             </tr>
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </Modal>
   );

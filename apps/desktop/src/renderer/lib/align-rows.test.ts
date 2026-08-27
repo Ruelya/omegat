@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   alignmentRows,
+  alignmentPointerSelection,
+  alignmentScrollTarget,
   alignmentSelectionAfterEdit,
   alignTableDrop,
   alignTableKey,
@@ -107,6 +109,35 @@ describe("alignment visual rows", () => {
       anchor: 3,
       handled: true,
     });
+    expect(
+      alignTableKey(
+        { ...state, row: 12, anchor: 12, rowCount: 30 },
+        { key: "PageDown", pageRows: 7 },
+      ),
+    ).toEqual({
+      ...state,
+      row: 19,
+      anchor: 19,
+      rowCount: 30,
+      handled: true,
+    });
+    expect(alignTableKey(state, { key: "N", shiftKey: true })).toEqual({
+      ...state,
+      row: 2,
+      handled: true,
+    });
+    expect(alignTableKey(state, { key: "f" })).toEqual({
+      ...state,
+      side: "target",
+      handled: true,
+    });
+    expect(
+      alignTableKey({ ...state, side: "target" }, { key: "B", shiftKey: true }),
+    ).toEqual({
+      ...state,
+      side: "source",
+      handled: true,
+    });
     expect(alignTableKey(state, { key: "m" })).toEqual({
       ...state,
       action: "merge",
@@ -170,6 +201,19 @@ describe("alignment visual rows", () => {
       pinpoint: null,
       handled: true,
     });
+  });
+
+  it("extends pointer ranges and minimally reveals their selected edge", () => {
+    expect(
+      alignmentPointerSelection({ anchor: 5, focus: 7 }, 2, 12, true),
+    ).toEqual({ anchor: 5, focus: 2 });
+    expect(
+      alignmentPointerSelection({ anchor: 5, focus: 2 }, 20, 12, false),
+    ).toEqual({ anchor: 11, focus: 11 });
+    expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 5, 7, 12)).toBeNull();
+    expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 5, 10, 12)).toBe(10);
+    expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 5, 1, 12)).toBe(1);
+    expect(alignmentScrollTarget({ firstRow: 3, lastRow: 8 }, 1, 10, 12)).toBe(10);
   });
 
   it("models Java one-column drag/drop eligibility and request payloads", () => {
