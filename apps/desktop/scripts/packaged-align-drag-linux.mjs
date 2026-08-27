@@ -420,13 +420,18 @@ try {
     dragStartEvents.some((event) => event.type === "dragstart"),
     `XTEST did not initiate a native drag: ${JSON.stringify(dragStartEvents)}`,
   );
-  await xdotool(xvfb.display, [
-    "mousemove",
-    "--duration",
-    "250",
-    String(edgeScreenX),
-    String(edgeScreenY),
-  ]);
+  const dragStartX = startScreenX + 24;
+  const dragStartY = startScreenY + 8;
+  for (let step = 1; step <= 12; step += 1) {
+    const x = Math.round(
+      dragStartX + ((edgeScreenX - dragStartX) * step) / 12,
+    );
+    const y = Math.round(
+      dragStartY + ((edgeScreenY - dragStartY) * step) / 12,
+    );
+    await xdotool(xvfb.display, ["mousemove", String(x), String(y)]);
+    await sleep(25);
+  }
 
   const hovered = await waitFor("stationary pointer drag autoscroll", async () => {
     const state = await client.evaluate(`(() => {
