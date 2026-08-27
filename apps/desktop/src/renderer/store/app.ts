@@ -317,7 +317,8 @@ export const useApp = create<AppState>((set, get) => ({
   },
   open: async (root) => {
     const props = await rpc<ProjectPropsDto>("project.open", { root });
-    const entries = await rpc<EntryDto[]>("entry.list");
+    const listed = await rpc<EntryDto[]>("entry.list");
+    const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
     set({ props, entries, screen: "workspace", index: 0, stats, error: null });
     await get().loadPrefs();
@@ -359,7 +360,8 @@ export const useApp = create<AppState>((set, get) => ({
     const committedEntry = committed.entries[committed.index];
     await rpc("project.save");
     const reloaded = await rpc<{ props?: ProjectPropsDto }>("project.reload");
-    const entries = await rpc<EntryDto[]>("entry.list");
+    const listed = await rpc<EntryDto[]>("entry.list");
+    const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
     const index = reloadedEntryIndex(entries, committedEntry, committed.index);
     if (index < 0) {
