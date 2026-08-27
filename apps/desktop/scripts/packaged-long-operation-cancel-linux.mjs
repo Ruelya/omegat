@@ -634,10 +634,24 @@ try {
     },
     reload: {
       visibleProgress: reloadPostCancel.visibleProgress,
-      cancelled: reloadCancelled,
+      cancelled: {
+        operation: reloadCancelled.operation,
+        phase: reloadCancelled.phase,
+        stage: reloadCancelled.stage,
+        operationStatus: reloadCancelled.operationStatus,
+        editorStatus: reloadCancelled.editorStatus,
+        cancelVisible: reloadCancelled.cancelVisible,
+        entry: reloadCancelled.entry,
+      },
       requestTrace: reloadRequestTrace,
       domTrace: reloadPostCancel.domTrace,
-      entryRollback: reloadBefore,
+      entryRollback: {
+        entry: reloadBefore.entry,
+        keyPreserved: reloadCancelled.key === reloadBefore.key,
+        sourcePreserved: reloadCancelled.source === reloadBefore.source,
+        translationPreserved:
+          reloadCancelled.translation === reloadBefore.translation,
+      },
     },
     sidecarResponsive: postCancel.version.version,
   }));
