@@ -57,8 +57,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**62 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 90
+**64 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 91
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment.
@@ -142,7 +142,7 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **9/9**: in addition to six ZIP cases,
+The deep write-back suite is now **11/11**: in addition to six ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
 translated attributes/text under out-of-order translation maps. OpenXML
 hidden field text, external relationship targets, and intact fallback content
@@ -155,6 +155,11 @@ strictly separates skipped text/meta/intact subtrees from button, link,
 language, and paragraph-on-`br` translations. A second option-matrix case
 enables OpenDocument bookmark/sheet/link attributes while proving disabled
 bookmark references, notes, comments, and presentation notes remain intact.
+Two further nested cases exercise the same public filter parse/write API:
+double-nested XLIFF `sub` regions retain depth-first occurrence IDs alongside
+`bpt`/`ept`/`ph` shortcuts, while XHTML keeps an ignored nested subtree and
+its attributes byte-for-byte independent from translated outer/inline
+attributes and paragraph-on-`br` text.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -324,6 +329,13 @@ response. The table uses a bounded real scroll viewport, derives PageUp/PageDown
 distance from currently visible variable-height rows, minimally reveals the
 selection lead after edits, supports reverse Shift extension by mouse, and
 routes Swing's N/P/F/B row/column actions through the shared keyboard model.
+Native row dragging now continuously autoscrolls that real viewport through
+`requestAnimationFrame`; speed is clamped to the remaining scroll extent, and
+the nearest visible row becomes the drop focus until explicit before-first or
+after-last boundaries are reached. The focusable table exposes the exact
+row/column or boundary through `aria-activedescendant`, visually marks only a
+Java-eligible drop target, and restores keyboard focus after drop or editor
+Escape.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
