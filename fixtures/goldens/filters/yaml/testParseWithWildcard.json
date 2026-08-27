@@ -1,0 +1,36 @@
+{
+  "id": "yaml",
+  "fixture": "yaml/sample1.yaml",
+  "java_test": "org.omegat.filters.YamlFilterTest#testParseWithWildcard",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "exclude": "footer/*/*"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Welcome",
+    "Home",
+    "About",
+    "Contact",
+    "(c) 2025 Example Co.",
+    "Enabled features"
+  ],
+  "ids": [
+    "title_0",
+    "menu/items[0]_0",
+    "menu/items[1]_0",
+    "menu/items[2]_0",
+    "footer/copyright_0",
+    "features/description_0"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "---\ntitle: \"Welcome\"\nmenu:\n  items:\n  - \"Home\"\n  - \"About\"\n  - \"Contact\"\nfooter:\n  copyright: \"(c) 2025 Example Co.\"\n  links:\n    help: \"/help\"\n    terms: \"/terms\"\nfeatures:\n  description: \"Enabled features\"\n  enabled: true\n  count: 3\n"
+}

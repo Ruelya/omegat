@@ -1,0 +1,24 @@
+{
+  "id": "yaml",
+  "fixture": "yaml/tips.yaml",
+  "java_test": "org.omegat.filters.YamlFilterTest#testParseWithExcludeFileKey",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "exclude": "**/file"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Call user manual",
+    "Automatic backup"
+  ],
+  "ids": [
+    "tips[0]/name_0",
+    "tips[1]/name_0"
+  ],
+  "paths": [
+    "",
+    ""
+  ],
+  "empty_write_text": "---\ntips:\n- file: \"shortcut_help.html\"\n  name: \"Call user manual\"\n- file: \"automatic_backup.html\"\n  name: \"Automatic backup\"\n"
+}

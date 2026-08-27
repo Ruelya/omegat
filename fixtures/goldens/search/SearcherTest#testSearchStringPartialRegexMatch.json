@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringPartialRegexMatch",
+  "hit": true,
+  "text": "OmegaT version 4.3.2-beta",
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchStringPartialRegexMatch"
+  ]
+}

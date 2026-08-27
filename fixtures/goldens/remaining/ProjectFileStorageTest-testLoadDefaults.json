@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.ProjectFileStorageTest#testLoadDefaults",
+  "source_lang": "en-us",
+  "target_lang": "fr-fr",
+  "source_tok": "org.omegat.tokenizer.LuceneEnglishTokenizer",
+  "target_tok": "org.omegat.tokenizer.LuceneFrenchTokenizer",
+  "sentence_seg": true,
+  "support_default": true,
+  "remove_tags": false,
+  "exclude_count": 6,
+  "exclude0": "**/.svn/**",
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testLoadDefaults"
+  ]
+}
