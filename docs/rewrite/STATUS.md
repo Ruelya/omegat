@@ -44,9 +44,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 - Java `src/main/java`: **779** files / **157825** lines
 - Rewrite Rust: `crates/**/*.rs` **56750** lines; `apps/desktop/src`
-  TS/TSX/CSS **17711** lines (**~47%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **17711**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **7952**
+  TS/TSX/CSS **19697** lines (**~48%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **19697**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **8441**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 132
+native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 137
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -233,7 +233,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**720** vs **963**, `EditorController` **1127** vs **2365**. The headless
+**720** vs **963**, `EditorController` **1210** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -301,6 +301,15 @@ chooses a deterministic next visible entry (or a truly empty view) when a
 reload or rebuilt filter removes the active segment. Exact Zustand and
 controller tests cover commit-before-reload, reordered same-source entries,
 caret clamping, filter retention, and empty-filter recovery.
+External-fix refresh now rebuilds the active segment from the authoritative
+entry without first committing a stale live draft; ordinary refresh retains
+commit-before-rebuild behavior. Controller `changeCase` clamps roaming UTF-16
+selections to the translation, expands a collapsed caret to its current word,
+preserves OmegaT tags, and writes through `EditorTextArea3` / `Document3` with
+undo selection retention. The exporter calls Java `EditorUtils.doChangeCase`
+for **17** inputs across lower/upper/sentence/title/cycle plus a five-step
+cycle sequence; strict desktop equality includes uncased CJK and the
+`Ǉ`/`ǈ`/`ǉ` title-case distinction.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
@@ -322,7 +331,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**21 files / 132 tests**, including exact success and
+**21 files / 137 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -391,7 +400,7 @@ accelerators pass through the same normalizer.
 `IssueCheckerTest` **3/3**, `GlossaryTextAreaTest` **3/3**, and
 `NotesTextAreaTest` **2/2** now use toolkit-independent Rust/desktop product
 models and strict Java-exported values. Eight Swing-facing docks now call the
-shared **380-line** desktop controller path instead of embedding all behavior
+shared **507-line** desktop controller path instead of embedding all behavior
 in JSX. Exact product tests cover score-sorted fuzzy selection before
 insert/overwrite, glossary insertion at the active `Document3` selection,
 per-entry note undo/redo, priority-ordered comment providers, complete-key
@@ -401,6 +410,15 @@ notification rows. Source-only editor navigation now rejects alternatives,
 while alternative navigation compares all six Java `EntryKey` fields; target
 paths preserve POSIX or Windows separators. These additions are desktop model
 evidence, not a claim of Swing toolkit or Windows/macOS package parity.
+Matches, glossary, notes, comments, multiple translations, MT, dictionary, and
+segment properties now expose real pane popup actions through a shared
+keyboard-dismissable/context-menu host. Hit/no-hit notification decisions are
+centralized and visibly surfaced by pane headers. Segment selection and manual
+MT/dictionary/completer loads use abortable latest-request controllers: an
+older result cannot publish after a newer selection, and a cancelled multi-step
+load stops before issuing its next sidecar query. Exact tests prove
+stale-result rejection, notification dispatch, disabled popup actions, and the
+store-level two-selection race.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
