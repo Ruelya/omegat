@@ -350,21 +350,58 @@ try {
     windowX + Math.max(0, (pageMetrics.outerWidth - pageMetrics.innerWidth) / 2);
   const contentTop =
     windowY + Math.max(0, pageMetrics.outerHeight - pageMetrics.innerHeight);
-  const startScreenX = Math.round(contentLeft + initial.startX);
-  const startScreenY = Math.round(contentTop + initial.startY);
-  const edgeScreenX = Math.round(contentLeft + initial.edgeX);
-  const edgeScreenY = Math.round(contentTop + initial.edgeY);
+  let startScreenX = Math.round(contentLeft + initial.startX);
+  let startScreenY = Math.round(contentTop + initial.startY);
+  let edgeScreenX = Math.round(contentLeft + initial.edgeX);
+  let edgeScreenY = Math.round(contentTop + initial.edgeY);
+  await client.evaluate(`(() => {
+    window.__omegatE2ePointer = null;
+    document.addEventListener("pointermove", (event) => {
+      window.__omegatE2ePointer = {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        target: event.target?.id ?? null,
+      };
+    });
+  })()`);
   await xdotool(xvfb.display, [
     "mousemove",
     "--sync",
     String(startScreenX),
     String(startScreenY),
+  ]);
+  const observedPointer = await waitFor("XTEST pointer calibration", () =>
+    client.evaluate("window.__omegatE2ePointer"),
+  );
+  const correctionX = Math.round(initial.startX - observedPointer.clientX);
+  const correctionY = Math.round(initial.startY - observedPointer.clientY);
+  startScreenX += correctionX;
+  startScreenY += correctionY;
+  edgeScreenX += correctionX;
+  edgeScreenY += correctionY;
+  await client.evaluate("window.__omegatE2ePointer = null");
+  await xdotool(xvfb.display, [
+    "mousemove",
+    "--sync",
+    String(startScreenX),
+    String(startScreenY),
+  ]);
+  const calibratedPointer = await waitFor("source-cell pointer target", async () => {
+    const pointer = await client.evaluate("window.__omegatE2ePointer");
+    return pointer?.target === "align-cell-0-source" ? pointer : undefined;
+  });
+  assert.equal(calibratedPointer.target, "align-cell-0-source");
+  await xdotool(xvfb.display, [
     "mousedown",
     "1",
+    "sleep",
+    "0.15",
     "mousemove_relative",
     "--sync",
     "12",
     "6",
+    "sleep",
+    "0.15",
     "mousemove",
     "--sync",
     String(edgeScreenX),
