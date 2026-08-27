@@ -1,0 +1,28 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-xliff-RFE1506.xliff",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testTranslationRFE1506",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "1.0.1",
+    "bar",
+    "組織",
+    "Create",
+    "Emoji"
+  ],
+  "translations": {
+    "Create": "作成",
+    "Emoji": "絵文字"
+  },
+  "translated": {
+    "source": "Create",
+    "translation": "作成"
+  },
+  "translated_write": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xliff version=\"1.2\" xmlns=\"urn:oasis:names:tc:xliff:document:1.2\">\n  <file id=\"92\" original=\"/22.txt\" source-language=\"en\" target-language=\"ja\" datatype=\"plaintext\" project-id=\"375123\" tool-id=\"foo\">\n    <header>\n      <tool tool-id=\"foo\" tool-name=\"Boo\" tool-version=\"1.0\"/>\n    </header>\n    <body>\n      <trans-unit id=\"5078\">\n        <source>1.0.1</source>\n        <target state=\"needs-translation\">1.0.1</target>\n      </trans-unit>\n      <trans-unit id=\"5086\" approved=\"yes\">\n        <source>foo</source>\n        <target state=\"final\">bar</target>\n      </trans-unit>\n      <trans-unit id=\"5088\" approved=\"yes\">\n        <source>Organization</source>\n        <target state=\"needs-review-translation\">組織</target>\n      </trans-unit>\n      <trans-unit id=\"5090\">\n        <source>Create</source>\n        <target state=\"translated\">作成</target>\n      </trans-unit>\n     <trans-unit id=\"5128\" approved=\"yes\">\n        <source>Emoji</source>\n        <target state=\"translated\">絵文字</target>\n      </trans-unit>\n    </body>\n  </file>\n</xliff>",
+  "translated_write_review": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xliff version=\"1.2\" xmlns=\"urn:oasis:names:tc:xliff:document:1.2\">\n  <file id=\"92\" original=\"/22.txt\" source-language=\"en\" target-language=\"ja\" datatype=\"plaintext\" project-id=\"375123\" tool-id=\"foo\">\n    <header>\n      <tool tool-id=\"foo\" tool-name=\"Boo\" tool-version=\"1.0\"/>\n    </header>\n    <body>\n      <trans-unit id=\"5078\">\n        <source>1.0.1</source>\n        <target state=\"needs-translation\">1.0.1</target>\n      </trans-unit>\n      <trans-unit id=\"5086\" approved=\"yes\">\n        <source>foo</source>\n        <target state=\"final\">bar</target>\n      </trans-unit>\n      <trans-unit id=\"5088\" approved=\"yes\">\n        <source>Organization</source>\n        <target state=\"needs-review-translation\">組織</target>\n      </trans-unit>\n      <trans-unit id=\"5090\">\n        <source>Create</source>\n        <target state=\"needs-review-translation\">作成</target>\n      </trans-unit>\n     <trans-unit id=\"5128\" approved=\"yes\">\n        <source>Emoji</source>\n        <target state=\"needs-review-translation\">絵文字</target>\n      </trans-unit>\n    </body>\n  </file>\n</xliff>"
+}

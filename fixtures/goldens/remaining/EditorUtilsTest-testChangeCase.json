@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.editor.EditorUtilsTest#testChangeCase",
+  "input": "lower case only",
+  "lower": "lower case only",
+  "upper": "LOWER CASE ONLY",
+  "sentence": "Lower case only",
+  "title": "Lower Case Only"
+}

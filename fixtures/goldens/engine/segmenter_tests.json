@@ -1,0 +1,118 @@
+{
+  "java_test": "org.omegat.core.segmentation.SegmenterTest#testSegment",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "java_test": "org.omegat.core.segmentation.SegmenterTest#testSegment",
+      "name": "testSegment",
+      "lang": "en",
+      "input": "<br7>\n\n<br5>\n\nother",
+      "sentences": [
+        "<br7>",
+        "<br5>",
+        "other"
+      ],
+      "spaces": [
+        "",
+        "",
+        "\n\n",
+        "",
+        "\n\n",
+        ""
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.segmentation.SegmenterTest#testGlue",
+      "name": "testGlue",
+      "source_lang": "en",
+      "target_lang": "fr",
+      "input": "<br7>\n\n<br5>\n\nother",
+      "sentences": [
+        "<br7>",
+        "<br5>",
+        "other"
+      ],
+      "spaces": [
+        "",
+        "",
+        "\n\n",
+        "",
+        "\n\n",
+        ""
+      ],
+      "glued": "<br7>\n\n<br5>\n\nother"
+    },
+    {
+      "java_test": "org.omegat.core.segmentation.SegmenterTest#testGlueCJK",
+      "name": "testGlueCJK",
+      "source_lang": "en",
+      "target_lang": "ja",
+      "input": "Foo. Bar.\nHere.\n\nThere.\r\nThis.\tThat.\n\tOther.",
+      "sentences": [
+        "Foo\\u3002",
+        "Bar\\u3002",
+        "Here\\u3002",
+        "There\\u3002",
+        "This\\u3002",
+        "That\\u3002",
+        "Other\\u3002"
+      ],
+      "spaces": [
+        "",
+        "",
+        " ",
+        "",
+        "\n",
+        "",
+        "\n\n",
+        "",
+        "\r\n",
+        "",
+        "\t",
+        "",
+        "\n\t",
+        ""
+      ],
+      "glued": "Foo\\u3002Bar\\u3002\nHere\\u3002\n\nThere\\u3002\r\nThis\\u3002\tThat\\u3002\n\tOther\\u3002"
+    },
+    {
+      "java_test": "org.omegat.core.segmentation.SegmenterTest#testGlueCJK",
+      "name": "testGlueCJK",
+      "source_lang": "en",
+      "target_lang": "ja",
+      "input": "Foo. \n Bar.",
+      "sentences": [
+        "Foo\\u3002",
+        "",
+        "Bar\\u3002"
+      ],
+      "spaces": [
+        "",
+        "",
+        " \n",
+        "",
+        " ",
+        ""
+      ],
+      "glued": "Foo\\u3002\n Bar\\u3002"
+    },
+    {
+      "java_test": "org.omegat.core.segmentation.SegmenterTest#testGlueCJK",
+      "name": "testGlueCJK",
+      "source_lang": "en",
+      "target_lang": "ja",
+      "input": "Foo. \t Bar.",
+      "sentences": [
+        "Foo\\u3002",
+        "Bar\\u3002"
+      ],
+      "spaces": [
+        "",
+        "",
+        " \t ",
+        ""
+      ],
+      "glued": "Foo\\u3002\t Bar\\u3002"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ProjectPropertiesTest#test2",
+  "source": "/some/dir/1/",
+  "under_root": true,
+  "under": "dir/1/",
+  "keys": [
+    "org.omegat.core.data.ProjectPropertiesTest#test2"
+  ]
+}

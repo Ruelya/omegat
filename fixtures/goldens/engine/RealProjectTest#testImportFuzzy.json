@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.RealProjectTest#testImportFuzzy",
+  "has_default": false,
+  "has_alt": false,
+  "keys": [
+    "org.omegat.core.data.RealProjectTest#testImportFuzzy"
+  ]
+}
