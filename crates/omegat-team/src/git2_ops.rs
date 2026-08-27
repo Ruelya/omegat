@@ -266,6 +266,49 @@ pub fn commit(dir: &Path, message: &str) -> Result<String> {
     }
 }
 
+/// Restore an earlier tree without rewriting published history.
+///
+/// A multi-repository sync can publish one repository before another remote
+/// rejects its push. In that case a normal compensating commit is safer than a
+/// force-push: the remote branch remains fast-forward-only, while its visible
+/// files return to the tree observed before the transaction.
+pub fn commit_tree_from_version(
+    dir: &Path,
+    version: &str,
+    message: &str,
+) -> Result<Option<String>> {
+    let repo = open(dir)?;
+    let previous = repo
+        .find_commit(git2::Oid::from_str(version).map_err(map_err)?)
+        .map_err(map_err)?;
+    let previous_tree = previous.tree().map_err(map_err)?;
+    let parent = repo
+        .head()
+        .and_then(|head| head.peel_to_commit())
+        .map_err(map_err)?;
+    if parent.tree_id() == previous_tree.id() {
+        return Ok(None);
+    }
+    let sig = repo
+        .signature()
+        .or_else(|_| Signature::now("OmegaT", "omegat@example.com"))
+        .map_err(map_err)?;
+    let id = repo
+        .commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            message,
+            &previous_tree,
+            &[&parent],
+        )
+        .map_err(map_err)?;
+    let mut checkout = CheckoutBuilder::new();
+    checkout.force().remove_untracked(true);
+    repo.checkout_head(Some(&mut checkout)).map_err(map_err)?;
+    Ok(Some(id.to_string()))
+}
+
 pub fn push(dir: &Path, remote: &str, refspec: &str, user: &UserPass) -> Result<()> {
     let repo = open(dir)?;
     let mut rem = repo.find_remote(remote).map_err(map_err)?;

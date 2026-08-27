@@ -132,6 +132,53 @@ pub fn commit_and_push_after(
     Ok(Some(version))
 }
 
+pub fn rollback_published(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    version: &str,
+) -> Result<()> {
+    let dir = repo_work_dir(props, repo);
+    let user = git_credentials_provider::for_repo(props, repo);
+    let restored = git2_ops::commit_tree_from_version(
+        &dir,
+        version,
+        "OmegaT rollback incomplete multi-repository sync",
+    )?;
+    if restored.is_none() {
+        return Ok(());
+    }
+    let branch = if is_inplace(props, repo) {
+        git2_ops::current_branch(&dir)?
+    } else if let Some(branch) = &repo.branch {
+        branch.clone()
+    } else {
+        git2_ops::current_branch(&dir)?
+    };
+    let spec = if is_inplace(props, repo) {
+        format!("refs/heads/{branch}:refs/heads/{branch}")
+    } else {
+        format!("HEAD:refs/heads/{branch}")
+    };
+    git2_ops::push(&dir, "origin", &spec, &user)
+}
+
+pub fn rollback_unpublished(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    version: &str,
+) -> Result<()> {
+    let dir = repo_work_dir(props, repo);
+    let branch = if let Some(branch) = &repo.branch {
+        branch.clone()
+    } else {
+        git2_ops::current_branch(&dir)?
+    };
+    git2_ops::checkout_version(&dir, version, &branch)?;
+    let user = git_credentials_provider::for_repo(props, repo);
+    git2_ops::update_submodules(&dir, &user)?;
+    Ok(())
+}
+
 pub fn switch_to_version(
     props: &ProjectProperties,
     repo: &RepositoryDef,

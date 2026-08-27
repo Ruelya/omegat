@@ -495,6 +495,126 @@ mod tests {
     }
 
     #[test]
+    fn multi_repository_prepare_failure_restores_project_before_any_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let remote_a = dir.path().join("remote-a");
+        let remote_b = dir.path().join("remote-b");
+        std::fs::create_dir_all(&remote_a).unwrap();
+        std::fs::create_dir_all(&remote_b).unwrap();
+        std::fs::write(remote_a.join("first.txt"), "remote first").unwrap();
+        std::fs::write(remote_b.join("child.txt"), "remote child").unwrap();
+
+        let mut props = team_props(
+            dir.path().join("project"),
+            "file",
+            &remote_a.to_string_lossy(),
+            vec![RepositoryMapping {
+                local: "source/first.txt".into(),
+                repository: "first.txt".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        );
+        props.repositories.push(RepositoryDef {
+            repo_type: "file".into(),
+            url: remote_b.to_string_lossy().into_owned(),
+            branch: None,
+            mappings: vec![RepositoryMapping {
+                local: "source/blocker/child.txt".into(),
+                repository: "child.txt".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        });
+        props.write().unwrap();
+        std::fs::write(props.source_dir.join("first.txt"), "local first").unwrap();
+        std::fs::write(props.source_dir.join("blocker"), "local blocker").unwrap();
+
+        let error = sync(&props).unwrap_err();
+        assert!(matches!(error, TeamError::Io(_)), "{error:?}");
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("first.txt")).unwrap(),
+            "local first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("blocker")).unwrap(),
+            "local blocker"
+        );
+        assert_eq!(
+            std::fs::read_to_string(remote_a.join("first.txt")).unwrap(),
+            "remote first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(remote_b.join("child.txt")).unwrap(),
+            "remote child"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn multi_git_push_failure_compensates_already_published_repository() {
+        use std::os::unix::fs::PermissionsExt;
+
+        if Command::new("git").arg("--version").output().is_err() {
+            panic!("git is required for multi-repository transaction test");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bare_a = dir.path().join("remote-a.git");
+        let bare_b = dir.path().join("remote-b.git");
+        seed_bare(&bare_a, &dir.path().join("seed-a"));
+        seed_bare(&bare_b, &dir.path().join("seed-b"));
+        let rejecting_hook = bare_b.join("hooks").join("pre-receive");
+        std::fs::write(&rejecting_hook, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut permissions = std::fs::metadata(&rejecting_hook).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&rejecting_hook, permissions).unwrap();
+
+        let mut props = team_props(
+            dir.path().join("project"),
+            "git",
+            &bare_a.to_string_lossy(),
+            vec![RepositoryMapping {
+                local: "source/first.txt".into(),
+                repository: "first.txt".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        );
+        props.repositories.push(RepositoryDef {
+            repo_type: "git".into(),
+            url: bare_b.to_string_lossy().into_owned(),
+            branch: Some("main".into()),
+            mappings: vec![RepositoryMapping {
+                local: "source/second.txt".into(),
+                repository: "second.txt".into(),
+                includes: vec![],
+                excludes: vec![],
+            }],
+        });
+        props.write().unwrap();
+        std::fs::write(props.source_dir.join("first.txt"), "local first").unwrap();
+        std::fs::write(props.source_dir.join("second.txt"), "local second").unwrap();
+
+        let error = sync(&props).unwrap_err();
+        assert!(matches!(error, TeamError::Command(_)), "{error:?}");
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("first.txt")).unwrap(),
+            "local first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("second.txt")).unwrap(),
+            "local second"
+        );
+
+        let first = git2::Repository::open_bare(&bare_a).unwrap();
+        let first_tree = first.head().unwrap().peel_to_tree().unwrap();
+        assert!(first_tree.get_path(Path::new("first.txt")).is_err());
+        let second = git2::Repository::open_bare(&bare_b).unwrap();
+        let second_tree = second.head().unwrap().peel_to_tree().unwrap();
+        assert!(second_tree.get_path(Path::new("second.txt")).is_err());
+    }
+
+    #[test]
     fn git_provider_versions_guard_commit_and_switch() {
         let dir = tempfile::tempdir().unwrap();
         let bare = dir.path().join("remote.git");
@@ -562,11 +682,7 @@ mod tests {
             "remote"
         );
 
-        crate::git2_ops::pull_ff(
-            &seed,
-            &crate::user_pass_dialog::UserPass::new("", ""),
-        )
-        .unwrap();
+        crate::git2_ops::pull_ff(&seed, &crate::user_pass_dialog::UserPass::new("", "")).unwrap();
         std::fs::remove_file(seed.join("source/remote.txt")).unwrap();
         crate::git_remote_repository2::commit(&seed, "delete remote").unwrap();
         crate::git2_ops::push(
