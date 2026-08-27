@@ -121,8 +121,18 @@ pub fn copy_mapped_from_worktree(
     }
     for mapping in effective_mappings(repo) {
         let (from_root, from_rel, to_root, to_rel) = match dir {
-            CopyDir::RepoToProject => (wc, &mapping.repository, &props.root, &mapping.local),
-            CopyDir::ProjectToRepo => (&props.root, &mapping.local, wc, &mapping.repository),
+            CopyDir::RepoToProject => (
+                wc,
+                &mapping.repository,
+                props.root.as_path(),
+                &mapping.local,
+            ),
+            CopyDir::ProjectToRepo => (
+                props.root.as_path(),
+                &mapping.local,
+                wc,
+                &mapping.repository,
+            ),
         };
         let from = join_mapped(from_root, from_rel);
         let to = join_mapped(to_root, to_rel);
