@@ -314,7 +314,7 @@ try {
   assert.equal(crash.rejected, true);
   assert.match(
     crash.message,
-    /^plugin marker example\.native-marker failed: isolated worker exited /,
+    /^Error invoking remote method 'rpc': Error: plugin marker example\.native-marker failed: isolated worker exited /,
   );
 
   const alive = await client.evaluate("window.omegat.rpc('sys.version', {})", true);
