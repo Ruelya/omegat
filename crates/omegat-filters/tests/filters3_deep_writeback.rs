@@ -513,7 +513,10 @@ fn docbook_nested_indexterm_attributes_and_text_share_stable_ids() {
     assert_eq!(terms.len(), 2);
     assert_eq!(para.attribute("url"), Some("URL extérieure"));
     assert_eq!(terms[0].attribute("url"), Some("URL index"));
-    assert_eq!(terms[1].attribute("lang"), Some("fr"));
+    assert_eq!(
+        terms[1].attribute(("http://www.w3.org/XML/1998/namespace", "lang")),
+        Some("fr")
+    );
     assert_eq!(
         element_names_and_text(&rewritten).1,
         vec![
