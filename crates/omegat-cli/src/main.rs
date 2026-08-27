@@ -4,6 +4,7 @@ use omegat_core::error::CoreError;
 use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_ipc::SearchParams;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -179,7 +180,7 @@ enum TeamCmd {
 
 fn main() -> Result<()> {
     env_logger::init();
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(normalize_empty_config_dir(std::env::args_os()));
     if cli.no_team {
         std::env::set_var("OMEGAT_NO_TEAM", "1");
     }
@@ -425,6 +426,26 @@ fn main() -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn normalize_empty_config_dir(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut args = args.into_iter().peekable();
+    let mut normalized = Vec::new();
+    while let Some(arg) = args.next() {
+        if arg == "--config-dir=" {
+            continue;
+        }
+        if arg == "--config-dir"
+            && args
+                .peek()
+                .is_some_and(|value| value.is_empty())
+        {
+            args.next();
+            continue;
+        }
+        normalized.push(arg);
+    }
+    normalized
 }
 
 fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
