@@ -1842,23 +1842,20 @@ try {
     "fingerprint FIFO recovery in replacement sidecar",
     async () => {
       const state = await editorState(client);
-      const product = await client.evaluate(`(async () => {
+      const product = await client.evaluate(`(() => {
         const app = document.querySelector(".app");
-        const entries = await window.omegat.rpc("entry.list", {});
         const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
         return {
           operation: app?.dataset.operation ?? "",
           phase: app?.dataset.operationPhase ?? "",
-          entries: entries.length,
           conflictKeys: rows.map((row) =>
             row.getAttribute("data-team-conflict-key") ?? ""
           ),
         };
-      })()`, true);
+      })()`);
       if (
         product.operation === "externalRefresh"
         && product.phase === "succeeded"
-        && product.entries === sidecarRestartBefore.entries + 1
         && product.conflictKeys.length === 2
         && state.key === sidecarRestartBefore.editor.key
         && state.translation === sidecarRestartBefore.editor.translation
@@ -1868,6 +1865,14 @@ try {
       }
       throw new Error(JSON.stringify({ product, state }));
     },
+  );
+  const sidecarRestartEntries = await client.evaluate(
+    "window.omegat.rpc('entry.list', {})",
+    true,
+  );
+  assert.equal(
+    sidecarRestartEntries.length,
+    sidecarRestartBefore.entries + 1,
   );
   assert.deepEqual(
     new Set(sidecarRestartRecovered.product.conflictKeys),
@@ -1887,7 +1892,7 @@ try {
     replacementPid: replacementRefreshSidecar.pid,
     journalPresentBeforeKill: true,
     journalRemovedAfterCommit: true,
-    entries: sidecarRestartRecovered.product.entries,
+    entries: sidecarRestartEntries.length,
     completeEntryKey: JSON.parse(sidecarRestartRecovered.editor.key),
     conflictKeys: sidecarRestartRecovered.product.conflictKeys.map((key) =>
       JSON.parse(key)
