@@ -382,3 +382,146 @@ fn opendoc_nested_out_of_turn_and_attributes_share_one_stable_id_stream() {
         vec!["Extérieur", "Interne", "lié", "fin"]
     );
 }
+
+#[test]
+fn xliff_nested_sub_writeback_preserves_depth_with_out_of_order_translations() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("nested.xlf");
+    let output = temp.path().join("translated.xlf");
+    std::fs::write(
+        &source,
+        r#"<xliff version="1.2"><file><body><trans-unit id="unit"><source>Source</source><target state="new">Before <sub>Outer <sub>Inner</sub> tail</sub> after</target></trans-unit></body></file></xliff>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("xliff").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| segment.source.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Inner", "Outer <s0/> tail", "Before <s0/> after",]
+    );
+
+    let translations = HashMap::from([
+        ("Before <s0/> after".into(), "Avant <s0/> après".into()),
+        ("Inner".into(), "Intérieur".into()),
+        ("Outer <s0/> tail".into(), "Extérieur <s0/> fin".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| segment.source.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Intérieur", "Extérieur <s0/> fin", "Avant <s0/> après",]
+    );
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let target = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "target")
+        .unwrap();
+    assert_eq!(target.attribute("state"), Some("translated"));
+    let subs: Vec<_> = target
+        .descendants()
+        .filter(|node| node.tag_name().name() == "sub")
+        .collect();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(
+        element_names_and_text(&rewritten).1,
+        vec!["Source", "Avant", "Extérieur", "Intérieur", "fin", "après",]
+    );
+}
+
+#[test]
+fn docbook_nested_indexterm_attributes_and_text_share_stable_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("nested.dbk");
+    let output = temp.path().join("translated.dbk");
+    std::fs::write(
+        &source,
+        r#"<book><para url="Outer URL">Before <indexterm url="Index URL"><primary>Outer index <indexterm xml:lang="en"><secondary>Inner index</secondary></indexterm> tail</primary></indexterm> after</para></book>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("docbook").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "Outer URL"),
+            ("1", "Index URL"),
+            ("2", "en"),
+            ("3", "Inner index"),
+            ("4", "Outer index <i0/> tail"),
+            ("5", "Before <i0/> after"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("5".into(), "Avant <i0/> après".into()),
+        ("2".into(), "fr".into()),
+        ("4".into(), "Index extérieur <i0/> fin".into()),
+        ("0".into(), "URL extérieure".into()),
+        ("3".into(), "Index intérieur".into()),
+        ("1".into(), "URL index".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "URL extérieure"),
+            ("1", "URL index"),
+            ("2", "fr"),
+            ("3", "Index intérieur"),
+            ("4", "Index extérieur <i0/> fin"),
+            ("5", "Avant <i0/> après"),
+        ]
+    );
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let para = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "para")
+        .unwrap();
+    let terms: Vec<_> = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "indexterm")
+        .collect();
+    assert_eq!(terms.len(), 2);
+    assert_eq!(para.attribute("url"), Some("URL extérieure"));
+    assert_eq!(terms[0].attribute("url"), Some("URL index"));
+    assert_eq!(terms[1].attribute("lang"), Some("fr"));
+    assert_eq!(
+        element_names_and_text(&rewritten).1,
+        vec![
+            "Avant",
+            "Index extérieur",
+            "Index intérieur",
+            "fin",
+            "après",
+        ]
+    );
+}
