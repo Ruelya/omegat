@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testUpdateProgressColumnRemovesAndRestoresColumn",
+  "hidden_count": 1,
+  "shown_count": 2,
+  "keys": [
+    "org.omegat.gui.filelist.ProjectFilesListControllerTest#testUpdateProgressColumnRemovesAndRestoresColumn"
+  ]
+}

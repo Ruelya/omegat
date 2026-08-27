@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.text.LineLengthLimitWriterTest#testWrite",
+  "line_length": 80,
+  "max_length": 100,
+  "keys": [
+    "org.omegat.filters2.text.LineLengthLimitWriterTest#testWrite"
+  ]
+}
