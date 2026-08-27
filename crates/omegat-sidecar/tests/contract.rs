@@ -306,5 +306,33 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
         ])
     );
 
+    let dropped = rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "align.edit",
+        json!({
+            "action":"move-to-row",
+            "side":"source",
+            "start_row":1,
+            "end_row":2,
+            "target_row":4,
+            "beads":[
+                {"source":"a b","target":"A","source_lines":["a","b"],"target_lines":["A"],"score":1,"status":"accepted","enabled":true},
+                {"source":"c","target":"C D","source_lines":["c"],"target_lines":["C","D"],"score":2,"status":"needs-review","enabled":true},
+                {"source":"e","target":"E","source_lines":["e"],"target_lines":["E"],"score":3,"status":"accepted","enabled":true}
+            ]
+        }),
+    );
+    assert_eq!(
+        dropped["result"]["beads"],
+        json!([
+            {"source":"a","target":"A","source_lines":["a"],"target_lines":["A"],"score":1.0,"status":"default","enabled":true},
+            {"source":"","target":"C D","source_lines":[],"target_lines":["C","D"],"score":2.0,"status":"default","enabled":true},
+            {"source":"c b e","target":"E","source_lines":["c","b","e"],"target_lines":["E"],"score":3.0,"status":"default","enabled":true}
+        ])
+    );
+    assert_eq!(dropped["result"]["row_count"], 5);
+
     let _ = child.kill();
 }
