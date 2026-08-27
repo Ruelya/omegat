@@ -332,7 +332,7 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
             {"source":"c b e","target":"E","source_lines":["c","b","e"],"target_lines":["E"],"score":3.0,"status":"default","enabled":true}
         ])
     );
-    assert_eq!(dropped["result"]["row_count"], 5);
+    assert_eq!(dropped["result"]["row_count"], 6);
 
     let _ = child.kill();
 }
