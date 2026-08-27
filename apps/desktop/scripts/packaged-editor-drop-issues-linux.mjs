@@ -305,7 +305,7 @@ try {
     throw new Error(JSON.stringify(state));
   });
   assert.deepEqual(opened.entries.map(({ file, source }) => ({ file, source })), [{
-    file: "source/a-issue.txt",
+    file: "a-issue.txt",
     source: "Keep <x0/> tag.",
   }]);
 
@@ -317,8 +317,8 @@ try {
   assert.deepEqual(
     imported.map(({ file, source }) => ({ file, source })),
     [
-      { file: "source/a-issue.txt", source: "Keep <x0/> tag." },
-      { file: "source/b-imported.txt", source: "Imported by packaged drag." },
+      { file: "a-issue.txt", source: "Keep <x0/> tag." },
+      { file: "b-imported.txt", source: "Imported by packaged drag." },
     ],
   );
   assert.equal(
@@ -371,7 +371,7 @@ try {
   assert.deepEqual(leaveIssue, {
     activeSource: "Imported by packaged drag.",
     issueIndex: 0,
-    issueFile: "source/a-issue.txt",
+    issueFile: "a-issue.txt",
     issueText: "tag Tag MISSING",
     modal: true,
   });
