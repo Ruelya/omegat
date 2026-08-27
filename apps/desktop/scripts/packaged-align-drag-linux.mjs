@@ -261,8 +261,6 @@ try {
   await xdotool(xvfb.display, ["windowfocus", "--sync", windowId]);
   await xdotool(xvfb.display, [
     "key",
-    "--window",
-    windowId,
     "--delay",
     "80",
     "F10",
