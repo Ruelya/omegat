@@ -254,6 +254,15 @@ try {
     initialPid,
     "DevTools attached to a different Electron main process",
   );
+  const initialArgv = await processArgv(initialPid);
+  assert(
+    initialArgv.includes(`--remote-debugging-port=${port}`),
+    `Initial package arguments were unexpected: ${JSON.stringify(initialArgv)}`,
+  );
+  assert(
+    initialArgv.includes(marker),
+    `Initial package marker was missing: ${JSON.stringify(initialArgv)}`,
+  );
   const firstTarget = await waitFor("initial packaged renderer", () =>
     pageTarget(port),
   );
@@ -286,8 +295,14 @@ try {
   });
   restartedPid = await browserPid(secondBrowser.webSocketDebuggerUrl);
   const restartedArgv = await processArgv(restartedPid);
-  assert(restartedArgv.includes(`--remote-debugging-port=${port}`));
-  assert(restartedArgv.includes(marker));
+  assert(
+    restartedArgv.includes(`--remote-debugging-port=${port}`),
+    `Restarted package dropped arguments: ${JSON.stringify(restartedArgv)}`,
+  );
+  assert(
+    restartedArgv.includes(marker),
+    `Restarted package dropped its marker: ${JSON.stringify(restartedArgv)}`,
+  );
   assert.notEqual(restartedPid, initialPid);
 
   await waitFor("original packaged sidecar to exit", () =>
