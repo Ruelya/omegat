@@ -13,6 +13,7 @@ import {
   moveCaret,
   snapCaret,
 } from "../lib/editor-doc";
+import { getWordBoundary, removeDirectionChars } from "./EditorUtils";
 
 export type PopupMenuConstructor = {
   priority: number;
@@ -28,6 +29,8 @@ type CompositionSession = {
   currentText: string;
 };
 
+export type SelectionDirection = "forward" | "backward" | "none";
+
 export class EditorTextArea3 {
   doc: Document3State;
   private caretPosition = 0;
@@ -38,9 +41,12 @@ export class EditorTextArea3 {
   private sourceLocale = "und";
   private targetLocale = "und";
   private currentWord: string | null = null;
+  private currentWordLocale = "und";
+  private focused = false;
   private composition: CompositionSession | null = null;
   private readonly popupConstructors: PopupMenuConstructor[] = [];
   private readonly wordListeners = new Set<(word: string | null, locale: string) => void>();
+  private readonly focusListeners = new Set<(focused: boolean) => void>();
 
   constructor(source = "", translation = "") {
     this.doc = createDocument3(source, translation);
@@ -49,10 +55,19 @@ export class EditorTextArea3 {
     this.selectionFocus = this.caretPosition;
   }
 
-  setDocument(doc: Document3State): void {
+  setDocument(doc: Document3State, preserveSelection = false): void {
+    const anchor = this.selectionAnchor - this.doc.translationStart;
+    const focus = this.selectionFocus - this.doc.translationStart;
     this.composition = null;
     this.doc = doc;
-    this.setCaretPosition(doc.translationEnd);
+    if (preserveSelection) {
+      this.setSelection(
+        doc.translationStart + Math.max(0, Math.min(anchor, doc.translation.length)),
+        doc.translationStart + Math.max(0, Math.min(focus, doc.translation.length)),
+      );
+    } else {
+      this.setCaretPosition(doc.translationEnd);
+    }
   }
 
   getOmDocument(): Document3State {
@@ -95,6 +110,23 @@ export class EditorTextArea3 {
     this.selectionFocus = this.caretPosition;
   }
 
+  getSelectionDirection(): SelectionDirection {
+    if (this.selectionAnchor === this.selectionFocus) return "none";
+    return this.selectionAnchor < this.selectionFocus ? "forward" : "backward";
+  }
+
+  getSelectionAnchor(): number {
+    return this.selectionAnchor;
+  }
+
+  getSelectionFocus(): number {
+    return this.selectionFocus;
+  }
+
+  collapseSelection(to: "start" | "end" = "end"): void {
+    this.setCaretPosition(to === "start" ? this.getSelectionStart() : this.getSelectionEnd());
+  }
+
   selectAll(): void {
     this.selectionAnchor = this.doc.translationStart;
     this.selectionFocus = this.doc.translationEnd;
@@ -110,7 +142,9 @@ export class EditorTextArea3 {
   }
 
   getSelectedText(): string {
-    return this.doc.fullText.slice(this.getSelectionStart(), this.getSelectionEnd());
+    return removeDirectionChars(
+      this.doc.fullText.slice(this.getSelectionStart(), this.getSelectionEnd()),
+    );
   }
 
   replaceSelection(text: string): boolean {
@@ -126,7 +160,9 @@ export class EditorTextArea3 {
   insertText(text: string): boolean {
     if (this.getSelectionStart() !== this.getSelectionEnd()) return this.replaceSelection(text);
     const start = this.caretPosition;
-    const remove = this.overtypeMode && start < this.doc.translationEnd ? 1 : 0;
+    const remove = this.overtypeMode
+      ? Math.min(text.length, this.doc.translationEnd - start)
+      : 0;
     const before = this.doc;
     this.doc = applyDocumentEdit(this.doc, start, remove, text);
     if (this.doc === before) return false;
@@ -135,6 +171,7 @@ export class EditorTextArea3 {
   }
 
   beginComposition(): boolean {
+    this.clampSelectionToTranslation();
     if (this.composition || !this.isInActiveTranslation(this.caretPosition)) return false;
     const start = this.getSelectionStart();
     const end = this.getSelectionEnd();
@@ -243,6 +280,74 @@ export class EditorTextArea3 {
     return this.caretPosition;
   }
 
+  moveByToken(direction: -1 | 1, extendSelection = false): number {
+    const inTarget = this.isInActiveTranslation(this.caretPosition);
+    if (!inTarget) return this.caretPosition;
+    const relative = this.caretPosition - this.doc.translationStart;
+    const locale = this.targetLocale;
+    const probe = direction < 0 ? Math.max(0, relative - 1) : relative;
+    const boundary = getWordBoundary(locale, this.doc.translation, probe, direction > 0);
+    const next = this.doc.translationStart + boundary;
+    if (extendSelection) {
+      this.caretPosition = next;
+      this.selectionFocus = next;
+      this.notifyWordAtCaret();
+    } else {
+      this.setCaretPosition(next, direction < 0 ? "before" : "after");
+    }
+    return this.caretPosition;
+  }
+
+  deleteToken(direction: -1 | 1): boolean {
+    if (this.getSelectionStart() !== this.getSelectionEnd()) return this.deleteSelectionAtomic();
+    const origin = this.caretPosition;
+    const boundary = this.moveByToken(direction, true);
+    if (boundary === origin) return false;
+    return this.deleteSelectionAtomic();
+  }
+
+  /**
+   * Swing's paste/cut hooks forcibly trim a roaming selection back to the
+   * active translation before mutating the document.
+   */
+  clampSelectionToTranslation(force = true): void {
+    if (!force && !this.lockCursorToInputArea) return;
+    if (!this.doc.editMode) return;
+    const clamp = (position: number) =>
+      Math.max(this.doc.translationStart, Math.min(position, this.doc.translationEnd));
+    this.selectionAnchor = clamp(this.selectionAnchor);
+    this.selectionFocus = clamp(this.selectionFocus);
+    this.caretPosition = this.selectionFocus;
+    this.notifyWordAtCaret();
+  }
+
+  pasteText(text: string): boolean {
+    this.clampSelectionToTranslation();
+    return this.replaceSelection(text);
+  }
+
+  cutSelection(): string | null {
+    this.clampSelectionToTranslation();
+    if (this.getSelectionStart() === this.getSelectionEnd()) return null;
+    const selected = this.getSelectedText();
+    return this.deleteSelectionAtomic() ? selected : null;
+  }
+
+  selectTagAt(position: number): boolean {
+    if (!this.isInActiveTranslation(position)) return false;
+    const relative = position - this.doc.translationStart;
+    const tag = /<\/?[A-Za-z][\w:-]*\d*\/?>/g;
+    for (const match of this.doc.translation.matchAll(tag)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      if (relative >= start && relative < end) {
+        this.setSelection(this.doc.translationStart + start, this.doc.translationStart + end);
+        return true;
+      }
+    }
+    return false;
+  }
+
   isInActiveTranslation(position: number): boolean {
     return (
       this.doc.editMode &&
@@ -272,10 +377,12 @@ export class EditorTextArea3 {
 
   setSourceLocale(locale: string): void {
     this.sourceLocale = locale || "und";
+    this.notifyWordAtCaret();
   }
 
   setTargetLocale(locale: string): void {
     this.targetLocale = locale || "und";
+    this.notifyWordAtCaret();
   }
 
   registerPopupMenuConstructor(constructor: PopupMenuConstructor): () => void {
@@ -298,6 +405,28 @@ export class EditorTextArea3 {
     return () => this.wordListeners.delete(listener);
   }
 
+  focus(): void {
+    if (this.focused) return;
+    this.focused = true;
+    for (const listener of this.focusListeners) listener(true);
+  }
+
+  blur(): void {
+    if (!this.focused) return;
+    if (this.composition) this.commitComposition();
+    this.focused = false;
+    for (const listener of this.focusListeners) listener(false);
+  }
+
+  hasFocus(): boolean {
+    return this.focused;
+  }
+
+  onFocusChanged(listener: (focused: boolean) => void): () => void {
+    this.focusListeners.add(listener);
+    return () => this.focusListeners.delete(listener);
+  }
+
   private notifyWordAtCaret(): void {
     const inTarget = this.isInActiveTranslation(this.caretPosition);
     const text = inTarget ? this.doc.translation : this.doc.source;
@@ -307,9 +436,10 @@ export class EditorTextArea3 {
     const left = text.slice(0, relative).match(/[\p{L}\p{N}_]+$/u)?.[0] ?? "";
     const right = text.slice(relative).match(/^[\p{L}\p{N}_]+/u)?.[0] ?? "";
     const word = `${left}${right}` || null;
-    if (word === this.currentWord) return;
-    this.currentWord = word;
     const locale = inTarget ? this.targetLocale : this.sourceLocale;
+    if (word === this.currentWord && locale === this.currentWordLocale) return;
+    this.currentWord = word;
+    this.currentWordLocale = locale;
     for (const listener of this.wordListeners) listener(word, locale);
   }
 }

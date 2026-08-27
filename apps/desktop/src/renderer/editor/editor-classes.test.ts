@@ -168,6 +168,42 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(area.getText()).toBe("a<x0/>bあい");
   });
 
+  it("EditorTextArea3 models directional selection, clipboard, token and focus events", () => {
+    const area = new EditorTextArea3("source", "one \u200etwo <x0/> 😀");
+    const end = area.getOmDocument().translationEnd;
+    area.setSelection(end, 0);
+    expect(area.getSelectionDirection()).toBe("backward");
+    expect(area.getSelectedText()).toBe("one two <x0/> 😀");
+
+    area.setCaretPosition(area.getText().indexOf("two") + "two".length);
+    expect(area.deleteToken(-1)).toBe(true);
+    expect(area.getText()).toBe("one \u200e <x0/> 😀");
+
+    const tag = area.getText().indexOf("<x0/>");
+    expect(area.selectTagAt(tag + 2)).toBe(true);
+    expect(area.getSelectedText()).toBe("<x0/>");
+    expect(area.pasteText("<x1/>")).toBe(true);
+    expect(area.getText()).toBe("one \u200e <x1/> 😀");
+
+    const events: boolean[] = [];
+    area.onFocusChanged((focused) => events.push(focused));
+    area.focus();
+    area.focus();
+    area.blur();
+    expect(events).toEqual([true, false]);
+  });
+
+  it("EditorTextArea3 overtype replaces the inserted UTF-16 width", () => {
+    const area = new EditorTextArea3("source", "abcde");
+    area.setCaretPosition(1);
+    area.toggleOvertype();
+    expect(area.insertText("XY")).toBe(true);
+    expect(area.getText()).toBe("aXYde");
+    area.setCaretPosition(area.getOmDocument().translationEnd);
+    expect(area.insertText("!")).toBe(true);
+    expect(area.getText()).toBe("aXYde!");
+  });
+
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {
     const controller = new EditorController();
     controller.loadProject([
@@ -193,7 +229,7 @@ describe("Document3 / IEditor / completer classes", () => {
     controller.setFilter(makeFilter("noted"));
     expect(controller.getCurrentEntryNumber()).toBe(2);
     expect(controller.nextEntry()).toBe(false);
-    expect(controller.getLoadedRange()).toEqual({ first: 0, last: 2 });
+    expect(controller.getLoadedRange()).toEqual({ first: 1, last: 1 });
     controller.removeFilter();
     expect(controller.gotoEntry(1)).toBe(true);
     expect(controller.getCurrentTranslation()).toBe("un");
@@ -228,5 +264,36 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.markerSnapshot!.generation).toBeGreaterThan(generation);
     expect(controller.markerSnapshot!.marks.some((mark) => mark.painter === "nbsp")).toBe(false);
     expect(controller.getOmDocument()!.spans.some((span) => span.style === "marker:nbsp")).toBe(false);
+
+    expect(controller.loadUp(2)).toBe(2);
+    expect(controller.loadDown(2)).toBe(1);
+    expect(controller.getLoadedPage().map((entry) => entry.entryNumber)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(controller.hasMoreBefore()).toBe(false);
+    expect(controller.hasMoreAfter()).toBe(false);
+  });
+
+  it("EditorController synchronizes immutable renderer snapshots into stable segment pages", () => {
+    const controller = new EditorController();
+    controller.setPageRadius(1);
+    const entries = [
+      { file: "a.txt", id: "first", source: "one", translation: "un" },
+      { file: "a.txt", id: "second", source: "two", translation: "deux" },
+      { file: "b.txt", id: "third", source: "three", translation: "trois" },
+    ];
+    const page = controller.synchronizeRendererProject(
+      entries,
+      1,
+      createDocument3("two", "DEUX"),
+    );
+    expect(page.map(({ key, entryNumber, translation, active }) => ({
+      key,
+      entryNumber,
+      translation,
+      active,
+    }))).toEqual([
+      { key: "0:a.txt:first", entryNumber: 1, translation: "un", active: false },
+      { key: "1:a.txt:second", entryNumber: 2, translation: "DEUX", active: true },
+      { key: "2:b.txt:third", entryNumber: 3, translation: "trois", active: false },
+    ]);
   });
 });

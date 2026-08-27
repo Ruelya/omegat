@@ -107,7 +107,46 @@ input, textarea, select {
   flex-direction: column;
   min-height: 0;
 }
-.editor-doc { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.editor-doc {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  scroll-padding-block: 20%;
+}
+.editor-segment {
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-raised);
+}
+.editor-segment.is-context {
+  cursor: pointer;
+  opacity: 0.82;
+}
+.editor-segment.is-context:hover,
+.editor-segment.is-context:focus {
+  opacity: 1;
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: -2px;
+}
+.editor-segment.is-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.segment-meta {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 10px;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--bg-sunken) 92%, transparent);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.editor-selection {
+  color: HighlightText;
+  background: Highlight;
+}
 .tag-protected { user-select: none; cursor: default; }
 .mark-ws { color: var(--ink-soft); }
 .mark-nbsp { color: var(--accent); font-family: var(--mono); }
@@ -154,8 +193,8 @@ input, textarea, select {
 .row .meta { color: var(--ink-soft); font-family: var(--mono); font-size: 11px; }
 .editor {
   flex: 1;
-  display: grid;
-  grid-template-rows: auto 1fr auto 1fr;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 .src, .tgt {
@@ -166,7 +205,8 @@ input, textarea, select {
 .src { background: var(--bg-sunken); color: var(--ink-soft); }
 .tgt { background: var(--bg-raised); color: var(--color-target, inherit); }
 .src { color: var(--color-source, var(--ink-soft)); }
-.tgt.editor-surface:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
+.tgt.editor-surface:focus,
+.tgt.editor-surface:focus-within { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
 .editor-surface { position: relative; min-height: 8em; cursor: text; }
 .editor-surface .caret {
   display: inline-block;

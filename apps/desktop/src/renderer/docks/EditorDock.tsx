@@ -1,4 +1,4 @@
-import { SegmentEditor, SegmentSource } from "../editor/SegmentEditor";
+import { SegmentEditor } from "../editor/SegmentEditor";
 import { t } from "../i18n";
 import { useApp } from "../store/app";
 import { DockFrame } from "./DockFrame";
@@ -11,8 +11,6 @@ export function EditorDock() {
   return (
     <DockFrame title={`${t("editor")} ${e ? `#${e.index + 1}` : ""}`}>
       <div className="editor">
-        <div className="pane-h">{t("source")}</div>
-        <SegmentSource />
         <SegmentEditor />
         {marks.modification !== "none" && e && (
           <div className="mod-info">

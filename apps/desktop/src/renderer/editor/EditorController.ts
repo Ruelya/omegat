@@ -28,6 +28,7 @@ export type LoadedEntry = {
 };
 
 export type LoadedPageEntry = {
+  key: string;
   index: number;
   entryNumber: number;
   file: string;
@@ -134,6 +135,49 @@ export class EditorController {
     const requested = Math.max(0, Math.min(preferredEntryNumber - 1, this.entries.length - 1));
     const initial = this.visibleEntryIndices.includes(requested) ? requested : this.visibleEntryIndices[0]!;
     this.activateEntry(initial);
+  }
+
+  /**
+   * Bind the renderer's immutable project snapshot to the same paging model
+   * used by the headless controller. This deliberately does not touch
+   * navigation or undo history: Zustand owns those while React is mounted.
+   */
+  synchronizeRendererProject(
+    entries: readonly LoadedEntry[],
+    activeIndex: number,
+    document: Document3State,
+  ): LoadedPageEntry[] {
+    this.entries = entries.map((entry, index) => ({
+      ...entry,
+      translation: index === activeIndex ? document.translation : entry.translation,
+    }));
+    this.rebuildVisibleEntries();
+    const safeIndex = Math.max(0, Math.min(activeIndex, this.entries.length - 1));
+    const active = this.entries[safeIndex];
+    if (!active || !this.visibleEntryIndices.includes(safeIndex)) {
+      this.document = null;
+      this.currentFile = null;
+      this.currentEntryNumber = 0;
+      this.displayedEntryIndex = -1;
+      this.firstLoaded = -1;
+      this.lastLoaded = -1;
+      this.markerSnapshot = null;
+      return [];
+    }
+    const files = [...new Set(this.entries.map((entry) => entry.file))];
+    this.previousDisplayedFileIndex = this.displayedFileIndex;
+    this.displayedFileIndex = Math.max(0, files.indexOf(active.file));
+    this.displayedEntryIndex = safeIndex;
+    this.currentFile = active.file;
+    this.currentEntryNumber = safeIndex + 1;
+    this.document = document;
+    this.markerSnapshot = this.markers.processEntry(
+      this.entryKey(safeIndex, active),
+      this.markerInput(active, true),
+    );
+    this.textArea.setDocument(document, true);
+    this.loadWindowAround(safeIndex);
+    return this.getLoadedPage();
   }
 
   loadEmptyProject(): void {
@@ -255,6 +299,8 @@ export class EditorController {
       } else {
         this.activateEntry(next);
       }
+    } else if (this.displayedEntryIndex >= 0) {
+      this.loadWindowAround(this.displayedEntryIndex);
     }
   }
 
@@ -272,8 +318,11 @@ export class EditorController {
 
   getLoadedPage(): LoadedPageEntry[] {
     if (this.firstLoaded < 0 || this.lastLoaded < this.firstLoaded) return [];
+    const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
+    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
+    if (first < 0 || last < first) return [];
     return this.visibleEntryIndices
-      .filter((index) => index >= this.firstLoaded && index <= this.lastLoaded)
+      .slice(first, last + 1)
       .map((index) => {
         const entry = this.entries[index]!;
         const active = index === this.displayedEntryIndex;
@@ -281,6 +330,7 @@ export class EditorController {
           ? this.markerSnapshot
           : this.markers.processEntry(this.entryKey(index, entry), this.markerInput(entry, active));
         return {
+          key: this.entryKey(index, entry),
           index,
           entryNumber: index + 1,
           file: entry.file,
@@ -297,12 +347,32 @@ export class EditorController {
     if (this.displayedEntryIndex >= 0) this.loadWindowAround(this.displayedEntryIndex);
   }
 
-  loadUp(count: number): void {
-    this.firstLoaded = Math.max(0, this.firstLoaded - Math.max(0, count));
+  loadUp(count: number): number {
+    const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
+    if (first <= 0) return 0;
+    const next = Math.max(0, first - Math.max(0, Math.floor(count)));
+    this.firstLoaded = this.visibleEntryIndices[next]!;
+    return first - next;
   }
 
-  loadDown(count: number): void {
-    this.lastLoaded = Math.min(this.entries.length - 1, this.lastLoaded + Math.max(0, count));
+  loadDown(count: number): number {
+    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
+    if (last < 0 || last >= this.visibleEntryIndices.length - 1) return 0;
+    const next = Math.min(
+      this.visibleEntryIndices.length - 1,
+      last + Math.max(0, Math.floor(count)),
+    );
+    this.lastLoaded = this.visibleEntryIndices[next]!;
+    return next - last;
+  }
+
+  hasMoreBefore(): boolean {
+    return this.visibleEntryIndices.indexOf(this.firstLoaded) > 0;
+  }
+
+  hasMoreAfter(): boolean {
+    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
+    return last >= 0 && last < this.visibleEntryIndices.length - 1;
   }
 
   private moveVisible(delta: -1 | 1): boolean {
@@ -321,8 +391,16 @@ export class EditorController {
   }
 
   private loadWindowAround(index: number, radius = this.pageRadius): void {
-    this.firstLoaded = Math.max(0, index - radius);
-    this.lastLoaded = Math.min(this.entries.length - 1, index + radius);
+    const visiblePosition = this.visibleEntryIndices.indexOf(index);
+    if (visiblePosition < 0) {
+      this.firstLoaded = -1;
+      this.lastLoaded = -1;
+      return;
+    }
+    const first = Math.max(0, visiblePosition - radius);
+    const last = Math.min(this.visibleEntryIndices.length - 1, visiblePosition + radius);
+    this.firstLoaded = this.visibleEntryIndices[first]!;
+    this.lastLoaded = this.visibleEntryIndices[last]!;
   }
 
   private replaceWithoutHistory(text: string): void {

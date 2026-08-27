@@ -9,6 +9,8 @@ describe("segment editor source", () => {
     const src = readFileSync(join(here, "SegmentEditor.tsx"), "utf8");
     expect(src).not.toMatch(/contentEditable/);
     expect(src).toMatch(/role="textbox"/);
-    expect(src).toMatch(/deleteBackwardAtomic/);
+    expect(src).toMatch(/synchronizeRendererProject/);
+    expect(src).toMatch(/area\.deleteBackward\(\)/);
+    expect(src).toMatch(/area\.pasteText\(text\)/);
   });
 });

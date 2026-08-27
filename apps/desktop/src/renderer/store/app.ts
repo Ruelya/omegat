@@ -502,9 +502,13 @@ export const useApp = create<AppState>((set, get) => ({
   setDraft: (v) => {
     const prev = get().draft;
     const src = get().entries[get().index]?.source ?? get().document3.source;
+    const current = get().document3;
+    const document3 = current.source === src
+      ? replaceEditText(current, v)
+      : replaceEditText(createDocument3(src, v), v);
     set({
       draft: v,
-      document3: replaceEditText(createDocument3(src, v), v),
+      document3,
       history: pushUndo(get().history, prev, v),
     });
   },
