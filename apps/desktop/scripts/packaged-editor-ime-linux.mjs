@@ -731,8 +731,9 @@ try {
   });
 
   const decorationFocus = await client.evaluate(`(() => {
-    const rect = document.querySelector(".editor-surface").getBoundingClientRect();
-    return { x: rect.left + 20, y: rect.top + rect.height / 2 };
+    const fragment = document.querySelector(".editor-surface [data-offset]");
+    const rect = fragment.getBoundingClientRect();
+    return { x: rect.left + Math.min(4, rect.width / 2), y: rect.top + rect.height / 2 };
   })()`);
   const decorationFocusScreen = screenPoint(decorationFocus);
   await xdotool(xvfb.display, [
