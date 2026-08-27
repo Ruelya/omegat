@@ -1477,6 +1477,15 @@ try {
       ? state
       : undefined;
   });
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+    "packaged team conflict entry did not focus its native input proxy",
+  );
   for (let index = 0; index < 6; index += 1) {
     await client.command("Input.dispatchKeyEvent", {
       type: "keyDown",
