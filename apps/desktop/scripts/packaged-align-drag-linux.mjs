@@ -338,7 +338,9 @@ try {
         startX: start.left + start.width / 2,
         startY: start.top + start.height / 2,
         edgeX: start.left + start.width / 2,
-        edgeY: edge.bottom - 2,
+        // Stay above Chromium's horizontal scrollbar while remaining inside
+        // the renderer's 48px autoscroll pressure zone.
+        edgeY: edge.bottom - 24,
       };
     })()`);
     return state?.rowCount === 80 ? state : undefined;
