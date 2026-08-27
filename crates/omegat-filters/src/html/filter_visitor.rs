@@ -5,17 +5,57 @@ use super::html_writer::{
     chars_to_entities, compress_spaces, compress_whitespace_layout, entities_to_chars, java_trim,
     rewrite_encoding_header, space_postfix, space_prefix,
 };
-use super::tokenizer::{tokenize, Node};
+use super::tokenizer::{tokenize_with_protected, Node};
 use crate::{ExtractedSegment, FilterContext, ParsedFile, ProtectedPart};
 use regex::Regex;
 use std::collections::HashMap;
 
 const BLOCK_TAGS: &[&str] = &[
-    "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "BODY", "CANVAS", "CENTER", "DD", "DIV",
-    "DL", "DT", "FIELDSET", "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4",
-    "H5", "H6", "HEADER", "HR", "LABEL", "LEGEND", "LI", "MAIN", "NAV", "NOSCRIPT", "OL",
-    "OPTION", "P", "PRE", "SECTION", "SELECT", "TABLE", "TD", "TEXTAREA", "TFOOT", "TH",
-    "TITLE", "TR", "UL", "VIDEO",
+    "ADDRESS",
+    "ARTICLE",
+    "ASIDE",
+    "BLOCKQUOTE",
+    "BODY",
+    "CANVAS",
+    "CENTER",
+    "DD",
+    "DIV",
+    "DL",
+    "DT",
+    "FIELDSET",
+    "FIGCAPTION",
+    "FIGURE",
+    "FOOTER",
+    "FORM",
+    "H1",
+    "H2",
+    "H3",
+    "H4",
+    "H5",
+    "H6",
+    "HEADER",
+    "HR",
+    "LABEL",
+    "LEGEND",
+    "LI",
+    "MAIN",
+    "NAV",
+    "NOSCRIPT",
+    "OL",
+    "OPTION",
+    "P",
+    "PRE",
+    "SECTION",
+    "SELECT",
+    "TABLE",
+    "TD",
+    "TEXTAREA",
+    "TFOOT",
+    "TH",
+    "TITLE",
+    "TR",
+    "UL",
+    "VIDEO",
 ];
 const PARENT_TAGS: &[&str] = &["HEAD", "HTML"];
 const PROTECTED_TAGS: &[&str] = &["!DOCTYPE", "STYLE", "SCRIPT", "OBJECT", "EMBED"];
@@ -126,7 +166,10 @@ impl<'a> Visitor<'a> {
         if PROTECTED_TAGS.contains(&name) {
             return true;
         }
-        if name == "META" && tag.attr("http-equiv").is_some_and(|v| v.eq_ignore_ascii_case("content-type"))
+        if name == "META"
+            && tag
+                .attr("http-equiv")
+                .is_some_and(|v| v.eq_ignore_ascii_case("content-type"))
         {
             return true;
         }
@@ -343,9 +386,10 @@ impl<'a> Visitor<'a> {
         match node {
             Node::Tag { .. } => self.writeout(&format!("<{}>", node.get_text())),
             Node::Remark { .. } => self.writeout(&node.to_html()),
-            Node::Text { raw } => {
-                self.writeout(&compress_whitespace_layout(raw, self.options.compress_whitespace))
-            }
+            Node::Text { raw } => self.writeout(&compress_whitespace_layout(
+                raw,
+                self.options.compress_whitespace,
+            )),
         }
     }
 
@@ -360,10 +404,7 @@ impl<'a> Visitor<'a> {
 
         let mut first = 0i32;
         while first <= last_prec {
-            if let Node::Tag {
-                end_tag: false, ..
-            } = &all[first as usize]
-            {
+            if let Node::Tag { end_tag: false, .. } = &all[first as usize] {
                 let opening = all[first as usize].tag_name().to_string();
                 let mut rec = 1;
                 let mut found = false;
@@ -393,10 +434,7 @@ impl<'a> Visitor<'a> {
 
         let mut last_keep = last_follow;
         while last_keep > last_trans {
-            if let Node::Tag {
-                end_tag: true, ..
-            } = &all[last_keep as usize]
-            {
+            if let Node::Tag { end_tag: true, .. } = &all[last_keep as usize] {
                 let closing = all[last_keep as usize].tag_name().to_string();
                 let mut rec = 1;
                 let mut found = false;
@@ -474,7 +512,9 @@ impl<'a> Visitor<'a> {
             for i in first..=last_keep {
                 match &all[i as usize] {
                     Node::Tag { .. } => self.assign_tag_shortcut(&all[i as usize], &mut paragraph),
-                    Node::Remark { .. } => self.assign_remark_shortcut(&all[i as usize], &mut paragraph),
+                    Node::Remark { .. } => {
+                        self.assign_remark_shortcut(&all[i as usize], &mut paragraph)
+                    }
                     Node::Text { .. } => {
                         paragraph.push_str(&entities_to_chars(&all[i as usize].to_html()));
                     }
@@ -616,9 +656,7 @@ fn attr_comment(tag: &str, key: &str) -> String {
 }
 
 fn is_xml_header(s: &str) -> bool {
-    Regex::new(r"^<\?xml.*?\?>$")
-        .unwrap()
-        .is_match(s)
+    Regex::new(r"^<\?xml.*?\?>$").unwrap().is_match(s)
 }
 
 pub fn process_html(
@@ -637,11 +675,16 @@ pub fn process_html(
     });
     let mut v = Visitor::new(kind, &options, ctx, process);
     let collapse = kind == VisitorKind::Html;
-    for node in tokenize(raw, collapse) {
+    let ignore_tag_pairs = options.ignore_tag_pairs();
+    let nodes = tokenize_with_protected(raw, collapse, |node| {
+        ignore_tag_pairs.iter().any(|(key, value)| {
+            node.attr(key)
+                .is_some_and(|actual| actual.eq_ignore_ascii_case(value))
+        })
+    });
+    for node in nodes {
         match node {
-            Node::Tag {
-                end_tag: true, ..
-            } => v.visit_end(node),
+            Node::Tag { end_tag: true, .. } => v.visit_end(node),
             Node::Tag {
                 protected_html: Some(_),
                 ..
@@ -680,5 +723,49 @@ pub fn process_html(
             skeleton: Some(written.clone()),
         },
         written,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sources(outcome: &HtmlOutcome) -> Vec<&str> {
+        outcome
+            .parsed
+            .segments
+            .iter()
+            .map(|segment| segment.source.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn ignore_tags_protects_the_entire_nested_subtree() {
+        let raw = concat!(
+            r#"<main><div class="notrans">secret "#,
+            r#"<div class="notrans">nested</div> tail</div>"#,
+            r#"<p title="heading">shown</p></main>"#
+        );
+        let mut ctx = FilterContext::default();
+        ctx.options
+            .insert("ignoreTags".into(), "class=notrans".into());
+        let outcome = process_html(raw, &ctx, VisitorKind::Html, None);
+        assert_eq!(sources(&outcome), vec!["heading", "shown"]);
+        assert_eq!(outcome.written, raw);
+    }
+
+    #[test]
+    fn ignored_subtree_stays_verbatim_during_other_translations() {
+        let raw = r#"<div data-i18n="off"><b>do not translate</b></div><p>Hello</p>"#;
+        let mut ctx = FilterContext::default();
+        ctx.options
+            .insert("ignoreTags".into(), "data-i18n=off".into());
+        let translations = HashMap::from([("Hello".to_string(), "Bonjour".to_string())]);
+        let outcome = process_html(raw, &ctx, VisitorKind::Html, Some(&translations));
+        assert_eq!(sources(&outcome), vec!["Hello"]);
+        assert_eq!(
+            outcome.written,
+            r#"<div data-i18n="off"><b>do not translate</b></div><p>Bonjour</p>"#
+        );
     }
 }

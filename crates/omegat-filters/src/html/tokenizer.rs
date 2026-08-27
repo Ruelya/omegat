@@ -37,13 +37,7 @@ impl Node {
     }
 
     pub fn is_end_tag(&self) -> bool {
-        matches!(
-            self,
-            Node::Tag {
-                end_tag: true,
-                ..
-            }
-        )
+        matches!(self, Node::Tag { end_tag: true, .. })
     }
 
     pub fn is_empty_xml(&self) -> bool {
@@ -95,10 +89,7 @@ impl Node {
         else {
             return;
         };
-        if let Some(a) = attrs
-            .iter_mut()
-            .find(|a| a.name.eq_ignore_ascii_case(key))
-        {
+        if let Some(a) = attrs.iter_mut().find(|a| a.name.eq_ignore_ascii_case(key)) {
             a.value = Some(value.to_string());
         } else {
             attrs.push(Attr {
@@ -180,6 +171,18 @@ fn replace_attr_value(raw_inner: &str, key: &str, new_val: &str) -> String {
 }
 
 pub fn tokenize(input: &str, collapse_protected: bool) -> Vec<Node> {
+    tokenize_with_protected(input, collapse_protected, |_| false)
+}
+
+/// Tokenize while allowing `FilterVisitor` options to protect arbitrary
+/// composite elements. Java's visitor disables child traversal when an
+/// opening tag matches `ignoreTags`; flattening the tree without collapsing
+/// that element would otherwise leak its text as translatable segments.
+pub fn tokenize_with_protected(
+    input: &str,
+    collapse_protected: bool,
+    mut dynamically_protected: impl FnMut(&Node) -> bool,
+) -> Vec<Node> {
     let mut out = Vec::new();
     let bytes = input.as_bytes();
     let mut i = 0;
@@ -205,7 +208,31 @@ pub fn tokenize(input: &str, collapse_protected: bool) -> Vec<Node> {
                     continue;
                 }
             }
-            if let Some((node, end)) = parse_tag(input, i, collapse_protected) {
+            if let Some((mut node, mut end)) = parse_tag(input, i) {
+                let collapse = if let Node::Tag {
+                    name,
+                    end_tag,
+                    empty_xml,
+                    ..
+                } = &node
+                {
+                    collapse_protected
+                        && !end_tag
+                        && !empty_xml
+                        && (matches!(name.as_str(), "SCRIPT" | "STYLE" | "OBJECT" | "EMBED")
+                            || dynamically_protected(&node))
+                } else {
+                    false
+                };
+                if collapse {
+                    let name = node.tag_name().to_string();
+                    if let Some(close) = find_matching_end_tag(input, end, &name) {
+                        if let Node::Tag { protected_html, .. } = &mut node {
+                            *protected_html = Some(input[i..close].to_string());
+                        }
+                        end = close;
+                    }
+                }
                 out.push(node);
                 i = end;
                 continue;
@@ -223,7 +250,7 @@ pub fn tokenize(input: &str, collapse_protected: bool) -> Vec<Node> {
     out
 }
 
-fn parse_tag(input: &str, start: usize, collapse_protected: bool) -> Option<(Node, usize)> {
+fn parse_tag(input: &str, start: usize) -> Option<(Node, usize)> {
     if start >= input.len() || input.as_bytes()[start] != b'<' {
         return None;
     }
@@ -240,7 +267,8 @@ fn parse_tag(input: &str, start: usize, collapse_protected: bool) -> Option<(Nod
     if i < bytes.len() && bytes[i] == b'!' {
         i += 1;
     }
-    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b':')
+    while i < bytes.len()
+        && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b':')
     {
         i += 1;
     }
@@ -276,17 +304,7 @@ fn parse_tag(input: &str, start: usize, collapse_protected: bool) -> Option<(Nod
         return None;
     }
     let (raw_inner, gt, attrs, empty_xml) = parse_tag_tail(input, start, i)?;
-    let mut end = gt + 1;
-    let mut protected_html = None;
-    if collapse_protected
-        && !end_tag
-        && matches!(name.as_str(), "SCRIPT" | "STYLE" | "OBJECT" | "EMBED")
-    {
-        if let Some(close) = find_end_tag(input, end, &name) {
-            protected_html = Some(input[start..close].to_string());
-            end = close;
-        }
-    }
+    let end = gt + 1;
     Some((
         Node::Tag {
             name,
@@ -294,13 +312,17 @@ fn parse_tag(input: &str, start: usize, collapse_protected: bool) -> Option<(Nod
             attrs,
             end_tag,
             empty_xml,
-            protected_html,
+            protected_html: None,
         },
         end,
     ))
 }
 
-fn parse_tag_tail(input: &str, start: usize, mut i: usize) -> Option<(String, usize, Vec<Attr>, bool)> {
+fn parse_tag_tail(
+    input: &str,
+    start: usize,
+    mut i: usize,
+) -> Option<(String, usize, Vec<Attr>, bool)> {
     let bytes = input.as_bytes();
     let mut attrs = Vec::new();
     loop {
@@ -372,27 +394,46 @@ fn parse_tag_tail(input: &str, start: usize, mut i: usize) -> Option<(String, us
     }
 }
 
-fn find_end_tag(input: &str, from: usize, name: &str) -> Option<usize> {
-    let needle = format!("</{name}");
-    let rest = &input[from..];
-    let lower = rest.to_ascii_lowercase();
-    let nlow = needle.to_ascii_lowercase();
-    let mut search = 0;
-    while let Some(rel) = lower[search..].find(&nlow) {
-        let at = from + search + rel;
-        let after = at + needle.len();
-        let bytes = input.as_bytes();
-        if after < bytes.len() {
-            let c = bytes[after];
-            if c == b'>' || c.is_ascii_whitespace() || c == b'/' {
-                if let Some(gt) = input[after..].find('>') {
-                    return Some(after + gt + 1);
+fn find_matching_end_tag(input: &str, from: usize, name: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut cursor = from;
+    while cursor < input.len() {
+        let rel = input[cursor..].find('<')?;
+        let at = cursor + rel;
+        if let Some((node, end)) = parse_tag(input, at) {
+            if node.tag_name().eq_ignore_ascii_case(name) {
+                if node.is_end_tag() {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(end);
+                    }
+                } else if !node.is_empty_xml() {
+                    depth += 1;
                 }
             }
-        } else if after == bytes.len() {
-            return Some(after);
+            cursor = end;
+        } else {
+            cursor = at + 1;
         }
-        search += rel + 1;
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_protection_collapses_nested_matching_elements() {
+        let raw =
+            r#"<div class="notrans">secret<div class="notrans">nested</div>tail</div><p>shown</p>"#;
+        let nodes =
+            tokenize_with_protected(raw, true, |node| node.attr("class") == Some("notrans"));
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(
+            nodes[0].to_html(),
+            r#"<div class="notrans">secret<div class="notrans">nested</div>tail</div>"#
+        );
+        assert_eq!(nodes[2].to_html(), "shown");
+    }
 }
