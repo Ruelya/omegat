@@ -1487,6 +1487,24 @@ try {
   );
   assert.equal(
     await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+    "packaged team decoy did not focus before clearing its best-match draft",
+  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await xdotool(xvfb.display, ["key", "BackSpace"]);
+  await waitFor("cleared decoy best-match draft", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(duplicateSetup.decoy.key)
+      && state.translation === ""
+      ? state
+      : undefined;
+  });
+  assert.equal(
+    await client.evaluate(`(() => {
       const button = document.querySelector(".topbar button");
       button?.click();
       return Boolean(button);
