@@ -432,7 +432,18 @@ export class EditorController {
     entries: readonly LoadedEntry[],
     activeIndex: number,
     document: Document3State,
+    filter: IEditorFilter = makeFilter("none"),
   ): LoadedPageEntry[] {
+    const filterChanged =
+      filter.kind !== this.entriesFilter.kind
+      || filter.query !== this.entriesFilter.query;
+    if (filterChanged) {
+      this.entriesFilter = filter;
+      this.markers.invalidate();
+      this.loadedMarkerKeys.clear();
+      this.loadedPageGeneration += 1;
+      this.markerSnapshot = null;
+    }
     this.entries = entries.map((entry, index) => ({
       ...entry,
       translation: index === activeIndex ? document.translation : entry.translation,

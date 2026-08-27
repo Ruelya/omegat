@@ -15,6 +15,7 @@ type Pending = {
 };
 
 let sidecar: ChildProcessWithoutNullStreams | null = null;
+const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 const pending = new Map<number, Pending>();
 let nextId = 1;
 let buf = "";
@@ -99,9 +100,64 @@ function startSidecar() {
 function stopSidecar() {
   sidecar?.kill();
   sidecar = null;
+  for (const child of isolatedMarkerSidecars) child.kill();
+  isolatedMarkerSidecars.clear();
+}
+
+function isolatedMarkerRpc(method: string, params: unknown): Promise<unknown> {
+  const child = spawn(sidecarPath(), [], { stdio: ["pipe", "pipe", "pipe"] });
+  isolatedMarkerSidecars.add(child);
+  const id = nextId++;
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  child.once("close", () => isolatedMarkerSidecars.delete(child));
+  child.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error(`isolated marker RPC timed out: ${method}`));
+    }, 8_000);
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timeout);
+      const line = stdout.trim().split(/\r?\n/).at(-1);
+      if (!line) {
+        reject(new Error(`isolated marker sidecar exited ${code}: ${stderr.trim()}`));
+        return;
+      }
+      try {
+        const response = JSON.parse(line) as {
+          result?: unknown;
+          error?: { message?: string };
+        };
+        if (response.error) {
+          reject(new Error(response.error.message ?? "isolated marker RPC failed"));
+        } else {
+          resolve(response.result);
+        }
+      } catch (error) {
+        reject(new Error(`invalid isolated marker response: ${String(error)}`));
+      }
+    });
+  });
 }
 
 function rpc(method: string, params: unknown = {}): Promise<unknown> {
+  // Native callbacks may take the full worker timeout. Keep project and
+  // navigation RPCs responsive while each Marker runs in its own sidecar,
+  // which in turn retains the cdylib crash/timeout worker boundary.
+  if (method === "markers.query") return isolatedMarkerRpc(method, params);
   if (!sidecar) startSidecar();
   const id = nextId++;
   return new Promise((resolve, reject) => {

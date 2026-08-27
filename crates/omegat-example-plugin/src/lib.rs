@@ -2,8 +2,11 @@
 
 use serde_json::{json, Value};
 use std::ffi::{CStr, CString};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
+use std::time::Duration;
 
 #[repr(C)]
 pub struct OmegatPluginHost {
@@ -116,6 +119,40 @@ pub fn example_marker_output(input: &Value) -> Value {
         })
         .collect::<Vec<_>>();
     json!({ "marks": marks })
+}
+
+fn trace_delayed_marker(phase: &str, input: &Value) {
+    let Ok(path) = std::env::var("OMEGAT_EXAMPLE_MARKER_TRACE") else {
+        return;
+    };
+    let source = input
+        .get("source_text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if let Ok(mut trace) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(trace, "{phase}\t{source}");
+    }
+}
+
+fn delay_example_marker(input: &Value) {
+    let slow = input
+        .get("translation_text")
+        .and_then(Value::as_str)
+        .is_some_and(|text| text.contains("slow plugin"));
+    if !slow {
+        return;
+    }
+    let delay_ms = std::env::var("OMEGAT_EXAMPLE_MARKER_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(4_000);
+    if delay_ms == 0 {
+        return;
+    }
+    trace_delayed_marker("start", input);
+    std::thread::sleep(Duration::from_millis(delay_ms));
+    trace_delayed_marker("finish", input);
 }
 
 /// Minimal `{"0":"a","1":"b"}` object reader (no nested objects).
@@ -240,6 +277,7 @@ pub extern "C" fn omegat_plugin_marker_marks(
     {
         std::process::abort();
     }
+    delay_example_marker(&input);
     let output = example_marker_output(&input).to_string();
     write_cstr(out, cap, &output)
 }

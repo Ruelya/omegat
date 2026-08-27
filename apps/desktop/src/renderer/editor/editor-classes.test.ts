@@ -12,6 +12,10 @@ import {
 } from "./Document3";
 import { allowInsert } from "./DocumentFilter3";
 import { EditorController } from "./EditorController";
+import {
+  nextUntranslatedEntryIndex,
+  selectionAfterEntryChange,
+} from "./EditorSelection";
 import { EditorTextArea3 } from "./EditorTextArea3";
 import { HistoryPredictor } from "./history/HistoryPredictor";
 import { HistoryCompleter } from "./history/HistoryCompleter";
@@ -821,5 +825,46 @@ describe("Document3 / IEditor / completer classes", () => {
       { key: JSON.stringify(keys[1]), entryNumber: 2, translation: "DEUX", active: true },
       { key: JSON.stringify(keys[2]), entryNumber: 3, translation: "trois", active: false },
     ]);
+  });
+
+  it("filters renderer pages and preserves caret only for the same complete EntryKey", () => {
+    const controller = new EditorController();
+    controller.setPageRadius(4);
+    const entries = [
+      { file: "a.txt", id: "one", source: "one", translation: "" },
+      { file: "a.txt", id: "two", source: "two", translation: "deux" },
+      { file: "b.txt", id: "three", source: "three", translation: "" },
+    ];
+    const page = controller.synchronizeRendererProject(
+      entries,
+      0,
+      createDocument3("one", ""),
+      makeFilter("untranslated"),
+    );
+    expect(page.map(({ entryNumber, source, active }) => ({
+      entryNumber,
+      source,
+      active,
+    }))).toEqual([
+      { entryNumber: 1, source: "one", active: true },
+      { entryNumber: 3, source: "three", active: false },
+    ]);
+
+    const key = JSON.stringify({
+      file: "a.txt",
+      source_text: "one",
+      id: "one",
+      prev: "",
+      next: "",
+      path: null,
+    });
+    expect(
+      selectionAfterEntryChange(key, key, { anchor: 3, focus: 8 }, 5),
+    ).toEqual({ anchor: 3, focus: 5 });
+    expect(
+      selectionAfterEntryChange(key, `${key}-other`, { anchor: 3, focus: 4 }, 7),
+    ).toEqual({ anchor: 7, focus: 7 });
+    expect(nextUntranslatedEntryIndex(entries, 1)).toBe(2);
+    expect(nextUntranslatedEntryIndex(entries, 2)).toBe(0);
   });
 });

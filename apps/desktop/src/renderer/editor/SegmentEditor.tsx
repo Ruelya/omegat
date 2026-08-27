@@ -24,7 +24,12 @@ import {
   type EditorScrollAnchor,
   type ScrollAnchorCandidate,
 } from "./EditorController";
+import {
+  nextUntranslatedEntryIndex,
+  selectionAfterEntryChange,
+} from "./EditorSelection";
 import { bindMarkerRemark } from "./IEditor";
+import { makeFilter } from "./IEditorFilter";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
 import { buildRenderedTextFragments } from "./RenderedText";
@@ -129,6 +134,7 @@ export function SegmentEditor() {
   const marks = useApp((s) => s.marks);
   const glossary = useApp((s) => s.glossary);
   const focus = useApp((s) => s.focusPanel);
+  const filterUntranslated = useApp((s) => s.filterUntranslated);
   const tabAdvance = useApp((s) => Boolean(s.prefs?.tab_advance));
   const editConflict = useApp((s) => s.editConflict);
   const resolveEditConflict = useApp((s) => s.resolveEditConflict);
@@ -145,12 +151,21 @@ export function SegmentEditor() {
   const [manualConflict, setManualConflict] = useState("");
   const [markerTooltip, setMarkerTooltip] = useState<MarkerTooltipState | null>(null);
   const [, setMarkerRevision] = useState(0);
+  const activeEntryKey = entries[activeIndex]?.key
+    ? JSON.stringify(entries[activeIndex]!.key)
+    : null;
+  const previousEntryKey = useRef(activeEntryKey);
   const composing = useRef(false);
   const discardCompositionEnd = useRef(false);
   const dragPointer = useRef<number | null>(null);
   const suppressClick = useRef(false);
   editorController.setPageRadius(pageRadius);
-  const loadedPage = editorController.synchronizeRendererProject(entries, activeIndex, document3);
+  const loadedPage = editorController.synchronizeRendererProject(
+    entries,
+    activeIndex,
+    document3,
+    makeFilter(filterUntranslated ? "untranslated" : "none"),
+  );
   const activeLoadedEntry = loadedPage.find((entry) => entry.active);
   const loadedPageSignature = loadedPage
     .map(({ key, source, translation, active }) =>
@@ -191,16 +206,28 @@ export function SegmentEditor() {
   }, []);
 
   useEffect(() => {
-    setSelection((current) => ({
-      anchor: Math.min(current.anchor, document3.translation.length),
-      focus: Math.min(current.focus, document3.translation.length),
-    }));
-  }, [document3.translation]);
+    setSelection((current) =>
+      selectionAfterEntryChange(
+        previousEntryKey.current,
+        activeEntryKey,
+        current,
+        document3.translation.length,
+      )
+    );
+    previousEntryKey.current = activeEntryKey;
+  }, [activeEntryKey, document3.translation]);
 
   useEffect(() => {
-    const end = document3.translation.length;
-    setSelection({ anchor: end, focus: end });
-  }, [activeIndex]);
+    if (!filterUntranslated || !document3.translation) return;
+    const next = nextUntranslatedEntryIndex(entries, activeIndex);
+    if (next >= 0 && next !== activeIndex) void select(next, false);
+  }, [
+    activeIndex,
+    document3.translation,
+    entries,
+    filterUntranslated,
+    select,
+  ]);
 
   useEffect(() => {
     if (editConflict) setManualConflict(editConflict.ours);
