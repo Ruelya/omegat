@@ -38,12 +38,16 @@ const CASE_TOKEN = /[\p{L}\p{M}\p{N}]+(?:['’][\p{L}\p{M}\p{N}]+)*/gu;
 const OMEGAT_TAG = /<\/?[A-Za-z][\w:-]*\d*\/?>/g;
 const TITLE_CASE_VARIANTS: Record<string, string> = {
   "\u01c4": "\u01c5",
+  "\u01c5": "\u01c5",
   "\u01c6": "\u01c5",
   "\u01c7": "\u01c8",
+  "\u01c8": "\u01c8",
   "\u01c9": "\u01c8",
   "\u01ca": "\u01cb",
+  "\u01cb": "\u01cb",
   "\u01cc": "\u01cb",
   "\u01f1": "\u01f2",
+  "\u01f2": "\u01f2",
   "\u01f3": "\u01f2",
 };
 const ACTUAL_TITLE_CASE = new Set(["\u01c5", "\u01c8", "\u01cb", "\u01f2"]);
