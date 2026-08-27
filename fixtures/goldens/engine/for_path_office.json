@@ -1,0 +1,22 @@
+{
+  "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testIsFileSupported",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "docx": "openxml",
+  "xlsx": "openxml",
+  "pptx": "openxml",
+  "note": "FilterRegistry.for_path uses filters3 OpenXMLFilter for *.docx/*.xlsx/*.pptx. filters4 MsOfficeFileFilter is selected by id=msoffice.",
+  "cases": [
+    {
+      "extension": "docx",
+      "for_path_id": "openxml"
+    },
+    {
+      "extension": "xlsx",
+      "for_path_id": "openxml"
+    },
+    {
+      "extension": "pptx",
+      "for_path_id": "openxml"
+    }
+  ]
+}

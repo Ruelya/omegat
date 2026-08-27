@@ -1,0 +1,26 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.EncodingDetectorTest#testDetectHTMLEncodingSpecialCase",
+  "cases": [
+    {
+      "file": "file-HTMLUtils-x-user-defined-charset.html",
+      "default": null,
+      "encoding": "windows-1252"
+    },
+    {
+      "file": "file-HTMLUtils-x-user-defined-content.html",
+      "default": null,
+      "encoding": "windows-1252"
+    },
+    {
+      "file": "file-HTMLUtils-utf16_be-charset.html",
+      "default": null,
+      "encoding": "UTF-8"
+    },
+    {
+      "file": "file-HTMLUtils-windows-1252.html",
+      "default": "windows-1252",
+      "encoding": "windows-1252"
+    }
+  ]
+}

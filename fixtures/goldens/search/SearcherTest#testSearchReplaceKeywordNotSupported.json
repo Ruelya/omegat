@@ -1,0 +1,15 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchReplaceKeywordNotSupported",
+  "query": "great",
+  "replacement": "awesome",
+  "input": "Great things are great indeed.",
+  "replacements": [
+    "awesome",
+    "awesome"
+  ],
+  "count": 2,
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchReplaceKeywordNotSupported"
+  ]
+}

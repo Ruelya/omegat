@@ -1,0 +1,1134 @@
+{
+  "java_test": "org.omegat.filters3.xml.DefaultXMLDialect#getParagraphTags",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "dialects": [
+    {
+      "id": "android",
+      "class": "org.omegat.filters3.xml.android.AndroidDialect",
+      "paragraph": [
+        "item",
+        "string"
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "resources"
+      }
+    },
+    {
+      "id": "camtasia",
+      "class": "org.omegat.filters3.xml.camtasiawindows.CamtasiaWindowsDialect",
+      "paragraph": [
+        "Caption",
+        "JumpURL",
+        "Project_Notes",
+        "RichText",
+        "RichTextHTML",
+        "Text",
+        "TitleName",
+        "Value",
+        "strOverlayRichText"
+      ],
+      "intact": [
+        "Accel_cmd",
+        "Accel_fVirt",
+        "Action",
+        "AddTextDropShadow",
+        "AlwaysDisplay",
+        "AudioClickReduction",
+        "AudioClickSensitivity",
+        "AudioClippingReduction",
+        "AudioCompressionOn",
+        "AudioCompressionPreset",
+        "AudioCurAttack",
+        "AudioCurGain",
+        "AudioCurRatio",
+        "AudioCurRelease",
+        "AudioCurThreshold",
+        "AudioCustAttack",
+        "AudioCustGain",
+        "AudioCustRatio",
+        "AudioCustRelease",
+        "AudioCustThreshold",
+        "AudioGlobalBypass",
+        "AudioNoiseReduction",
+        "AudioNoiseSensitivity",
+        "AudioTraining",
+        "AudioVocalEnhancement",
+        "AutoSaveFile",
+        "AutoSizeCallouts",
+        "AutoSizeClip",
+        "BGColor",
+        "BGImage",
+        "BGType",
+        "BackgroundColor",
+        "BackgroundOpacity",
+        "BookmarkTime",
+        "BookmarkUniqueID",
+        "BorderState",
+        "CanFlip_X",
+        "CanFlip_X180",
+        "CanFlip_X270",
+        "CanFlip_X90",
+        "CanRotate_180",
+        "CanRotate_270",
+        "CanRotate_90",
+        "CaptionAlignment",
+        "CaptionFont",
+        "CaptionFontSize",
+        "ClipBin_Array",
+        "ClipID",
+        "ColorMask",
+        "CreateMarker",
+        "CursorKeyframe_Array",
+        "DShowControl_ClipMap",
+        "DShowControl_Edit_Array",
+        "DefaultFontSize",
+        "DisableFading",
+        "DockPIP",
+        "Duration",
+        "EnableBackground",
+        "End",
+        "FadeIn",
+        "FadeInEffect",
+        "FadeOut",
+        "FadeOutEffect",
+        "FieldArrayKey",
+        "FillState",
+        "FlipOnX",
+        "FlipOnY",
+        "FontSize",
+        "FriendlyName",
+        "GotoTime",
+        "Height",
+        "Hotspot_Info",
+        "ID",
+        "ImagePath",
+        "Image_Object",
+        "IndentLevel",
+        "KeepAspectRatio",
+        "Line",
+        "MaxCaptionLength",
+        "NoiseFilterInfo",
+        "Opacity",
+        "OpenURLInNewWindow",
+        "OverlayCaptions",
+        "OverlayFlags",
+        "OverlayID",
+        "OverlayName",
+        "Overlay_ClipImageAbove_Object",
+        "Overlay_KeyStrokeImageAbove_Object",
+        "PIP_Array",
+        "PauseAtEnd",
+        "PowerPointFilename",
+        "PowerPointProject",
+        "PreserveSize",
+        "ProjectID",
+        "Project_Settings",
+        "QuestionGroup_Array",
+        "RectDest_Height",
+        "RectDest_Width",
+        "RectDest_X",
+        "RectDest_Y",
+        "RotationAngle",
+        "ShadowBlur",
+        "ShadowOpacity",
+        "ShadowSize_X",
+        "ShadowSize_Y",
+        "ShowCaptions",
+        "SmoothScale",
+        "Start",
+        "StaticTitle",
+        "Style",
+        "TextBottomIndent",
+        "TextColor",
+        "TextLeftIndent",
+        "TextRectDest_Height",
+        "TextRectDest_Width",
+        "TextRectDest_X",
+        "TextRectDest_Y",
+        "TextRightIndent",
+        "TextShadowBlur",
+        "TextShadowOpacity",
+        "TextShadowSize_X",
+        "TextShadowSize_Y",
+        "TextTopIndent",
+        "TextTransparencyFromCallout",
+        "TextVJust",
+        "Time",
+        "TitleClipHeight",
+        "TitleClipWidth",
+        "TrackID",
+        "Type",
+        "UI_Layout",
+        "UniqueID",
+        "UseAsMarker",
+        "UseDropShadow",
+        "UseTColor",
+        "UseTextDropShadow",
+        "VectorGrow",
+        "VectorProps",
+        "WhiteColorMask",
+        "Width",
+        "XGrow",
+        "YGrow",
+        "ZoomPanHints",
+        "Zoom_Array",
+        "borderWidth",
+        "clrShadow",
+        "clrTextShadow",
+        "clrTransparent",
+        "cutoutPercentage",
+        "cutoutScaling",
+        "figure",
+        "reshapers",
+        "roundedRectRadius",
+        "seamY",
+        "shapeConstraints",
+        "svg",
+        "textBoundaries"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "Project_Data"
+      }
+    },
+    {
+      "id": "docbook",
+      "class": "org.omegat.filters3.xml.docbook.DocBookDialect",
+      "paragraph": [
+        "address",
+        "affiliation",
+        "author",
+        "authorgroup",
+        "authorinitials",
+        "bibliomixed",
+        "bibliomset",
+        "book",
+        "bookinfo",
+        "bridgehead",
+        "chapter",
+        "copyright",
+        "date",
+        "edition",
+        "email",
+        "entry",
+        "firstname",
+        "glosssee",
+        "glossseealso",
+        "holder",
+        "isbn",
+        "itemizedlist",
+        "keyword",
+        "keywordset",
+        "listitem",
+        "member",
+        "orgname",
+        "para",
+        "preface",
+        "primaryie",
+        "pubdate",
+        "refentrytitle",
+        "releaseinfo",
+        "revhistory",
+        "revision",
+        "revnumber",
+        "revremark",
+        "row",
+        "secondaryie",
+        "section",
+        "seealsoie",
+        "seeie",
+        "simpara",
+        "subtitle",
+        "surname",
+        "synopfragmentref",
+        "table",
+        "tbody",
+        "term",
+        "tertiaryie",
+        "tgroup",
+        "thead",
+        "title",
+        "tocentry",
+        "year"
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+        "indexterm"
+      ],
+      "preformat": [
+        "address",
+        "literallayout",
+        "programlisting",
+        "screen",
+        "synopsis"
+      ],
+      "attrs": [
+        "lang",
+        "url",
+        "xml:lang"
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "public_doctype": "-//OASIS//DTD DocBook.*"
+      }
+    },
+    {
+      "id": "flash",
+      "class": "org.omegat.filters3.xml.flash.FlashDialect",
+      "paragraph": [
+        "characters"
+      ],
+      "intact": [
+        "script"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "helpandmanual",
+      "class": "org.omegat.filters3.xml.helpandmanual.HelpAndManualDialect",
+      "paragraph": [
+        "caption",
+        "config-value",
+        "keyword",
+        "li",
+        "para",
+        "title",
+        "variable"
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "topic|map|helpproject"
+      }
+    },
+    {
+      "id": "infix",
+      "class": "org.omegat.filters3.xml.infix.InfixDialect",
+      "paragraph": [
+        "P",
+        "STORY"
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "DOC"
+      }
+    },
+    {
+      "id": "l10nmgr",
+      "class": "org.omegat.filters3.xml.l10nmgr.L10nmgrDialect",
+      "paragraph": [
+        "address",
+        "blockquote",
+        "center",
+        "data",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "hr",
+        "label",
+        "legend",
+        "li",
+        "ol",
+        "option",
+        "p",
+        "pageGrp",
+        "select",
+        "table",
+        "td",
+        "textarea",
+        "th",
+        "title",
+        "tr",
+        "ul"
+      ],
+      "intact": [
+        "head"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "TYPO3L10N"
+      }
+    },
+    {
+      "id": "opendoc",
+      "class": "org.omegat.filters3.xml.opendoc.OpenDocDialect",
+      "paragraph": [
+        "dc:description",
+        "dc:language",
+        "dc:subject",
+        "dc:title",
+        "meta:keyword",
+        "meta:user-defined",
+        "text:h",
+        "text:p",
+        "text:tab"
+      ],
+      "intact": [
+        "dc:creator",
+        "dc:date",
+        "dc:language",
+        "meta:creation-date",
+        "meta:editing-cycles",
+        "meta:editing-duration",
+        "meta:generator",
+        "meta:initial-creator",
+        "meta:print-date",
+        "meta:user-defined",
+        "office:automatic-styles",
+        "office:font-face-decls",
+        "office:scripts",
+        "office:styles",
+        "text:change",
+        "text:note-citation",
+        "text:tracked-changes"
+      ],
+      "out_of_turn": [
+        "office:annotation",
+        "text:footnote",
+        "text:note"
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+        "text:alphabetical-index-mark": [
+          "text:key1",
+          "text:key2",
+          "text:string-value"
+        ]
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "openxml",
+      "class": "org.omegat.filters3.xml.openxml.OpenXMLDialect",
+      "paragraph": [
+        "Text",
+        "a:p",
+        "c:v",
+        "comment",
+        "dc:creator",
+        "dc:subject",
+        "dc:title",
+        "definedName",
+        "si",
+        "w:br",
+        "w:p",
+        "w:tab"
+      ],
+      "intact": [
+        "Act",
+        "Char",
+        "Colors",
+        "Connection",
+        "Control",
+        "Copyright",
+        "DocumentProperties",
+        "DocumentSettings",
+        "DocumentSheet",
+        "EndX",
+        "Event",
+        "EventList",
+        "FaceNames",
+        "Fill",
+        "FillForegnd",
+        "FooterMargin",
+        "Foreign",
+        "ForeignData",
+        "Geom",
+        "HeaderFooter",
+        "HeaderMargin",
+        "Height",
+        "Help",
+        "Icon",
+        "Image",
+        "LayerMem",
+        "Layout",
+        "Line",
+        "Masters",
+        "Menu",
+        "Misc",
+        "PageHeight",
+        "PageLayout",
+        "PageProps",
+        "PageSheet",
+        "PageWidth",
+        "Para",
+        "PinY",
+        "PreviewPicture",
+        "PrintProps",
+        "Protection",
+        "Scratch",
+        "ShdwBkgnd",
+        "StyleSheets",
+        "TextBkgnd",
+        "TextBlock",
+        "TextXForm",
+        "User",
+        "VBProjectData",
+        "Width",
+        "Window",
+        "Windows",
+        "XForm",
+        "XForm1D",
+        "a:tableStyleId",
+        "authors",
+        "c:f",
+        "c:formatCode",
+        "cp:lastModifiedBy",
+        "cp:lastPrinted",
+        "cp:revision",
+        "cp:version",
+        "dcterms:created",
+        "dcterms:modified",
+        "definedNames",
+        "mc:Fallback",
+        "p:attrName",
+        "rPh",
+        "v14:Geom",
+        "vx:Char",
+        "vx:Color",
+        "vx:Event",
+        "vx:Fill",
+        "vx:Line",
+        "vx:TextBkgnd",
+        "w:fldChar",
+        "w:instrText",
+        "wp14:pctHeight",
+        "wp14:pctWidth",
+        "wp:align",
+        "wp:posOffset",
+        "xdr:col",
+        "xdr:colOff",
+        "xdr:row",
+        "xdr:rowOff"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+        "sheet": [
+          "name"
+        ]
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "propxml",
+      "class": "org.omegat.filters3.xml.properties.PropertiesDialect",
+      "paragraph": [
+        "entry"
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "properties"
+      }
+    },
+    {
+      "id": "relaxng",
+      "class": "org.omegat.filters3.xml.relaxng.RelaxNGDialect",
+      "paragraph": [
+        "a:documentation",
+        "documentation"
+      ],
+      "intact": [
+        "name",
+        "nsName",
+        "value"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "grammar",
+        "xmlns": "xmlns(:\\w+)?=\"http://relaxng.org/ns/structure/1.0\""
+      }
+    },
+    {
+      "id": "resx",
+      "class": "org.omegat.filters3.xml.resx.ResXDialect",
+      "paragraph": [
+        "value"
+      ],
+      "intact": [
+        "comment",
+        "metadata",
+        "resheader"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "schematron",
+      "class": "org.omegat.filters3.xml.schematron.SchematronDialect",
+      "paragraph": [
+        "assert",
+        "report"
+      ],
+      "intact": [
+        "active",
+        "include",
+        "key",
+        "let",
+        "ns",
+        "phase"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "schema|pattern"
+      }
+    },
+    {
+      "id": "scribus",
+      "class": "org.omegat.filters3.xml.scribus.ScribusDialect",
+      "paragraph": [
+
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+        "CH"
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "SCRIBUSUTF8NEW"
+      }
+    },
+    {
+      "id": "svg",
+      "class": "org.omegat.filters3.xml.svg.SvgDialect",
+      "paragraph": [
+        "flowRoot",
+        "p",
+        "svg",
+        "text"
+      ],
+      "intact": [
+        "dc:format",
+        "image",
+        "path",
+        "style"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "svg"
+      }
+    },
+    {
+      "id": "txml",
+      "class": "org.omegat.filters3.xml.txml.TXMLDialect",
+      "paragraph": [
+        "source",
+        "target"
+      ],
+      "intact": [
+        "revisions",
+        "skeleton",
+        "source",
+        "ut"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "typo3",
+      "class": "org.omegat.filters3.xml.typo3.Typo3Dialect",
+      "paragraph": [
+        "abstract",
+        "br",
+        "header",
+        "image_link",
+        "imagecaption",
+        "li",
+        "p",
+        "subtitle",
+        "td",
+        "title"
+      ],
+      "intact": [
+        "l18n_diffsource"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "t3_tt_content"
+      }
+    },
+    {
+      "id": "visio",
+      "class": "org.omegat.filters3.xml.visio.VisioDialect",
+      "paragraph": [
+        "Text"
+      ],
+      "intact": [
+        "Act",
+        "Char",
+        "Colors",
+        "Connection",
+        "Control",
+        "Copyright",
+        "DocumentProperties",
+        "DocumentSettings",
+        "DocumentSheet",
+        "EndX",
+        "Event",
+        "EventList",
+        "FaceNames",
+        "Fill",
+        "FillForegnd",
+        "FooterMargin",
+        "Foreign",
+        "ForeignData",
+        "Geom",
+        "HeaderFooter",
+        "HeaderMargin",
+        "Height",
+        "Help",
+        "Icon",
+        "Image",
+        "LayerMem",
+        "Layout",
+        "Line",
+        "Masters",
+        "Menu",
+        "Misc",
+        "PageHeight",
+        "PageLayout",
+        "PageProps",
+        "PageSheet",
+        "PageWidth",
+        "Para",
+        "PinY",
+        "PreviewPicture",
+        "PrintProps",
+        "Protection",
+        "Scratch",
+        "ShdwBkgnd",
+        "StyleSheets",
+        "TextBkgnd",
+        "TextBlock",
+        "TextXForm",
+        "User",
+        "VBProjectData",
+        "Width",
+        "Window",
+        "Windows",
+        "XForm",
+        "XForm1D",
+        "v14:Geom",
+        "vx:Char",
+        "vx:Color",
+        "vx:Event",
+        "vx:Fill",
+        "vx:Line",
+        "vx:TextBkgnd"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "wix",
+      "class": "org.omegat.filters3.xml.wix.WiXDialect",
+      "paragraph": [
+        "String"
+      ],
+      "intact": [
+
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "WixLocalization"
+      }
+    },
+    {
+      "id": "wordpress",
+      "class": "org.omegat.filters3.xml.wordpress.WordpressDialect",
+      "paragraph": [
+        "channel",
+        "content:encoded",
+        "description",
+        "title"
+      ],
+      "intact": [
+        "category",
+        "dc:creator",
+        "generator",
+        "guid",
+        "link",
+        "pubDate",
+        "title"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "xhtml",
+      "class": "org.omegat.filters3.xml.xhtml.XHTMLDialect",
+      "paragraph": [
+        "address",
+        "blockquote",
+        "body",
+        "center",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "head",
+        "hr",
+        "html",
+        "label",
+        "legend",
+        "li",
+        "ol",
+        "option",
+        "p",
+        "select",
+        "table",
+        "td",
+        "textarea",
+        "th",
+        "title",
+        "tr",
+        "ul"
+      ],
+      "intact": [
+        "embed",
+        "object",
+        "script",
+        "style"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+        "pre",
+        "textarea"
+      ],
+      "attrs": [
+        "abbr",
+        "alt",
+        "content",
+        "dir",
+        "href",
+        "hreflang",
+        "lang",
+        "placeholder",
+        "summary",
+        "title",
+        "xml:lang"
+      ],
+      "tag_attrs": {
+        "img": [
+          "src"
+        ],
+        "input": [
+          "value"
+        ]
+      },
+      "constraints": {
+        "public_doctype": "-//W3C//DTD XHTML.*"
+      }
+    },
+    {
+      "id": "xliff",
+      "class": "org.omegat.filters3.xml.xliff.XLIFFDialect",
+      "paragraph": [
+        "source",
+        "target"
+      ],
+      "intact": [
+        "alt-trans",
+        "bin-unit",
+        "context",
+        "count-group",
+        "header",
+        "note",
+        "prop-group",
+        "sdl:seg-defs",
+        "seg-source",
+        "source"
+      ],
+      "out_of_turn": [
+        "sub"
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+
+      }
+    },
+    {
+      "id": "xmlss",
+      "class": "org.omegat.filters3.xml.xmlspreadsheet.XMLSpreadsheetDialect",
+      "paragraph": [
+        "Cell",
+        "Workbook"
+      ],
+      "intact": [
+        "DocumentProperties",
+        "ExcelWorkbook",
+        "OfficeDocumentSettings",
+        "WorksheetOptions"
+      ],
+      "out_of_turn": [
+
+      ],
+      "preformat": [
+
+      ],
+      "attrs": [
+
+      ],
+      "tag_attrs": {
+
+      },
+      "constraints": {
+        "root": "Workbook"
+      }
+    }
+  ]
+}

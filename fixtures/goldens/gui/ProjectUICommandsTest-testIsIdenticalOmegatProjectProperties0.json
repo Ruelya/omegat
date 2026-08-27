@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.ProjectUICommandsTest#testIsIdenticalOmegatProjectProperties0",
+  "identical_before": true,
+  "identical_after_export_levels_change": false,
+  "keys": [
+    "org.omegat.gui.main.ProjectUICommandsTest#testIsIdenticalOmegatProjectProperties0"
+  ]
+}
