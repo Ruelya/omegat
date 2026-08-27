@@ -1,9 +1,149 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.util.editor.EditorUtilsTest#testChangeCase",
-  "input": "lower case only",
-  "lower": "lower case only",
-  "upper": "LOWER CASE ONLY",
-  "sentence": "Lower case only",
-  "title": "Lower Case Only"
+  "cycle_sequence": [
+    "A I'VE GOT A {CRAZY} TEXT HERE INCLUDING 1 日本語!",
+    "a i've got a {crazy} text here including 1 日本語!",
+    "A i've got a {crazy} text here including 1 日本語!",
+    "A I've Got A {Crazy} Text Here Including 1 日本語!",
+    "A I'VE GOT A {CRAZY} TEXT HERE INCLUDING 1 日本語!"
+  ],
+  "cases": [
+    {
+      "input": "a I've GOT a {crazy} text hErE including 1 日本語!",
+      "lower": "a i've got a {crazy} text here including 1 日本語!",
+      "upper": "A I'VE GOT A {CRAZY} TEXT HERE INCLUDING 1 日本語!",
+      "sentence": "A i've got a {crazy} text here including 1 日本語!",
+      "title": "A I've Got A {Crazy} Text Here Including 1 日本語!",
+      "cycle": "A I'VE GOT A {CRAZY} TEXT HERE INCLUDING 1 日本語!"
+    },
+    {
+      "input": "lower case only",
+      "lower": "lower case only",
+      "upper": "LOWER CASE ONLY",
+      "sentence": "Lower case only",
+      "title": "Lower Case Only",
+      "cycle": "Lower case only"
+    },
+    {
+      "input": "UPPER CASE ONLY",
+      "lower": "upper case only",
+      "upper": "UPPER CASE ONLY",
+      "sentence": "Upper case only",
+      "title": "Upper Case Only",
+      "cycle": "upper case only"
+    },
+    {
+      "input": "Title Case Only",
+      "lower": "title case only",
+      "upper": "TITLE CASE ONLY",
+      "sentence": "Title case only",
+      "title": "Title Case Only",
+      "cycle": "TITLE CASE ONLY"
+    },
+    {
+      "input": "Sentence case string",
+      "lower": "sentence case string",
+      "upper": "SENTENCE CASE STRING",
+      "sentence": "Sentence case string",
+      "title": "Sentence Case String",
+      "cycle": "Sentence Case String"
+    },
+    {
+      "input": "mIxed CaSe oNly",
+      "lower": "mixed case only",
+      "upper": "MIXED CASE ONLY",
+      "sentence": "Mixed case only",
+      "title": "Mixed Case Only",
+      "cycle": "MIXED CASE ONLY"
+    },
+    {
+      "input": "A B C",
+      "lower": "a b c",
+      "upper": "A B C",
+      "sentence": "A b c",
+      "title": "A B C",
+      "cycle": "a b c"
+    },
+    {
+      "input": "{!} 1 日本語",
+      "lower": "{!} 1 日本語",
+      "upper": "{!} 1 日本語",
+      "sentence": "{!} 1 日本語",
+      "title": "{!} 1 日本語",
+      "cycle": "{!} 1 日本語"
+    },
+    {
+      "input": "lower",
+      "lower": "lower",
+      "upper": "LOWER",
+      "sentence": "Lower",
+      "title": "Lower",
+      "cycle": "Lower"
+    },
+    {
+      "input": "UPPER",
+      "lower": "upper",
+      "upper": "UPPER",
+      "sentence": "Upper",
+      "title": "Upper",
+      "cycle": "upper"
+    },
+    {
+      "input": "Title",
+      "lower": "title",
+      "upper": "TITLE",
+      "sentence": "Title",
+      "title": "Title",
+      "cycle": "TITLE"
+    },
+    {
+      "input": "mIxed",
+      "lower": "mixed",
+      "upper": "MIXED",
+      "sentence": "Mixed",
+      "title": "Mixed",
+      "cycle": "MIXED"
+    },
+    {
+      "input": "A",
+      "lower": "a",
+      "upper": "A",
+      "sentence": "A",
+      "title": "A",
+      "cycle": "a"
+    },
+    {
+      "input": "MQL5",
+      "lower": "mql5",
+      "upper": "MQL5",
+      "sentence": "Mql5",
+      "title": "Mql5",
+      "cycle": "mql5"
+    },
+    {
+      "input": "<g0>Foo</g0>",
+      "lower": "<g0>foo</g0>",
+      "upper": "<g0>FOO</g0>",
+      "sentence": "<g0>Foo</g0>",
+      "title": "<g0>Foo</g0>",
+      "cycle": "<g0>FOO</g0>"
+    },
+    {
+      "input": "\"Foo, Bar\"",
+      "lower": "\"foo, bar\"",
+      "upper": "\"FOO, BAR\"",
+      "sentence": "\"Foo, bar\"",
+      "title": "\"Foo, Bar\"",
+      "cycle": "\"FOO, BAR\""
+    },
+    {
+      "input": "Ǉ ǈ ǉ",
+      "lower": "ǉ ǉ ǉ",
+      "upper": "Ǉ Ǉ Ǉ",
+      "sentence": "ǈ ǉ ǉ",
+      "title": "ǈ ǈ ǈ",
+      "cycle": "Ǉ Ǉ Ǉ"
+    }
+  ]
 }

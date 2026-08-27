@@ -18,6 +18,134 @@ function boundedIndex(index: number, length: number): number {
   return Math.max(0, Math.min(Math.trunc(index), length - 1));
 }
 
+export class LatestDockRequest<T> {
+  private generation = 0;
+  private pending: AbortController | null = null;
+
+  cancel(): void {
+    this.generation += 1;
+    this.pending?.abort();
+    this.pending = null;
+  }
+
+  isPending(): boolean {
+    return this.pending !== null;
+  }
+
+  /**
+   * Only the newest result may publish. AbortSignal also lets multi-step dock
+   * loads stop before issuing their next sidecar request.
+   */
+  async run(
+    load: (signal: AbortSignal) => Promise<T>,
+    publish: (value: T) => void,
+  ): Promise<boolean> {
+    this.cancel();
+    const generation = this.generation;
+    const request = new AbortController();
+    this.pending = request;
+    try {
+      const value = await load(request.signal);
+      if (
+        request.signal.aborted
+        || generation !== this.generation
+        || this.pending !== request
+      ) {
+        return false;
+      }
+      publish(value);
+      return true;
+    } catch (error) {
+      if (request.signal.aborted || generation !== this.generation) return false;
+      throw error;
+    } finally {
+      if (this.pending === request) this.pending = null;
+    }
+  }
+}
+
+export type DockNotificationTone = "hit" | "miss";
+
+export class DockNotificationController {
+  constructor(
+    private notifyHits = true,
+    private notifyMisses = false,
+  ) {}
+
+  setNotifyHits(enabled: boolean): void {
+    this.notifyHits = enabled;
+  }
+
+  setNotifyMisses(enabled: boolean): void {
+    this.notifyMisses = enabled;
+  }
+
+  getSettings(): { hits: boolean; misses: boolean } {
+    return { hits: this.notifyHits, misses: this.notifyMisses };
+  }
+
+  signal(resultCount: number): DockNotificationTone | null {
+    if (resultCount > 0) return this.notifyHits ? "hit" : null;
+    return this.notifyMisses ? "miss" : null;
+  }
+}
+
+export type DockMenuItem = {
+  id: string;
+  label: string;
+  checked?: boolean;
+  disabled?: boolean;
+  separatorBefore?: boolean;
+  action: () => void;
+};
+
+export type DockPopupSnapshot = {
+  open: boolean;
+  x: number;
+  y: number;
+  items: DockMenuItem[];
+};
+
+export class DockPopupController {
+  private items: DockMenuItem[] = [];
+  private x = 0;
+  private y = 0;
+  private opened = false;
+
+  update(items: readonly DockMenuItem[]): void {
+    this.items = items.map((item) => ({ ...item }));
+  }
+
+  open(x: number, y: number): DockPopupSnapshot {
+    this.x = Math.max(0, x);
+    this.y = Math.max(0, y);
+    this.opened = true;
+    return this.snapshot();
+  }
+
+  close(): DockPopupSnapshot {
+    this.opened = false;
+    return this.snapshot();
+  }
+
+  invoke(id: string): boolean {
+    const item = this.items.find((candidate) => candidate.id === id);
+    if (!item || item.disabled) return false;
+    item.action();
+    this.opened = false;
+    return true;
+  }
+
+  snapshot(): DockPopupSnapshot {
+    return {
+      open: this.opened,
+      x: this.x,
+      y: this.y,
+      items: this.items.map((item) => ({ ...item })),
+    };
+  }
+}
+
 /**
  * Stateful fuzzy-match selection, mirroring MatchesTextArea instead of
  * treating every pointer click as an immediate overwrite.

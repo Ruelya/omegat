@@ -11,6 +11,7 @@ import { buildActiveDocument } from "./SegmentBuilder";
 import { SegmentHistory } from "./SegmentHistory";
 import { EditorTextArea3, type ProtectedRange } from "./EditorTextArea3";
 import { TranslationUndoManager } from "./TranslationUndoManager";
+import { changeCase as changeEditorCase, getWordBoundary, type ChangeCaseMode } from "./EditorUtils";
 import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
 import type { Mark } from "./mark/Mark";
 import type { EntryKeyDto, IssueDto } from "../lib/types";
@@ -145,6 +146,7 @@ export class EditorController {
   targetLangIsRTL = false;
   markerSnapshot: MarkerSnapshot | null = null;
   leaveIssues: IssueDto[] = [];
+  targetLocale = "en";
   private entriesFilter: IEditorFilter = makeFilter("none");
   private visibleEntryIndices: number[] = [];
   private pageRadius = 25;
@@ -312,6 +314,88 @@ export class EditorController {
       this.bindDocumentToTextArea(true);
     }
     return this.textArea.getSelectedText();
+  }
+
+  setTargetLocale(locale: string): void {
+    this.targetLocale = locale || "und";
+    this.textArea.setTargetLocale(this.targetLocale);
+  }
+
+  /**
+   * Change the selected text, or the word touching a collapsed caret, through
+   * the active EditorTextArea3/Document3 UTF-16 range.
+   */
+  changeCase(mode: ChangeCaseMode): boolean {
+    if (!this.document?.editMode) return false;
+    this.adoptLiveDocument();
+    this.bindDocumentToTextArea(true);
+    const doc = this.document;
+    let start = Math.max(doc.translationStart, this.textArea.getSelectionStart());
+    let end = Math.min(doc.translationEnd, this.textArea.getSelectionEnd());
+    if (start > end) return false;
+    if (start === end) {
+      const caret = Math.max(0, Math.min(
+        this.textArea.getCaretPosition() - doc.translationStart,
+        doc.translation.length,
+      ));
+      const probe = caret > 0 ? caret - 1 : caret;
+      start = doc.translationStart
+        + getWordBoundary(this.targetLocale, doc.translation, probe, false);
+      end = doc.translationStart
+        + getWordBoundary(this.targetLocale, doc.translation, probe, true);
+    }
+    start = Math.max(doc.translationStart, Math.min(start, doc.translationEnd));
+    end = Math.max(start, Math.min(end, doc.translationEnd));
+    this.textArea.setSelection(start, end);
+    const selected = doc.fullText.slice(start, end);
+    const replacement = changeEditorCase(selected, mode, this.targetLocale);
+    if (selected === replacement) return false;
+
+    const before = this.currentUndoState();
+    if (!this.textArea.replaceSelection(replacement)) return false;
+    this.undo.remember(before);
+    this.document = this.textArea.getOmDocument();
+    this.syncActiveEntry();
+    this.refreshCurrentMarkers();
+    this.bindDocumentToTextArea(true);
+    this.textArea.setSelection(start, start + replacement.length);
+    return true;
+  }
+
+  /**
+   * Rebuild the active segment after an external fixer. When the active entry
+   * was fixed, its authoritative entry value replaces the dirty editor text
+   * without first committing that stale draft.
+   */
+  refreshViewAfterFix(fixedEntries: readonly number[] | null = null): boolean {
+    const current = this.getCurrentEntryNumber();
+    const activeWasFixed = fixedEntries === null || fixedEntries.includes(current);
+    return this.refreshView(!activeWasFixed);
+  }
+
+  refreshView(doCommit = true): boolean {
+    if (!this.document || this.displayedEntryIndex < 0) return false;
+    const caret = this.getCurrentPositionInEntryTranslationInEditor();
+    const index = this.displayedEntryIndex;
+    if (doCommit) this.commitCurrentDocument(true);
+    this.openEntry(index, false, caret);
+    return true;
+  }
+
+  refreshEntries(entryNumbers: ReadonlySet<number>): void {
+    let refreshActive = false;
+    entryNumbers.forEach((entryNumber) => {
+      const index = entryNumber - 1;
+      const entry = this.entries[index];
+      if (!entry) return;
+      this.markers.invalidate(this.entryKey(index, entry));
+      if (index === this.displayedEntryIndex) refreshActive = true;
+    });
+    if (refreshActive) {
+      this.refreshView(false);
+    } else if (entryNumbers.size > 0) {
+      this.loadedPageGeneration += 1;
+    }
   }
 
   getCurrentEntry(): LoadedEntry | null {

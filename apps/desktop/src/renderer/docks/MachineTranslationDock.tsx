@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { t } from "../i18n";
 import {
+  DockNotificationController,
   MachineTranslateController,
   type DockEditTarget,
 } from "../lib/dock-controllers";
@@ -12,15 +13,53 @@ export function MachineTranslationDock() {
   const queryMt = useApp((s) => s.queryMt);
   const draft = useApp((s) => s.draft);
   const setDraft = useApp((s) => s.setDraft);
+  const openWindow = useApp((s) => s.openWindow);
   const [selected, setSelected] = useState(-1);
+  const [notifyHits, setNotifyHits] = useState(true);
   const controller = new MachineTranslateController(mt, selected);
+  const notifications = new DockNotificationController(notifyHits);
   const editor: DockEditTarget = {
     getCurrentTranslation: () => draft,
     replaceEditText: setDraft,
     insertText: (text) => setDraft(draft + text),
   };
   return (
-    <DockFrame title={t("mt")}>
+    <DockFrame
+      title={t("mt")}
+      notification={notifications.signal(controller.results.length)}
+      menu={[
+        {
+          id: "fetch",
+          label: t("fetchMt"),
+          action: () => void queryMt(),
+        },
+        {
+          id: "insert",
+          label: t("insertTranslation"),
+          disabled: controller.getSelected() === null,
+          action: () => controller.apply(editor, "insert"),
+        },
+        {
+          id: "replace",
+          label: t("replace"),
+          disabled: controller.getSelected() === null,
+          action: () => controller.apply(editor, "overwrite"),
+        },
+        {
+          id: "notifications",
+          label: "Notifications",
+          checked: notifyHits,
+          separatorBefore: true,
+          action: () => setNotifyHits((enabled) => !enabled),
+        },
+        {
+          id: "preferences",
+          label: "Machine translation preferences",
+          separatorBefore: true,
+          action: () => openWindow("prefs"),
+        },
+      ]}
+    >
       <button type="button" onClick={() => void queryMt()}>
         {t("fetchMt")}
       </button>

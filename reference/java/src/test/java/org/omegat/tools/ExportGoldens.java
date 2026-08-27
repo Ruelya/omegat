@@ -173,6 +173,7 @@ import org.omegat.filters4.xml.xliff.SdlProject;
 import org.omegat.filters4.xml.xliff.SdlXliff;
 import org.omegat.filters4.xml.xliff.Xliff1Filter;
 import org.omegat.filters4.xml.xliff.Xliff2Filter;
+import org.omegat.gui.editor.EditorUtils;
 import org.omegat.gui.editor.IEditor;
 import org.omegat.gui.glossary.GlossaryEntry;
 import org.omegat.gui.glossary.GlossaryReaderTSV;
@@ -4634,11 +4635,51 @@ public final class ExportGoldens {
                         Map.of("input", "\u202C", "output", ""),
                         Map.of("input", "\u202Az\u202Bz\u202C", "output", "zz"),
                         Map.of("input", "zz", "output", "zz"))));
+        ITokenizer changeCaseTokenizer = new LuceneEnglishTokenizer();
+        List<String> changeCaseInputs = List.of(
+                "a I've GOT a {crazy} text hErE including 1 \u65e5\u672c\u8a9e!",
+                "lower case only",
+                "UPPER CASE ONLY",
+                "Title Case Only",
+                "Sentence case string",
+                "mIxed CaSe oNly",
+                "A B C",
+                "{!} 1 \u65e5\u672c\u8a9e",
+                "lower",
+                "UPPER",
+                "Title",
+                "mIxed",
+                "A",
+                "MQL5",
+                "<g0>Foo</g0>",
+                "\"Foo, Bar\"",
+                "\u01c7 \u01c8 \u01c9");
+        List<Map<String, Object>> changeCaseCases = new ArrayList<>();
+        for (String input : changeCaseInputs) {
+            Map<String, Object> changeCase = new LinkedHashMap<>();
+            changeCase.put("input", input);
+            changeCase.put("lower", EditorUtils.doChangeCase(input, IEditor.CHANGE_CASE_TO.LOWER,
+                    Locale.ENGLISH, changeCaseTokenizer));
+            changeCase.put("upper", EditorUtils.doChangeCase(input, IEditor.CHANGE_CASE_TO.UPPER,
+                    Locale.ENGLISH, changeCaseTokenizer));
+            changeCase.put("sentence", EditorUtils.doChangeCase(input, IEditor.CHANGE_CASE_TO.SENTENCE,
+                    Locale.ENGLISH, changeCaseTokenizer));
+            changeCase.put("title", EditorUtils.doChangeCase(input, IEditor.CHANGE_CASE_TO.TITLE,
+                    Locale.ENGLISH, changeCaseTokenizer));
+            changeCase.put("cycle", EditorUtils.doChangeCase(input, IEditor.CHANGE_CASE_TO.CYCLE,
+                    Locale.ENGLISH, changeCaseTokenizer));
+            changeCaseCases.add(changeCase);
+        }
+        List<String> cycleSequence = new ArrayList<>();
+        String cycled = changeCaseInputs.get(0);
+        for (int i = 0; i < 5; i++) {
+            cycled = EditorUtils.doChangeCase(cycled, IEditor.CHANGE_CASE_TO.CYCLE,
+                    Locale.ENGLISH, changeCaseTokenizer);
+            cycleSequence.add(cycled);
+        }
         writeCase("remaining/EditorUtilsTest-testChangeCase.json",
                 "org.omegat.util.editor.EditorUtilsTest#testChangeCase",
-                Map.of("input", "lower case only", "lower", "lower case only",
-                        "upper", "LOWER CASE ONLY", "sentence", "Lower case only",
-                        "title", "Lower Case Only"));
+                Map.of("cases", changeCaseCases, "cycle_sequence", cycleSequence));
         writeCase("remaining/IssuesTypeListModelTest-testCalculateData_NoIssues.json",
                 "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_NoIssues", Map.of("count", 0));
         writeCase("remaining/IssuesTypeListModelTest-testCalculateData_SingleType.json",

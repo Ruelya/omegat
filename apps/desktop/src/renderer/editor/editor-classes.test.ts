@@ -392,6 +392,53 @@ describe("Document3 / IEditor / completer classes", () => {
     });
   });
 
+  it("EditorController changeCase clamps UTF-16 selections and leaves tags intact", () => {
+    const controller = new EditorController();
+    controller.loadProject([{
+      file: "editor.txt",
+      source: "source",
+      translation: "one <x0/> lower case only 😀",
+    }]);
+
+    controller.setCaretPosition({ selectionStart: -20, selectionEnd: 200 });
+    expect(controller.changeCase("upper")).toBe(true);
+    expect(controller.getCurrentTranslation()).toBe("ONE <x0/> LOWER CASE ONLY 😀");
+    expect(controller.getCurrentPositionInEntryTranslationInEditor()).toEqual({
+      selectionStart: 0,
+      selectionEnd: "ONE <x0/> LOWER CASE ONLY 😀".length,
+    });
+
+    controller.setCaretPosition({ position: "ONE <x0/> LOWER ca".length });
+    expect(controller.changeCase("lower")).toBe(true);
+    expect(controller.getCurrentTranslation()).toBe("ONE <x0/> LOWER case ONLY 😀");
+    expect(controller.getSelectedText()).toBe("case");
+    expect(controller.undoEdit()).toBe("ONE <x0/> LOWER CASE ONLY 😀");
+  });
+
+  it("EditorController refreshes an externally fixed entry without committing a stale draft", () => {
+    const controller = new EditorController();
+    controller.loadProject([{
+      file: "editor.txt",
+      source: "source",
+      translation: "before",
+    }]);
+    controller.textArea.setText("stale local edit");
+    controller.entries[0]!.translation = "fixed externally";
+
+    expect(controller.refreshViewAfterFix([1])).toBe(true);
+    expect({
+      translation: controller.getCurrentTranslation(),
+      stored: controller.entries[0]!.translation,
+      dirty: controller.getOmDocument()!.dirty,
+      editMode: controller.getOmDocument()!.editMode,
+    }).toEqual({
+      translation: "fixed externally",
+      stored: "fixed externally",
+      dirty: false,
+      editMode: true,
+    });
+  });
+
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {
     const controller = new EditorController();
     controller.loadProject([

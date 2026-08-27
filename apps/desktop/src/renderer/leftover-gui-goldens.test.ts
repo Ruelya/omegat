@@ -77,11 +77,21 @@ describe("leftover GUI Java *Test goldens", () => {
     for (const c of dir.cases) {
       expect(removeDirectionChars(c.input)).toBe(c.output);
     }
-    const cases = load("remaining/EditorUtilsTest-testChangeCase.json");
-    expect(changeCase(cases.input, "lower")).toBe(cases.lower);
-    expect(changeCase(cases.input, "upper")).toBe(cases.upper);
-    expect(changeCase(cases.input, "title")).toBe(cases.title);
-    expect(changeCase(cases.input, "sentence")).toBe(cases.sentence);
+    const change = load("remaining/EditorUtilsTest-testChangeCase.json");
+    for (const testCase of change.cases) {
+      expect(changeCase(testCase.input, "lower"), testCase.input).toBe(testCase.lower);
+      expect(changeCase(testCase.input, "upper"), testCase.input).toBe(testCase.upper);
+      expect(changeCase(testCase.input, "title"), testCase.input).toBe(testCase.title);
+      expect(changeCase(testCase.input, "sentence"), testCase.input).toBe(testCase.sentence);
+      expect(changeCase(testCase.input, "cycle"), testCase.input).toBe(testCase.cycle);
+    }
+    let cycled = change.cases[0].input as string;
+    const cycleSequence = [];
+    for (let i = 0; i < change.cycle_sequence.length; i += 1) {
+      cycled = changeCase(cycled, "cycle");
+      cycleSequence.push(cycled);
+    }
+    expect(cycleSequence).toEqual(change.cycle_sequence);
   });
 
   it("EditorUtilsTest#testReplaceGlossaryEntries assert_eq", () => {

@@ -1,5 +1,10 @@
+import { useState } from "react";
 import { t } from "../i18n";
-import { MatchesController, type DockEditTarget } from "../lib/dock-controllers";
+import {
+  DockNotificationController,
+  MatchesController,
+  type DockEditTarget,
+} from "../lib/dock-controllers";
 import { useApp } from "../store/app";
 import { DockFrame } from "./DockFrame";
 
@@ -8,7 +13,10 @@ export function MatchesDock() {
   const selected = useApp((s) => s.selectedMatch);
   const draft = useApp((s) => s.draft);
   const setDraft = useApp((s) => s.setDraft);
+  const openWindow = useApp((s) => s.openWindow);
+  const [notifyHits, setNotifyHits] = useState(true);
   const controller = new MatchesController(matches, selected);
+  const notifications = new DockNotificationController(notifyHits);
   const editor: DockEditTarget = {
     getCurrentTranslation: () => draft,
     replaceEditText: setDraft,
@@ -18,7 +26,37 @@ export function MatchesDock() {
     useApp.setState({ selectedMatch: controller.select(index) });
   };
   return (
-    <DockFrame title={t("matches")}>
+    <DockFrame
+      title={t("matches")}
+      notification={notifications.signal(controller.matches.length)}
+      menu={[
+        {
+          id: "insert",
+          label: t("insertTranslation"),
+          disabled: controller.getActiveMatch() === null,
+          action: () => controller.apply(editor, "insert"),
+        },
+        {
+          id: "replace",
+          label: t("replace"),
+          disabled: controller.getActiveMatch() === null,
+          action: () => controller.apply(editor, "overwrite"),
+        },
+        {
+          id: "notifications",
+          label: "Notifications",
+          checked: notifyHits,
+          separatorBefore: true,
+          action: () => setNotifyHits((enabled) => !enabled),
+        },
+        {
+          id: "preferences",
+          label: "Match preferences",
+          separatorBefore: true,
+          action: () => openWindow("prefs"),
+        },
+      ]}
+    >
       {controller.matches.map((m, i) => (
         <div
           key={`${m.comes_from}-${i}`}

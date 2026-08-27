@@ -3,8 +3,11 @@ import { EditorController } from "../editor/EditorController";
 import {
   CommentsController,
   DictionaryController,
+  DockNotificationController,
+  DockPopupController,
   entryComment,
   GlossaryController,
+  LatestDockRequest,
   MachineTranslateController,
   MatchesController,
   MultipleTranslationsController,
@@ -255,5 +258,47 @@ describe("Swing-depth desktop dock controllers", () => {
     expect(editor.gotoEntryBySourceAndKey("same", altKey)).toBe(true);
     expect(editor.getCurrentEntry()?.key).toEqual(altKey);
     expect(editor.getCurrentTargetFile("C:\\target\\")).toBe("C:\\target\\folder\\source.txt");
+  });
+
+  it("cancels stale asynchronous dock results before they can publish", async () => {
+    let resolveOld!: (value: string) => void;
+    const old = new Promise<string>((resolve) => {
+      resolveOld = resolve;
+    });
+    const published: string[] = [];
+    const requests = new LatestDockRequest<string>();
+
+    const first = requests.run(() => old, (value) => published.push(value));
+    expect(requests.isPending()).toBe(true);
+    const second = requests.run(async () => "new", (value) => published.push(value));
+    expect(await second).toBe(true);
+    resolveOld("old");
+    expect(await first).toBe(false);
+    expect(requests.isPending()).toBe(false);
+    expect(published).toEqual(["new"]);
+  });
+
+  it("dispatches hit/miss notifications and popup actions through dock controllers", () => {
+    const notifications = new DockNotificationController(true, false);
+    expect(notifications.signal(2)).toBe("hit");
+    expect(notifications.signal(0)).toBeNull();
+    notifications.setNotifyHits(false);
+    notifications.setNotifyMisses(true);
+    expect(notifications.getSettings()).toEqual({ hits: false, misses: true });
+    expect(notifications.signal(2)).toBeNull();
+    expect(notifications.signal(0)).toBe("miss");
+
+    const invoked: string[] = [];
+    const popup = new DockPopupController();
+    popup.update([
+      { id: "disabled", label: "Disabled", disabled: true, action: () => invoked.push("disabled") },
+      { id: "insert", label: "Insert", checked: true, action: () => invoked.push("insert") },
+    ]);
+    expect(popup.open(-5, 12)).toMatchObject({ open: true, x: 0, y: 12 });
+    expect(popup.invoke("disabled")).toBe(false);
+    expect(popup.snapshot().open).toBe(true);
+    expect(popup.invoke("insert")).toBe(true);
+    expect(popup.snapshot().open).toBe(false);
+    expect(invoked).toEqual(["insert"]);
   });
 });

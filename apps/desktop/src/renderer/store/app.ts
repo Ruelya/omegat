@@ -14,6 +14,7 @@ import {
   type ViewMarks,
 } from "../lib/editor-doc";
 import { DEFAULT_DOCK_LAYOUT, layoutFromPrefs, layoutToPrefs, serializeDockLayout, type DockLayout } from "../lib/layout";
+import { LatestDockRequest } from "../lib/dock-controllers";
 import { applyColorVars, defaultPreferences } from "../lib/preferences";
 import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchForm } from "../lib/search-params";
 import type {
@@ -57,6 +58,43 @@ async function rpc<T>(method: string, params?: unknown): Promise<T> {
     throw new Error("sidecar bridge unavailable");
   }
   return window.omegat.rpc(method, params) as Promise<T>;
+}
+
+function stopIfCancelled(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  const error = new Error("dock request cancelled");
+  error.name = "AbortError";
+  throw error;
+}
+
+type SelectedDockData = {
+  index: number;
+  key: EntryDto["key"];
+  matches: MatchDto[];
+  glossary: GlossaryHitDto[];
+  issues: IssueDto[];
+  mt: MtSuggestionDto[];
+  dict: DictHitDto[];
+  completer: CompleterItemDto[];
+  draft: string;
+  note: string;
+  source: string;
+  file: string;
+  previousIndex: number;
+  navBack: number[];
+  recordHistory: boolean;
+};
+
+const selectedDockRequest = new LatestDockRequest<SelectedDockData>();
+const mtDockRequest = new LatestDockRequest<MtSuggestionDto>();
+const dictionaryDockRequest = new LatestDockRequest<DictHitDto[]>();
+const completerDockRequest = new LatestDockRequest<CompleterItemDto[]>();
+
+function cancelDockRequests(): void {
+  selectedDockRequest.cancel();
+  mtDockRequest.cancel();
+  dictionaryDockRequest.cancel();
+  completerDockRequest.cancel();
 }
 
 function normalizeEntrySetResult(result: EntrySetResult | EntryDto): EntrySetResult {
@@ -325,6 +363,7 @@ export const useApp = create<AppState>((set, get) => ({
     await get().open(root);
   },
   closeProject: async () => {
+    cancelDockRequests();
     try {
       await rpc("project.close");
     } catch {
@@ -412,75 +451,114 @@ export const useApp = create<AppState>((set, get) => ({
     const insert_best = prefs?.insert_best_match ?? true;
     const e = entries[index];
     if (!e) return;
-    const matches = await rpc<MatchDto[]>("matches.query", { index });
-    const glossary = await rpc<GlossaryHitDto[]>("glossary.query", { index });
-    const issues = await rpc<IssueDto[]>("issues.list");
-    let mt: MtSuggestionDto[] = [];
-    if (get().mtAutoFetch) {
-      try {
-        mt = [await rpc<MtSuggestionDto>("mt.query", { index, engine: "mymemory" })];
-      } catch {
-        mt = [];
+    mtDockRequest.cancel();
+    dictionaryDockRequest.cancel();
+    completerDockRequest.cancel();
+    await selectedDockRequest.run(async (signal) => {
+      const matches = await rpc<MatchDto[]>("matches.query", { index });
+      stopIfCancelled(signal);
+      const glossary = await rpc<GlossaryHitDto[]>("glossary.query", { index });
+      stopIfCancelled(signal);
+      const issues = await rpc<IssueDto[]>("issues.list");
+      stopIfCancelled(signal);
+      let mt: MtSuggestionDto[] = [];
+      if (get().mtAutoFetch) {
+        try {
+          mt = [await rpc<MtSuggestionDto>("mt.query", { index, engine: "mymemory" })];
+        } catch {
+          mt = [];
+        }
+        stopIfCancelled(signal);
       }
-    }
-    const dict = get().prefs?.dictionary_auto_search
-      ? await rpc<DictHitDto[]>("dict.query", {
-          word: e.source.split(/\s+/)[0] || "",
-          fuzzy: get().prefs?.dictionary_fuzzy_matching,
-        })
-      : [];
-    let draft = e.translation;
-    if (!draft && insert_best && matches[0]) draft = matches[0].translation;
-    const completer = get().completerAuto
-      ? await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "", text: draft })
-      : [];
-    set({
-      index,
-      matches,
-      glossary,
-      issues,
-      mt,
-      dict,
-      completer,
-      draft,
-      document3: createDocument3(e.source, draft),
-      note: e.note,
-      history: { undo: [], redo: [] },
-      selectedMatch: 0,
-      status: `${e.file} #${index + 1}`,
-      ...(recordHistory && prev !== index
-        ? { navBack: [...navBack, prev], navForward: [] }
-        : {}),
+      const dict = get().prefs?.dictionary_auto_search
+        ? await rpc<DictHitDto[]>("dict.query", {
+            word: e.source.split(/\s+/)[0] || "",
+            fuzzy: get().prefs?.dictionary_fuzzy_matching,
+          })
+        : [];
+      stopIfCancelled(signal);
+      let draft = e.translation;
+      if (!draft && insert_best && matches[0]) draft = matches[0].translation;
+      const completer = get().completerAuto
+        ? await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "", text: draft })
+        : [];
+      stopIfCancelled(signal);
+      return {
+        index,
+        key: { ...e.key },
+        matches,
+        glossary,
+        issues,
+        mt,
+        dict,
+        completer,
+        draft,
+        note: e.note,
+        source: e.source,
+        file: e.file,
+        previousIndex: prev,
+        navBack,
+        recordHistory,
+      };
+    }, (loaded) => {
+      const current = get().entries[loaded.index];
+      if (!current || !sameCompleteEntryKey(current.key, loaded.key)) return;
+      set({
+        index: loaded.index,
+        matches: loaded.matches,
+        glossary: loaded.glossary,
+        issues: loaded.issues,
+        mt: loaded.mt,
+        dict: loaded.dict,
+        completer: loaded.completer,
+        draft: loaded.draft,
+        document3: createDocument3(loaded.source, loaded.draft),
+        note: loaded.note,
+        history: { undo: [], redo: [] },
+        selectedMatch: 0,
+        status: `${loaded.file} #${loaded.index + 1}`,
+        ...(loaded.recordHistory && loaded.previousIndex !== loaded.index
+          ? { navBack: [...loaded.navBack, loaded.previousIndex], navForward: [] }
+          : {}),
+      });
     });
   },
   queryMt: async (engine = "mymemory") => {
     try {
-      const one = await rpc<MtSuggestionDto>("mt.query", { index: get().index, engine });
-      set({ mt: [one, ...get().mt.filter((m) => m.engine !== engine)] });
+      const index = get().index;
+      await mtDockRequest.run(
+        () => rpc<MtSuggestionDto>("mt.query", { index, engine }),
+        (one) => {
+          if (get().index !== index) return;
+          set({ mt: [one, ...get().mt.filter((m) => m.engine !== engine)] });
+        },
+      );
     } catch (e) {
       set({ error: String(e) });
     }
   },
   queryDict: async (word) => {
-    set({
-      dict: await rpc<DictHitDto[]>("dict.query", {
+    const index = get().index;
+    await dictionaryDockRequest.run(() => rpc<DictHitDto[]>("dict.query", {
         word,
         fuzzy: get().prefs?.dictionary_fuzzy_matching,
-      }),
-    });
+      }), (dict) => {
+        if (get().index === index) set({ dict });
+      });
   },
   queryCompleter: async (prefix) => {
     if (!get().completerAuto && !prefix) {
       set({ completer: [] });
       return;
     }
-    set({
-      completer: await rpc<CompleterItemDto[]>("completer.query", {
+    const index = get().index;
+    await completerDockRequest.run(() => rpc<CompleterItemDto[]>("completer.query", {
         index: get().index,
         prefix,
         text: get().draft,
-      }),
-    });
+      }), (completer) => {
+        if (get().index === index) set({ completer });
+      });
   },
   loadFilters: async () => set({ filters: await rpc<FilterInfoDto[]>("filters.list") }),
   loadPrefs: async () => {
@@ -952,6 +1030,7 @@ export const useApp = create<AppState>((set, get) => ({
 }));
 
 export function resetAppState() {
+  cancelDockRequests();
   useApp.setState({
     ...initialState,
     firstRun: true,

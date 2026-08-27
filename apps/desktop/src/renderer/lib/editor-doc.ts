@@ -1,4 +1,5 @@
 import type { MarkPrefs } from "./types";
+import { changeCase, type ChangeCaseMode } from "../editor/EditorUtils";
 
 export type DocToken = { kind: "text" | "tag"; value: string };
 
@@ -320,18 +321,6 @@ export function redoDraft(stacks: HistoryStacks, current: string): { draft: stri
   };
 }
 
-export function switchCase(text: string, mode: "upper" | "lower" | "title" | "sentence" | "cycle"): string {
-  if (mode === "upper") return text.toUpperCase();
-  if (mode === "lower") return text.toLowerCase();
-  if (mode === "title") {
-    return text.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-  }
-  if (mode === "sentence") {
-    return text.replace(/(^\s*[a-z])|([.!?]\s+[a-z])/g, (m) => m.toUpperCase());
-  }
-  if (text === text.toUpperCase()) return text.toLowerCase();
-  if (text === text.toLowerCase()) {
-    return text.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-  }
-  return text.toUpperCase();
+export function switchCase(text: string, mode: ChangeCaseMode): string {
+  return changeCase(text, mode);
 }

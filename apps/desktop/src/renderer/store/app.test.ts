@@ -160,6 +160,69 @@ describe("app store", () => {
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")[0]).toBe("/p");
   });
 
+  it("cancels an older dock load when a newer segment selection wins", async () => {
+    let resolveOldMatches!: (value: unknown[]) => void;
+    const oldMatches = new Promise<unknown[]>((resolve) => {
+      resolveOldMatches = resolve;
+    });
+    rpc.mockImplementation(async (method: string, params?: { index?: number }) => {
+      if (method === "matches.query" && params?.index === 0) return oldMatches;
+      if (method === "matches.query") {
+        return [{ source: "second", translation: "new result", score: 99, comes_from: "tm/new" }];
+      }
+      if (
+        method === "glossary.query"
+        || method === "issues.list"
+        || method === "dict.query"
+        || method === "completer.query"
+      ) {
+        return [];
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    const secondEntry = {
+      ...sampleEntry,
+      index: 1,
+      key: {
+        ...sampleEntry.key,
+        source_text: "second",
+        id: "2",
+        path: "/second",
+      },
+      id: "2",
+      source: "second",
+      translation: "deux",
+      translated: true,
+    };
+    useApp.setState({
+      entries: [{ ...sampleEntry }, secondEntry],
+      index: 0,
+      draft: "",
+      note: "",
+      prefs: defaultPreferences({ insert_best_match: false }),
+    });
+
+    const older = useApp.getState().select(0, false);
+    const newer = useApp.getState().select(1, false);
+    await newer;
+    resolveOldMatches([{ source: "first", translation: "stale", score: 100, comes_from: "tm/old" }]);
+    await older;
+
+    expect({
+      index: useApp.getState().index,
+      draft: useApp.getState().draft,
+      matches: useApp.getState().matches,
+      staleGlossaryRequest: rpc.mock.calls.some(
+        ([method, params]) => method === "glossary.query" && params?.index === 0,
+      ),
+    }).toEqual({
+      index: 1,
+      draft: "deux",
+      matches: [{ source: "second", translation: "new result", score: 99, comes_from: "tm/new" }],
+      staleGlossaryRequest: false,
+    });
+  });
+
   it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {
     const props = {
       root: "/p",

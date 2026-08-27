@@ -96,6 +96,51 @@ input, textarea, select {
   overflow: hidden;
 }
 .dock-body { flex: 1; overflow: auto; }
+.dock[data-notification="hit"] .pane-h {
+  box-shadow: inset 3px 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
+}
+.dock[data-notification="miss"] .pane-h {
+  box-shadow: inset 3px 0 #b26a00;
+}
+.dock-menu-trigger {
+  margin: -4px -5px -4px auto;
+  min-width: 24px;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.dock-popup {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+}
+.dock-popup button {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 4px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.dock-popup button:hover:not(:disabled),
+.dock-popup button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.dock-popup button.separator {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+}
 .splitter {
   background: var(--line);
   cursor: col-resize;
@@ -228,6 +273,8 @@ input, textarea, select {
 }
 .col:last-child { border-right: none; }
 .pane-h {
+  display: flex;
+  align-items: center;
   padding: 7px 10px;
   font-size: 11px;
   letter-spacing: 0.08em;

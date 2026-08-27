@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { t } from "../i18n";
 import { sameCompleteEntryKey } from "../editor/EditorController";
 import {
@@ -15,6 +16,7 @@ export function MultipleTranslationsDock() {
   const setDraft = useApp((s) => s.setDraft);
   const commitCurrent = useApp((s) => s.commitCurrent);
   const select = useApp((s) => s.select);
+  const [selectedRow, setSelectedRow] = useState(0);
   const controller = new MultipleTranslationsController(entries, index);
   const editor: MultipleTranslationTarget = {
     getCurrentTranslation: () => draft,
@@ -32,11 +34,39 @@ export function MultipleTranslationsDock() {
       return target >= 0;
     },
   };
+  const activeRow = controller.rows[selectedRow];
   return (
-    <DockFrame title={t("multiple")}>
+    <DockFrame
+      title={t("multiple")}
+      menu={[
+        {
+          id: "replace",
+          label: t("replace"),
+          disabled: activeRow === undefined,
+          action: () => controller.replace(editor, selectedRow),
+        },
+        {
+          id: "default",
+          label: t("defaultTranslation"),
+          disabled: activeRow === undefined || activeRow.isDefault,
+          action: () => controller.makeDefault(editor, selectedRow),
+        },
+        {
+          id: "goto",
+          label: "Go to segment",
+          separatorBefore: true,
+          disabled: activeRow === undefined,
+          action: () => controller.goto(editor, selectedRow),
+        },
+      ]}
+    >
       <div className="empty-state">{e?.default_translation ? t("defaultTranslation") : t("alternateTranslation")}</div>
       {controller.rows.map((row, rowIndex) => (
-        <div key={JSON.stringify(row.key)} className="hit">
+        <div
+          key={JSON.stringify(row.key)}
+          className={`hit ${rowIndex === selectedRow ? "active" : ""}`}
+          onClick={() => setSelectedRow(rowIndex)}
+        >
           #{row.index + 1} {row.file}{row.id ? `/${row.id}` : ""} — {row.translation || "—"}
           {row.previous !== null && row.next !== null && (
             <div className="muted">({row.previous} &lt;...&gt; {row.next})</div>
