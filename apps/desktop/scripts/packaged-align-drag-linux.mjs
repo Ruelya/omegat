@@ -492,6 +492,35 @@ try {
     );
     return active === "align-drop-bottom-source" ? true : undefined;
   });
+  const bottomDropPoint = await client.evaluate(`(() => {
+    const cell = document.querySelector("#align-drop-bottom-source");
+    const rect = cell?.getBoundingClientRect();
+    if (!rect) return null;
+    return {
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+      hit: document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      )?.id ?? null,
+    };
+  })()`);
+  assert.equal(bottomDropPoint?.hit, "align-drop-bottom-source");
+  await xdotool(xvfb.display, [
+    "mousemove",
+    String(Math.round(contentLeft + bottomDropPoint.clientX + correctionX)),
+    String(Math.round(contentTop + bottomDropPoint.clientY + correctionY)),
+  ]);
+  await waitFor("native dragover on bottom drop cell", async () => {
+    const events = await client.evaluate("window.__omegatE2eDragEvents");
+    return events.some(
+      (event) =>
+        event.type === "dragover" &&
+        event.target === "align-drop-bottom-source",
+    )
+      ? true
+      : undefined;
+  });
   await xdotool(xvfb.display, ["mouseup", "1"]);
 
   const dropped = await waitFor("sidecar-backed drop result", async () => {
