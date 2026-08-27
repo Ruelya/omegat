@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createDocument3, replaceEditText, type Document3State } from "../editor/Document3";
-import { issuesForEntryOnLeave } from "../editor/EditorController";
+import { issuesForEntryOnLeave, sameCompleteEntryKey } from "../editor/EditorController";
 import { IEditor } from "../editor/IEditor";
 import {
   marksFromPrefs,
@@ -75,19 +75,6 @@ function isOptimisticLock(error: unknown): boolean {
   return /optimistic(?: lock| revision)/i.test(String(error));
 }
 
-function sameEntryKey(a: EntryDto["key"] | undefined, b: EntryDto["key"] | undefined): boolean {
-  return Boolean(
-    a
-    && b
-    && a.file === b.file
-    && a.source_text === b.source_text
-    && a.id === b.id
-    && a.prev === b.prev
-    && a.next === b.next
-    && a.path === b.path
-  );
-}
-
 function reloadedEntryIndex(
   entries: readonly EntryDto[],
   previous: EntryDto | undefined,
@@ -95,7 +82,7 @@ function reloadedEntryIndex(
 ): number {
   if (entries.length === 0) return -1;
   const keyed = previous
-    ? entries.findIndex((entry) => sameEntryKey(entry.key, previous.key))
+    ? entries.findIndex((entry) => sameCompleteEntryKey(entry.key, previous.key))
     : -1;
   return keyed >= 0
     ? keyed

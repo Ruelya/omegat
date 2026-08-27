@@ -183,6 +183,8 @@ input, textarea, select {
 .checks { display: flex; flex-wrap: wrap; gap: 8px 16px; border: 1px solid var(--line); padding: 8px; }
 .btn-row, .row-2 { display: flex; gap: 8px; flex-wrap: wrap; }
 .prop-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 8px; font-family: var(--mono); font-size: 11px; }
+.prop-grid > div { display: contents; }
+.prop-grid > div.active > span, .prop-grid > div.active > b { color: var(--accent); }
 .stats { width: 100%; border-collapse: collapse; }
 .stats td, .stats th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
 .align-table-scroll {

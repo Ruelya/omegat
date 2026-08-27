@@ -110,6 +110,22 @@ export function findCyclicEntryIndex<T>(
   return null;
 }
 
+export function sameCompleteEntryKey(
+  left: EntryKeyDto | undefined,
+  right: EntryKeyDto | undefined,
+): boolean {
+  return Boolean(
+    left
+    && right
+    && left.file === right.file
+    && left.source_text === right.source_text
+    && left.id === right.id
+    && left.prev === right.prev
+    && left.next === right.next
+    && left.path === right.path
+  );
+}
+
 export class EditorController {
   readonly editor = IEditor;
   readonly textArea = new EditorTextArea3();
@@ -227,6 +243,15 @@ export class EditorController {
 
   getCurrentFile(): string | null {
     return this.currentFile;
+  }
+
+  getCurrentTargetFile(targetRoot: string): string | null {
+    const file = this.getCurrentFile();
+    if (!file) return null;
+    const separator = targetRoot.includes("\\") && !targetRoot.includes("/") ? "\\" : "/";
+    const root = targetRoot.replace(/[\\/]+$/, "");
+    const relative = file.replace(/^[\\/]+/, "").replace(/[\\/]/g, separator);
+    return `${root}${separator}${relative}`;
   }
 
   getCurrentEntryNumber(): number {
@@ -543,6 +568,27 @@ export class EditorController {
     const changed = index !== this.displayedEntryIndex;
     this.activateEntry(index);
     return changed;
+  }
+
+  /**
+   * Java's source/key navigation used by fuzzy and multiple-translation panes.
+   * A supplied key must match every EntryKey field; source-only navigation
+   * resolves only a translated default, never an arbitrary alternative.
+   */
+  gotoEntryBySourceAndKey(
+    source: string | null,
+    key: EntryKeyDto | null = null,
+  ): boolean {
+    const index = this.entries.findIndex((entry) => {
+      if (source !== null && entry.source !== source) return false;
+      if (key !== null) return sameCompleteEntryKey(entry.key, key);
+      const translated = entry.translated ?? entry.translation.length > 0;
+      return !entry.isAlt && translated;
+    });
+    if (index < 0 || !this.visibleEntryIndices.includes(index)) return false;
+    if (index === this.displayedEntryIndex) return true;
+    this.activateEntry(index);
+    return true;
   }
 
   gotoFile(file: string | number): boolean {
