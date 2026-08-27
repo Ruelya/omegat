@@ -43,9 +43,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **51331** lines; `apps/desktop/src`
-  TS/TSX/CSS **12688** lines (**~41%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **12688**
+- Rewrite Rust: `crates/**/*.rs` **52511** lines; `apps/desktop/src`
+  TS/TSX/CSS **13183** lines (**~42%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **13183**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **5023**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
@@ -56,9 +56,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-27 verification:** core selected suites **143 passed**, filters
-**57 passed**, team **28 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 88
+**2026-08-27 verification:** core selected suites **144 passed**, filters
+**59 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 89
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
@@ -140,6 +140,9 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
+The deep write-back suite is now **6/6**: in addition to the four ZIP cases,
+nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
+translated attributes/text under out-of-order translation maps.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -253,7 +256,12 @@ parent infers the remote tip, then verifies restart recovery and compensating
 history. Two pre-observed clients create competing commits before either
 publication; the actual libgit2 pushes produce one remote acceptance followed
 by one non-fast-forward rejection.
-The suite is **28 passed / 1 ignored** (the preserved SVN binary prerequisite).
+An advisory exclusive `operation.lock` now serializes recovery, sync,
+project-file commits, guarded commits, and version switches for the same
+project across processes. A real child process holds the product lock while a
+second sync receives an exact conflict without creating `active.json`; sync
+continues after the holder exits. The suite is **30 passed / 1 ignored** (the
+preserved SVN binary prerequisite).
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -284,6 +292,11 @@ shift-extended selection, source/target column movement, and Java's unmodified
 U/D/S/M/E/A/R/C/K/Space/Escape accelerators through a tested product keyboard
 model. Mixed enabled selections toggle each bead once, and pinpoint completion
 requires a different row and column as in `AlignPanelController`. The sidecar
+now also accepts arbitrary-row drag moves. React native drag/drop uses Java
+`AlignTransferHandler.canImport` semantics: one matching source/target column,
+non-null cells only, edge-line movement, a target outside the selected span,
+and a different target bead. The Rust mutation preserves Java's directional
+insertion order and clears review state on every touched bead. The sidecar
 contract is **3/3**, including strict multiline
 split/review/span-merge/span-replace/pinpoint output.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
