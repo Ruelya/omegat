@@ -197,6 +197,13 @@ pub fn tokenize_with_protected(
                     i = end;
                     continue;
                 }
+                // HTMLParser treats a comment that reaches EOF as one remark.
+                // Keeping it as a single node prevents malformed comment text
+                // from leaking into the translation stream.
+                out.push(Node::Remark {
+                    raw: input[i..].to_string(),
+                });
+                break;
             }
             if input[i..].len() >= 2 && input.as_bytes()[i + 1] == b'?' {
                 if let Some(rel) = input[i + 2..].find("?>") {
@@ -231,6 +238,14 @@ pub fn tokenize_with_protected(
                             *protected_html = Some(input[i..close].to_string());
                         }
                         end = close;
+                    } else {
+                        // A raw-text or ignoreTags element is still protected
+                        // when its end tag is missing. Browser/HTMLParser trees
+                        // implicitly close it at EOF.
+                        if let Node::Tag { protected_html, .. } = &mut node {
+                            *protected_html = Some(input[i..].to_string());
+                        }
+                        end = input.len();
                     }
                 }
                 out.push(node);
@@ -276,10 +291,11 @@ fn parse_tag(input: &str, start: usize) -> Option<(Node, usize)> {
         return None;
     }
     let name = input[name_start..i].to_ascii_uppercase();
-    // declarations / doctype: read until '>'
+    // Declarations can contain quoted `>` characters and DOCTYPE internal
+    // subsets. Stop only at a top-level, unquoted delimiter.
     if name.starts_with('!') || name == "!DOCTYPE" || input[name_start..].starts_with('!') {
-        if let Some(rel) = input[start + 1..].find('>') {
-            let end = start + 1 + rel + 1;
+        if let Some(gt) = find_declaration_end(input, start + 1) {
+            let end = gt + 1;
             let raw_inner = input[start + 1..end - 1].to_string();
             let tag_name = if raw_inner.to_ascii_uppercase().starts_with("!DOCTYPE") {
                 "!DOCTYPE".to_string()
@@ -316,6 +332,30 @@ fn parse_tag(input: &str, start: usize) -> Option<(Node, usize)> {
         },
         end,
     ))
+}
+
+fn find_declaration_end(input: &str, mut i: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let mut quote = None;
+    let mut subset_depth = 0usize;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if let Some(delimiter) = quote {
+            if byte == delimiter {
+                quote = None;
+            }
+        } else {
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'[' => subset_depth += 1,
+                b']' => subset_depth = subset_depth.saturating_sub(1),
+                b'>' if subset_depth == 0 => return Some(i),
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 fn parse_tag_tail(
@@ -433,6 +473,46 @@ mod tests {
         assert_eq!(
             nodes[0].to_html(),
             r#"<div class="notrans">secret<div class="notrans">nested</div>tail</div>"#
+        );
+        assert_eq!(nodes[2].to_html(), "shown");
+    }
+
+    #[test]
+    fn unterminated_protected_element_is_collapsed_through_eof() {
+        let raw = r#"<p>shown</p><script>const hidden = "<p>not text";"#;
+        let nodes = tokenize_with_protected(raw, true, |_| false);
+        assert_eq!(nodes.len(), 5);
+        assert_eq!(
+            nodes[4].to_html(),
+            r#"<script>const hidden = "<p>not text";"#
+        );
+    }
+
+    #[test]
+    fn unterminated_dynamic_element_is_collapsed_through_eof() {
+        let raw = r#"<div data-i18n="off">secret <b>still secret"#;
+        let nodes =
+            tokenize_with_protected(raw, true, |node| node.attr("data-i18n") == Some("off"));
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].to_html(), raw);
+    }
+
+    #[test]
+    fn unterminated_comment_remains_one_remark() {
+        let raw = "<!-- hidden <p>still hidden";
+        let nodes = tokenize(raw, true);
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(nodes[0], Node::Remark { .. }));
+        assert_eq!(nodes[0].to_html(), raw);
+    }
+
+    #[test]
+    fn doctype_internal_subset_keeps_quoted_delimiters() {
+        let raw = r#"<!DOCTYPE html [<!ENTITY sample "a > b">]><p>shown</p>"#;
+        let nodes = tokenize(raw, true);
+        assert_eq!(
+            nodes[0].to_html(),
+            r#"<!DOCTYPE html [<!ENTITY sample "a > b">]>"#
         );
         assert_eq!(nodes[2].to_html(), "shown");
     }

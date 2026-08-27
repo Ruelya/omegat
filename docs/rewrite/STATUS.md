@@ -37,15 +37,16 @@ plus a `parity` cell is not class completion. See the measured gap below.
 
 ## Remaining measured gap
 
-Adversarial audit **2026-08-18** (Java 6.2 tree vs this rewrite). Inventory:
+Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 `tools/honesty/missing_java_tests.txt`.
 
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite: `crates/` **45114** lines + `apps/desktop/src` **10204** lines (**~35%**)
-- Java GUI: **297** files / **61510** lines vs desktop renderer **9785**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **3281**
+- Rewrite Rust: `crates/**/*.rs` **46909** lines; `apps/desktop/src`
+  TS/TSX/CSS **11982** lines (**~37%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop source **11982**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **4767**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **818** (includes
   API-less product-class fixtures)
@@ -105,11 +106,15 @@ symlink-safe deletion replaced the last three API-name-only fixtures.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
 isSpaces / break-before / outLine / no-break word. FilterMaster /
 PluginUtils / Latex unit goldens exist (plugin ABI replacement, not JAR
-loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **735**.
+loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **824**.
 The Rust tokenizer now collapses arbitrary paired elements matched by
 `ignoreTags` (including nested same-name elements), so protected subtree text
 is neither extracted nor rewritten; exact identity and translated write-back
-tests cover that traversal boundary.
+tests cover that traversal boundary. EOF-terminated comments, unclosed
+script/style/ignoreTags elements, quoted tag delimiters, DOCTYPE internal
+subsets, and UTF-16 LE/BE BOM inputs now have explicit product-path boundary
+tests; incomplete protected subtrees stay intact after decoding instead of
+leaking child text as segments.
 
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported.
@@ -140,16 +145,22 @@ for the 6 lists + 2000-stem truncation.
 
 **P7 editor:** **50/50** `gui.editor` Java `test*` goldens exist.
 Product `SegmentEditor.tsx` **imports and calls `Document3`**
-(`applyDocumentEdit`, `DocumentFilter3`, atomic delete). Thickness is improved
+(`extractTranslation`) and routes mutations through `EditorTextArea3`'s
+`Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**315** vs **963**, `EditorController` **389** vs **2365**. The headless
+**445** vs **963**, `EditorController` **467** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
-now expose strict multi-segment pages; IME updates are one replaceable
-composition with commit/cancel; MarkerController caches per-entry generations,
-maps translation/source marks into `Document3` spans, and invalidates those
-spans after edits.
+now expose stable-key multi-segment pages and the React renderer displays the
+active segment in its surrounding lazy-expanded page; inactive segment
+click/keyboard activation uses store navigation. Directional selection,
+cut/copy/paste clamping, token deletion, Shift+Enter, tag double-click, focus
+transitions, atomic caret motion, and hidden-textarea IME events call
+`EditorTextArea3` rather than duplicating mutations in JSX. IME updates remain
+one replaceable composition with commit/cancel; MarkerController caches
+per-entry generations, maps translation/source marks into `Document3` spans,
+and invalidates those spans after edits.
 `FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.

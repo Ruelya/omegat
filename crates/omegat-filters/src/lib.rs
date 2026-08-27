@@ -7,9 +7,9 @@ pub mod filters3;
 mod filters4;
 mod hhc;
 pub mod html;
-mod inline_tag;
 mod ilias;
 mod ini;
+mod inline_tag;
 mod json;
 pub mod latex;
 mod magento;
@@ -399,9 +399,17 @@ pub fn merge_translations(
 
 pub fn read_to_string(path: &Path) -> Result<String> {
     let bytes = std::fs::read(path)?;
-    let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes);
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        return Ok(cow.trim_start_matches('\u{feff}').to_string());
+        let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes[3..]);
+        return Ok(cow.into_owned());
+    }
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (cow, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return Ok(cow.into_owned());
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (cow, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return Ok(cow.into_owned());
     }
     // Try UTF-8 first; fall back to windows-1252 for legacy files.
     if std::str::from_utf8(&bytes).is_ok() {

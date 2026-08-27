@@ -46,3 +46,45 @@ impl Filter for HtmlFilter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn utf16_bytes(text: &str, little_endian: bool) -> Vec<u8> {
+        let mut bytes = if little_endian {
+            vec![0xff, 0xfe]
+        } else {
+            vec![0xfe, 0xff]
+        };
+        for unit in text.encode_utf16() {
+            bytes.extend_from_slice(if little_endian {
+                &unit.to_le_bytes()
+            } else {
+                &unit.to_be_bytes()
+            });
+        }
+        bytes
+    }
+
+    #[test]
+    fn html_filter_reads_utf16_bom_boundaries() {
+        let dir = tempdir().unwrap();
+        for (name, little_endian) in [("little.html", true), ("big.html", false)] {
+            let path = dir.path().join(name);
+            std::fs::write(
+                &path,
+                utf16_bytes("<html><body><p>Zażółć 😀</p></body></html>", little_endian),
+            )
+            .unwrap();
+            let parsed = HtmlFilter.parse(&path, &FilterContext::default()).unwrap();
+            let sources: Vec<_> = parsed
+                .segments
+                .iter()
+                .map(|segment| segment.source.as_str())
+                .collect();
+            assert_eq!(sources, vec!["Zażółć 😀"], "{name}");
+        }
+    }
+}

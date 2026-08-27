@@ -768,4 +768,57 @@ mod tests {
             r#"<div data-i18n="off"><b>do not translate</b></div><p>Bonjour</p>"#
         );
     }
+
+    #[test]
+    fn unterminated_script_is_protected_at_document_boundary() {
+        let raw = r#"<p>Hello</p><script>const sample = "<p>not a segment";"#;
+        let translations = HashMap::from([("Hello".to_string(), "Bonjour".to_string())]);
+        let outcome = process_html(
+            raw,
+            &FilterContext::default(),
+            VisitorKind::Html,
+            Some(&translations),
+        );
+        assert_eq!(sources(&outcome), vec!["Hello"]);
+        assert_eq!(
+            outcome.written,
+            r#"<p>Bonjour</p><script>const sample = "<p>not a segment";"#
+        );
+    }
+
+    #[test]
+    fn unterminated_ignored_subtree_is_protected_at_document_boundary() {
+        let raw = r#"<p>Hello</p><div class="notrans">secret <b>still secret"#;
+        let mut ctx = FilterContext::default();
+        ctx.options
+            .insert("ignoreTags".into(), "class=notrans".into());
+        let outcome = process_html(raw, &ctx, VisitorKind::Html, None);
+        assert_eq!(sources(&outcome), vec!["Hello"]);
+        assert_eq!(outcome.written, raw);
+    }
+
+    #[test]
+    fn unterminated_comment_does_not_become_a_segment() {
+        let raw = "<p>Hello</p><!-- hidden <p>still hidden";
+        let outcome = process_html(raw, &FilterContext::default(), VisitorKind::Html, None);
+        assert_eq!(sources(&outcome), vec!["Hello"]);
+        assert_eq!(outcome.written, raw);
+    }
+
+    #[test]
+    fn quoted_tag_delimiters_do_not_end_attributes() {
+        let raw = r#"<p title="2 > 1">Hello"#;
+        let translations = HashMap::from([
+            ("2 > 1".to_string(), "2 est supérieur à 1".to_string()),
+            ("Hello".to_string(), "Bonjour".to_string()),
+        ]);
+        let outcome = process_html(
+            raw,
+            &FilterContext::default(),
+            VisitorKind::Html,
+            Some(&translations),
+        );
+        assert_eq!(sources(&outcome), vec!["2 > 1", "Hello"]);
+        assert_eq!(outcome.written, r#"<p title="2 est supérieur à 1">Bonjour"#);
+    }
 }
