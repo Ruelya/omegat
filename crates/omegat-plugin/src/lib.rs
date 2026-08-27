@@ -268,9 +268,9 @@ impl DynamicMarker {
         let serialized =
             serde_json::to_vec(input).map_err(|error| self.error(error.to_string()))?;
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(&serialized)
-                .map_err(|error| self.error(format!("cannot write isolated worker input: {error}")))?;
+            stdin.write_all(&serialized).map_err(|error| {
+                self.error(format!("cannot write isolated worker input: {error}"))
+            })?;
         }
         let stdout = child
             .stdout
