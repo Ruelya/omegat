@@ -259,29 +259,38 @@ try {
     })
   ).toString();
   await xdotool(xvfb.display, ["windowfocus", "--sync", windowId]);
-  await xdotool(xvfb.display, [
-    "key",
-    "--delay",
-    "80",
-    "F10",
-    "Right",
-    "Right",
-    "Right",
-    "Right",
-    "Down",
-    "Down",
-    "Down",
-    "Down",
-    "Down",
-    "Down",
-    "Return",
-  ]);
-  await waitFor("aligner opened through native menu", async () =>
-    (await client.evaluate(
+  const alignerIsOpen = () =>
+    client.evaluate(
       "Boolean(document.querySelector('table[aria-label=\"manual alignment table\"]'))",
-    ))
-      ? true
-      : undefined,
+    );
+  const menuSequences = [
+    ["alt+t", "a", "Return"],
+    ["alt+t", "Home", "Down", "Down", "Down", "Down", "Down", "Return"],
+    [
+      "F10",
+      "Right",
+      "Right",
+      "Right",
+      "Right",
+      "Down",
+      "Down",
+      "Down",
+      "Down",
+      "Down",
+      "Down",
+      "Return",
+    ],
+  ];
+  for (const sequence of menuSequences) {
+    await xdotool(xvfb.display, ["key", "--delay", "80", ...sequence]);
+    await sleep(500);
+    if (await alignerIsOpen()) break;
+    await xdotool(xvfb.display, ["key", "Escape", "Escape"]);
+  }
+  assert.equal(
+    await alignerIsOpen(),
+    true,
+    "The packaged native Tools menu did not open the aligner",
   );
 
   await client.evaluate(`(() => {
