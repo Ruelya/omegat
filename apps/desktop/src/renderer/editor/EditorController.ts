@@ -18,6 +18,7 @@ import {
   type EditorFileDropHandlers,
   type EditorFileDropResult,
 } from "./EditorFileDrop";
+import { HeadlessLoadedWindow } from "./HeadlessLoadedWindow";
 import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
 import type { Mark } from "./mark/Mark";
 import type { EntryKeyDto, IssueDto } from "../lib/types";
@@ -132,11 +133,10 @@ export class EditorController {
   readonly markers = new MarkerController();
   readonly undo = new TranslationUndoManager<EditorUndoState>();
   readonly history = new SegmentHistory();
+  readonly loadedWindow = new HeadlessLoadedWindow();
   displayedFileIndex = 0;
   previousDisplayedFileIndex = 0;
   displayedEntryIndex = -1;
-  firstLoaded = -1;
-  lastLoaded = -1;
   document: Document3State | null = null;
   currentFile: string | null = null;
   currentEntryNumber = 0;
@@ -147,11 +147,7 @@ export class EditorController {
   leaveIssues: IssueDto[] = [];
   targetLocale = "en";
   private entriesFilter: IEditorFilter = makeFilter("none");
-  private visibleEntryIndices: number[] = [];
-  private pageRadius = 25;
   private filterOriginIndex = 0;
-  private loadedMarkerKeys = new Set<string>();
-  private loadedPageGeneration = 0;
 
   getCurrentTranslation(): string {
     return this.document?.translation ?? this.editor.getCurrentTranslation();
@@ -393,7 +389,7 @@ export class EditorController {
     if (refreshActive) {
       this.refreshView(false);
     } else if (entryNumbers.size > 0) {
-      this.loadedPageGeneration += 1;
+      this.loadedWindow.invalidate();
     }
   }
 
@@ -448,20 +444,21 @@ export class EditorController {
     this.displayedEntryIndex = -1;
     this.entries = entries.map((entry) => ({ ...entry }));
     this.markers.invalidate();
-    this.loadedMarkerKeys.clear();
-    this.loadedPageGeneration += 1;
+    this.loadedWindow.invalidate();
     this.markerSnapshot = null;
     this.rebuildVisibleEntries();
     this.history.back = [];
     this.history.forward = [];
     this.undo.undoStack = [];
     this.undo.redoStack = [];
-    if (this.visibleEntryIndices.length === 0) {
+    if (this.loadedWindow.visibleIndices().length === 0) {
       this.clearActiveView(Math.max(0, preferredEntryNumber - 1));
       return;
     }
     const requested = Math.max(0, Math.min(preferredEntryNumber - 1, this.entries.length - 1));
-    const initial = this.visibleEntryIndices.includes(requested) ? requested : this.visibleEntryIndices[0]!;
+    const initial = this.loadedWindow.contains(requested)
+      ? requested
+      : this.loadedWindow.firstVisible()!;
     this.activateEntry(initial);
   }
 
@@ -489,8 +486,7 @@ export class EditorController {
 
     this.entries = entries.map((entry) => ({ ...entry }));
     this.markers.invalidate();
-    this.loadedMarkerKeys.clear();
-    this.loadedPageGeneration += 1;
+    this.loadedWindow.invalidate();
     this.markerSnapshot = null;
     this.rebuildVisibleEntries();
     this.history.back = [];
@@ -501,17 +497,17 @@ export class EditorController {
     const reboundIndex = previousKey === null
       ? -1
       : this.entries.findIndex((entry, index) => this.entryKey(index, entry) === previousKey);
-    if (this.visibleEntryIndices.length === 0) {
+    if (this.loadedWindow.visibleIndices().length === 0) {
       this.clearActiveView(reboundIndex >= 0 ? reboundIndex : previousIndex);
       return reboundIndex >= 0;
     }
     const reboundVisible =
-      reboundIndex >= 0 && this.visibleEntryIndices.includes(reboundIndex);
+      reboundIndex >= 0 && this.loadedWindow.contains(reboundIndex);
     const anchor = reboundIndex >= 0 ? reboundIndex : previousIndex;
     const target = reboundVisible
       ? reboundIndex
-      : this.visibleEntryIndices.find((index) => index >= anchor)
-        ?? this.visibleEntryIndices[0]!;
+      : this.loadedWindow.findVisible((index) => index >= anchor)
+        ?? this.loadedWindow.firstVisible()!;
     this.openEntry(target, false, reboundVisible ? caret : { position: 0 });
     return reboundIndex >= 0;
   }
@@ -519,7 +515,7 @@ export class EditorController {
   loadEmptyProject(): void {
     this.commitCurrentDocument(true);
     this.entries = [];
-    this.visibleEntryIndices = [];
+    this.loadedWindow.clear();
     this.displayedFileIndex = 0;
     this.previousDisplayedFileIndex = 0;
     this.history.back = [];
@@ -527,8 +523,6 @@ export class EditorController {
     this.undo.undoStack = [];
     this.undo.redoStack = [];
     this.markers.invalidate();
-    this.loadedMarkerKeys.clear();
-    this.loadedPageGeneration += 1;
     this.clearActiveView(0);
   }
 
@@ -584,7 +578,7 @@ export class EditorController {
 
   gotoEntry(entryNumber: number): boolean {
     const index = entryNumber - 1;
-    if (!this.visibleEntryIndices.includes(index)) return false;
+    if (!this.loadedWindow.contains(index)) return false;
     const changed = index !== this.displayedEntryIndex;
     this.activateEntry(index);
     return changed;
@@ -605,7 +599,7 @@ export class EditorController {
       const translated = entry.translated ?? entry.translation.length > 0;
       return !entry.isAlt && translated;
     });
-    if (index < 0 || !this.visibleEntryIndices.includes(index)) return false;
+    if (index < 0 || !this.loadedWindow.contains(index)) return false;
     if (index === this.displayedEntryIndex) return true;
     this.activateEntry(index);
     return true;
@@ -618,7 +612,9 @@ export class EditorController {
       if (typeof file === "number") throw new RangeError("file index out of bounds");
       return false;
     }
-    const index = this.visibleEntryIndices.find((candidate) => this.entries[candidate]?.file === fileName);
+    const index = this.loadedWindow.findVisible(
+      (candidate) => this.entries[candidate]?.file === fileName,
+    );
     if (index === undefined) return false;
     const changed = index !== this.displayedEntryIndex;
     this.activateEntry(index);
@@ -715,21 +711,20 @@ export class EditorController {
     this.entriesFilter = filter;
     this.rebuildVisibleEntries();
     this.markers.invalidate();
-    this.loadedMarkerKeys.clear();
-    this.loadedPageGeneration += 1;
+    this.loadedWindow.invalidate();
     this.markerSnapshot = null;
 
-    if (this.visibleEntryIndices.length === 0) {
+    if (this.loadedWindow.visibleIndices().length === 0) {
       this.clearActiveView(previousIndex);
       return;
     }
     const preserveCurrent =
-      hadActiveEntry && this.visibleEntryIndices.includes(previousIndex);
+      hadActiveEntry && this.loadedWindow.contains(previousIndex);
     const target = preserveCurrent
       ? previousIndex
-      : this.visibleEntryIndices.find((index) =>
+      : this.loadedWindow.findVisible((index) =>
           hadActiveEntry ? index > previousIndex : index >= previousIndex
-        ) ?? this.visibleEntryIndices[0]!;
+        ) ?? this.loadedWindow.firstVisible()!;
     this.openEntry(target, false, preserveCurrent ? caret : { position: 0 });
   }
 
@@ -742,7 +737,7 @@ export class EditorController {
   }
 
   getLoadedRange(): { first: number; last: number } {
-    return { first: this.firstLoaded, last: this.lastLoaded };
+    return this.loadedWindow.getRange();
   }
 
   /**
@@ -778,12 +773,8 @@ export class EditorController {
 
   getLoadedPage(): LoadedPageEntry[] {
     this.updateLoadedMarkerLifecycle();
-    if (this.firstLoaded < 0 || this.lastLoaded < this.firstLoaded) return [];
-    const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
-    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
-    if (first < 0 || last < first) return [];
-    return this.visibleEntryIndices
-      .slice(first, last + 1)
+    return this.loadedWindow
+      .loadedIndices()
       .map((index) => {
         const entry = this.entries[index]!;
         const active = index === this.displayedEntryIndex;
@@ -804,38 +795,28 @@ export class EditorController {
   }
 
   setPageRadius(radius: number): void {
-    this.pageRadius = Math.max(0, Math.floor(radius));
-    if (this.displayedEntryIndex >= 0) this.loadWindowAround(this.displayedEntryIndex);
+    this.loadedWindow.setRadius(radius, this.displayedEntryIndex);
+    this.updateLoadedMarkerLifecycle();
   }
 
   loadUp(count: number): number {
-    const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
-    if (first <= 0) return 0;
-    const next = Math.max(0, first - Math.max(0, Math.floor(count)));
-    this.firstLoaded = this.visibleEntryIndices[next]!;
+    const loaded = this.loadedWindow.loadUp(count);
     this.updateLoadedMarkerLifecycle();
-    return first - next;
+    return loaded;
   }
 
   loadDown(count: number): number {
-    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
-    if (last < 0 || last >= this.visibleEntryIndices.length - 1) return 0;
-    const next = Math.min(
-      this.visibleEntryIndices.length - 1,
-      last + Math.max(0, Math.floor(count)),
-    );
-    this.lastLoaded = this.visibleEntryIndices[next]!;
+    const loaded = this.loadedWindow.loadDown(count);
     this.updateLoadedMarkerLifecycle();
-    return next - last;
+    return loaded;
   }
 
   hasMoreBefore(): boolean {
-    return this.visibleEntryIndices.indexOf(this.firstLoaded) > 0;
+    return this.loadedWindow.hasMoreBefore();
   }
 
   hasMoreAfter(): boolean {
-    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
-    return last >= 0 && last < this.visibleEntryIndices.length - 1;
+    return this.loadedWindow.hasMoreAfter();
   }
 
   private moveVisible(delta: -1 | 1): boolean {
@@ -847,7 +828,7 @@ export class EditorController {
     matches: (entry: LoadedEntry, index: number) => boolean,
   ): boolean {
     if (this.displayedEntryIndex < 0) return false;
-    const visible = new Set(this.visibleEntryIndices);
+    const visible = this.loadedWindow.visibleSet();
     const target = findCyclicEntryIndex(
       this.entries,
       this.displayedEntryIndex,
@@ -862,48 +843,28 @@ export class EditorController {
   }
 
   private rebuildVisibleEntries(): void {
-    this.visibleEntryIndices = this.entries.flatMap((entry, index) =>
-      this.entriesFilter.allowed(entry) ? [index] : [],
+    this.loadedWindow.rebuild(
+      this.entries,
+      (entry) => this.entriesFilter.allowed(entry),
     );
   }
 
-  private loadWindowAround(index: number, radius = this.pageRadius): void {
-    const visiblePosition = this.visibleEntryIndices.indexOf(index);
-    if (visiblePosition < 0) {
-      this.firstLoaded = -1;
-      this.lastLoaded = -1;
-      this.updateLoadedMarkerLifecycle();
-      return;
-    }
-    const first = Math.max(0, visiblePosition - radius);
-    const last = Math.min(this.visibleEntryIndices.length - 1, visiblePosition + radius);
-    this.firstLoaded = this.visibleEntryIndices[first]!;
-    this.lastLoaded = this.visibleEntryIndices[last]!;
+  private loadWindowAround(index: number): void {
+    this.loadedWindow.around(index);
     this.updateLoadedMarkerLifecycle();
   }
 
   private loadedEntryIndices(): number[] {
-    if (this.firstLoaded < 0 || this.lastLoaded < this.firstLoaded) return [];
-    const first = this.visibleEntryIndices.indexOf(this.firstLoaded);
-    const last = this.visibleEntryIndices.indexOf(this.lastLoaded);
-    return first < 0 || last < first
-      ? []
-      : this.visibleEntryIndices.slice(first, last + 1);
+    return this.loadedWindow.loadedIndices();
   }
 
   private updateLoadedMarkerLifecycle(): void {
     const keys = this.loadedEntryIndices().map((index) =>
       this.entryKey(index, this.entries[index]!)
     );
-    if (
-      keys.length === this.loadedMarkerKeys.size
-      && keys.every((key) => this.loadedMarkerKeys.has(key))
-    ) {
-      return;
+    if (this.loadedWindow.synchronizeMarkerKeys(keys)) {
+      this.markers.retainEntries(keys);
     }
-    this.loadedMarkerKeys = new Set(keys);
-    this.loadedPageGeneration += 1;
-    this.markers.retainEntries(keys);
   }
 
   private clearActiveView(originIndex: number): void {
@@ -912,8 +873,7 @@ export class EditorController {
     this.currentFile = null;
     this.currentEntryNumber = 0;
     this.displayedEntryIndex = -1;
-    this.firstLoaded = -1;
-    this.lastLoaded = -1;
+    this.loadedWindow.clearRange();
     this.markerSnapshot = null;
     this.undo.undoStack = [];
     this.undo.redoStack = [];
@@ -1046,7 +1006,7 @@ export class EditorController {
    * generation, including requests that belong to inactive entries.
    */
   async refreshLoadedPageMarkersAsync(): Promise<boolean> {
-    const generation = this.loadedPageGeneration;
+    const generation = this.loadedWindow.currentGeneration();
     const jobs = this.loadedEntryIndices().map((index) => {
       const entry = this.entries[index]!;
       return {
@@ -1059,7 +1019,7 @@ export class EditorController {
     await Promise.all(jobs.map(({ key, input }) =>
       this.markers.processEntryAsync(key, input)
     ));
-    if (generation !== this.loadedPageGeneration) return false;
+    if (generation !== this.loadedWindow.currentGeneration()) return false;
 
     const current = this.loadedEntryIndices();
     if (

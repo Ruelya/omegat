@@ -20,6 +20,7 @@ import {
   selectionAfterEntryChange,
 } from "./EditorSelection";
 import { EditorTextArea3 } from "./EditorTextArea3";
+import { HeadlessLoadedWindow } from "./HeadlessLoadedWindow";
 import { HistoryPredictor } from "./history/HistoryPredictor";
 import { HistoryCompleter } from "./history/HistoryCompleter";
 import { bindMarkerRemark, IEditor } from "./IEditor";
@@ -61,6 +62,45 @@ describe("Document3 / IEditor / completer classes", () => {
     const c = new EditorController();
     c.replaceEditText("hello");
     expect(c.getCurrentTranslation()).toBe("hello");
+  });
+
+  it("HeadlessLoadedWindow owns filtered range and generations independently", () => {
+    const first = new HeadlessLoadedWindow();
+    const second = new HeadlessLoadedWindow();
+    const entries = [
+      { visible: true },
+      { visible: false },
+      { visible: true },
+      { visible: true },
+    ];
+    first.rebuild(entries, (entry) => entry.visible);
+    second.rebuild(entries, () => true);
+    first.setRadius(1, 2);
+    second.setRadius(0, 0);
+
+    expect({
+      firstRange: first.getRange(),
+      firstLoaded: first.loadedIndices(),
+      firstDown: first.loadDown(2),
+      firstExpanded: first.loadedIndices(),
+      secondRange: second.getRange(),
+      secondLoaded: second.loadedIndices(),
+      generationBeforeKeys: first.currentGeneration(),
+      keysChanged: first.synchronizeMarkerKeys(["zero", "two", "three"]),
+      generationAfterKeys: first.currentGeneration(),
+      sameKeysChanged: first.synchronizeMarkerKeys(["zero", "two", "three"]),
+    }).toEqual({
+      firstRange: { first: 0, last: 3 },
+      firstLoaded: [0, 2, 3],
+      firstDown: 0,
+      firstExpanded: [0, 2, 3],
+      secondRange: { first: 0, last: 0 },
+      secondLoaded: [0],
+      generationBeforeKeys: 0,
+      keysChanged: true,
+      generationAfterKeys: 1,
+      sameKeysChanged: false,
+    });
   });
 
   it("IEditor routes one-marker refreshes into the live marker controller", () => {
