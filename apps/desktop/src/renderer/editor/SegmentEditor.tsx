@@ -4,8 +4,8 @@ import { t } from "../i18n";
 import { useApp } from "../store/app";
 import { DocumentFilter3, isPossible } from "./DocumentFilter3";
 import {
+  applyDocumentEdit,
   createDocument3,
-  insertString,
   type Document3State,
 } from "./Document3";
 import { EditorController } from "./EditorController";
@@ -32,16 +32,9 @@ function applyThroughDocument3(doc: Document3State, offset: number, length: numb
     text,
   );
   if (!result.applied) return doc;
-  const next = insertString({ ...doc, fullText: result.doc.text }, offset, length === 0 ? text : "");
-  return {
-    ...next,
-    translation: result.doc.text.slice(result.doc.translationStart, result.doc.translationEnd),
-    fullText: result.doc.text,
-    translationStart: result.doc.translationStart,
-    translationEnd: result.doc.translationEnd,
-    textBeingComposed: result.doc.textBeingComposed,
-    dirty: true,
-  };
+  return applyDocumentEdit(doc, offset, length, text, {
+    composed: result.doc.textBeingComposed,
+  });
 }
 
 export function SegmentSource() {

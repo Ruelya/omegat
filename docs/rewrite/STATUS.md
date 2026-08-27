@@ -69,14 +69,19 @@ until R12 and the matching `assert_eq` set is complete.
 TMXWriter / TagValidation method goldens exist. Rewrite-wave goldens now
 cover Searcher **34/34**, ProjectProperties **11/11**, TMXReader **9/9**,
 SRX **7/7**, SRXManager **8/8**, RealProject import **3/3**. `assert_eq`
-covers util + Searcher string/replace/checkEntry + TMX L1 + Properties +
-import. `ExternalTMFactoryTest` (TMX resegment / PO 1013 / Mozilla lang
+covers util + all **34/34** Searcher methods through the stateful project-search
+product model + TMX L1 + Properties + import. `ExternalTMFactoryTest` (TMX
+resegment / PO 1013 / Mozilla lang
 33 / XLIFF 3 / fuzzy TUV) and `ProjectFileStorageTest` (defaults,
 glossary paths, DTD entities, team XML, abs2rel) now `assert_eq` Java
 method results. Remaining util goldens (`EntityUtil` / `MagicComment` /
 `TagUtil` / `StaticUtils` / `EncodingDetector` / `Preferences` /
-`MatchesTextArea.substituteNumbers`) also `assert_eq`. `Searcher.java`
-**1133** vs `search.rs` still shorter. Remaining util goldens now
+`MatchesTextArea.substituteNumbers`) also `assert_eq`. `Searcher.java` is
+**1133** lines vs `search.rs` **1253** (size is not a completion claim): the
+Rust path now retains UTF-16 match regions, source / target / note /
+key-property hits, author/date filters, project/TM/orphan origins, duplicate
+preambles, rerun lifecycle, and regex replacement groups. Remaining util
+goldens now
 `assert_eq` StringUtil / Language / BiDi / FileUtil / TMXDateParser /
 TmxEscapingWriter / HttpConnectionUtils / Statistics / Token / Version /
 PatternConsts / Merge / KnownException / Glossary CSV+TBX /
@@ -127,9 +132,13 @@ for the 6 lists + 2000-stem truncation.
 
 **P7 editor:** **50/50** `gui.editor` Java `test*` goldens exist.
 Product `SegmentEditor.tsx` **imports and calls `Document3`**
-(`insertString`, `DocumentFilter3`, atomic delete). Thickness still
-thin vs Swing: `EditorTextArea3` **19** vs **963**;
-`EditorController` **101** vs **2365**. `FontFallbackMarker` uses canvas
+(`applyDocumentEdit`, `DocumentFilter3`, atomic delete). Thickness is improved
+but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
+**245** vs **963**, `EditorController` **300** vs **2365**. The headless
+product model now shares document mutations across the surface/controller,
+enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
+and implements filtered navigation/history/undo/loaded windows.
+`FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.
 
@@ -320,8 +329,12 @@ document with `insertString` (`TF_CUR_SEGMENT_START` chrome);
 `XXX` offset is the computed insertString value (4), not a hardcoded 31.
 `DocumentFilter3.replace` takes a `FilterBypass`. Autocompleter views:
 Glossary / Autotext / CharTable / HistoryCompleter / HistoryPredictor
-(next-word) / Tag. The P7 row is `parity_gap` (product editor now uses
-`Document3`; class files are still thin vs Java).
+(next-word) / Tag. `Document3.applyDocumentEdit` is now the common product
+mutation path used by `SegmentEditor`, `EditorTextArea3`, and
+`EditorController`; trusted chrome edits move live translation positions
+without dirtying user text. The P7 row is `parity_gap` (the controller and
+text-area remain substantially smaller than Java and browser/Electron behavior
+is not Swing behavior).
 
 ## P8 notes
 
