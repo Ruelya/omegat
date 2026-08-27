@@ -102,7 +102,7 @@ export function alignmentDragViewport(
     const pressure = 1 - Math.max(0, topDistance) / edgeSize;
     const requested = -Math.max(1, Math.ceil(maxStep * pressure));
     return {
-      delta: Math.max(-scrollTop, requested),
+      delta: scrollTop === 0 ? 0 : Math.max(-scrollTop, requested),
       focusRow: scrollTop === 0 ? -1 : first,
     };
   }
