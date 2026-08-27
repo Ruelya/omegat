@@ -217,10 +217,31 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
     );
     assert_eq!(review["result"]["beads"][1]["status"], "needs-review");
 
-    let merged_span = rpc(
+    let toggled = rpc(
         &mut stdin,
         &mut stdout,
         3,
+        "align.edit",
+        json!({
+            "action":"toggle-keep",
+            "indexes":[0,1,1],
+            "beads":review["result"]["beads"]
+        }),
+    );
+    assert_eq!(
+        toggled["result"]["beads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|bead| bead["enabled"].as_bool().unwrap())
+            .collect::<Vec<_>>(),
+        vec![false, false, true]
+    );
+
+    let merged_span = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
         "align.edit",
         json!({
             "action":"merge",
@@ -229,7 +250,7 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
             "end_row":2,
             "source_lang":"en",
             "target_lang":"fr",
-            "beads":review["result"]["beads"]
+            "beads":toggled["result"]["beads"]
         }),
     );
     assert_eq!(
@@ -241,7 +262,7 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
     let replaced_span = rpc(
         &mut stdin,
         &mut stdout,
-        4,
+        5,
         "align.edit",
         json!({
             "action":"replace-span",
@@ -260,7 +281,7 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
     let pinpoint = rpc(
         &mut stdin,
         &mut stdout,
-        5,
+        6,
         "align.edit",
         json!({
             "action":"pinpoint",
