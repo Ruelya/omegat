@@ -265,6 +265,7 @@ describe("app store", () => {
         revision: 4,
         default_translation: true,
       }],
+      ["issues.list", undefined],
       ["project.save", undefined],
       ["project.reload", undefined],
       ["entry.list", undefined],
