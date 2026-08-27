@@ -1,0 +1,24 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2-tag-dropping-bugfix-SF613.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testParseRegression",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "test",
+    "hello!"
+  ],
+  "ids": [
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    ""
+  ],
+  "empty_write_text": "<html><meta charset=\"UTF-8\"><title>test</title><style type=\"text/css\">\nbody {line-height:1.4;}\n</style><body><p>hello!</p>\n\n</body>\n</html>"
+}

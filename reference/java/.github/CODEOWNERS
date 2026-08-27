@@ -1,0 +1,58 @@
+# Code owners for the OmegaT project
+
+# Message catalogs
+Bundle*.properties    @kazephil @brandelune @kosivantsov
+
+# User Documents and UI contents
+/src/docs/manual/    @kazephil @brandelune @kosivantsov
+/src/docs/greeting/  @kazephil @brandelune @kosivantsov
+/src/docs/tips/      @kazephil @brandelune @kosivantsov @miurahr
+readme*.txt          @kazephil @brandelune @kosivantsov
+
+# Document styles
+/src/docs/xsl/       @kazephil @brandelune @kosivantsov
+/src/docs/style/     @kazephil @brandelune @kosivantsov
+/src/docs/template/  @kazephil @brandelune @kosivantsov
+
+# Developer documentation
+/src/docs/developer/ @miurahr @brandelune
+OmegaT-license.txt   @kazephil @brandelune @kosivantsov @miurahr
+
+# Build system and CI/CD
+build.gradle @miurahr
+settings.gradle @miurahr
+/build-logic/ @miurahr
+/gradle/ @miurahr
+/config/ @miurahr
+/.github @miurahr
+/ci/ @miurahr
+/release/ @miurahr
+.readthedocs.yaml @miurahr
+azure-pipelines.yml @miurahr
+compose.yml @miurahr
+Plugins.properties @miurahr
+
+# Modules
+/aligner @miurahr
+/firssttime-wizard @miurahr
+/language-modules @miurahr
+/machinetranslators @miurahr
+/spellchecker @miurahr
+/connectors @miurahr
+/scripting @miurahr
+/theme @miurahr
+/tipoftheday @miurahr
+
+# Tests
+/src/test @miurahr
+/test-acceptance @miurahr
+/test-integration @miurahr
+
+# Scripts
+/scripts @kosivantsov
+
+# CLI
+/src/main/resources/org/omegat/cli/Parameters*.properties    @kazephil @brandelune @kosivantsov
+
+# Packages owners
+/src/main/java/org/omegat/cli/*.java @miurahr
