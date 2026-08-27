@@ -1,0 +1,16 @@
+{
+  "java_test": "org.omegat.gui.align.AlignerTest#testWritePairsToTMX_writesExpectedTMX",
+  "pairs": [
+    [
+      "Hello world",
+      "こんにちは世界"
+    ],
+    [
+      "Goodbye",
+      "さようなら"
+    ]
+  ],
+  "src_lang": "en",
+  "tgt_lang": "ja",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

@@ -1,0 +1,36 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testTranslate",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "forceJava8LiteralsEscape": "true"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Value",
+    "Value2",
+    "Value3",
+    "Value4",
+    "Value5",
+    "Value☃"
+  ],
+  "ids": [
+    "ID",
+    "ID2",
+    "ID3",
+    "ID4",
+    "ID5",
+    "ID6"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "ID=Value\r\nID2=Value2\r\n\r\n# some comment\r\nID3=Value3\r\n\r\n# multiple line\r\n# comment\r\nID4=Value4\r\n\r\n! alternate comment style\r\nID5=Value5\r\n\r\n# Unicode escape \\u2603\r\nID6=Value\\u2603\r\n"
+}
