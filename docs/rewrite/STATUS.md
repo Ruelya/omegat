@@ -140,9 +140,13 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **6/6**: in addition to the four ZIP cases,
+The deep write-back suite is now **7/7**: in addition to five ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
-translated attributes/text under out-of-order translation maps.
+translated attributes/text under out-of-order translation maps. OpenXML
+hidden field text, external relationship targets, and intact fallback content
+now write independently under one options set. XLIFF nested callbacks receive
+stable per-unit occurrence IDs, and translated `bpt`/`ept` shortcuts recover
+their original content-based XML elements instead of becoming escaped text.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -297,7 +301,10 @@ now also accepts arbitrary-row drag moves. React native drag/drop uses Java
 non-null cells only, edge-line movement, a target outside the selected span,
 and a different target bead. The Rust mutation preserves Java's directional
 insertion order and clears review state on every touched bead. The sidecar
-contract is **3/3**, including strict multiline
+returns the exact post-move anchor/focus rows (without duplicate-text
+matching), React restores that directional selection, and explicit top/bottom
+drop targets expose Java's new-bead boundary moves. The sidecar contract is
+**3/3**, including strict multiline
 split/review/span-merge/span-replace/pinpoint/drag output.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
