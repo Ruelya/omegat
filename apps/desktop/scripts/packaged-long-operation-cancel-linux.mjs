@@ -1466,6 +1466,21 @@ try {
       ? state
       : undefined;
   });
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector(".topbar button");
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible project save action was unavailable for packaged team ours",
+  );
+  await waitFor("packaged team ours saved to local TMX", async () =>
+    (await readFile(join(project, "omegat", "project_save.tmx"), "utf8"))
+        .includes(`<seg>${teamConflictOurs}</seg>`)
+      ? true
+      : undefined
+  );
   await client.evaluate(`(() => {
     window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
   })()`);
