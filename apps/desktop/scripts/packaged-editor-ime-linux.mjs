@@ -670,6 +670,20 @@ try {
   });
   assert.equal(persisted.translation, "日本語失焦 😀 beta");
 
+  await waitFor("missing-tag leave issue close", async () => {
+    const closed = await client.evaluate(`(() => {
+      const issue = document.querySelector('[data-issue-kind="tag"]');
+      const overlay = issue?.closest(".modal-bg");
+      overlay?.click();
+      return Boolean(issue);
+    })()`);
+    return closed || undefined;
+  });
+  await waitFor("leave issue modal close", async () => {
+    const closed = await client.evaluate("!document.querySelector('.modal-bg')");
+    return closed || undefined;
+  });
+
   await client.evaluate(`(() => {
     const button = [...document.querySelectorAll("button")]
       .find((candidate) => candidate.getAttribute("aria-label") === "Preferences");
@@ -725,7 +739,7 @@ try {
   })()`);
   await waitFor("preferences modal close", async () => {
     const closed = await client.evaluate(
-      "!document.querySelector('.prefs-grid') && Boolean(document.querySelector('.editor-surface'))",
+      "!document.querySelector('.modal-bg') && Boolean(document.querySelector('.editor-surface'))",
     );
     return closed || undefined;
   });
