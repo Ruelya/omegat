@@ -1,0 +1,16 @@
+{
+  "id": "xhtml",
+  "fixture": "xhtml/simple.xhtml",
+  "java_test": "org.omegat.filters dialect/table for xhtml",
+  "options": {},
+  "sources": [
+    "T",
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "T",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

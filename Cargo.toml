@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/omegat-ipc",
+    "crates/omegat-core",
+    "crates/omegat-filters",
+    "crates/omegat-team",
+    "crates/omegat-script",
+    "crates/omegat-plugin",
+    "crates/omegat-sidecar",
+    "crates/omegat-cli",
+    "crates/omegat-example-plugin",
+]
+
+[workspace.package]
+version = "6.2.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://omegat.org"
+authors = ["OmegaT contributors"]
+rust-version = "1.83"
+
+[workspace.dependencies]
+omegat-ipc = { path = "crates/omegat-ipc" }
+omegat-core = { path = "crates/omegat-core" }
+omegat-filters = { path = "crates/omegat-filters" }
+omegat-team = { path = "crates/omegat-team" }
+omegat-script = { path = "crates/omegat-script" }
+omegat-plugin = { path = "crates/omegat-plugin" }
+serde = { version = "=1.0.216", features = ["derive"] }
+serde_json = "=1.0.133"
+thiserror = "=1.0.69"
+anyhow = "=1.0.94"
+clap = { version = "=4.4.18", features = ["derive"] }
+quick-xml = { version = "=0.36.2", features = ["serialize"] }
+regex = "=1.11.1"
+walkdir = "=2.5.0"
+globset = "=0.4.15"
+unicode-segmentation = "=1.11.0"
+csv = "=1.3.1"
+html-escape = "=0.2.13"
+roxmltree = "=0.20.0"
+zip = { version = "=0.6.6", default-features = false, features = ["deflate"] }
+fs2 = "=0.4.3"
+sha2 = "=0.10.8"
+hex = "=0.4.3"
+encoding_rs = "=0.8.35"
+once_cell = "=1.20.2"
+log = "=0.4.22"
+env_logger = "=0.11.5"
+similar = "=2.6.0"
+urlencoding = "=2.1.3"
+libloading = "=0.8.6"
+flate2 = { version = "=1.1.9", default-features = false, features = ["rust_backend"] }
+boa_engine = { version = "=0.20.0", default-features = false }
+rust-stemmers = "=1.2.0"
+git2 = { version = "=0.19.0", default-features = false, features = ["vendored-libgit2"] }
