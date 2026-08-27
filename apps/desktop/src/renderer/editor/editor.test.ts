@@ -10,7 +10,9 @@ describe("segment editor source", () => {
     expect(src).not.toMatch(/contentEditable/);
     expect(src).toMatch(/role="textbox"/);
     expect(src).toMatch(/synchronizeRendererProject/);
-    expect(src).toMatch(/area\.deleteBackward\(\)/);
+    expect(src).toMatch(/area\.handleBeforeInput\(native\.inputType, native\.data\)/);
+    expect(src).toMatch(/renderedCaretFromPoint\(root, ev\.clientX, ev\.clientY\)/);
+    expect(src).toMatch(/scrollAdjustmentForAnchor/);
     expect(src).toMatch(/area\.pasteText\(text\)/);
   });
 });

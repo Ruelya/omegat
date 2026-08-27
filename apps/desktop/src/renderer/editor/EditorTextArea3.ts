@@ -88,18 +88,32 @@ export class EditorTextArea3 {
   }
 
   setCaretPosition(position: number, bias: "before" | "after" = "after"): void {
-    let next = Math.max(0, Math.min(position, this.doc.fullText.length));
-    if (this.lockCursorToInputArea && this.doc.editMode) {
-      next = Math.max(this.doc.translationStart, Math.min(next, this.doc.translationEnd));
-    }
-    const relative = next - this.doc.translationStart;
-    if (relative >= 0 && relative <= this.doc.translation.length) {
-      next = this.doc.translationStart + snapCaret(this.doc.translation, relative, bias);
-    }
+    const next = this.normalizeCaretPosition(position, bias);
     this.caretPosition = next;
     this.selectionAnchor = next;
     this.selectionFocus = next;
     this.notifyWordAtCaret();
+  }
+
+  /**
+   * Apply a UTF-16 offset resolved from Electron's native caret hit-testing.
+   * Tag interiors are snapped atomically according to the pixel-side bias.
+   */
+  setCaretFromRenderedOffset(
+    offset: number,
+    bias: "before" | "after" = "after",
+    extendSelection = false,
+  ): number {
+    const relative = Math.max(0, Math.min(offset, this.doc.translation.length));
+    const next = this.normalizeCaretPosition(this.doc.translationStart + relative, bias);
+    if (extendSelection) {
+      this.caretPosition = next;
+      this.selectionFocus = next;
+      this.notifyWordAtCaret();
+    } else {
+      this.setCaretPosition(next, bias);
+    }
+    return this.caretPosition;
   }
 
   setSelection(start: number, end: number): void {
@@ -168,6 +182,56 @@ export class EditorTextArea3 {
     if (this.doc === before) return false;
     this.setCaretPosition(start + text.length);
     return true;
+  }
+
+  /**
+   * Route Chromium/Electron `beforeinput` operations through Document3 instead
+   * of synthesizing printable characters from keydown events.
+   */
+  handleBeforeInput(inputType: string, data: string | null = null): boolean {
+    switch (inputType) {
+      case "insertText":
+      case "insertReplacementText":
+      case "insertFromDrop":
+      case "insertFromPaste":
+      case "insertFromYank":
+        if (data !== null) this.insertText(data);
+        return true;
+      case "insertLineBreak":
+      case "insertParagraph":
+        this.insertText("\n");
+        return true;
+      case "deleteContentBackward":
+        this.deleteBackward();
+        return true;
+      case "deleteContentForward":
+        this.deleteForward();
+        return true;
+      case "deleteWordBackward":
+      case "deleteSoftLineBackward":
+      case "deleteHardLineBackward":
+        this.deleteToken(-1);
+        return true;
+      case "deleteWordForward":
+      case "deleteSoftLineForward":
+      case "deleteHardLineForward":
+        this.deleteToken(1);
+        return true;
+      case "deleteContent":
+      case "deleteByCut":
+      case "deleteByDrag":
+        this.deleteSelectionAtomic();
+        return true;
+      case "insertCompositionText":
+        if (!this.composition) this.beginComposition();
+        if (this.composition) this.updateComposition(data ?? "");
+        return true;
+      case "deleteCompositionText":
+        if (this.composition) this.updateComposition("");
+        return true;
+      default:
+        return false;
+    }
   }
 
   beginComposition(): boolean {
@@ -425,6 +489,18 @@ export class EditorTextArea3 {
   onFocusChanged(listener: (focused: boolean) => void): () => void {
     this.focusListeners.add(listener);
     return () => this.focusListeners.delete(listener);
+  }
+
+  private normalizeCaretPosition(position: number, bias: "before" | "after"): number {
+    let next = Math.max(0, Math.min(position, this.doc.fullText.length));
+    if (this.lockCursorToInputArea && this.doc.editMode) {
+      next = Math.max(this.doc.translationStart, Math.min(next, this.doc.translationEnd));
+    }
+    const relative = next - this.doc.translationStart;
+    if (relative >= 0 && relative <= this.doc.translation.length) {
+      next = this.doc.translationStart + snapCaret(this.doc.translation, relative, bias);
+    }
+    return next;
   }
 
   private notifyWordAtCaret(): void {

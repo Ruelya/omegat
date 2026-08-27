@@ -204,6 +204,28 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(area.getText()).toBe("aXYde!");
   });
 
+  it("EditorTextArea3 routes native beforeinput and pixel offsets through Document3", () => {
+    const area = new EditorTextArea3("source", "a<x0/>bc");
+    area.setCaretFromRenderedOffset(3, "before");
+    expect(area.getCaretPosition()).toBe(1);
+    area.setCaretFromRenderedOffset(3, "after");
+    expect(area.getCaretPosition()).toBe(6);
+
+    expect(area.handleBeforeInput("insertText", "😀")).toBe(true);
+    expect(area.getText()).toBe("a<x0/>😀bc");
+    expect(area.handleBeforeInput("deleteContentBackward")).toBe(true);
+    expect(area.getText()).toBe("a<x0/>bc");
+    expect(area.handleBeforeInput("formatBold")).toBe(false);
+
+    area.setCaretPosition(area.getOmDocument().translationEnd);
+    area.setCaretFromRenderedOffset(3, "before", true);
+    expect({
+      anchor: area.getSelectionAnchor(),
+      focus: area.getSelectionFocus(),
+      direction: area.getSelectionDirection(),
+    }).toEqual({ anchor: 8, focus: 1, direction: "backward" });
+  });
+
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {
     const controller = new EditorController();
     controller.loadProject([
@@ -270,6 +292,22 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.getLoadedPage().map((entry) => entry.entryNumber)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(controller.hasMoreBefore()).toBe(false);
     expect(controller.hasMoreAfter()).toBe(false);
+  });
+
+  it("EditorController restores a variable-height stable scroll anchor after prepend", () => {
+    const controller = new EditorController();
+    const anchor = controller.captureScrollAnchor(100, [
+      { key: "first", top: 40, bottom: 90 },
+      { key: "second", top: 90, bottom: 150 },
+      { key: "third", top: 150, bottom: 220 },
+    ]);
+    expect(anchor).toEqual({ key: "second", offset: -10 });
+    expect(controller.scrollAdjustmentForAnchor(anchor, 100, [
+      { key: "prepended", top: 35, bottom: 170 },
+      { key: "second", top: 225, bottom: 285 },
+      { key: "third", top: 285, bottom: 355 },
+    ])).toBe(135);
+    expect(controller.scrollAdjustmentForAnchor(anchor, 100, [])).toBe(0);
   });
 
   it("EditorController synchronizes immutable renderer snapshots into stable segment pages", () => {

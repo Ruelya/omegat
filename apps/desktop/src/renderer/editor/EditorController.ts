@@ -38,6 +38,17 @@ export type LoadedPageEntry = {
   marks: Mark[];
 };
 
+export type ScrollAnchorCandidate = {
+  key: string;
+  top: number;
+  bottom: number;
+};
+
+export type EditorScrollAnchor = {
+  key: string;
+  offset: number;
+};
+
 export class EditorController {
   readonly editor = IEditor;
   readonly textArea = new EditorTextArea3();
@@ -314,6 +325,37 @@ export class EditorController {
 
   getLoadedRange(): { first: number; last: number } {
     return { first: this.firstLoaded, last: this.lastLoaded };
+  }
+
+  /**
+   * Remember the first segment intersecting the scroll viewport. The offset is
+   * relative to the viewport rather than scrollTop, so it survives prepending
+   * variably-sized rendered segments.
+   */
+  captureScrollAnchor(
+    viewportTop: number,
+    candidates: readonly ScrollAnchorCandidate[],
+  ): EditorScrollAnchor | null {
+    const candidate =
+      candidates.find(({ bottom }) => Number.isFinite(bottom) && bottom > viewportTop)
+      ?? candidates.at(-1);
+    if (!candidate || !Number.isFinite(candidate.top)) return null;
+    return { key: candidate.key, offset: candidate.top - viewportTop };
+  }
+
+  /**
+   * Return the scrollTop delta needed to put a stable segment back at its
+   * pre-render viewport offset.
+   */
+  scrollAdjustmentForAnchor(
+    anchor: EditorScrollAnchor | null,
+    viewportTop: number,
+    candidates: readonly ScrollAnchorCandidate[],
+  ): number {
+    if (!anchor) return 0;
+    const candidate = candidates.find(({ key }) => key === anchor.key);
+    if (!candidate || !Number.isFinite(candidate.top)) return 0;
+    return candidate.top - viewportTop - anchor.offset;
   }
 
   getLoadedPage(): LoadedPageEntry[] {

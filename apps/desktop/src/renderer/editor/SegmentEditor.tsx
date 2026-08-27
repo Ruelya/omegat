@@ -1,10 +1,12 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ClipboardEvent,
   type CompositionEvent,
   type FocusEvent,
+  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -18,11 +20,97 @@ import {
   extractTranslation,
   type Document3State,
 } from "./Document3";
-import { EditorController } from "./EditorController";
+import {
+  EditorController,
+  type EditorScrollAnchor,
+  type ScrollAnchorCandidate,
+} from "./EditorController";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
 
 const editorController = new EditorController();
+
+type NativeCaretHit = {
+  node: Node;
+  offset: number;
+};
+
+type CaretCapableDocument = Document & {
+  caretPositionFromPoint?: (
+    x: number,
+    y: number,
+  ) => { offsetNode: Node; offset: number } | null;
+  caretRangeFromPoint?: (x: number, y: number) => Range | null;
+};
+
+function caretHitFromPoint(doc: Document, x: number, y: number): NativeCaretHit | null {
+  const native = doc as CaretCapableDocument;
+  const position = native.caretPositionFromPoint?.(x, y);
+  if (position) return { node: position.offsetNode, offset: position.offset };
+  const range = native.caretRangeFromPoint?.(x, y);
+  if (range) return { node: range.startContainer, offset: range.startOffset };
+  return null;
+}
+
+function renderedCaretFromPoint(
+  root: HTMLElement,
+  x: number,
+  y: number,
+): { offset: number; bias: "before" | "after" } | null {
+  const doc = root.ownerDocument;
+  const hit = caretHitFromPoint(doc, x, y);
+  if (hit) {
+    const origin =
+      hit.node.nodeType === Node.ELEMENT_NODE
+        ? hit.node as Element
+        : hit.node.parentElement;
+    const fragment = origin?.closest<HTMLElement>("[data-offset]");
+    if (fragment && root.contains(fragment)) {
+      const start = Number(fragment.dataset.offset);
+      if (Number.isFinite(start)) {
+        const limit =
+          hit.node.nodeType === Node.TEXT_NODE
+            ? hit.node.textContent?.length ?? 0
+            : hit.node.childNodes.length;
+        const range = doc.createRange();
+        range.selectNodeContents(fragment);
+        try {
+          range.setEnd(hit.node, Math.max(0, Math.min(hit.offset, limit)));
+          const local = range.toString().length;
+          const length = fragment.textContent?.length ?? 0;
+          const bias =
+            fragment.dataset.tag && local * 2 < length ? "before" : "after";
+          return { offset: start + local, bias };
+        } catch {
+          // Fall through to an element-boundary hit when Chromium gives a
+          // transient node that was replaced during the same layout pass.
+        }
+      }
+    }
+  }
+
+  const fragment = doc.elementFromPoint(x, y)?.closest<HTMLElement>("[data-offset]");
+  if (!fragment || !root.contains(fragment)) return null;
+  const start = Number(fragment.dataset.offset);
+  if (!Number.isFinite(start)) return null;
+  const rect = fragment.getBoundingClientRect();
+  const after = x >= rect.left + rect.width / 2;
+  return {
+    offset: start + (after ? fragment.textContent?.length ?? 0 : 0),
+    bias: after ? "after" : "before",
+  };
+}
+
+function scrollCandidates(container: HTMLElement): ScrollAnchorCandidate[] {
+  return [...container.querySelectorAll<HTMLElement>("[data-entry-key]")].map((element) => {
+    const bounds = element.getBoundingClientRect();
+    return {
+      key: element.dataset.entryKey ?? "",
+      top: bounds.top,
+      bottom: bounds.bottom,
+    };
+  });
+}
 
 function renderRichText(
   text: string,
@@ -113,9 +201,11 @@ export function SegmentEditor() {
   const glossary = useApp((s) => s.glossary);
   const focus = useApp((s) => s.focusPanel);
   const tabAdvance = useApp((s) => Boolean(s.prefs?.tab_advance));
+  const scrollViewport = useRef<HTMLDivElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const ime = useRef<HTMLTextAreaElement>(null);
   const interaction = useRef(new EditorTextArea3());
+  const pendingScrollAnchor = useRef<EditorScrollAnchor | null>(null);
   const [selection, setSelection] = useState({
     anchor: document3.translation.length,
     focus: document3.translation.length,
@@ -124,6 +214,7 @@ export function SegmentEditor() {
   const composing = useRef(false);
   editorController.setPageRadius(pageRadius);
   const loadedPage = editorController.synchronizeRendererProject(entries, activeIndex, document3);
+  const loadedPageSignature = loadedPage.map(({ key }) => key).join("\u0000");
 
   useEffect(() => {
     setSelection((current) => ({
@@ -140,6 +231,19 @@ export function SegmentEditor() {
   useEffect(() => {
     if (focus === "editor") surface.current?.focus();
   }, [focus]);
+
+  useLayoutEffect(() => {
+    const viewport = scrollViewport.current;
+    const anchor = pendingScrollAnchor.current;
+    pendingScrollAnchor.current = null;
+    if (!viewport || !anchor) return;
+    const adjustment = editorController.scrollAdjustmentForAnchor(
+      anchor,
+      viewport.getBoundingClientRect().top,
+      scrollCandidates(viewport),
+    );
+    if (adjustment !== 0) viewport.scrollTop += adjustment;
+  }, [loadedPageSignature]);
 
   function prepareInteraction(): EditorTextArea3 {
     const area = interaction.current;
@@ -197,6 +301,17 @@ export function SegmentEditor() {
     composing.current = false;
   }
 
+  function onNativeBeforeInput(ev: FormEvent<HTMLTextAreaElement>) {
+    const native = ev.nativeEvent as InputEvent;
+    const isCompositionInput =
+      native.inputType === "insertCompositionText"
+      || native.inputType === "deleteCompositionText";
+    const area = isCompositionInput ? interaction.current : prepareInteraction();
+    if (!area.handleBeforeInput(native.inputType, native.data)) return;
+    ev.preventDefault();
+    applyDoc(area.getOmDocument(), area);
+  }
+
   function onKey(ev: KeyboardEvent<HTMLDivElement>) {
     if (composing.current) {
       if (ev.key === "Escape" && interaction.current.cancelComposition()) {
@@ -211,18 +326,6 @@ export function SegmentEditor() {
       const area = prepareInteraction();
       area.selectAll();
       readSelection(area);
-      return;
-    }
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === "Backspace") {
-      ev.preventDefault();
-      const area = prepareInteraction();
-      if (area.deleteToken(-1)) applyDoc(area.getOmDocument(), area);
-      return;
-    }
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === "Delete") {
-      ev.preventDefault();
-      const area = prepareInteraction();
-      if (area.deleteToken(1)) applyDoc(area.getOmDocument(), area);
       return;
     }
     if (ev.key === "Enter" && !ev.shiftKey) {
@@ -243,18 +346,6 @@ export function SegmentEditor() {
     if (ev.key === "Tab" && !tabAdvance && completer[0]) {
       ev.preventDefault();
       insertAt(completer[0].text);
-      return;
-    }
-    if (ev.key === "Backspace") {
-      ev.preventDefault();
-      const area = prepareInteraction();
-      if (area.deleteBackward()) applyDoc(area.getOmDocument(), area);
-      return;
-    }
-    if (ev.key === "Delete") {
-      ev.preventDefault();
-      const area = prepareInteraction();
-      if (area.deleteForward()) applyDoc(area.getOmDocument(), area);
       return;
     }
     if (ev.key === "ArrowLeft") {
@@ -293,28 +384,16 @@ export function SegmentEditor() {
       readSelection(area);
       return;
     }
-    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
-    if (ev.key.length === 1) {
-      ev.preventDefault();
-      insertAt(ev.key);
-    }
   }
 
   function onClick(ev: MouseEvent<HTMLDivElement>) {
-    const target = ev.target as HTMLElement;
-    const tag = target.closest("[data-tag]") as HTMLElement | null;
-    if (tag?.dataset.tag) {
-      const idx = Number(tag.dataset.offset);
-      if (Number.isFinite(idx)) {
-        setSelection({ anchor: idx + tag.dataset.tag.length, focus: idx + tag.dataset.tag.length });
-      }
-      return;
-    }
-    const offset = target.dataset.offset;
-    if (offset != null) {
-      const position = Number(offset);
-      if (Number.isFinite(position)) setSelection({ anchor: position, focus: position });
-    }
+    const root = surface.current;
+    if (!root) return;
+    const hit = renderedCaretFromPoint(root, ev.clientX, ev.clientY);
+    if (!hit) return;
+    const area = prepareInteraction();
+    area.setCaretFromRenderedOffset(hit.offset, hit.bias, ev.shiftKey);
+    readSelection(area);
   }
 
   function onDoubleClick(ev: MouseEvent<HTMLDivElement>) {
@@ -362,7 +441,15 @@ export function SegmentEditor() {
       (position <= 0.2 && editorController.hasMoreBefore())
       || (position >= 0.8 && editorController.hasMoreAfter())
     ) {
-      setPageRadius((radius) => Math.min(entries.length, radius + 8));
+      pendingScrollAnchor.current = editorController.captureScrollAnchor(
+        el.getBoundingClientRect().top,
+        scrollCandidates(el),
+      );
+      setPageRadius((radius) => {
+        const next = Math.min(entries.length, radius + 8);
+        if (next === radius) pendingScrollAnchor.current = null;
+        return next;
+      });
     }
   }
 
@@ -377,13 +464,19 @@ export function SegmentEditor() {
 
   return (
     <div
+      ref={scrollViewport}
       className="editor-doc"
       data-first-loaded={editorController.getLoadedRange().first}
       data-last-loaded={editorController.getLoadedRange().last}
       onScroll={onPageScroll}
     >
       {loadedPage.map((entry) => entry.active ? (
-        <section className="editor-segment is-active" data-entry={entry.entryNumber} key={entry.key}>
+        <section
+          className="editor-segment is-active"
+          data-entry={entry.entryNumber}
+          data-entry-key={entry.key}
+          key={entry.key}
+        >
           <div className="segment-meta">{entry.file} · #{entry.entryNumber}</div>
           <div className="pane-h">{t("source")}</div>
           <SegmentSource />
@@ -434,6 +527,10 @@ export function SegmentEditor() {
               tabIndex={-1}
               value=""
               onChange={() => undefined}
+              onBeforeInput={onNativeBeforeInput}
+              onInput={(ev) => {
+                ev.currentTarget.value = "";
+              }}
             />
           </div>
         </section>
@@ -441,6 +538,7 @@ export function SegmentEditor() {
         <section
           className="editor-segment is-context"
           data-entry={entry.entryNumber}
+          data-entry-key={entry.key}
           data-marker-count={entry.marks.length}
           key={entry.key}
           role="button"
