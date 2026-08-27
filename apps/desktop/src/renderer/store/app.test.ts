@@ -1581,11 +1581,13 @@ describe("app store", () => {
       document: useApp.getState().document3,
       conflict: useApp.getState().editConflict,
     }).toEqual({
-      methods: ["entry.list", "entry.set"],
+      methods: ["entry.list", "entry.set", "issues.list"],
       index: 1,
       keys: [decoy.key, wantedKey],
       document: {
         ...createDocument3("same", "local wanted"),
+        activeStart: "local wanted".length,
+        activeEnd: "local wanted".length,
         dirty: false,
       },
       conflict: null,
