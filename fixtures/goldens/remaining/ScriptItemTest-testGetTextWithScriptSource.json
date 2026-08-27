@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithScriptSource",
+  "source": "print('Hello, world!')",
+  "text": "print('Hello, world!')",
+  "file_name": "<editor script>",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithScriptSource"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.BiDiMarkersTest#testMarkersBidi",
+  "enabled": true,
+  "source": "ملفات‪ XHTML",
+  "translation": "ملفات‪ XHTML",
+  "is_active": true,
+  "marks": [
+    {
+      "startOffset": 5,
+      "endOffset": 5,
+      "entryPart": "TRANSLATION"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
