@@ -13,6 +13,9 @@ use crate::tmx::{ProjectTmx, TmxEntry};
 use omegat_filters::{FilterContext, FilterRegistry};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ALIGN_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub const PREF_ALGORITHM: &str = "aligner_algorithm_class";
 pub const PREF_CALCULATOR: &str = "aligner_calculator_type";
@@ -1286,6 +1289,59 @@ pub fn write_aligned_tmx(
     tmx.write(dest, src_lang, tgt_lang)
 }
 
+pub fn write_aligned_tmx_cancellable(
+    tmx: &ProjectTmx,
+    dest: &Path,
+    src_lang: &str,
+    tgt_lang: &str,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    if src_lang.trim().is_empty() || tgt_lang.trim().is_empty() {
+        return Err(crate::error::CoreError::InvalidProject(
+            "IllegalStateException: aligner languages are not set".into(),
+        ));
+    }
+    if cancellation.is_cancelled() {
+        return Err(CoreError::Cancelled);
+    }
+    let id = ALIGN_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let name = dest
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("align.tmx");
+    let staged = dest.with_file_name(format!(
+        ".{name}.omegat-align-staged-{}-{id}",
+        std::process::id()
+    ));
+    let backup = dest.with_file_name(format!(
+        ".{name}.omegat-align-backup-{}-{id}",
+        std::process::id()
+    ));
+    tmx.write(&staged, src_lang, tgt_lang)?;
+    if cancellation.checkpoint("align.write") {
+        let _ = std::fs::remove_file(staged);
+        return Err(CoreError::Cancelled);
+    }
+    let had_destination = dest.exists();
+    if had_destination {
+        if let Err(error) = std::fs::rename(dest, &backup) {
+            let _ = std::fs::remove_file(staged);
+            return Err(error.into());
+        }
+    }
+    if let Err(error) = std::fs::rename(&staged, dest) {
+        if had_destination {
+            let _ = std::fs::rename(&backup, dest);
+        }
+        let _ = std::fs::remove_file(staged);
+        return Err(error.into());
+    }
+    if had_destination {
+        let _ = std::fs::remove_file(backup);
+    }
+    Ok(())
+}
+
 pub fn do_align(
     beads: &[(String, String)],
     algo: Option<AlignAlgo>,
@@ -1568,6 +1624,9 @@ fn decode_min_cancellable(
                 &mut dp, &mut bt, i, j, n, m, cur, 1, 2, merge_pen, ls, rs, cfg,
             );
         }
+        if cancellation.checkpoint("align.decode") {
+            return Err(CoreError::Cancelled);
+        }
     }
     if cancellation.is_cancelled() {
         Err(CoreError::Cancelled)
@@ -1668,6 +1727,9 @@ fn decode_posterior_cancellable(
                     }
                 }
             }
+        }
+        if cancellation.checkpoint("align.decode") {
+            return Err(CoreError::Cancelled);
         }
     }
     if cancellation.is_cancelled() {

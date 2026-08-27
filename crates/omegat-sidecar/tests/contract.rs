@@ -130,6 +130,84 @@ fn send_cancelled_request(
     response_for(child_out, id)
 }
 
+fn cancel_at_checkpoint(
+    child_in: &mut impl Write,
+    child_out: &mut impl BufRead,
+    id: i64,
+    method: &str,
+    mut params: Value,
+    stage: &str,
+) -> Value {
+    let progress_token = format!("{method}-{id}");
+    params
+        .as_object_mut()
+        .expect("checkpoint request params must be an object")
+        .insert("progress_token".into(), json!(progress_token));
+    writeln!(
+        child_in,
+        "{}",
+        json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+    )
+    .unwrap();
+    child_in.flush().unwrap();
+    loop {
+        let mut line = String::new();
+        child_out.read_line(&mut line).unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_ne!(
+            value.get("id").and_then(Value::as_i64),
+            Some(id),
+            "{method} completed before reaching checkpoint {stage}: {value}"
+        );
+        if value.get("method").and_then(Value::as_str) == Some("$/progress")
+            && value["params"]["token"] == progress_token
+            && value["params"]["stage"] == stage
+        {
+            break;
+        }
+    }
+    writeln!(
+        child_in,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": { "id": id }
+        })
+    )
+    .unwrap();
+    child_in.flush().unwrap();
+    response_for(child_out, id)
+}
+
+fn file_snapshot(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    fn collect(root: &std::path::Path, path: &std::path::Path, out: &mut Vec<(String, Vec<u8>)>) {
+        let Ok(entries) = std::fs::read_dir(path) else {
+            return;
+        };
+        for entry in entries {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let file_type = entry.file_type().unwrap();
+            if file_type.is_dir() {
+                collect(root, &path, out);
+            } else if file_type.is_file() {
+                out.push((
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    std::fs::read(path).unwrap(),
+                ));
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(root, root, &mut files);
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
 fn blocking_http_endpoint() -> (String, mpsc::Receiver<()>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -394,6 +472,339 @@ fn cancellation_reaches_languagetool_issues_and_filter_product_paths() {
         "sys.version",
         json!({}),
     );
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn protocol_cancellation_rolls_back_reload_and_compile_state() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cancel-reload-compile");
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
+
+    for index in 0..1_000 {
+        std::fs::write(
+            root.join("source").join(format!("{index:04}.txt")),
+            "Repeated source",
+        )
+        .unwrap();
+    }
+    let loaded = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
+    assert_eq!(loaded["result"]["entries"], 1_000);
+    let before_reload = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}))["result"].clone();
+
+    for index in 0..1_000 {
+        std::fs::write(
+            root.join("source").join(format!("{index:04}.txt")),
+            format!("Changed source {index}"),
+        )
+        .unwrap();
+    }
+    let cancelled_reload = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "project.reload",
+        json!({}),
+        "project.reload.sources",
+    );
+    assert_eq!(
+        cancelled_reload["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    let after_reload = rpc(&mut stdin, &mut stdout, 5, "entry.list", json!({}));
+    assert_eq!(after_reload["result"], before_reload);
+
+    let first = &after_reload["result"][0];
+    let updated = rpc(
+        &mut stdin,
+        &mut stdout,
+        6,
+        "entry.set",
+        json!({
+            "index": 0,
+            "key": first["key"],
+            "translation": "Traduction partagée",
+            "note": "",
+            "revision": first["revision"],
+            "default_translation": true
+        }),
+    );
+    assert_eq!(
+        updated["result"]["updated"].as_array().unwrap().len(),
+        1_000
+    );
+    std::fs::write(root.join("target/0000.txt"), "old compiled target").unwrap();
+    std::fs::write(root.join("target/unrelated.keep"), "must remain").unwrap();
+    let before_compile = file_snapshot(&root.join("target"));
+    let cancelled_compile = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "project.compile",
+        json!({}),
+        "project.compile.targets",
+    );
+    assert_eq!(
+        cancelled_compile["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(file_snapshot(&root.join("target")), before_compile);
+    assert!(std::fs::read_dir(root.join("target"))
+        .unwrap()
+        .all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".omegat-compile-")));
+
+    let responsive = rpc(&mut stdin, &mut stdout, 8, "sys.version", json!({}));
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn protocol_cancellation_rolls_back_team_sync_and_commit() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cancel-team");
+    let remote = temp.path().join("file-remote");
+    std::fs::create_dir_all(remote.join("source")).unwrap();
+    for index in 0..600 {
+        std::fs::write(
+            remote.join("source").join(format!("{index:04}.txt")),
+            format!("remote baseline {index:04} {}", "x".repeat(256)),
+        )
+        .unwrap();
+    }
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    let mapping = json!({
+        "repositories": [{
+            "repo_type": "file",
+            "url": remote,
+            "branch": null,
+            "mappings": [{
+                "local": "/source/",
+                "repository": "/source/",
+                "includes": [],
+                "excludes": []
+            }]
+        }]
+    });
+    let configured = rpc(&mut stdin, &mut stdout, 2, "team.mapping", mapping);
+    assert_eq!(configured["result"]["ok"], true);
+    let initialized = rpc(&mut stdin, &mut stdout, 3, "team.sync", json!({}));
+    assert_eq!(initialized["result"]["action"], "sync");
+
+    for index in 0..600 {
+        std::fs::write(
+            root.join("source").join(format!("{index:04}.txt")),
+            format!("local commit candidate {index:04} {}", "y".repeat(256)),
+        )
+        .unwrap();
+    }
+    let project_before_commit = file_snapshot(&root.join("source"));
+    let remote_before_commit = file_snapshot(&remote);
+    let cancelled_commit = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "team.commit",
+        json!({"which": "source"}),
+        "team.mapping.copy",
+    );
+    assert_eq!(
+        cancelled_commit["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(file_snapshot(&root.join("source")), project_before_commit);
+    assert_eq!(file_snapshot(&remote), remote_before_commit);
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+
+    for index in 0..600 {
+        std::fs::write(
+            remote.join("source").join(format!("{index:04}.txt")),
+            format!("remote sync candidate {index:04} {}", "z".repeat(256)),
+        )
+        .unwrap();
+    }
+    let project_before_sync = file_snapshot(&root.join("source"));
+    let remote_before_sync = file_snapshot(&remote);
+    let cancelled_sync = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "team.sync",
+        json!({}),
+        "team.mapping.copy",
+    );
+    assert_eq!(
+        cancelled_sync["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(file_snapshot(&root.join("source")), project_before_sync);
+    assert_eq!(file_snapshot(&remote), remote_before_sync);
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+
+    let responsive = rpc(&mut stdin, &mut stdout, 6, "sys.version", json!({}));
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn protocol_cancellation_preserves_existing_aligner_output() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source.properties");
+    let target = temp.path().join("target.properties");
+    let dest = temp.path().join("aligned.tmx");
+    let source_text = (0..5_000)
+        .map(|index| format!("key{index}=source value {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let target_text = (0..5_000)
+        .map(|index| format!("key{index}=target value {index}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&source, source_text).unwrap();
+    std::fs::write(&target, target_text).unwrap();
+    std::fs::write(&dest, b"preexisting aligned output").unwrap();
+
+    let cancelled = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "align.run",
+        json!({
+            "source": source,
+            "target": target,
+            "dest": dest,
+            "mode": "parsewise",
+            "segment": false,
+            "source_lang": "en",
+            "target_lang": "fr"
+        }),
+        "align.decode",
+    );
+    assert_eq!(
+        cancelled["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(std::fs::read(&dest).unwrap(), b"preexisting aligned output");
+    let siblings = file_snapshot(temp.path());
+    assert!(siblings
+        .iter()
+        .all(|(path, _)| !path.contains(".omegat-align-")));
+    let responsive = rpc(&mut stdin, &mut stdout, 2, "sys.version", json!({}));
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn sidecar_self_writes_are_suppressed_before_real_external_changes() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("self-write-events");
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    let source = root.join("source/chapter.txt");
+    std::fs::write(&source, "Initial source").unwrap();
+    let created_event = notification_for(&mut stdout, "project.files-changed");
+    assert_eq!(created_event["params"]["paths"], json!([source]));
+    let loaded = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
+    assert_eq!(loaded["result"]["entries"], 1);
+    let listed = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
+    let entry = &listed["result"][0];
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.set",
+        json!({
+            "index": 0,
+            "key": entry["key"],
+            "translation": "Traduction",
+            "note": "",
+            "revision": entry["revision"],
+            "default_translation": true
+        }),
+    );
+    let saved = rpc(&mut stdin, &mut stdout, 5, "project.save", json!({}));
+    assert_eq!(saved["result"]["ok"], true);
+    std::thread::sleep(Duration::from_millis(250));
+
+    std::fs::write(&source, "Actual external source change").unwrap();
+    let external = notification_for(&mut stdout, "project.files-changed");
+    assert_eq!(
+        external["params"],
+        json!({
+            "root": root.to_string_lossy(),
+            "paths": [source.to_string_lossy()]
+        })
+    );
+    let responsive = rpc(&mut stdin, &mut stdout, 6, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
     let _ = child.kill();
 }

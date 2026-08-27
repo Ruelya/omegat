@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +130,37 @@ describe("ProjectFileWatcher", () => {
       root: resolve(root),
       generation: 21,
       paths: [resolve(root, "omegat", "project_save.tmx")],
+      sources: ["native"],
+    });
+    watcher.close();
+  });
+
+  it("suppresses delayed real fs echoes but publishes the next external write", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omegat-watch-real-write-"));
+    roots.push(root);
+    mkdirSync(join(root, "source"), { recursive: true });
+    mkdirSync(join(root, "omegat"), { recursive: true });
+    const source = join(root, "source", "chapter.txt");
+    writeFileSync(source, "initial");
+    const publish = vi.fn();
+    const watcher = new ProjectFileWatcher(publish, 10);
+    watcher.watch(root, 33);
+
+    const endWrite = watcher.beginWriteSource("project.save");
+    writeFileSync(join(root, "omegat", "project_save.tmx"), "sidecar save");
+    endWrite();
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 100));
+    expect(publish).not.toHaveBeenCalled();
+
+    writeFileSync(source, "real external change with a distinct fingerprint");
+    for (let attempts = 0; attempts < 50 && publish.mock.calls.length === 0; attempts += 1) {
+      await new Promise((resolveTimer) => setTimeout(resolveTimer, 10));
+    }
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith({
+      root: resolve(root),
+      generation: 33,
+      paths: [resolve(source)],
       sources: ["native"],
     });
     watcher.close();

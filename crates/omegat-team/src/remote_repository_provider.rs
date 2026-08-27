@@ -1,7 +1,7 @@
 //! Java `RemoteRepositoryProvider`.
 
 use crate::error::{Result, TeamError};
-use crate::mapping::{copy_mapped, effective_mappings, propagate_deleted, CopyDir};
+use crate::mapping::{copy_mapped_cancellable, effective_mappings, propagate_deleted, CopyDir};
 use crate::project_team_settings::{is_inplace, prep_dir};
 use crate::rebase_and_commit::rebase_all;
 use crate::rebase_utils::save_bases;
@@ -572,7 +572,7 @@ pub fn sync_cancellable(
         journal.persist(props)?;
         for (repo, deleted) in props.repositories.iter().zip(&deleted) {
             check_cancelled(cancellation)?;
-            copy_mapped(props, repo, CopyDir::RepoToProject)?;
+            copy_mapped_cancellable(props, repo, CopyDir::RepoToProject, cancellation)?;
             propagate_deleted(props, repo, deleted)?;
             check_cancelled(cancellation)?;
         }
@@ -595,7 +595,7 @@ pub fn sync_cancellable(
         journal.persist(props)?;
         for repo in &props.repositories {
             check_cancelled(cancellation)?;
-            copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
+            copy_mapped_cancellable(props, repo, CopyDir::ProjectToRepo, cancellation)?;
             check_cancelled(cancellation)?;
         }
         journal.phase = "publishing".into();
@@ -721,7 +721,7 @@ pub fn commit_project_files_cancellable(
             journal.persist(props)?;
             for repo in &props.repositories {
                 check_cancelled(cancellation)?;
-                copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
+                copy_mapped_cancellable(props, repo, CopyDir::ProjectToRepo, cancellation)?;
                 check_cancelled(cancellation)?;
             }
             journal.phase = "publishing".into();

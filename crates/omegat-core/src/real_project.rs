@@ -20,7 +20,10 @@ use omegat_ipc::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
+
+static COMPILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub struct ProjectSession {
     pub props: ProjectProperties,
@@ -136,11 +139,22 @@ impl ProjectSession {
     }
 
     pub fn reload_cancellable(&mut self, cancellation: &CancellationToken) -> Result<()> {
-        self.reload_sources_cancellable(cancellation)?;
-        if cancellation.is_cancelled() {
-            return Err(CoreError::Cancelled);
+        let previous_entries = self.entries.clone();
+        let result = (|| {
+            self.reload_sources_cancellable(cancellation)?;
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            self.apply_memory();
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.entries = previous_entries;
+            return Err(error);
         }
-        self.apply_memory();
         Ok(())
     }
 
@@ -268,6 +282,9 @@ impl ProjectSession {
                 entry.next = Some(sources.get(index + 1).cloned().unwrap_or_default());
             }
             entries.extend(file_entries);
+            if cancellation.checkpoint("project.reload.sources") {
+                return Err(CoreError::Cancelled);
+            }
         }
         if cancellation.is_cancelled() {
             return Err(CoreError::Cancelled);
@@ -521,6 +538,7 @@ impl ProjectSession {
             }
             by_file.entry(e.file.clone()).or_default().push(e);
         }
+        let mut stage = CompileStage::new(&self.props.target_dir)?;
         let mut n = 0;
         for (rel, segs) in by_file {
             if cancellation.is_cancelled() {
@@ -528,6 +546,7 @@ impl ProjectSession {
             }
             let src = self.props.source_dir.join(&rel);
             let dest = self.props.target_dir.join(&rel);
+            let staged = stage.target_path(&rel)?;
             let Some(filter) = self.filters.for_path(&src) else {
                 continue;
             };
@@ -565,23 +584,29 @@ impl ProjectSession {
                     map.insert(p.source.clone(), trans);
                 }
             }
-            filter.write_cancellable(
-                &src,
-                &dest,
-                &map,
-                &ctx,
-                &|| cancellation.is_cancelled(),
-            )?;
+            filter.write_cancellable(&src, &staged, &map, &ctx, &|| cancellation.is_cancelled())?;
+            stage.add(staged, dest);
             n += 1;
+            if cancellation.checkpoint("project.compile.targets") {
+                return Err(CoreError::Cancelled);
+            }
         }
         if cancellation.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
-        self.export_tm_levels_cancellable(cancellation)?;
+        self.stage_tm_levels_cancellable(&mut stage, cancellation)?;
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        stage.publish()?;
         Ok(n)
     }
 
-    fn export_tm_levels_cancellable(&self, cancellation: &CancellationToken) -> Result<()> {
+    fn stage_tm_levels_cancellable(
+        &self,
+        stage: &mut CompileStage,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
         let levels = self.props.export_tm_levels.to_ascii_lowercase();
         let stem = self
             .props
@@ -600,11 +625,14 @@ impl ProjectSession {
             }
             if levels.contains(level) {
                 let path = dir.join(format!("{stem}-{level}.tmx"));
-                std::fs::write(
+                stage.add_bytes(
                     path,
                     self.tmx
                         .to_xml_level(&self.props.source_lang, &self.props.target_lang, level),
                 )?;
+                if cancellation.checkpoint("project.compile.exports") {
+                    return Err(CoreError::Cancelled);
+                }
             }
         }
         if cancellation.is_cancelled() {
@@ -886,6 +914,136 @@ impl ProjectSession {
             },
         }
     }
+}
+
+struct StagedCompileOutput {
+    staged: PathBuf,
+    destination: PathBuf,
+    backup: Option<PathBuf>,
+    published: bool,
+}
+
+/// Compile into private files and publish only after every filter and export
+/// has completed. This prevents cancellation or a late filter failure from
+/// exposing a mixture of old and newly compiled targets.
+struct CompileStage {
+    id: String,
+    root: PathBuf,
+    outputs: Vec<StagedCompileOutput>,
+}
+
+impl CompileStage {
+    fn new(target_dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(target_dir)?;
+        let id = format!(
+            "{}-{}",
+            std::process::id(),
+            COMPILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let root = target_dir.join(format!(".omegat-compile-{id}"));
+        std::fs::create_dir_all(&root)?;
+        Ok(Self {
+            id,
+            root,
+            outputs: Vec::new(),
+        })
+    }
+
+    fn target_path(&self, relative: &str) -> Result<PathBuf> {
+        let path = self.root.join("targets").join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(path)
+    }
+
+    fn add(&mut self, staged: PathBuf, destination: PathBuf) {
+        self.outputs.push(StagedCompileOutput {
+            staged,
+            destination,
+            backup: None,
+            published: false,
+        });
+    }
+
+    fn add_bytes(&mut self, destination: PathBuf, contents: String) -> Result<()> {
+        let index = self.outputs.len();
+        let staged = sibling_compile_path(&destination, &self.id, index, "staged");
+        if let Some(parent) = staged.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&staged, contents)?;
+        self.add(staged, destination);
+        Ok(())
+    }
+
+    fn publish(mut self) -> Result<()> {
+        for index in 0..self.outputs.len() {
+            let destination = self.outputs[index].destination.clone();
+            if let Some(parent) = destination.parent() {
+                if let Err(error) = std::fs::create_dir_all(parent) {
+                    self.rollback_published(index);
+                    return Err(error.into());
+                }
+            }
+            if destination.exists() {
+                let backup = sibling_compile_path(&destination, &self.id, index, "backup");
+                if let Err(error) = std::fs::rename(&destination, &backup) {
+                    self.rollback_published(index);
+                    return Err(error.into());
+                }
+                self.outputs[index].backup = Some(backup);
+            }
+            let staged = self.outputs[index].staged.clone();
+            if let Err(error) = std::fs::rename(&staged, &destination) {
+                if let Some(backup) = self.outputs[index].backup.take() {
+                    let _ = std::fs::rename(backup, &destination);
+                }
+                self.rollback_published(index);
+                return Err(error.into());
+            }
+            self.outputs[index].published = true;
+        }
+        for output in &mut self.outputs {
+            if let Some(backup) = output.backup.take() {
+                let _ = std::fs::remove_file(backup);
+            }
+        }
+        Ok(())
+    }
+
+    fn rollback_published(&mut self, before: usize) {
+        for index in (0..before).rev() {
+            let output = &mut self.outputs[index];
+            if !output.published {
+                continue;
+            }
+            let _ = std::fs::remove_file(&output.destination);
+            if let Some(backup) = output.backup.take() {
+                let _ = std::fs::rename(backup, &output.destination);
+            }
+            output.published = false;
+        }
+    }
+}
+
+impl Drop for CompileStage {
+    fn drop(&mut self) {
+        for output in &self.outputs {
+            if !output.published {
+                let _ = std::fs::remove_file(&output.staged);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn sibling_compile_path(destination: &Path, id: &str, index: usize, kind: &str) -> PathBuf {
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+    destination.with_file_name(format!(".{name}.omegat-compile-{kind}-{id}-{index}"))
 }
 
 fn now_iso() -> String {

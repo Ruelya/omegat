@@ -2,6 +2,7 @@
 
 import {
   readdirSync,
+  statSync,
   watch as watchDirectory,
   type FSWatcher,
   type WatchEventType,
@@ -26,6 +27,47 @@ type WatchFactory = (
 ) => WatchHandle;
 
 const WATCHED_PROJECT_DIRS = ["source", "omegat", "tm", "glossary", "dictionary"];
+
+function fileFingerprint(path: string): string | null {
+  try {
+    const stats = statSync(path, { bigint: true });
+    if (!stats.isFile()) return null;
+    return [
+      stats.dev,
+      stats.ino,
+      stats.size,
+      stats.mtimeNs,
+      stats.ctimeNs,
+    ].join(":");
+  } catch {
+    return null;
+  }
+}
+
+function collectProjectFingerprints(root: string): Map<string, string | null> {
+  const files = new Map<string, string | null>();
+  const record = (path: string) => {
+    const fingerprint = fileFingerprint(path);
+    if (fingerprint !== null) files.set(resolve(path), fingerprint);
+  };
+  const collect = (path: string) => {
+    let entries;
+    try {
+      entries = readdirSync(path, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) collect(child);
+      else if (entry.isFile()) record(child);
+    }
+  };
+  record(join(root, "omegat.project"));
+  WATCHED_PROJECT_DIRS.forEach((directory) => collect(join(root, directory)));
+  return files;
+}
 
 function collectDirectories(path: string, directories: string[]): void {
   let entries;
@@ -56,6 +98,8 @@ export class ProjectFileWatcher {
   private readonly changed = new Set<string>();
   private readonly sources = new Set<ProjectChangeSource>();
   private readonly activeWriteSources = new Map<number, string>();
+  private readonly suppressedNativeFingerprints = new Map<string, string | null>();
+  private writeBaseline: Map<string, string | null> | null = null;
   private nextWriteSource = 1;
   private timer: NodeJS.Timeout | null = null;
 
@@ -94,9 +138,24 @@ export class ProjectFileWatcher {
    */
   beginWriteSource(source: string): () => void {
     const token = this.nextWriteSource++;
+    if (this.activeWriteSources.size === 0 && this.root) {
+      this.writeBaseline = collectProjectFingerprints(this.root);
+    }
     this.activeWriteSources.set(token, source);
     return () => {
-      this.activeWriteSources.delete(token);
+      if (!this.activeWriteSources.delete(token)) return;
+      if (this.activeWriteSources.size > 0 || !this.root) return;
+      const before = this.writeBaseline ?? new Map<string, string | null>();
+      const after = collectProjectFingerprints(this.root);
+      const paths = new Set([...before.keys(), ...after.keys()]);
+      for (const path of paths) {
+        const previous = before.get(path) ?? null;
+        const current = after.get(path) ?? null;
+        if (previous !== current) {
+          this.suppressedNativeFingerprints.set(path, current);
+        }
+      }
+      this.writeBaseline = null;
     };
   }
 
@@ -138,6 +197,8 @@ export class ProjectFileWatcher {
     this.changed.clear();
     this.sources.clear();
     this.activeWriteSources.clear();
+    this.suppressedNativeFingerprints.clear();
+    this.writeBaseline = null;
     this.root = null;
     this.generation += 1;
   }
@@ -169,8 +230,17 @@ export class ProjectFileWatcher {
   }
 
   private recordChange(path: string, source: ProjectChangeSource): void {
-    if (!this.isProjectInput(path) || this.activeWriteSources.size > 0) return;
-    this.changed.add(resolve(path));
+    const resolvedPath = resolve(path);
+    if (!this.isProjectInput(resolvedPath) || this.activeWriteSources.size > 0) return;
+    if (
+      source === "native"
+      && this.suppressedNativeFingerprints.has(resolvedPath)
+    ) {
+      const expected = this.suppressedNativeFingerprints.get(resolvedPath) ?? null;
+      if (fileFingerprint(resolvedPath) === expected) return;
+      this.suppressedNativeFingerprints.delete(resolvedPath);
+    }
+    this.changed.add(resolvedPath);
     this.sources.add(source);
   }
 }

@@ -1,8 +1,9 @@
 //! Mapping include/exclude used by `RemoteRepositoryProvider`.
 
-use crate::error::Result;
+use crate::error::{Result, TeamError};
 use crate::project_team_settings::repo_work_dir;
 use crate::team_utils::{join_mapped, join_rel, rel_unix, strip_slash};
+use omegat_core::cancellation::CancellationToken;
 use omegat_core::properties::{ProjectProperties, RepositoryDef, RepositoryMapping};
 use std::path::{Component, Path};
 
@@ -101,8 +102,17 @@ pub fn copy_mapped(
     repo: &RepositoryDef,
     dir: CopyDir,
 ) -> Result<Vec<String>> {
+    copy_mapped_cancellable(props, repo, dir, &CancellationToken::default())
+}
+
+pub fn copy_mapped_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
     let wc = repo_work_dir(props, repo);
-    copy_mapped_from_worktree(props, repo, &wc, dir)
+    copy_mapped_from_worktree_cancellable(props, repo, &wc, dir, cancellation)
 }
 
 /// Execute repository mappings against an already prepared worktree.
@@ -116,11 +126,22 @@ pub fn copy_mapped_from_worktree(
     wc: &std::path::Path,
     dir: CopyDir,
 ) -> Result<Vec<String>> {
+    copy_mapped_from_worktree_cancellable(props, repo, wc, dir, &CancellationToken::default())
+}
+
+pub fn copy_mapped_from_worktree_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
     let mut copied = Vec::new();
     if !wc.exists() {
         return Ok(copied);
     }
     for mapping in effective_mappings(repo) {
+        check_cancelled(cancellation)?;
         let (from_root, from_rel, to_root, to_rel) = match dir {
             CopyDir::RepoToProject => (
                 wc,
@@ -146,6 +167,7 @@ pub fn copy_mapped_from_worktree(
                 }
                 std::fs::copy(&from, &to)?;
                 copied.push(rel_unix(&to, to_root));
+                check_copy_checkpoint(cancellation)?;
             }
             continue;
         }
@@ -153,6 +175,7 @@ pub fn copy_mapped_from_worktree(
             continue;
         }
         for ent in walkdir::WalkDir::new(&from).into_iter().flatten() {
+            check_cancelled(cancellation)?;
             if !ent.file_type().is_file() {
                 continue;
             }
@@ -175,9 +198,26 @@ pub fn copy_mapped_from_worktree(
             }
             std::fs::copy(ent.path(), &dest)?;
             copied.push(rel_unix(&dest, to_root));
+            check_copy_checkpoint(cancellation)?;
         }
     }
     Ok(copied)
+}
+
+fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(TeamError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn check_copy_checkpoint(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.checkpoint("team.mapping.copy") {
+        Err(TeamError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 /// Propagate repository deletions through the same mapping/include/exclude

@@ -109,13 +109,6 @@ impl App {
     fn handle(&mut self, req: RpcRequest, cancellation: &CancellationToken) -> RpcResponse {
         let id = req.id.clone().unwrap_or(Value::Null);
         let result = self.dispatch(&req.method, req.params, cancellation);
-        if cancellation.is_cancelled() {
-            return RpcResponse::err(
-                id,
-                error_code::REQUEST_CANCELLED,
-                "request cancelled",
-            );
-        }
         match result {
             Ok(result) => RpcResponse::ok(id, result),
             Err((code, msg)) => RpcResponse::err(id, code, msg),
@@ -844,11 +837,12 @@ impl App {
                     ));
                 }
                 if !dest.is_empty() {
-                    omegat_core::align::write_aligned_tmx(
+                    omegat_core::align::write_aligned_tmx_cancellable(
                         &tmx,
                         std::path::Path::new(dest),
                         &sl,
                         &tl,
+                        cancellation,
                     )
                     .map_err(core_err)?;
                 }
@@ -1335,7 +1329,22 @@ fn main() {
         }
         let id = req.id.clone().unwrap_or(Value::Null);
         let key = request_key(&id);
-        let cancellation = CancellationToken::default();
+        let cancellation = if let Some(progress_token) =
+            req.params.get("progress_token").cloned()
+        {
+            let progress_responses = responses.clone();
+            CancellationToken::with_checkpoint_observer(move |stage| {
+                let notification = RpcNotification::new(
+                    "$/progress",
+                    json!({ "token": progress_token, "stage": stage }),
+                );
+                if let Ok(line) = serde_json::to_string(&notification) {
+                    let _ = progress_responses.send(line);
+                }
+            })
+        } else {
+            CancellationToken::default()
+        };
         cancellations
             .lock()
             .unwrap()
