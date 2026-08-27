@@ -66,13 +66,22 @@ fn openxml_deep_writeback_targets_a_namespaced_part_occurrence() {
             .map(|segment| (segment.id.as_str(), segment.source.as_str()))
             .collect::<Vec<_>>(),
         vec![
-            ("word/document.xml#0", "Same deep"),
-            ("word/header1.xml#0", "Same deep")
+            (
+                "word/document.xml#0",
+                "<w0><w1>Same</w1></w0><w2><w3> deep</w3></w2>",
+            ),
+            (
+                "word/header1.xml#0",
+                "<w0><w1>Same</w1></w0><w2><w3> deep</w3></w2>",
+            ),
         ]
     );
 
     let mut translations = HashMap::new();
-    translations.insert("word/header1.xml#0".into(), "Header only".into());
+    translations.insert(
+        "word/header1.xml#0".into(),
+        "<w0><w1>Header</w1></w0><w2><w3> only</w3></w2>".into(),
+    );
     filter
         .write(&source, &output, &translations, &context)
         .unwrap();
@@ -84,8 +93,14 @@ fn openxml_deep_writeback_targets_a_namespaced_part_occurrence() {
             .map(|segment| (segment.id.as_str(), segment.source.as_str()))
             .collect::<Vec<_>>(),
         vec![
-            ("word/document.xml#0", "Same deep"),
-            ("word/header1.xml#0", "Header only")
+            (
+                "word/document.xml#0",
+                "<w0><w1>Same</w1></w0><w2><w3> deep</w3></w2>",
+            ),
+            (
+                "word/header1.xml#0",
+                "<w0><w1>Header</w1></w0><w2><w3> only</w3></w2>",
+            ),
         ]
     );
     assert_eq!(
@@ -103,18 +118,26 @@ fn openxml_deep_writeback_targets_a_namespaced_part_occurrence() {
     );
     assert_eq!(
         element_names_and_text(&read_part(&output, "word/header1.xml")).1,
-        vec!["Header only"]
+        vec!["Header", "only"]
     );
 }
 
 #[test]
-fn opendoc_deep_writeback_distinguishes_content_and_styles() {
+fn opendoc_deep_writeback_distinguishes_content_meta_and_intact_styles() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("deep.odt");
     let output = temp.path().join("translated.odt");
     let content = r#"<office:document-content xmlns:office="urn:office" xmlns:text="urn:text"><office:body><office:text><text:p><text:span>Repeated</text:span></text:p></office:text></office:body></office:document-content>"#;
     let styles = r#"<office:document-styles xmlns:office="urn:office" xmlns:dc="urn:dc"><office:styles><dc:title>Repeated</dc:title></office:styles></office:document-styles>"#;
-    write_zip(&source, &[("content.xml", content), ("styles.xml", styles)]);
+    let meta = r#"<office:document-meta xmlns:office="urn:office" xmlns:dc="urn:dc"><office:meta><dc:title>Repeated</dc:title></office:meta></office:document-meta>"#;
+    write_zip(
+        &source,
+        &[
+            ("content.xml", content),
+            ("styles.xml", styles),
+            ("meta.xml", meta),
+        ],
+    );
 
     let registry = FilterRegistry::new();
     let filter = registry.by_id("opendoc").unwrap();
@@ -126,11 +149,11 @@ fn opendoc_deep_writeback_distinguishes_content_and_styles() {
             .iter()
             .map(|segment| (segment.id.as_str(), segment.source.as_str()))
             .collect::<Vec<_>>(),
-        vec![("content.xml#0", "Repeated"), ("styles.xml#0", "Repeated")]
+        vec![("content.xml#0", "Repeated"), ("meta.xml#0", "Repeated")]
     );
 
     let mut translations = HashMap::new();
-    translations.insert("styles.xml#0".into(), "Style title".into());
+    translations.insert("meta.xml#0".into(), "Metadata title".into());
     filter
         .write(&source, &output, &translations, &context)
         .unwrap();
@@ -143,7 +166,7 @@ fn opendoc_deep_writeback_distinguishes_content_and_styles() {
             .collect::<Vec<_>>(),
         vec![
             ("content.xml#0", "Repeated"),
-            ("styles.xml#0", "Style title")
+            ("meta.xml#0", "Metadata title")
         ]
     );
     assert_eq!(
@@ -152,6 +175,10 @@ fn opendoc_deep_writeback_distinguishes_content_and_styles() {
     );
     assert_eq!(
         element_names_and_text(&read_part(&output, "styles.xml")).1,
-        vec!["Style title"]
+        vec!["Repeated"]
+    );
+    assert_eq!(
+        element_names_and_text(&read_part(&output, "meta.xml")).1,
+        vec!["Metadata title"]
     );
 }
