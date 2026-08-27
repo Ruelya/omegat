@@ -9,6 +9,16 @@ import type { FilterOptionsDto } from "../lib/types";
 import { useApp } from "../store/app";
 import { Modal } from "./Modal";
 
+type AlignBead = {
+  source: string;
+  target: string;
+  source_lines: (string | null)[];
+  target_lines: (string | null)[];
+  score: number;
+  enabled: boolean;
+  status: "default" | "accepted" | "needs-review";
+};
+
 export function AlignWindow() {
   const [src, setSrc] = useState("");
   const [tgt, setTgt] = useState("");
@@ -18,8 +28,9 @@ export function AlignWindow() {
   const [counter, setCounter] = useState("word");
   const [calculator, setCalculator] = useState("normal");
   const [side, setSide] = useState("both");
-  const [pairs, setPairs] = useState<{ source: string; target: string }[]>([]);
+  const [beads, setBeads] = useState<AlignBead[]>([]);
   const [sel, setSel] = useState(0);
+  const [pinpoint, setPinpoint] = useState<{ index: number; side: string } | null>(null);
   const [message, setMessage] = useState("");
   async function run() {
     const r = (await window.omegat?.rpc("align.run", {
@@ -29,21 +40,35 @@ export function AlignWindow() {
       algo,
       counter,
       calculator,
-    })) as { pairs?: { source: string; target: string }[] };
-    setPairs(Array.isArray(r?.pairs) ? r.pairs : []);
+    })) as { pairs?: { source: string; target: string }[]; beads?: AlignBead[] };
+    const next = Array.isArray(r?.beads)
+      ? r.beads
+      : (r?.pairs ?? []).map((pair) => ({
+          ...pair,
+          source_lines: [pair.source],
+          target_lines: [pair.target],
+          score: Number.MAX_VALUE,
+          enabled: true,
+          status: "default" as const,
+        }));
+    setBeads(next);
     setSel(0);
+    setPinpoint(null);
     setMessage("");
   }
-  async function edit(action: string) {
+  async function edit(action: string, extra: Record<string, unknown> = {}) {
     const r = (await window.omegat?.rpc("align.edit", {
       action,
       index: sel,
       side,
-      pairs,
-    })) as { pairs?: { source: string; target: string }[] };
-    if (r?.pairs) {
-      setPairs(r.pairs);
-      setSel((current) => Math.min(current, Math.max(0, r.pairs!.length - 1)));
+      beads,
+      source_lang: useApp.getState().props?.source_lang ?? "en",
+      target_lang: useApp.getState().props?.target_lang ?? "fr",
+      ...extra,
+    })) as { beads?: AlignBead[] };
+    if (r?.beads) {
+      setBeads(r.beads);
+      setSel((current) => Math.min(current, Math.max(0, r.beads!.length - 1)));
       setMessage("");
     }
   }
@@ -51,11 +76,11 @@ export function AlignWindow() {
     const props = useApp.getState().props;
     const r = (await window.omegat?.rpc("align.write", {
       dest,
-      pairs,
+      beads,
       source_lang: props?.source_lang ?? "en",
       target_lang: props?.target_lang ?? "fr",
     })) as { count?: number };
-    setMessage(`${r?.count ?? pairs.length} → ${dest}`);
+    setMessage(`${r?.count ?? beads.filter((bead) => bead.enabled).length} → ${dest}`);
   }
   return (
     <Modal id="align" title={t("aligner")} wide>
@@ -91,7 +116,29 @@ export function AlignWindow() {
           <button type="button" onClick={() => void edit("split")}>{t("alignSplit")}</button>
           <button type="button" onClick={() => void edit("up")}>{t("alignUp")}</button>
           <button type="button" onClick={() => void edit("down")}>{t("alignDown")}</button>
-          <button type="button" disabled={!dest || !pairs.length} onClick={() => void write()}>{t("save")}</button>
+          <button type="button" onClick={() => void edit("accepted")}>✓ accepted</button>
+          <button type="button" onClick={() => void edit("needs-review")}>! review</button>
+          <button type="button" onClick={() => void edit("clear-status")}>clear mark</button>
+          <button
+            type="button"
+            disabled={side === "both"}
+            onClick={() => {
+              if (!pinpoint) {
+                setPinpoint({ index: sel, side });
+              } else {
+                void edit("pinpoint", {
+                  index: pinpoint.index,
+                  side: pinpoint.side,
+                  end_index: sel,
+                  end_side: side,
+                }).then(() => setPinpoint(null));
+              }
+            }}
+          >
+            {pinpoint ? "pinpoint end" : "pinpoint start"}
+          </button>
+          <button type="button" onClick={() => void edit("realign-pending", { algo })}>realign pending</button>
+          <button type="button" disabled={!dest || !beads.length} onClick={() => void write()}>{t("save")}</button>
         </div>
         {message && <div className="meta">{message}</div>}
         <table className="align-table">
@@ -99,11 +146,23 @@ export function AlignWindow() {
             <tr><th>#</th><th>source</th><th>target</th></tr>
           </thead>
           <tbody>
-            {pairs.map((p, i) => (
-              <tr key={i} className={i === sel ? "sel" : undefined} onClick={() => setSel(i)}>
-                <td>{i + 1}</td>
-                <td>{p.source}</td>
-                <td>{p.target}</td>
+            {beads.map((bead, i) => (
+              <tr
+                key={i}
+                className={`${i === sel ? "sel " : ""}${bead.status}`}
+                onClick={() => setSel(i)}
+              >
+                <td>
+                  <input
+                    aria-label={`keep alignment ${i + 1}`}
+                    type="checkbox"
+                    checked={bead.enabled}
+                    onChange={(event) => void edit("keep", { indexes: [i], enabled: event.target.checked })}
+                  />
+                  {i + 1}
+                </td>
+                <td>{bead.source_lines.map((line) => line ?? "").join("\n")}</td>
+                <td>{bead.target_lines.map((line) => line ?? "").join("\n")}</td>
               </tr>
             ))}
           </tbody>

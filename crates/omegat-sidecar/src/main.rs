@@ -9,6 +9,64 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::sync::Mutex;
 
+fn mutable_bead_from_json(value: &Value) -> omegat_core::align::MutableBead {
+    let lines = |key: &str, fallback: &str| -> Vec<Option<String>> {
+        value
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                vec![Some(
+                    value
+                        .get(fallback)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                )]
+            })
+    };
+    let source_lines = lines("source_lines", "source");
+    let target_lines = lines("target_lines", "target");
+    let mut bead = omegat_core::align::MutableBead::from_lines(
+        value
+            .get("score")
+            .and_then(Value::as_f64)
+            .unwrap_or(f32::MAX as f64) as f32,
+        source_lines,
+        target_lines,
+    );
+    if let Some(enabled) = value.get("enabled").and_then(Value::as_bool) {
+        bead.enabled = enabled;
+    }
+    bead.status = match value.get("status").and_then(Value::as_str) {
+        Some("accepted") => omegat_core::align::BeadStatus::Accepted,
+        Some("needs-review") => omegat_core::align::BeadStatus::NeedsReview,
+        _ => omegat_core::align::BeadStatus::Default,
+    };
+    bead
+}
+
+fn mutable_bead_json(
+    bead: &omegat_core::align::MutableBead,
+    source_language: &str,
+    target_language: &str,
+) -> Value {
+    json!({
+        "source": bead.source_text(source_language),
+        "target": bead.target_text(target_language),
+        "source_lines": &bead.source_lines,
+        "target_lines": &bead.target_lines,
+        "score": bead.score,
+        "enabled": bead.enabled,
+        "status": bead.status,
+    })
+}
+
 struct App {
     session: Option<ProjectSession>,
     prefs: Preferences,
@@ -48,7 +106,11 @@ impl App {
         }
     }
 
-    fn dispatch(&mut self, method: &str, params: Value) -> std::result::Result<Value, (i32, String)> {
+    fn dispatch(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> std::result::Result<Value, (i32, String)> {
         match method {
             "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
             "sys.capabilities" => Ok(serde_json::to_value(capabilities()).unwrap()),
@@ -117,7 +179,9 @@ impl App {
                     .enumerate()
                     .map(|(i, e)| e.to_dto(i))
                     .collect();
-                Ok(json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}))
+                Ok(
+                    json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}),
+                )
             }
             "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
             "project.update" => {
@@ -148,13 +212,21 @@ impl App {
             }
             "entry.list" => {
                 let s = self.session()?;
-                let list: Vec<EntryDto> = s.entries.iter().enumerate().map(|(i, e)| e.to_dto(i)).collect();
+                let list: Vec<EntryDto> = s
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| e.to_dto(i))
+                    .collect();
                 Ok(serde_json::to_value(list).unwrap())
             }
             "entry.get" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let s = self.session()?;
-                let e = s.entries.get(index).ok_or((error_code::INVALID_PARAMS, "index".into()))?;
+                let e = s
+                    .entries
+                    .get(index)
+                    .ok_or((error_code::INVALID_PARAMS, "index".into()))?;
                 Ok(serde_json::to_value(e.to_dto(index)).unwrap())
             }
             "entry.set" => {
@@ -175,8 +247,13 @@ impl App {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let comment = params.get("comment").and_then(|v| v.as_str()).unwrap_or("");
-                omegat_core::glossary::append_entry(&s.props.glossary_file, source, target, comment)
-                    .map_err(|e| (error_code::IO, e.to_string()))?;
+                omegat_core::glossary::append_entry(
+                    &s.props.glossary_file,
+                    source,
+                    target,
+                    comment,
+                )
+                .map_err(|e| (error_code::IO, e.to_string()))?;
                 s.glossary = omegat_core::glossary::load_glossary(&s.props.glossary_file);
                 Ok(json!({"ok": true}))
             }
@@ -196,10 +273,15 @@ impl App {
                 Ok(json!({"ok": true}))
             }
             "tmx.export" => {
-                let level = params.get("level").and_then(|v| v.as_str()).unwrap_or("omegat");
+                let level = params
+                    .get("level")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("omegat");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
                 let s = self.session()?;
-                let xml = s.tmx.to_xml_level(&s.props.source_lang, &s.props.target_lang, level);
+                let xml = s
+                    .tmx
+                    .to_xml_level(&s.props.source_lang, &s.props.target_lang, level);
                 if !dest.is_empty() {
                     std::fs::write(dest, &xml).map_err(|e| (error_code::IO, e.to_string()))?;
                 }
@@ -207,17 +289,34 @@ impl App {
             }
             "languagetool.check" => {
                 let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                let url = (!self.prefs.languagetool_url.is_empty()).then(|| self.prefs.languagetool_url.clone());
-                let lang = self.session().map(|s| s.props.target_lang.clone()).unwrap_or_else(|_| "en".into());
-                Ok(serde_json::to_value(omegat_core::languagetool::check(url.as_deref(), text, &lang, 0, "")).unwrap())
+                let url = (!self.prefs.languagetool_url.is_empty())
+                    .then(|| self.prefs.languagetool_url.clone());
+                let lang = self
+                    .session()
+                    .map(|s| s.props.target_lang.clone())
+                    .unwrap_or_else(|_| "en".into());
+                Ok(serde_json::to_value(omegat_core::languagetool::check(
+                    url.as_deref(),
+                    text,
+                    &lang,
+                    0,
+                    "",
+                ))
+                .unwrap())
             }
             "finder.run" => {
                 let xml = params
                     .get("xml")
                     .and_then(|v| v.as_str())
-                    .or_else(|| (!self.prefs.finder_xml.is_empty()).then_some(self.prefs.finder_xml.as_str()))
+                    .or_else(|| {
+                        (!self.prefs.finder_xml.is_empty())
+                            .then_some(self.prefs.finder_xml.as_str())
+                    })
                     .unwrap_or("");
-                let sel = params.get("selection").and_then(|v| v.as_str()).unwrap_or("");
+                let sel = params
+                    .get("selection")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or(sel);
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let items = omegat_core::finder::parse_finder_xml(xml);
@@ -240,7 +339,10 @@ impl App {
             }
             "team.resolve" => {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                let side = params.get("side").and_then(|v| v.as_str()).unwrap_or("ours");
+                let side = params
+                    .get("side")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ours");
                 let translation = params.get("translation").and_then(|v| v.as_str());
                 let left = omegat_team::resolve(&self.session()?.props, source, side, translation)
                     .map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
@@ -249,25 +351,43 @@ impl App {
             "wiki.import" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = &self.session()?.props.source_dir;
-                let n = omegat_core::wiki::import_wiki(std::path::Path::new(src), dest).map_err(core_err)?;
+                let n = omegat_core::wiki::import_wiki(std::path::Path::new(src), dest)
+                    .map_err(core_err)?;
                 Ok(json!({"files": n}))
             }
             "med.open" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
-                omegat_core::wiki::open_med(std::path::Path::new(src), std::path::Path::new(dest)).map_err(core_err)?;
+                omegat_core::wiki::open_med(std::path::Path::new(src), std::path::Path::new(dest))
+                    .map_err(core_err)?;
                 Ok(json!({"ok": true}))
             }
             "project.convert" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
-                let sl = params.get("source_lang").and_then(|v| v.as_str()).unwrap_or("en");
-                let tl = params.get("target_lang").and_then(|v| v.as_str()).unwrap_or("fr");
-                omegat_core::wiki::convert_project(std::path::Path::new(src), std::path::Path::new(dest), sl, tl).map_err(core_err)?;
+                let sl = params
+                    .get("source_lang")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("en");
+                let tl = params
+                    .get("target_lang")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("fr");
+                omegat_core::wiki::convert_project(
+                    std::path::Path::new(src),
+                    std::path::Path::new(dest),
+                    sl,
+                    tl,
+                )
+                .map_err(core_err)?;
                 Ok(json!({"ok": true}))
             }
             "aligner.configure" => {
-                if params.get("persist").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if params
+                    .get("persist")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
                     if let Some(algo) = params.get("algo").and_then(|v| v.as_str()) {
                         self.prefs.aligner_algorithm = algo.to_string();
                     }
@@ -369,13 +489,12 @@ impl App {
                 let mut copied = 0usize;
                 for f in files {
                     let Some(src) = f.as_str() else { continue };
-                    let name = std::path::Path::new(src)
-                        .file_name()
-                        .unwrap_or_default();
+                    let name = std::path::Path::new(src).file_name().unwrap_or_default();
                     if name.is_empty() {
                         continue;
                     }
-                    std::fs::copy(src, dest.join(name)).map_err(|e| (error_code::IO, e.to_string()))?;
+                    std::fs::copy(src, dest.join(name))
+                        .map_err(|e| (error_code::IO, e.to_string()))?;
                     copied += 1;
                 }
                 self.session_mut()?.reload().map_err(core_err)?;
@@ -407,7 +526,10 @@ impl App {
                 }
                 .ok_or((error_code::FILTER, format!("no filter for {path}")))?;
                 let parsed = filter
-                    .parse(std::path::Path::new(path), &omegat_filters::FilterContext::default())
+                    .parse(
+                        std::path::Path::new(path),
+                        &omegat_filters::FilterContext::default(),
+                    )
                     .map_err(|e| core_err(e.into()))?;
                 let segments: Vec<_> = parsed
                     .segments
@@ -418,7 +540,10 @@ impl App {
             }
             "mt.query" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let engine = params.get("engine").and_then(|v| v.as_str()).unwrap_or("mymemory");
+                let engine = params
+                    .get("engine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("mymemory");
                 let r = self.session()?.mt(index, engine).map_err(core_err)?;
                 Ok(serde_json::to_value(r).unwrap())
             }
@@ -447,7 +572,9 @@ impl App {
             "team.sync" => {
                 let s = self.session()?;
                 match omegat_team::sync(&s.props) {
-                    Ok(r) => Ok(json!({"action": r.action, "message": r.message, "conflicts": r.conflicts})),
+                    Ok(r) => Ok(
+                        json!({"action": r.action, "message": r.message, "conflicts": r.conflicts}),
+                    ),
                     Err(omegat_team::TeamError::Conflict(msg)) => {
                         Err((error_code::TEAM_CONFLICT, msg))
                     }
@@ -455,13 +582,19 @@ impl App {
                 }
             }
             "team.commit" => {
-                let which = params.get("which").and_then(|v| v.as_str()).unwrap_or("target");
+                let which = params
+                    .get("which")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("target");
                 let r = omegat_team::commit_project_files(&self.session()?.props, which)
                     .map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
                 Ok(json!({"action": r.action, "message": r.message}))
             }
             "script.run" => {
-                let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("null");
+                let src = params
+                    .get("source")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("null");
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let mut state = if let Ok(s) = self.session() {
                     let e = s.entries.get(index);
@@ -499,7 +632,12 @@ impl App {
                         let _ = s.compile(None);
                     }
                     for [src, tgt, cmt] in &state.glossary_adds {
-                        let _ = omegat_core::glossary::append_entry(&s.props.glossary_file, src, tgt, cmt);
+                        let _ = omegat_core::glossary::append_entry(
+                            &s.props.glossary_file,
+                            src,
+                            tgt,
+                            cmt,
+                        );
                     }
                     s.glossary = omegat_core::glossary::load_glossary(&s.props.glossary_file);
                 }
@@ -516,10 +654,22 @@ impl App {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
-                let mode = params.get("mode").and_then(|v| v.as_str()).unwrap_or("parsewise");
-                let algo = params.get("algo").and_then(|v| v.as_str()).unwrap_or("viterbi");
-                let counter = params.get("counter").and_then(|v| v.as_str()).unwrap_or("word");
-                let calculator = params.get("calculator").and_then(|v| v.as_str()).unwrap_or("normal");
+                let mode = params
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("parsewise");
+                let algo = params
+                    .get("algo")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("viterbi");
+                let counter = params
+                    .get("counter")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("word");
+                let calculator = params
+                    .get("calculator")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("normal");
                 let cfg = omegat_core::align::AlignConfig {
                     mode: match mode {
                         "heapwise" => omegat_core::align::AlignMode::Heapwise,
@@ -541,7 +691,10 @@ impl App {
                     } else {
                         omegat_core::align::CalculatorType::Normal
                     },
-                    segment: params.get("segment").and_then(|v| v.as_bool()).unwrap_or(true),
+                    segment: params
+                        .get("segment")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true),
                 };
                 let sl = params
                     .get("source_lang")
@@ -564,31 +717,203 @@ impl App {
                 )
                 .map_err(core_err)?;
                 if !dest.is_empty() {
-                    omegat_core::align::write_aligned_tmx(&tmx, std::path::Path::new(dest), &sl, &tl)
-                        .map_err(core_err)?;
+                    omegat_core::align::write_aligned_tmx(
+                        &tmx,
+                        std::path::Path::new(dest),
+                        &sl,
+                        &tl,
+                    )
+                    .map_err(core_err)?;
                 }
                 let pairs: Vec<_> = tmx
                     .entries
                     .iter()
                     .map(|e| json!({"source": e.source, "target": e.translation}))
                     .collect();
-                Ok(json!({"ok": true, "pairs": pairs, "count": pairs.len()}))
+                let beads: Vec<_> = tmx
+                    .entries
+                    .iter()
+                    .map(|entry| {
+                        mutable_bead_json(
+                            &omegat_core::align::MutableBead::new(
+                                entry.source.clone(),
+                                entry.translation.clone(),
+                            ),
+                            &sl,
+                            &tl,
+                        )
+                    })
+                    .collect();
+                Ok(json!({"ok": true, "pairs": pairs, "beads": beads, "count": pairs.len()}))
             }
             "align.edit" => {
-                let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("merge");
+                let action = params
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("merge");
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let side = params
                     .get("side")
                     .and_then(|v| v.as_str())
                     .map(omegat_core::align::AlignSide::from_name)
                     .unwrap_or(omegat_core::align::AlignSide::Both);
-                let raw = params.get("pairs").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let source_language = params
+                    .get("source_lang")
+                    .and_then(Value::as_str)
+                    .unwrap_or("en");
+                let target_language = params
+                    .get("target_lang")
+                    .and_then(Value::as_str)
+                    .unwrap_or("fr");
+                if let Some(raw_beads) = params.get("beads").and_then(Value::as_array) {
+                    let beads: Vec<_> = raw_beads.iter().map(mutable_bead_from_json).collect();
+                    let indexes: Vec<usize> = params
+                        .get("indexes")
+                        .and_then(Value::as_array)
+                        .map(|values| {
+                            values
+                                .iter()
+                                .filter_map(Value::as_u64)
+                                .map(|value| value as usize)
+                                .collect()
+                        })
+                        .unwrap_or_else(|| vec![index]);
+                    let next = match action {
+                        "merge" => omegat_core::align::merge_beads(&beads, index, side),
+                        "up" => omegat_core::align::move_bead_side(
+                            &beads,
+                            index,
+                            index.saturating_sub(1),
+                            side,
+                        ),
+                        "down" => omegat_core::align::move_bead_side(
+                            &beads,
+                            index,
+                            (index + 1).min(beads.len().saturating_sub(1)),
+                            side,
+                        ),
+                        "accepted" => omegat_core::align::set_bead_status(
+                            &beads,
+                            &indexes,
+                            omegat_core::align::BeadStatus::Accepted,
+                        ),
+                        "needs-review" => omegat_core::align::set_bead_status(
+                            &beads,
+                            &indexes,
+                            omegat_core::align::BeadStatus::NeedsReview,
+                        ),
+                        "clear-status" => omegat_core::align::set_bead_status(
+                            &beads,
+                            &indexes,
+                            omegat_core::align::BeadStatus::Default,
+                        ),
+                        "keep-all" => omegat_core::align::set_beads_enabled(&beads, None, true),
+                        "keep-none" => omegat_core::align::set_beads_enabled(&beads, None, false),
+                        "keep" => omegat_core::align::set_beads_enabled(
+                            &beads,
+                            Some(&indexes),
+                            params
+                                .get("enabled")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(true),
+                        ),
+                        "split" => {
+                            let line_index = params
+                                .get("line_index")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0) as usize;
+                            let mut parts: Vec<String> = params
+                                .get("lines")
+                                .and_then(Value::as_array)
+                                .map(|values| {
+                                    values
+                                        .iter()
+                                        .filter_map(Value::as_str)
+                                        .map(str::to_string)
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            if parts.len() < 2 {
+                                let line = match side {
+                                    omegat_core::align::AlignSide::Source => beads
+                                        .get(index)
+                                        .and_then(|bead| bead.source_lines.get(line_index)),
+                                    omegat_core::align::AlignSide::Target => beads
+                                        .get(index)
+                                        .and_then(|bead| bead.target_lines.get(line_index)),
+                                    omegat_core::align::AlignSide::Both => None,
+                                }
+                                .and_then(Option::as_deref)
+                                .unwrap_or("");
+                                if let Some((left, right)) = line.rsplit_once(' ') {
+                                    parts = vec![left.to_string(), right.to_string()];
+                                }
+                            }
+                            omegat_core::align::split_bead_line(
+                                &beads, index, side, line_index, &parts,
+                            )
+                        }
+                        "pinpoint" => {
+                            let end_index = params
+                                .get("end_index")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(index as u64)
+                                as usize;
+                            let end_side = params
+                                .get("end_side")
+                                .and_then(Value::as_str)
+                                .map(omegat_core::align::AlignSide::from_name)
+                                .unwrap_or(omegat_core::align::AlignSide::Both);
+                            omegat_core::align::pinpoint_align(
+                                &beads,
+                                (index, side),
+                                (end_index, end_side),
+                            )
+                        }
+                        "realign-pending" => omegat_core::align::realign_pending(
+                            &beads,
+                            match params.get("algo").and_then(Value::as_str) {
+                                Some("forward-backward") => {
+                                    omegat_core::align::AlignAlgo::ForwardBackward
+                                }
+                                _ => omegat_core::align::AlignAlgo::Viterbi,
+                            },
+                        )
+                        .map_err(core_err)?,
+                        _ => beads,
+                    };
+                    let pairs: Vec<_> = next
+                        .iter()
+                        .map(|bead| {
+                            json!({
+                                "source": bead.source_text(source_language),
+                                "target": bead.target_text(target_language)
+                            })
+                        })
+                        .collect();
+                    let response_beads: Vec<_> = next
+                        .iter()
+                        .map(|bead| mutable_bead_json(bead, source_language, target_language))
+                        .collect();
+                    return Ok(json!({"pairs": pairs, "beads": response_beads}));
+                }
+                let raw = params
+                    .get("pairs")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
                 let pairs: Vec<(String, String)> = raw
                     .iter()
                     .map(|v| {
                         (
-                            v.get("source").and_then(|s| s.as_str()).unwrap_or("").to_string(),
-                            v.get("target").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                            v.get("source")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            v.get("target")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("")
+                                .to_string(),
                         )
                     })
                     .collect();
@@ -602,34 +927,6 @@ impl App {
                 if dest.is_empty() {
                     return Err((-32602, "align.write requires dest".into()));
                 }
-                let raw = params
-                    .get("pairs")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let pairs: Vec<(String, String)> = raw
-                    .iter()
-                    .filter(|value| {
-                        value
-                            .get("enabled")
-                            .and_then(|enabled| enabled.as_bool())
-                            .unwrap_or(true)
-                    })
-                    .map(|value| {
-                        (
-                            value
-                                .get("source")
-                                .and_then(|text| text.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            value
-                                .get("target")
-                                .and_then(|text| text.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                        )
-                    })
-                    .collect();
                 let source_lang = params
                     .get("source_lang")
                     .and_then(|v| v.as_str())
@@ -642,6 +939,39 @@ impl App {
                     .map(str::to_string)
                     .or_else(|| self.session().ok().map(|s| s.props.target_lang.clone()))
                     .unwrap_or_else(|| "fr".into());
+                let pairs: Vec<(String, String)> =
+                    if let Some(raw) = params.get("beads").and_then(Value::as_array) {
+                        let beads: Vec<_> = raw.iter().map(mutable_bead_from_json).collect();
+                        omegat_core::align::beads_to_pairs(&beads, &source_lang, &target_lang)
+                    } else {
+                        params
+                            .get("pairs")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default()
+                            .iter()
+                            .filter(|value| {
+                                value
+                                    .get("enabled")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(true)
+                            })
+                            .map(|value| {
+                                (
+                                    value
+                                        .get("source")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    value
+                                        .get("target")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("")
+                                        .to_string(),
+                                )
+                            })
+                            .collect()
+                    };
                 omegat_core::align::write_aligned_pairs(
                     &pairs,
                     std::path::Path::new(dest),
@@ -651,15 +981,22 @@ impl App {
                 .map_err(core_err)?;
                 Ok(json!({"ok": true, "count": pairs.len(), "dest": dest}))
             }
-            other => Err((error_code::METHOD_NOT_FOUND, format!("unknown method {other}"))),
+            other => Err((
+                error_code::METHOD_NOT_FOUND,
+                format!("unknown method {other}"),
+            )),
         }
     }
 
     fn session(&self) -> std::result::Result<&ProjectSession, (i32, String)> {
-        self.session.as_ref().ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
+        self.session
+            .as_ref()
+            .ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
     }
     fn session_mut(&mut self) -> std::result::Result<&mut ProjectSession, (i32, String)> {
-        self.session.as_mut().ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
+        self.session
+            .as_mut()
+            .ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
     }
 }
 

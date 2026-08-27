@@ -150,10 +150,16 @@ pub fn persist_languages(
     target: Option<&str>,
 ) {
     if let Some(source) = source {
-        store.insert(PREF_SOURCE_LANGUAGE.into(), Language::new(Some(source)).get_language());
+        store.insert(
+            PREF_SOURCE_LANGUAGE.into(),
+            Language::new(Some(source)).get_language(),
+        );
     }
     if let Some(target) = target {
-        store.insert(PREF_TARGET_LANGUAGE.into(), Language::new(Some(target)).get_language());
+        store.insert(
+            PREF_TARGET_LANGUAGE.into(),
+            Language::new(Some(target)).get_language(),
+        );
     }
 }
 
@@ -167,11 +173,7 @@ pub fn restore_language(store: &HashMap<String, String>, key: &str, fallback: &s
 }
 
 /// Java `AlignFilePickerController.persistInputDir`: remember a file's parent.
-pub fn persist_input_dir(
-    store: &mut HashMap<String, String>,
-    key: &str,
-    file: Option<&Path>,
-) {
+pub fn persist_input_dir(store: &mut HashMap<String, String>, key: &str, file: Option<&Path>) {
     if let Some(parent) = file.and_then(Path::parent) {
         if !parent.as_os_str().is_empty() {
             store.insert(key.into(), parent.to_string_lossy().into_owned());
@@ -213,6 +215,318 @@ impl AlignSide {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BeadStatus {
+    #[default]
+    Default,
+    Accepted,
+    NeedsReview,
+}
+
+/// Mutable manual-alignment state corresponding to Java `MutableBead`.
+///
+/// Lines stay separate until TMX output, so a visual cell split does not lose
+/// its language-aware join semantics. `None` is retained because Java's table
+/// model uses null cells to represent the short side of an unbalanced bead.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MutableBead {
+    pub score: f32,
+    pub source_lines: Vec<Option<String>>,
+    pub target_lines: Vec<Option<String>>,
+    pub enabled: bool,
+    pub status: BeadStatus,
+}
+
+impl MutableBead {
+    pub fn from_lines(
+        score: f32,
+        source_lines: Vec<Option<String>>,
+        target_lines: Vec<Option<String>>,
+    ) -> Self {
+        let equal = source_lines == target_lines;
+        Self {
+            score,
+            source_lines,
+            target_lines,
+            enabled: !equal,
+            status: if equal {
+                BeadStatus::Accepted
+            } else {
+                BeadStatus::Default
+            },
+        }
+    }
+
+    pub fn new(source: impl Into<String>, target: impl Into<String>) -> Self {
+        Self::from_lines(
+            f32::MAX,
+            vec![Some(source.into())],
+            vec![Some(target.into())],
+        )
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            score: f32::MAX,
+            source_lines: Vec::new(),
+            target_lines: Vec::new(),
+            enabled: true,
+            status: BeadStatus::Default,
+        }
+    }
+
+    pub fn is_balanced(&self) -> bool {
+        self.source_lines.len() == self.target_lines.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.source_lines.is_empty() && self.target_lines.is_empty()
+    }
+
+    pub fn source_text(&self, language: &str) -> String {
+        join_bead_lines(language, &self.source_lines)
+    }
+
+    pub fn target_text(&self, language: &str) -> String {
+        join_bead_lines(language, &self.target_lines)
+    }
+}
+
+fn join_bead_lines(language: &str, lines: &[Option<String>]) -> String {
+    let delimiter = if Language::new(Some(language)).is_space_delimited() {
+        " "
+    } else {
+        ""
+    };
+    lines
+        .iter()
+        .map(|line| line.as_deref().unwrap_or("null"))
+        .collect::<Vec<_>>()
+        .join(delimiter)
+}
+
+pub fn beads_to_pairs(
+    beads: &[MutableBead],
+    source_language: &str,
+    target_language: &str,
+) -> Vec<(String, String)> {
+    beads
+        .iter()
+        .filter(|bead| bead.enabled)
+        .map(|bead| {
+            (
+                bead.source_text(source_language),
+                bead.target_text(target_language),
+            )
+        })
+        .collect()
+}
+
+pub fn merge_beads(beads: &[MutableBead], index: usize, side: AlignSide) -> Vec<MutableBead> {
+    let mut out = beads.to_vec();
+    if index + 1 >= out.len() {
+        return out;
+    }
+    match side {
+        AlignSide::Both => {
+            let next = out.remove(index + 1);
+            out[index].source_lines.extend(next.source_lines);
+            out[index].target_lines.extend(next.target_lines);
+            out[index].status = BeadStatus::Default;
+        }
+        AlignSide::Source => {
+            let lines = std::mem::take(&mut out[index + 1].source_lines);
+            out[index].source_lines.extend(lines);
+            out[index].status = BeadStatus::Default;
+            out[index + 1].status = BeadStatus::Default;
+        }
+        AlignSide::Target => {
+            let lines = std::mem::take(&mut out[index + 1].target_lines);
+            out[index].target_lines.extend(lines);
+            out[index].status = BeadStatus::Default;
+            out[index + 1].status = BeadStatus::Default;
+        }
+    }
+    out.retain(|bead| !bead.is_empty());
+    out
+}
+
+pub fn move_bead_side(
+    beads: &[MutableBead],
+    from: usize,
+    to: usize,
+    side: AlignSide,
+) -> Vec<MutableBead> {
+    let mut out = beads.to_vec();
+    if from >= out.len() || to >= out.len() || from == to {
+        return out;
+    }
+    match side {
+        AlignSide::Both => out.swap(from, to),
+        AlignSide::Source => {
+            let lines = out[from].source_lines.clone();
+            out[from].source_lines = out[to].source_lines.clone();
+            out[to].source_lines = lines;
+            out[from].status = BeadStatus::Default;
+            out[to].status = BeadStatus::Default;
+        }
+        AlignSide::Target => {
+            let lines = out[from].target_lines.clone();
+            out[from].target_lines = out[to].target_lines.clone();
+            out[to].target_lines = lines;
+            out[from].status = BeadStatus::Default;
+            out[to].status = BeadStatus::Default;
+        }
+    }
+    out
+}
+
+pub fn split_bead_line(
+    beads: &[MutableBead],
+    index: usize,
+    side: AlignSide,
+    line_index: usize,
+    parts: &[String],
+) -> Vec<MutableBead> {
+    let mut out = beads.to_vec();
+    let Some(bead) = out.get_mut(index) else {
+        return out;
+    };
+    let lines = match side {
+        AlignSide::Source => &mut bead.source_lines,
+        AlignSide::Target => &mut bead.target_lines,
+        AlignSide::Both => return out,
+    };
+    if line_index >= lines.len() || parts.len() < 2 {
+        return out;
+    }
+    lines.splice(line_index..=line_index, parts.iter().cloned().map(Some));
+    bead.status = BeadStatus::Default;
+    out
+}
+
+pub fn set_bead_status(
+    beads: &[MutableBead],
+    indexes: &[usize],
+    status: BeadStatus,
+) -> Vec<MutableBead> {
+    let mut out = beads.to_vec();
+    for &index in indexes {
+        if let Some(bead) = out.get_mut(index) {
+            bead.status = status;
+        }
+    }
+    out
+}
+
+pub fn set_beads_enabled(
+    beads: &[MutableBead],
+    indexes: Option<&[usize]>,
+    enabled: bool,
+) -> Vec<MutableBead> {
+    let mut out = beads.to_vec();
+    if let Some(indexes) = indexes {
+        for &index in indexes {
+            if let Some(bead) = out.get_mut(index) {
+                bead.enabled = enabled;
+            }
+        }
+    } else {
+        for bead in &mut out {
+            bead.enabled = enabled;
+        }
+    }
+    out
+}
+
+pub fn pinpoint_align(
+    beads: &[MutableBead],
+    first: (usize, AlignSide),
+    second: (usize, AlignSide),
+) -> Vec<MutableBead> {
+    if first.0 == second.0
+        || first.1 == second.1
+        || matches!(first.1, AlignSide::Both)
+        || matches!(second.1, AlignSide::Both)
+    {
+        return beads.to_vec();
+    }
+    let (low, high, relocate) = if first.0 < second.0 {
+        (first.0, second.0, first.1)
+    } else {
+        (second.0, first.0, second.1)
+    };
+    if high >= beads.len() {
+        return beads.to_vec();
+    }
+    let mut out = beads.to_vec();
+    let mut relocated = Vec::new();
+    for bead in &mut out[low..=high] {
+        let lines = match relocate {
+            AlignSide::Source => &mut bead.source_lines,
+            AlignSide::Target => &mut bead.target_lines,
+            AlignSide::Both => unreachable!(),
+        };
+        relocated.append(lines);
+        bead.status = BeadStatus::Default;
+    }
+    match relocate {
+        AlignSide::Source => out[high].source_lines = relocated,
+        AlignSide::Target => out[high].target_lines = relocated,
+        AlignSide::Both => unreachable!(),
+    }
+    out[high].status = BeadStatus::Accepted;
+    out.retain(|bead| !bead.is_empty());
+    out
+}
+
+pub fn realign_pending(beads: &[MutableBead], algo: AlignAlgo) -> Result<Vec<MutableBead>> {
+    fn flush(
+        pending: &mut Vec<(String, String)>,
+        output: &mut Vec<MutableBead>,
+        algo: AlignAlgo,
+    ) -> Result<()> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        output.extend(
+            do_align(pending, Some(algo))?
+                .into_iter()
+                .map(|(source, target)| MutableBead::new(source, target)),
+        );
+        pending.clear();
+        Ok(())
+    }
+
+    let mut output = Vec::new();
+    let mut pending = Vec::new();
+    for bead in beads {
+        if bead.status == BeadStatus::Accepted {
+            flush(&mut pending, &mut output, algo)?;
+            output.push(bead.clone());
+            continue;
+        }
+        let count = bead.source_lines.len().max(bead.target_lines.len());
+        for index in 0..count {
+            pending.push((
+                bead.source_lines
+                    .get(index)
+                    .and_then(Option::as_deref)
+                    .unwrap_or("")
+                    .to_string(),
+                bead.target_lines
+                    .get(index)
+                    .and_then(Option::as_deref)
+                    .unwrap_or("")
+                    .to_string(),
+            ));
+        }
+    }
+    flush(&mut pending, &mut output, algo)?;
+    Ok(output)
+}
+
 pub fn extract_units(path: &Path) -> Result<Vec<AlignUnit>> {
     let reg = FilterRegistry::new();
     let ctx = FilterContext::default();
@@ -235,7 +549,12 @@ pub fn extract_units(path: &Path) -> Result<Vec<AlignUnit>> {
         .collect())
 }
 
-pub fn align_files(source: &Path, target: &Path, src_lang: &str, tgt_lang: &str) -> Result<ProjectTmx> {
+pub fn align_files(
+    source: &Path,
+    target: &Path,
+    src_lang: &str,
+    tgt_lang: &str,
+) -> Result<ProjectTmx> {
     align_files_cfg(source, target, src_lang, tgt_lang, &AlignConfig::default())
 }
 
@@ -252,7 +571,13 @@ pub fn align_files_cfg(
     Ok(pairs_to_tmx(&pairs, src_lang, tgt_lang))
 }
 
-pub fn align_text(left: &str, right: &str, src_lang: &str, tgt_lang: &str, cfg: &AlignConfig) -> ProjectTmx {
+pub fn align_text(
+    left: &str,
+    right: &str,
+    src_lang: &str,
+    tgt_lang: &str,
+    cfg: &AlignConfig,
+) -> ProjectTmx {
     let ls = text_units(left, cfg.mode);
     let rs = text_units(right, cfg.mode);
     let pairs = align_units(&ls, &rs, src_lang, tgt_lang, cfg);
@@ -387,7 +712,12 @@ pub fn write_aligned_pairs(
     write_aligned_tmx(&tmx, dest, src_lang, tgt_lang)
 }
 
-pub fn write_aligned_tmx(tmx: &ProjectTmx, dest: &Path, src_lang: &str, tgt_lang: &str) -> Result<()> {
+pub fn write_aligned_tmx(
+    tmx: &ProjectTmx,
+    dest: &Path,
+    src_lang: &str,
+    tgt_lang: &str,
+) -> Result<()> {
     if src_lang.trim().is_empty() || tgt_lang.trim().is_empty() {
         return Err(crate::error::CoreError::InvalidProject(
             "IllegalStateException: aligner languages are not set".into(),
@@ -396,7 +726,10 @@ pub fn write_aligned_tmx(tmx: &ProjectTmx, dest: &Path, src_lang: &str, tgt_lang
     tmx.write(dest, src_lang, tgt_lang)
 }
 
-pub fn do_align(beads: &[(String, String)], algo: Option<AlignAlgo>) -> Result<Vec<(String, String)>> {
+pub fn do_align(
+    beads: &[(String, String)],
+    algo: Option<AlignAlgo>,
+) -> Result<Vec<(String, String)>> {
     let Some(algo) = algo else {
         return Err(crate::error::CoreError::InvalidProject(
             "IllegalStateException: required aligner settings are not set".into(),
@@ -468,7 +801,11 @@ fn paragraphs(text: &str) -> Vec<String> {
 fn maybe_segment(text: &str, lang: &str, segment: bool) -> Vec<String> {
     if !segment {
         let t = text.trim();
-        return if t.is_empty() { vec![] } else { vec![t.to_string()] };
+        return if t.is_empty() {
+            vec![]
+        } else {
+            vec![t.to_string()]
+        };
     }
     split_sentences_lang(text, true, lang, None)
 }
@@ -512,8 +849,7 @@ fn align_by_id(left: &[AlignUnit], right: &[AlignUnit]) -> Vec<(String, String)>
 
 fn has_real_ids(units: &[AlignUnit]) -> bool {
     units.iter().any(|u| {
-        u.id
-            .as_deref()
+        u.id.as_deref()
             .map(|id| id.chars().any(|c| c.is_ascii_alphabetic()))
             .unwrap_or(false)
     })
@@ -585,17 +921,17 @@ fn split_once(s: &str) -> (String, String) {
         (s[..idx].to_string(), s[idx + 1..].to_string())
     } else if s.chars().count() > 1 {
         let mid = s.chars().count() / 2;
-        let (a, b): (String, String) = s.chars().enumerate().fold(
-            (String::new(), String::new()),
-            |(mut a, mut b), (i, c)| {
-                if i < mid {
-                    a.push(c);
-                } else {
-                    b.push(c);
-                }
-                (a, b)
-            },
-        );
+        let (a, b): (String, String) =
+            s.chars()
+                .enumerate()
+                .fold((String::new(), String::new()), |(mut a, mut b), (i, c)| {
+                    if i < mid {
+                        a.push(c);
+                    } else {
+                        b.push(c);
+                    }
+                    (a, b)
+                });
         (a, b)
     } else {
         (s.to_string(), String::new())
@@ -614,7 +950,12 @@ fn forward_backward(ls: &[String], rs: &[String], cfg: &AlignConfig) -> Vec<(Str
     decode_posterior(ls, rs, cfg)
 }
 
-fn decode_min(ls: &[String], rs: &[String], cfg: &AlignConfig, merge_pen: f64) -> Vec<(String, String)> {
+fn decode_min(
+    ls: &[String],
+    rs: &[String],
+    cfg: &AlignConfig,
+    merge_pen: f64,
+) -> Vec<(String, String)> {
     let n = ls.len();
     let m = rs.len();
     let mut dp = vec![vec![f64::INFINITY; m + 1]; n + 1];
@@ -627,8 +968,12 @@ fn decode_min(ls: &[String], rs: &[String], cfg: &AlignConfig, merge_pen: f64) -
                 continue;
             }
             consider_min(&mut dp, &mut bt, i, j, n, m, cur, 1, 1, 0.0, ls, rs, cfg);
-            consider_min(&mut dp, &mut bt, i, j, n, m, cur, 2, 1, merge_pen, ls, rs, cfg);
-            consider_min(&mut dp, &mut bt, i, j, n, m, cur, 1, 2, merge_pen, ls, rs, cfg);
+            consider_min(
+                &mut dp, &mut bt, i, j, n, m, cur, 2, 1, merge_pen, ls, rs, cfg,
+            );
+            consider_min(
+                &mut dp, &mut bt, i, j, n, m, cur, 1, 2, merge_pen, ls, rs, cfg,
+            );
         }
     }
     backtrack(ls, rs, &bt, n, m)
@@ -666,7 +1011,13 @@ fn decode_posterior(ls: &[String], rs: &[String], cfg: &AlignConfig) -> Vec<(Str
     let m = rs.len();
     // Soft path: unmatched 1-0 / 0-1 are cheap; 2-1 / 1-2 are expensive.
     // Viterbi never takes 1-0, so the recovered beads differ on uneven heaps.
-    let trans = [(1, 1, 0.0), (2, 1, 2.2), (1, 2, 2.2), (1, 0, 0.15), (0, 1, 0.15)];
+    let trans = [
+        (1, 1, 0.0),
+        (2, 1, 2.2),
+        (1, 2, 2.2),
+        (1, 0, 0.15),
+        (0, 1, 0.15),
+    ];
     let mut fwd = vec![vec![0.0_f64; m + 1]; n + 1];
     let mut bt = vec![vec![(0isize, 0isize); m + 1]; n + 1];
     fwd[0][0] = 1.0;
@@ -751,7 +1102,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture(name: &str) -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/align").join(name)
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/align")
+            .join(name)
     }
 
     fn heap_cfg() -> AlignConfig {
@@ -858,7 +1211,13 @@ mod tests {
     #[test]
     fn heapwise_is_not_whitespace_split() {
         let cfg = heap_cfg();
-        let tmx = align_text("Hello world. Second.", "Bonjour monde. Deux.", "en", "fr", &cfg);
+        let tmx = align_text(
+            "Hello world. Second.",
+            "Bonjour monde. Deux.",
+            "en",
+            "fr",
+            &cfg,
+        );
         assert!(tmx.entries.iter().any(|e| e.source.contains(' ')));
         assert!(tmx.entries.len() >= 1);
         assert!(tmx.entries.len() <= 3);
@@ -866,11 +1225,7 @@ mod tests {
 
     #[test]
     fn viterbi_and_forward_backward_are_different_algorithms() {
-        let ls = vec![
-            "ab".into(),
-            "cd".into(),
-            "efghijklmnop".into(),
-        ];
+        let ls = vec!["ab".into(), "cd".into(), "efghijklmnop".into()];
         let rs = vec!["ab cd".into(), "efghijklmnop".into()];
         let vcfg = AlignConfig {
             mode: AlignMode::Heapwise,
@@ -905,7 +1260,11 @@ mod tests {
 
     #[test]
     fn edit_merge_split_move() {
-        let pairs = vec![("a".into(), "A".into()), ("b".into(), "B".into()), ("c".into(), "C".into())];
+        let pairs = vec![
+            ("a".into(), "A".into()),
+            ("b".into(), "B".into()),
+            ("c".into(), "C".into()),
+        ];
         let merged = edit_pairs(&pairs, "merge", 0);
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0], ("a b".into(), "A B".into()));
@@ -952,6 +1311,96 @@ mod tests {
     }
 
     #[test]
+    fn mutable_bead_matches_java_state_and_language_joining() {
+        let equal = MutableBead::new("同文", "同文");
+        assert_eq!(equal.enabled, false);
+        assert_eq!(equal.status, BeadStatus::Accepted);
+        assert_eq!(equal.is_balanced(), true);
+
+        let mut empty = MutableBead::empty();
+        assert_eq!(empty.enabled, true);
+        assert_eq!(empty.status, BeadStatus::Default);
+        assert_eq!(empty.is_empty(), true);
+        empty.source_lines = vec![Some("一".into()), Some("二".into())];
+        empty.target_lines = vec![Some("one".into()), None, Some("two".into())];
+        assert_eq!(empty.source_text("ja"), "一二");
+        assert_eq!(empty.target_text("en"), "one null two");
+        assert_eq!(empty.is_balanced(), false);
+    }
+
+    #[test]
+    fn mutable_bead_review_split_pinpoint_and_output_are_stateful() {
+        let beads = vec![
+            MutableBead::new("one", "un"),
+            MutableBead::from_lines(
+                1.5,
+                vec![Some("two words".into())],
+                vec![Some("deux".into()), Some("mots".into())],
+            ),
+            MutableBead::new("three", "trois"),
+        ];
+        let reviewed = set_bead_status(&beads, &[1], BeadStatus::NeedsReview);
+        assert_eq!(reviewed[1].status, BeadStatus::NeedsReview);
+        let split = split_bead_line(
+            &reviewed,
+            1,
+            AlignSide::Source,
+            0,
+            &["two".into(), "words".into()],
+        );
+        assert_eq!(
+            split[1].source_lines,
+            vec![Some("two".into()), Some("words".into())]
+        );
+        assert_eq!(split[1].status, BeadStatus::Default);
+
+        let pinpointed = pinpoint_align(&split, (0, AlignSide::Source), (2, AlignSide::Target));
+        assert_eq!(pinpointed.len(), 3);
+        assert_eq!(pinpointed[0].source_lines, Vec::<Option<String>>::new());
+        assert_eq!(pinpointed[0].target_lines, vec![Some("un".into())]);
+        assert_eq!(pinpointed[1].source_lines, Vec::<Option<String>>::new());
+        assert_eq!(
+            pinpointed[2].source_lines,
+            vec![
+                Some("one".into()),
+                Some("two".into()),
+                Some("words".into()),
+                Some("three".into())
+            ]
+        );
+        assert_eq!(pinpointed[2].target_lines, vec![Some("trois".into())]);
+        assert_eq!(pinpointed[2].status, BeadStatus::Accepted);
+
+        let disabled = set_beads_enabled(&pinpointed, None, false);
+        assert_eq!(beads_to_pairs(&disabled, "en", "fr"), Vec::new());
+        let enabled = set_beads_enabled(&disabled, None, true);
+        assert_eq!(
+            beads_to_pairs(&enabled, "en", "fr"),
+            vec![
+                (String::new(), "un".into()),
+                (String::new(), "deux mots".into()),
+                ("one two words three".into(), "trois".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn accepted_beads_are_barriers_when_realigning_pending() {
+        let mut accepted = MutableBead::new("fixed", "fixe");
+        accepted.status = BeadStatus::Accepted;
+        let beads = vec![
+            MutableBead::new("a", "A"),
+            accepted.clone(),
+            MutableBead::new("bb", "BB"),
+        ];
+        let result = realign_pending(&beads, AlignAlgo::Viterbi).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[1], accepted);
+        assert_eq!(result[0].source_text("en"), "a");
+        assert_eq!(result[2].target_text("en"), "BB");
+    }
+
+    #[test]
     fn manual_pair_writeback_uses_the_product_tmx_writer() {
         let pairs = vec![
             ("Hello".into(), "Bonjour".into()),
@@ -960,11 +1409,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dest = dir.path().join("manual.tmx");
         write_aligned_pairs(&pairs, &dest, "en", "fr").unwrap();
-        let parsed = crate::tmx::parse_tmx(
-            &std::fs::read_to_string(dest).unwrap(),
-            "en",
-            "fr",
-        );
+        let parsed = crate::tmx::parse_tmx(&std::fs::read_to_string(dest).unwrap(), "en", "fr");
         assert_eq!(pairs_from_tmx(&parsed), pairs);
     }
 
@@ -990,7 +1435,8 @@ mod tests {
         let parsed = crate::tmx::parse_tmx(&xml, src_lang, tgt_lang);
         assert_eq!(pairs_from_tmx(&parsed), expected_pairs(&g));
 
-        let missing = load_align_golden("AlignerTest#testWritePairsToTMX_missingLanguageThrows.json");
+        let missing =
+            load_align_golden("AlignerTest#testWritePairsToTMX_missingLanguageThrows.json");
         let err = write_aligned_tmx(&tmx, &dest, "", "").unwrap_err();
         let error_class = match err {
             crate::error::CoreError::InvalidProject(_) => "IllegalStateException",
@@ -998,7 +1444,8 @@ mod tests {
         };
         assert_eq!(error_class, missing["expect_error"].as_str().unwrap());
 
-        let aligned = load_align_golden("AlignerTest#testDoAlign_withBeads_returnsAlignedBeads.json");
+        let aligned =
+            load_align_golden("AlignerTest#testDoAlign_withBeads_returnsAlignedBeads.json");
         let input_spec = serde_json::json!({ "pairs": aligned["beads"].clone() });
         let result_spec = serde_json::json!({ "pairs": aligned["result"].clone() });
         let beads = do_align(&expected_pairs(&input_spec), Some(AlignAlgo::Viterbi)).unwrap();
@@ -1009,10 +1456,7 @@ mod tests {
             crate::error::CoreError::InvalidProject(_) => "IllegalStateException",
             _ => "Other",
         };
-        assert_eq!(
-            error_class,
-            missing["expect_error"].as_str().unwrap()
-        );
+        assert_eq!(error_class, missing["expect_error"].as_str().unwrap());
     }
 
     #[test]
@@ -1025,7 +1469,10 @@ mod tests {
             .iter()
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect();
-        assert_eq!(accepted, vec!["US-ASCII".to_string(), "WINDOWS-1252".to_string()]);
+        assert_eq!(
+            accepted,
+            vec!["US-ASCII".to_string(), "WINDOWS-1252".to_string()]
+        );
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../reference/java/aligner/src/main/resources/org/omegat/gui/align");
         let mut files = 0usize;
@@ -1047,7 +1494,11 @@ mod tests {
             );
             let text = String::from_utf8_lossy(&bytes);
             assert!(!text.contains('\u{202e}'), "{} contains RTLO", p.display());
-            assert!(text.contains('='), "{} must load at least one key", p.display());
+            assert!(
+                text.contains('='),
+                "{} must load at least one key",
+                p.display()
+            );
         }
         assert!(files >= 20, "aligner Bundle locales present: {files}");
     }
