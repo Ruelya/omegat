@@ -57,8 +57,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**60 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 89
+**62 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 90
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
@@ -140,13 +140,19 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **7/7**: in addition to five ZIP cases,
+The deep write-back suite is now **9/9**: in addition to six ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
 translated attributes/text under out-of-order translation maps. OpenXML
 hidden field text, external relationship targets, and intact fallback content
 now write independently under one options set. XLIFF nested callbacks receive
 stable per-unit occurrence IDs, and translated `bpt`/`ept` shortcuts recover
 their original content-based XML elements instead of becoming escaped text.
+The XHTML product path now applies Java's case-insensitive, whole-entry
+`skipRegExp` before allocating a segment ID; one combined write-back case
+strictly separates skipped text/meta/intact subtrees from button, link,
+language, and paragraph-on-`br` translations. A second option-matrix case
+enables OpenDocument bookmark/sheet/link attributes while proving disabled
+bookmark references, notes, comments, and presentation notes remain intact.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -306,6 +312,11 @@ matching), React restores that directional selection, and explicit top/bottom
 drop targets expose Java's new-bead boundary moves. The sidecar contract is
 **3/3**, including strict multiline
 split/review/span-merge/span-replace/pinpoint/drag output.
+Status actions now advance to the next bead through an exact sidecar selection
+response. The table uses a bounded real scroll viewport, derives PageUp/PageDown
+distance from currently visible variable-height rows, minimally reveals the
+selection lead after edits, supports reverse Shift extension by mouse, and
+routes Swing's N/P/F/B row/column actions through the shared keyboard model.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
