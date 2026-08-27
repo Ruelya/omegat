@@ -1401,25 +1401,6 @@ try {
     teamConflictTheirs.length,
     "ours/theirs fixtures must preserve the UTF-16 caret exactly",
   );
-  const secondConflictSetup = await client.evaluate(`(async () => {
-    const entries = await window.omegat.rpc("entry.list", {});
-    const decoy = entries.find((entry) =>
-      JSON.stringify(entry.key) === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
-    );
-    if (!decoy) throw new Error("same-source decoy disappeared before team conflict");
-    const updated = await window.omegat.rpc("entry.set", {
-      index: decoy.index,
-      key: decoy.key,
-      translation: ${JSON.stringify(secondConflictOurs)},
-      note: "second same-source ours",
-      revision: decoy.revision,
-      default_translation: false,
-    });
-    await window.omegat.rpc("project.save", {});
-    return updated.entry;
-  })()`, true);
-  assert.deepEqual(secondConflictSetup.key, duplicateSetup.decoy.key);
-  assert.equal(secondConflictSetup.translation, secondConflictOurs);
   const conflictRemoteTmx = join(conflictRemote, "omegat", "project_save.tmx");
   await Promise.all([
     mkdir(join(conflictRemote, "omegat"), { recursive: true }),
@@ -1524,7 +1505,7 @@ try {
   assert(orderedDecoy, "decoy duplicate disappeared after remote ordering");
   assert.equal(orderedWanted.index, duplicateSetup.wanted.index + 2);
   assert.equal(orderedDecoy.index, duplicateSetup.decoy.index + 2);
-  assert.equal(orderedDecoy.translation, secondConflictOurs);
+  assert.equal(orderedDecoy.translation, "");
   const teamOrderingTrace = await client.evaluate(
     `window.__omegatRpcOperationTrace`,
   );
@@ -1572,7 +1553,7 @@ try {
         : undefined;
     },
   );
-  assert.equal(decoyAfterAlternativeCommit.translation, secondConflictOurs);
+  assert.equal(decoyAfterAlternativeCommit.translation, "");
   const entriesAfterAlternativeCommit = await client.evaluate(
     `window.omegat.rpc("entry.list", {})`,
     true,
@@ -1587,23 +1568,26 @@ try {
     entriesAfterAlternativeCommit.find((entry) =>
       JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
     )?.translation,
-    secondConflictOurs,
+    "",
   );
   assert.equal(
     await client.evaluate(`(() => {
-      const button = document.querySelector(".topbar button");
-      button?.click();
-      return Boolean(button);
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
     })()`),
     true,
-    "visible project save action was unavailable for packaged team ours",
+    "packaged team decoy did not focus before editing its own translation",
   );
-  await waitFor("packaged team ours saved to local TMX", async () =>
-    (await readFile(join(project, "omegat", "project_save.tmx"), "utf8"))
-        .includes(`<seg>${teamConflictOurs}</seg>`)
-      ? true
-      : undefined
-  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await client.command("Input.insertText", { text: secondConflictOurs });
+  await waitFor("dirty packaged decoy ours Document3", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(duplicateSetup.decoy.key)
+      && state.translation === secondConflictOurs
+      ? state
+      : undefined;
+  });
   await client.evaluate(`(() => {
     window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
   })()`);
@@ -1613,6 +1597,25 @@ try {
     return state.key === JSON.stringify(duplicateSetup.wanted.key)
       && state.translation === teamConflictOurs
       ? state
+      : undefined;
+  });
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector(".topbar button");
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible project save action was unavailable for packaged team conflicts",
+  );
+  await waitFor("both packaged team ours saved to local TMX", async () => {
+    const tmx = await readFile(
+      join(project, "omegat", "project_save.tmx"),
+      "utf8",
+    );
+    return tmx.includes(`<seg>${teamConflictOurs}</seg>`)
+        && tmx.includes(`<seg>${secondConflictOurs}</seg>`)
+      ? true
       : undefined;
   });
   assert.equal(
