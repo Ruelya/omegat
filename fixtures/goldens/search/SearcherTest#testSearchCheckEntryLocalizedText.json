@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchCheckEntryLocalizedText",
+  "hit": true,
+  "field": "translation",
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchCheckEntryLocalizedText"
+  ]
+}

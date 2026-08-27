@@ -1,0 +1,17 @@
+{
+  "id": "srt",
+  "fixture": "srt/file-SrtFilter.srt",
+  "java_test": "org.omegat.filters dialect/table for srt",
+  "options": {},
+  "sources": [
+    "First title",
+    "Second title",
+    "Third title\nand again"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "First title",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}
