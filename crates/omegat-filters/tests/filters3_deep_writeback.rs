@@ -843,3 +843,219 @@ fn opendoc_disabled_regions_and_enabled_attributes_write_independently() {
         );
     }
 }
+
+#[test]
+fn xliff_double_nested_sub_and_content_tags_write_back_in_depth_first_id_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("double-nested.xlf");
+    let output = temp.path().join("translated-double-nested.xlf");
+    std::fs::write(
+        &source,
+        r#"<xliff version="1.2"><file><body><trans-unit id="nested"><source>Source</source><target state="new">Before <sub>Outer <bpt id="1">&lt;b&gt;</bpt>bold<ept id="1">&lt;/b&gt;</ept> <sub>Nested <ph id="2">&lt;br/&gt;</ph> text</sub> tail</sub> after</target></trans-unit></body></file></xliff>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("xliff").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("nested#0", "Nested <b0/> text"),
+            ("nested#1", "Outer <b0>bold</b0> <s0/> tail"),
+            ("nested#2", "Before <s0/> after"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("nested#2".into(), "Avant <s0/> après".into()),
+        (
+            "nested#0".into(),
+            "Imbriqué <b0/> texte".into(),
+        ),
+        (
+            "nested#1".into(),
+            "Extérieur <b0>gras</b0> <s0/> fin".into(),
+        ),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("nested#0", "Imbriqué <b0/> texte"),
+            ("nested#1", "Extérieur <b0>gras</b0> <s0/> fin"),
+            ("nested#2", "Avant <s0/> après"),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let target = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "target")
+        .unwrap();
+    let subs: Vec<_> = target
+        .descendants()
+        .filter(|node| node.tag_name().name() == "sub")
+        .collect();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(
+        subs[1]
+            .ancestors()
+            .filter(|node| node.tag_name().name() == "sub")
+            .count(),
+        1
+    );
+    assert_eq!(
+        (
+            target
+                .descendants()
+                .filter(|node| node.tag_name().name() == "bpt")
+                .count(),
+            target
+                .descendants()
+                .filter(|node| node.tag_name().name() == "ept")
+                .count(),
+            target
+                .descendants()
+                .filter(|node| node.tag_name().name() == "ph")
+                .count(),
+        ),
+        (1, 1, 1)
+    );
+    assert_eq!(
+        element_names_and_text(&rewritten).1,
+        vec![
+            "Source",
+            "Avant",
+            "Extérieur",
+            "<b>",
+            "gras",
+            "</b>",
+            "Imbriqué",
+            "<br/>",
+            "texte",
+            "fin",
+            "après",
+        ]
+    );
+}
+
+#[test]
+fn xhtml_nested_intact_and_inline_attributes_keep_independent_writeback_ids() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("nested-options.xhtml");
+    let output = temp.path().join("translated-nested-options.xhtml");
+    std::fs::write(
+        &source,
+        r#"<html><body><div><p title="Outer title">Visible <span title="Inline title">inner</span></p><section class="locked" title="Locked title"><p>Locked <span title="Locked nested title">nested</span></p></section><p>Before break<br/>After break</p></div></body></html>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("xhtml").unwrap();
+    let mut context = FilterContext::default();
+    context.options.extend([
+        ("ignoreDoctype".into(), "true".into()),
+        ("ignoreTags".into(), "class=locked".into()),
+        ("paragraphOnBr".into(), "true".into()),
+    ]);
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "Outer title"),
+            ("1", "Inline title"),
+            ("2", "Visible <s0>inner</s0>"),
+            ("3", "Before break"),
+            ("4", "After break"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("4".into(), "Après la rupture".into()),
+        ("2".into(), "Visible <s0>intérieur</s0>".into()),
+        ("0".into(), "Titre extérieur".into()),
+        ("3".into(), "Avant la rupture".into()),
+        ("1".into(), "Titre en ligne".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "Titre extérieur"),
+            ("1", "Titre en ligne"),
+            ("2", "Visible <s0>intérieur</s0>"),
+            ("3", "Avant la rupture"),
+            ("4", "Après la rupture"),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let paragraphs: Vec<_> = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "p")
+        .collect();
+    assert_eq!(paragraphs[0].attribute("title"), Some("Titre extérieur"));
+    let translated_span = paragraphs[0]
+        .descendants()
+        .find(|node| node.tag_name().name() == "span")
+        .unwrap();
+    assert_eq!(translated_span.attribute("title"), Some("Titre en ligne"));
+    assert_eq!(translated_span.text(), Some("intérieur"));
+    let locked = document
+        .descendants()
+        .find(|node| node.attribute("class") == Some("locked"))
+        .unwrap();
+    assert_eq!(locked.attribute("title"), Some("Locked title"));
+    let locked_span = locked
+        .descendants()
+        .find(|node| node.tag_name().name() == "span")
+        .unwrap();
+    assert_eq!(
+        (
+            locked_span.attribute("title"),
+            locked_span.text(),
+        ),
+        (Some("Locked nested title"), Some("nested"))
+    );
+    assert_eq!(paragraphs[2].text(), Some("Avant la rupture"));
+    assert_eq!(
+        paragraphs[2]
+            .children()
+            .filter(|node| node.tag_name().name() == "br")
+            .count(),
+        1
+    );
+    assert_eq!(
+        paragraphs[2]
+            .children()
+            .filter_map(|node| node.text())
+            .collect::<Vec<_>>(),
+        vec!["Avant la rupture", "Après la rupture"]
+    );
+}
