@@ -629,6 +629,65 @@ pub fn parse_external_tmx(
     entries
 }
 
+/// Java `Segmenter.segmentEntries` used by both `ProjectTMX` and external TMX.
+///
+/// A paragraph TU is split only when source and target produce the same number
+/// of sentences; otherwise the original pair is retained.
+pub fn resegment_entries(
+    entries: Vec<TmxEntry>,
+    source_lang: &str,
+    target_lang: &str,
+    sentence_segmenting: bool,
+) -> Vec<TmxEntry> {
+    if !sentence_segmenting {
+        return entries;
+    }
+    let mut out = Vec::new();
+    for entry in entries {
+        let sources = crate::segment::segment_sentences_lang(&entry.source, true, source_lang, None);
+        let targets =
+            crate::segment::segment_sentences_lang(&entry.translation, true, target_lang, None);
+        if sources.len() > 1 && sources.len() == targets.len() {
+            for (source, translation) in sources.into_iter().zip(targets) {
+                if source.trim().is_empty() {
+                    continue;
+                }
+                let mut split = entry.clone();
+                split.source = source;
+                split.translation = translation;
+                out.push(split);
+            }
+        } else {
+            out.push(entry);
+        }
+    }
+    out
+}
+
+/// Load a project TMX and apply Java's sentence resegmentation path.
+pub fn load_resegmented(
+    path: &Path,
+    source_lang: &str,
+    target_lang: &str,
+    sentence_segmenting: bool,
+) -> Result<ProjectTmx> {
+    if !path.exists() {
+        return Ok(ProjectTmx::new());
+    }
+    let raw = read_tmx_text(path)?;
+    let entries = resegment_entries(
+        parse_tmx_all(&raw, source_lang, target_lang),
+        source_lang,
+        target_lang,
+        sentence_segmenting,
+    );
+    let mut tmx = ProjectTmx::new();
+    for entry in entries {
+        tmx.insert(entry);
+    }
+    Ok(tmx)
+}
+
 pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx {
     let mut tmx = ProjectTmx::new();
     for e in parse_tmx_all(raw, source_lang, target_lang) {

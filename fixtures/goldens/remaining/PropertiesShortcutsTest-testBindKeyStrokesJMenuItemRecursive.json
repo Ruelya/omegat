@@ -1,6 +1,14 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItemRecursive",
-  "method": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItemRecursive",
-  "recursive": true
+  "accelerators": {
+    "parent": null,
+    "child": null,
+    "delete": null,
+    "user": "ctrl pressed P",
+    "unknown": "ctrl pressed X"
+  },
+  "keys": [
+    "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItemRecursive"
+  ]
 }

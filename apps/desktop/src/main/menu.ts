@@ -1,5 +1,6 @@
 import { Menu, type BrowserWindow, type MenuItemConstructorOptions } from "electron";
 import { t } from "../renderer/i18n";
+import { normalizeAccelerator } from "../renderer/lib/shortcuts";
 
 function send(win: BrowserWindow, action: string, payload?: unknown) {
   win.webContents.send("menu:action", action, payload);
@@ -14,7 +15,7 @@ function item(
 ): MenuItemConstructorOptions {
   return {
     label,
-    accelerator,
+    accelerator: accelerator ? normalizeAccelerator(accelerator) : undefined,
     click: () => send(win, action),
     ...extra,
   };

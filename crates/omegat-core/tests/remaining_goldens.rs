@@ -380,6 +380,57 @@ fn external_tm_factory_matches_java() {
 }
 
 #[test]
+fn tmx_resegmentation_matches_java_project_and_external_paths() {
+    let path = java_res("data/tmx/resegmenting.tmx");
+    let project = golden("remaining/TmxSegmentationTest-testProjectTMX.json");
+    let loaded = omegat_core::tmx::load_resegmented(&path, "en", "fr", true).unwrap();
+    let project_pairs: Vec<(String, String)> = loaded
+        .entries
+        .iter()
+        .map(|entry| (entry.source.clone(), entry.translation.clone()))
+        .collect();
+    let expected_project: Vec<(String, String)> = project["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["source"].as_str().unwrap().to_string(),
+                entry["translation"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(project_pairs, expected_project);
+    assert_eq!(
+        loaded.entries.len() as u64,
+        project["count"].as_u64().unwrap()
+    );
+
+    let external = golden("remaining/TmxSegmentationTest-testExternalTMX.json");
+    let external_pairs: Vec<(String, String)> =
+        omegat_core::external_tm::load(&path, "en", "fr", false)
+            .into_iter()
+            .map(|entry| (entry.source, entry.translation))
+            .collect();
+    let expected_external: Vec<(String, String)> = external["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["source"].as_str().unwrap().to_string(),
+                entry["translation"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(external_pairs, expected_external);
+    assert_eq!(
+        external_pairs.len() as u64,
+        external["count"].as_u64().unwrap()
+    );
+}
+
+#[test]
 fn glossary_entry_html_matches_java() {
     let simple = golden("remaining/GlossaryEntryTest-testToStyledString.json");
     let mut e = GlossaryEntry::new("source1", "translation1", "");

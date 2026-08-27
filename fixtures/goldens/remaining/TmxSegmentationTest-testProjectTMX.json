@@ -1,6 +1,18 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.data.TmxSegmentationTest#testProjectTMX",
-  "method": "org.omegat.core.data.TmxSegmentationTest#testProjectTMX",
-  "resegments": true
+  "count": 2,
+  "entries": [
+    {
+      "source": "This is test.",
+      "translation": "Ceci est un test."
+    },
+    {
+      "source": "Just a test.",
+      "translation": "Juste un test."
+    }
+  ],
+  "keys": [
+    "org.omegat.core.data.TmxSegmentationTest#testProjectTMX"
+  ]
 }

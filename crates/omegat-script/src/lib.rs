@@ -8,7 +8,7 @@ mod engine;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -17,6 +17,105 @@ pub enum ScriptError {
     Engine(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Script source shown by the scripting window.
+///
+/// This mirrors Java `ScriptItem`: inline editor text is returned directly,
+/// while file text is UTF-8, has an optional BOM removed, and normalizes the
+/// original line endings to `\n` for editing.
+#[derive(Debug, Clone)]
+pub enum ScriptItem {
+    Inline(String),
+    File(PathBuf),
+}
+
+impl ScriptItem {
+    pub fn inline(source: impl Into<String>) -> Self {
+        Self::Inline(source.into())
+    }
+
+    pub fn from_file(path: impl Into<PathBuf>) -> Self {
+        Self::File(path.into())
+    }
+
+    pub fn text(&self) -> Result<String, ScriptError> {
+        match self {
+            Self::Inline(source) => Ok(source.clone()),
+            Self::File(path) => {
+                let raw = std::fs::read_to_string(path)?;
+                Ok(normalize_script_text(&raw))
+            }
+        }
+    }
+
+    pub fn metadata(&self) -> Result<Option<ScriptMetadata>, ScriptError> {
+        match self {
+            Self::Inline(source) => Ok(parse_script_metadata(source)),
+            Self::File(path) => {
+                let raw = std::fs::read_to_string(path)?;
+                Ok(parse_script_metadata(&raw))
+            }
+        }
+    }
+
+    pub fn file_name(&self) -> &str {
+        match self {
+            Self::Inline(_) => "<editor script>",
+            Self::File(path) => path.file_name().and_then(|s| s.to_str()).unwrap_or(""),
+        }
+    }
+
+    pub fn set_text(&self, text: &str) -> Result<(), ScriptError> {
+        let Self::File(path) = self else {
+            return Err(ScriptError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cannot save inline script source.",
+            )));
+        };
+        let existing = std::fs::read_to_string(path)?;
+        let has_bom = existing.starts_with('\u{feff}');
+        let line_break = if existing.contains("\r\n") {
+            "\r\n"
+        } else if existing.contains('\r') {
+            "\r"
+        } else {
+            "\n"
+        };
+        let mut output = text.replace('\n', line_break);
+        if has_bom {
+            output.insert(0, '\u{feff}');
+        }
+        std::fs::write(path, output)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptMetadata {
+    pub name: String,
+    pub description: String,
+}
+
+/// Java `ScriptItem.SCAN_PATTERN`, applied to the first physical line.
+pub fn parse_script_metadata(source: &str) -> Option<ScriptMetadata> {
+    let first = source.lines().next().unwrap_or(source);
+    let name_marker = first.find(":name")?;
+    let name_equals = first[name_marker + 5..].find('=')? + name_marker + 5;
+    let description_marker = first[name_equals + 1..].find(":description")? + name_equals + 1;
+    let description_equals =
+        first[description_marker + 12..].find('=')? + description_marker + 12;
+    Some(ScriptMetadata {
+        name: first[name_equals + 1..description_marker].trim().to_string(),
+        description: first[description_equals + 1..].trim().to_string(),
+    })
+}
+
+fn normalize_script_text(raw: &str) -> String {
+    raw.strip_prefix('\u{feff}')
+        .unwrap_or(raw)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,6 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithValidContent",
-  "method": "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithValidContent",
-  "has_description": true
+  "content": ":name = Test Script :description = This is a test script",
+  "script_name": "Test Script",
+  "description": "This is a test script",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithValidContent"
+  ]
 }

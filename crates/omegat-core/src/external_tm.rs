@@ -86,7 +86,7 @@ pub fn load(path: &Path, source_lang: &str, target_lang: &str, keep_foreign: boo
             return vec![];
         };
         let loaded = tmx::parse_external_tmx(&raw, source_lang, target_lang, keep_foreign);
-        return resegment(loaded, source_lang, target_lang);
+        return tmx::resegment_entries(loaded, source_lang, target_lang, true);
     }
     let ctx = FilterContext {
         source_lang: source_lang.into(),
@@ -121,7 +121,7 @@ pub fn load(path: &Path, source_lang: &str, target_lang: &str, keep_foreign: boo
             })
         })
         .collect();
-    resegment(loaded, source_lang, target_lang)
+    tmx::resegment_entries(loaded, source_lang, target_lang, true)
 }
 
 /// Java `ParseEntry.stripSomeChars` (spaces + CR/LF normalize).
@@ -134,28 +134,4 @@ fn strip_some_chars(src: &str, remove_spaces: bool) -> String {
     }
     r = r.replace("\r\n", "\n").replace('\r', "\n");
     r
-}
-
-fn resegment(entries: Vec<TmxEntry>, source_lang: &str, target_lang: &str) -> Vec<TmxEntry> {
-    let mut out = Vec::new();
-    for e in entries {
-        let srcs = crate::segment::segment_sentences_lang(&e.source, true, source_lang, None);
-        let tgts = crate::segment::segment_sentences_lang(&e.translation, true, target_lang, None);
-        // Java `Segmenter.segmentEntries`: only keep the split when both sides
-        // produce the same sentence count (empty trimmed chunks still count).
-        if srcs.len() > 1 && srcs.len() == tgts.len() {
-            for i in 0..srcs.len() {
-                if srcs[i].trim().is_empty() {
-                    continue;
-                }
-                let mut next = e.clone();
-                next.source = srcs[i].clone();
-                next.translation = tgts[i].clone();
-                out.push(next);
-            }
-        } else {
-            out.push(e);
-        }
-    }
-    out
 }

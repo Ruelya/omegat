@@ -5,6 +5,12 @@ import { describe, expect, it } from "vitest";
 import { JAVA_MENU_ACTIONS } from "./menus/actions";
 import { changeCase, removeDirectionChars, replaceGlossaryEntries } from "./editor/EditorUtils";
 import { SEARCH_EXPRESSION_TYPES } from "./search/SearchWindow";
+import {
+  bindInputShortcuts,
+  bindMenuShortcuts,
+  javaKeyStroke,
+  mergeShortcutProperties,
+} from "./lib/shortcuts";
 import type { WindowId } from "./lib/types";
 
 const goldDir = join(dirname(fileURLToPath(import.meta.url)), "../../../../fixtures/goldens");
@@ -130,5 +136,73 @@ describe("leftover editor / align / finder / mt / cli goldens", () => {
     const replaceTypes = load("gui/SearchWindowTest-testReplaceTypeFollowsTheSelectedRadioButton.json");
     expect(SEARCH_EXPRESSION_TYPES).toEqual(types.types);
     expect(SEARCH_EXPRESSION_TYPES).toEqual(replaceTypes.types);
+  });
+
+  it("PropertiesShortcutsTest methods assert_eq", () => {
+    const get = load("remaining/PropertiesShortcutsTest-testGetKeyStroke.json");
+    const properties = mergeShortcutProperties(get.defaults_text, get.user_text);
+    for (const [action, stroke] of Object.entries(get.strokes)) {
+      expect(javaKeyStroke(properties, action), action).toBe(stroke);
+    }
+    let errorName = "";
+    try {
+      javaKeyStroke(properties, "OUT_OF_LIST");
+    } catch (error) {
+      errorName = (error as Error).name;
+    }
+    expect(errorName).toBe(get.missing_error);
+
+    const menu = load("remaining/PropertiesShortcutsTest-testBindKeyStrokesJMenuBar.json");
+    const bound = bindMenuShortcuts(
+      [
+        {
+          children: [
+            {
+              children: [
+                { action: "TEST_USER_1" },
+                { action: "OUT_OF_LIST", accelerator: "ctrl pressed X" },
+              ],
+            },
+            { action: "TEST_DELETE", accelerator: "ctrl pressed D" },
+          ],
+        },
+      ],
+      properties,
+    );
+    expect({
+      parent: bound[0]!.accelerator ?? null,
+      child: bound[0]!.children![0]!.accelerator ?? null,
+      delete: bound[0]!.children![1]!.accelerator ?? null,
+      user: bound[0]!.children![0]!.children![0]!.accelerator ?? null,
+      unknown: bound[0]!.children![0]!.children![1]!.accelerator ?? null,
+    }).toEqual(menu.accelerators);
+
+    const item = load("remaining/PropertiesShortcutsTest-testBindKeyStrokesJMenuItem.json");
+    expect([
+      bindMenuShortcuts([{ action: "TEST_SAVE" }], properties)[0]!.accelerator,
+      bindMenuShortcuts([{ action: "TEST_DELETE", accelerator: "ctrl pressed D" }], properties)[0]!.accelerator,
+      bindMenuShortcuts([{ action: "OUT_OF_LIST", accelerator: "ctrl pressed D" }], properties)[0]!.accelerator,
+    ]).toEqual(item.accelerators);
+
+    const recursive = load("remaining/PropertiesShortcutsTest-testBindKeyStrokesJMenuItemRecursive.json");
+    expect(recursive.accelerators).toEqual(menu.accelerators);
+
+    const input = load("remaining/PropertiesShortcutsTest-testBindKeyStrokesInputMapObjectArr.json");
+    const inputMap = bindInputShortcuts(
+      { "ctrl pressed D": "TEST_DELETE" },
+      properties,
+      ["TEST_SAVE", "TEST_CUT", "TEST_USER_1", "TEST_DELETE"],
+    );
+    const bindings = Object.entries(inputMap)
+      .map(([stroke, action]) => ({ stroke, action }))
+      .sort((a, b) => a.stroke.localeCompare(b.stroke));
+    expect(bindings).toEqual(input.bindings);
+    expect(Object.keys(inputMap)).toHaveLength(input.size);
+
+    const bundled = load("remaining/PropertiesShortcutsTest-testLoadBundled.json");
+    const selected = Object.fromEntries(
+      Object.keys(bundled.strokes).map((action) => [action, javaKeyStroke(properties, action)]),
+    );
+    expect(selected).toEqual(bundled.strokes);
   });
 });

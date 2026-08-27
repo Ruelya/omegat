@@ -14,6 +14,7 @@
 package org.omegat.tools;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -35,9 +36,18 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import javax.swing.InputMap;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.KeyStroke;
+
 import org.omegat.core.Core;
 import org.omegat.core.data.EntryKey;
+import org.omegat.core.data.ExternalTMFactory;
+import org.omegat.core.data.ExternalTMX;
 import org.omegat.core.data.NotLoadedProject;
+import org.omegat.core.data.ProjectTMX;
 import org.omegat.core.data.ProjectProperties;
 import org.omegat.core.data.ProtectedPart;
 import org.omegat.core.data.RealProject;
@@ -166,6 +176,8 @@ import org.omegat.gui.glossary.GlossaryEntry;
 import org.omegat.gui.glossary.GlossaryReaderTSV;
 import org.omegat.gui.glossary.GlossarySearcher;
 import org.omegat.gui.main.MainWindowMenuHandler;
+import org.omegat.gui.scripting.ScriptItem;
+import org.omegat.gui.shortcuts.PropertiesShortcuts;
 import org.omegat.tokenizer.DefaultTokenizer;
 import org.omegat.tokenizer.ITokenizer;
 import org.omegat.tokenizer.LuceneArabicTokenizer;
@@ -3334,8 +3346,221 @@ public final class ExportGoldens {
         exportMtFinderTests();
         exportCliTests();
         exportAlignerWindowTests();
+        exportScriptItemTests();
+        exportShortcutTests();
+        exportTmxSegmentationTests();
         exportRemainingRich();
         exportRemainingInScope();
+    }
+
+    private void exportScriptItemTests() throws Exception {
+        String inlineSource = "print('Hello, world!')";
+        ScriptItem inline = new ScriptItem(inlineSource);
+        writeCase("remaining/ScriptItemTest-testGetTextWithScriptSource.json",
+                "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithScriptSource",
+                Map.of("source", inlineSource, "text", inline.getText(),
+                        "file_name", inline.getFileName()));
+
+        Path dir = Files.createTempDirectory("omegat-script-item");
+        Method scan = ScriptItem.class.getDeclaredMethod("scanFileForDescription", File.class);
+        scan.setAccessible(true);
+        String metadata = ":name = Test Script :description = This is a test script";
+        Path validMetadata = dir.resolve("valid.js");
+        Files.writeString(validMetadata, metadata, StandardCharsets.UTF_8);
+        ScriptItem validScan = new ScriptItem("");
+        scan.invoke(validScan, validMetadata.toFile());
+        writeCase("remaining/ScriptItemTest-testScanFileForDescriptionWithValidContent.json",
+                "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithValidContent",
+                Map.of("content", metadata, "script_name", validScan.getScriptName(),
+                        "description", validScan.getDescription()));
+
+        String invalidMetadata = "some random content without metadata";
+        Path invalid = dir.resolve("invalid.js");
+        Files.writeString(invalid, invalidMetadata, StandardCharsets.UTF_8);
+        ScriptItem invalidScan = new ScriptItem("");
+        scan.invoke(invalidScan, invalid.toFile());
+        Map<String, Object> invalidResult = new LinkedHashMap<>();
+        invalidResult.put("content", invalidMetadata);
+        invalidResult.put("script_name", invalidScan.getScriptName());
+        invalidResult.put("description", invalidScan.getDescription());
+        writeCase("remaining/ScriptItemTest-testScanFileForDescriptionWithInvalidContent.json",
+                "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithInvalidContent",
+                invalidResult);
+
+        String fileSource = "print('Hello from file!')";
+        Path source = dir.resolve("testScript.txt");
+        Files.writeString(source, fileSource, StandardCharsets.UTF_8);
+        ScriptItem fromFile = new ScriptItem(source.toFile());
+        writeCase("remaining/ScriptItemTest-testGetTextWithValidFile.json",
+                "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithValidFile",
+                Map.of("file_name", fromFile.getFileName(), "text", fromFile.getText()));
+
+        Path missing = dir.resolve("missing.js");
+        String missingError = "";
+        try {
+            new ScriptItem(missing.toFile()).getText();
+        } catch (IOException ex) {
+            missingError = ex.getClass().getSimpleName();
+        }
+        writeCase("remaining/ScriptItemTest-testGetTextWithNonexistentFile.json",
+                "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithNonexistentFile",
+                Map.of("file_name", missing.getFileName().toString(), "error_class", missingError));
+
+        boolean ioError = false;
+        String ioErrorClass = "";
+        try {
+            new ScriptItem(dir.toFile()).getText();
+        } catch (IOException ex) {
+            ioError = true;
+            ioErrorClass = ex.getClass().getSimpleName();
+        }
+        writeCase("remaining/ScriptItemTest-testGetTextWithIOException.json",
+                "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithIOException",
+                Map.of("io_error", ioError, "error_class", ioErrorClass));
+    }
+
+    private void exportShortcutTests() throws Exception {
+        String resourceRoot = "/org/omegat/gui/shortcuts/";
+        PropertiesShortcuts shortcuts = new PropertiesShortcuts();
+        shortcuts.loadFromClasspath(resourceRoot + "test.properties");
+        shortcuts.loadFromClasspath(resourceRoot + "test.user.properties");
+
+        Map<String, Object> strokes = new LinkedHashMap<>();
+        strokes.put("TEST_SAVE", keyStrokeText(shortcuts.getKeyStroke("TEST_SAVE")));
+        strokes.put("TEST_CUT", keyStrokeText(shortcuts.getKeyStroke("TEST_CUT")));
+        strokes.put("TEST_DELETE", keyStrokeText(shortcuts.getKeyStroke("TEST_DELETE")));
+        strokes.put("TEST_USER_1", keyStrokeText(shortcuts.getKeyStroke("TEST_USER_1")));
+        String missingError = "";
+        try {
+            shortcuts.getKeyStroke("OUT_OF_LIST");
+        } catch (IllegalArgumentException ex) {
+            missingError = ex.getClass().getSimpleName();
+        }
+        writeCase("remaining/PropertiesShortcutsTest-testGetKeyStroke.json",
+                "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testGetKeyStroke",
+                Map.of("defaults_text", Files.readString(javaRoot.resolve(
+                                "src/test/resources/org/omegat/gui/shortcuts/test.properties")),
+                        "user_text", Files.readString(javaRoot.resolve(
+                                "src/test/resources/org/omegat/gui/shortcuts/test.user.properties")),
+                        "strokes", strokes, "missing_error", missingError));
+
+        JMenuBar bar = new JMenuBar();
+        JMenu parent = new JMenu();
+        JMenu child1 = new JMenu();
+        JMenuItem child2 = menuItem("TEST_DELETE", KeyStroke.getKeyStroke("ctrl D"));
+        JMenuItem grandchild1 = menuItem("TEST_USER_1", null);
+        JMenuItem grandchild2 = menuItem("OUT_OF_LIST", KeyStroke.getKeyStroke("ctrl X"));
+        bar.add(parent);
+        parent.add(child1);
+        parent.add(child2);
+        child1.add(grandchild1);
+        child1.add(grandchild2);
+        shortcuts.bindKeyStrokes(bar);
+        writeCase("remaining/PropertiesShortcutsTest-testBindKeyStrokesJMenuBar.json",
+                "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuBar",
+                Map.of("accelerators", acceleratorMap(parent, child1, child2, grandchild1, grandchild2)));
+
+        JMenuItem item = menuItem("TEST_SAVE", null);
+        List<Object> itemAccelerators = new ArrayList<>();
+        shortcuts.bindKeyStrokes(item);
+        itemAccelerators.add(keyStrokeText(item.getAccelerator()));
+        item.setActionCommand("TEST_DELETE");
+        shortcuts.bindKeyStrokes(item);
+        itemAccelerators.add(keyStrokeText(item.getAccelerator()));
+        item.setActionCommand("OUT_OF_LIST");
+        item.setAccelerator(KeyStroke.getKeyStroke("ctrl D"));
+        shortcuts.bindKeyStrokes(item);
+        itemAccelerators.add(keyStrokeText(item.getAccelerator()));
+        writeCase("remaining/PropertiesShortcutsTest-testBindKeyStrokesJMenuItem.json",
+                "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItem",
+                Map.of("accelerators", itemAccelerators));
+
+        JMenu recursive = new JMenu();
+        JMenu recursiveChild = new JMenu();
+        JMenuItem recursiveDelete = menuItem("TEST_DELETE", KeyStroke.getKeyStroke("ctrl D"));
+        JMenuItem recursiveUser = menuItem("TEST_USER_1", null);
+        JMenuItem recursiveUnknown = menuItem("OUT_OF_LIST", KeyStroke.getKeyStroke("ctrl X"));
+        recursive.add(recursiveChild);
+        recursive.add(recursiveDelete);
+        recursiveChild.add(recursiveUser);
+        recursiveChild.add(recursiveUnknown);
+        shortcuts.bindKeyStrokes(recursive);
+        writeCase("remaining/PropertiesShortcutsTest-testBindKeyStrokesJMenuItemRecursive.json",
+                "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItemRecursive",
+                Map.of("accelerators", acceleratorMap(
+                        recursive, recursiveChild, recursiveDelete, recursiveUser, recursiveUnknown)));
+
+        InputMap input = new InputMap();
+        shortcuts.bindKeyStrokes(input, "TEST_SAVE", "TEST_CUT", "TEST_USER_1");
+        input.put(KeyStroke.getKeyStroke("ctrl D"), "TEST_DELETE");
+        shortcuts.bindKeyStrokes(input, "TEST_DELETE");
+        List<Map<String, Object>> bindings = new ArrayList<>();
+        for (KeyStroke key : input.keys()) {
+            bindings.add(Map.of("stroke", keyStrokeText(key), "action", input.get(key).toString()));
+        }
+        bindings.sort((a, b) -> a.get("stroke").toString().compareTo(b.get("stroke").toString()));
+        writeCase("remaining/PropertiesShortcutsTest-testBindKeyStrokesInputMapObjectArr.json",
+                "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesInputMapObjectArr",
+                Map.of("size", input.size(), "bindings", bindings));
+
+        PropertiesShortcuts bundled = new PropertiesShortcuts();
+        bundled.loadFromClasspath(resourceRoot + "test.properties");
+        bundled.loadFromClasspath(resourceRoot + "test.user.properties");
+        Map<String, Object> selected = new LinkedHashMap<>();
+        for (String key : List.of("TEST_SAVE", "TEST_CUT", "TEST_DELETE", "TEST_USER_1", "TEST_USER_2")) {
+            selected.put(key, keyStrokeText(bundled.getKeyStroke(key)));
+        }
+        writeCase("remaining/PropertiesShortcutsTest-testLoadBundled.json",
+                "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testLoadBundled",
+                Map.of("strokes", selected));
+    }
+
+    private static JMenuItem menuItem(String action, KeyStroke accelerator) {
+        JMenuItem item = new JMenuItem();
+        item.setActionCommand(action);
+        item.setAccelerator(accelerator);
+        return item;
+    }
+
+    private static String keyStrokeText(KeyStroke stroke) {
+        return stroke == null ? null : stroke.toString();
+    }
+
+    private static Map<String, Object> acceleratorMap(
+            JMenuItem parent, JMenuItem child, JMenuItem delete, JMenuItem user, JMenuItem unknown) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("parent", keyStrokeText(parent.getAccelerator()));
+        result.put("child", keyStrokeText(child.getAccelerator()));
+        result.put("delete", keyStrokeText(delete.getAccelerator()));
+        result.put("user", keyStrokeText(user.getAccelerator()));
+        result.put("unknown", keyStrokeText(unknown.getAccelerator()));
+        return result;
+    }
+
+    private void exportTmxSegmentationTests() throws Exception {
+        File file = javaRoot.resolve("src/test/resources/data/tmx/resegmenting.tmx").toFile();
+        Segmenter segmenter = new Segmenter(SRX.getDefault());
+        ProjectTMX project = new ProjectTMX();
+        project.load(new Language("en"), new Language("fr"), true, file, segmenter);
+        List<Map<String, Object>> projectEntries = new ArrayList<>();
+        for (String source : List.of("This is test.", "Just a test.")) {
+            projectEntries.add(Map.of("source", source, "translation",
+                    project.getDefaultTranslation(source).getTranslationText()));
+        }
+        writeCase("remaining/TmxSegmentationTest-testProjectTMX.json",
+                "org.omegat.core.data.TmxSegmentationTest#testProjectTMX",
+                Map.of("count", project.getDefaults().size(), "entries", projectEntries));
+
+        ExternalTMX external = new ExternalTMFactory.TMXLoader(file, segmenter)
+                .setDoSegmenting(true).load(new Language("en"), new Language("fr"));
+        List<Map<String, Object>> externalEntries = new ArrayList<>();
+        for (var entry : external.getEntries()) {
+            externalEntries.add(Map.of("source", entry.getSourceText(),
+                    "translation", entry.getTranslationText()));
+        }
+        writeCase("remaining/TmxSegmentationTest-testExternalTMX.json",
+                "org.omegat.core.data.TmxSegmentationTest#testExternalTMX",
+                Map.of("count", external.getEntries().size(), "entries", externalEntries));
     }
 
     private void exportRemainingInScope() throws Exception {

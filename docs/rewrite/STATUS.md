@@ -84,6 +84,8 @@ DictionaryData / MixedEol / ExternalFinder / CLI common params +
 `constructCommandParams` / LegacyParameters initialize /
 AlignSettings persist / CalcStandardStatistics PO table /
 Latex `parseBracedCommand` / XML CJK path / Scripting #775.
+`TmxSegmentationTest` project and external loaders now export and
+`assert_eq` both resegmented source/translation pairs (2/2 methods).
 
 **P2 filters2:** `org.omegat.filters.*FilterTest` **150/150**.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
@@ -136,6 +138,10 @@ column-order numbers `assert_eq` the Java cases; Swing
 `TableColumnModel` itself stays a measured UI-toolkit gap.
 `EditorUtils.replaceGlossaryEntries` `assert_eq`s the Java snowman
 replacements.
+`PropertiesShortcutsTest` **6/6** now exports actual merged property,
+Swing `KeyStroke`, recursive menu, and input-map results; the desktop
+shortcut product path parses/merges/binds those values and native menu
+accelerators pass through the same normalizer.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
 live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
@@ -157,6 +163,11 @@ goldens `assert_eq` Java cases.
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
 ops golden is exported. CLI Main / Legacy / CommandCommon goldens exist.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
+`ScriptItemTest` **6/6** now exports actual Java inline/file text,
+metadata, missing-file, and I/O results and `omegat-script` imports the
+corresponding product API for strict equality. The latest thin-fixture
+inventory moved from **28 remaining + 13 gui** `method` rows to
+**14 remaining + 13 gui**; those rows remain work, not parity.
 
 **P12 ship:** same-key leftover count is 0 (brand `OmegaT` may equal
 English). Cross-key leftover English phrases: **260** (e.g.

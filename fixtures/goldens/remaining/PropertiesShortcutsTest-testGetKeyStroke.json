@@ -1,6 +1,16 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testGetKeyStroke",
-  "method": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testGetKeyStroke",
-  "parses": true
+  "defaults_text": "TEST_SAVE=ctrl S\n\nTEST_CUT=ctrl X\n\nTEST_DELETE=ctrl D\n",
+  "user_text": "TEST_USER_1=ctrl P\n\nTEST_USER_2=ctrl L\n\nTEST_DELETE=\n",
+  "strokes": {
+    "TEST_SAVE": "ctrl pressed S",
+    "TEST_CUT": "ctrl pressed X",
+    "TEST_DELETE": null,
+    "TEST_USER_1": "ctrl pressed P"
+  },
+  "missing_error": "IllegalArgumentException",
+  "keys": [
+    "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testGetKeyStroke"
+  ]
 }

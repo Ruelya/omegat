@@ -1,6 +1,10 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithInvalidContent",
-  "method": "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithInvalidContent",
-  "has_description": false
+  "content": "some random content without metadata",
+  "script_name": null,
+  "description": "",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptItemTest#testScanFileForDescriptionWithInvalidContent"
+  ]
 }
