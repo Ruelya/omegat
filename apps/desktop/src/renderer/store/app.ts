@@ -81,7 +81,11 @@ async function rpc<T>(
     throw new Error("sidecar bridge unavailable");
   }
   if (!signal) {
-    return window.omegat.rpc(method, params, clientRequestId) as Promise<T>;
+    return (
+      clientRequestId
+        ? window.omegat.rpc(method, params, clientRequestId)
+        : window.omegat.rpc(method, params)
+    ) as Promise<T>;
   }
   stopIfCancelled(signal);
   const requestId = `renderer-${nextRpcRequestId++}`;
