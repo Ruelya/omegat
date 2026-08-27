@@ -36,6 +36,7 @@ export class FontFallbackMarker extends AbstractMarker {
   getMarksForEntry(input: MarkerInput): Mark[] | null {
     if (!this.isEnabled()) return null;
     const text = input.translationText ?? input.sourceText;
+    if (text == null) return null;
     const out: Mark[] = [];
     let index = 0;
     for (const char of text) {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultPreferences } from "../lib/preferences";
+import type { EntryDto } from "../lib/types";
 import { resetAppState, useApp } from "../store/app";
 import { DESKTOP_MENU_ACTIONS, JAVA_MENU_ACTIONS, SCRIPT_SLOT_ACTIONS, dispatchMenuAction } from "./actions";
 
@@ -33,7 +34,7 @@ function installBridge() {
   });
 }
 
-const SAMPLE_ENTRY = {
+const SAMPLE_ENTRY: EntryDto = {
   index: 0,
   file: "a.txt",
   id: "1",

@@ -9,6 +9,7 @@ export class ReplaceMarker extends AbstractMarker {
   getMarksForEntry(input: MarkerInput): Mark[] | null {
     if (!this.isEnabled() || !this.needle) return null;
     const text = input.translationText ?? input.sourceText;
+    if (text == null) return null;
     const out: Mark[] = [];
     let i = 0;
     while (i < text.length) {

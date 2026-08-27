@@ -498,7 +498,7 @@ fn searcher_all_java_methods_use_stateful_product_path() {
         );
     }
 
-    let mut check = |method: &str,
+    let check = |method: &str,
                      query: &str,
                      source: &str,
                      translation: Option<&str>,
