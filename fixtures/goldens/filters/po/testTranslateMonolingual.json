@@ -1,0 +1,24 @@
+{
+  "id": "po",
+  "fixture": "po/file-POFilter-Monolingual.po",
+  "java_test": "org.omegat.filters.POFilterTest#testTranslateMonolingual",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "monolingualFormat": "true"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "first source",
+    "second source"
+  ],
+  "ids": [
+    "firstId",
+    "secondId"
+  ],
+  "paths": [
+    "",
+    ""
+  ],
+  "empty_write_text": "msgid \"firstId\"\nmsgstr \"\"\n\nmsgid \"secondId\"\nmsgstr \"\"\n\n"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-BadLiteral2.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testBadUnicodeLiterals",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "힯"
+  ],
+  "ids": [
+    "ID"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "# Invalid Unicode literal: codepoint not defined\n# Java's ResourceBundle parsing actually allows this.\nID=힯\n"
+}

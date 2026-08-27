@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.HunspellTokenizerTest#testHunspellEnglish",
+  "backend": "hunspell",
+  "parity_gap": "needs language-module dic",
+  "keys": [
+    "org.omegat.tokenizer.HunspellTokenizerTest#testHunspellEnglish"
+  ]
+}
