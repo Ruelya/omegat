@@ -338,6 +338,137 @@ mod tests {
     }
 
     #[test]
+    fn alternatives_with_same_file_id_and_source_persist_by_complete_entry_key() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("complete-entry-keys");
+        let prefs = Preferences::default_in(dir.path().join("cfg"));
+        let mut session = ProjectSession::create(
+            &CreateProjectParams {
+                root: root.to_string_lossy().into(),
+                source_lang: "en".into(),
+                target_lang: "fr".into(),
+                sentence_seg: false,
+            },
+            prefs,
+        )
+        .unwrap();
+        session.entries = vec![
+            Entry {
+                file: "same.po".into(),
+                id: "message".into(),
+                prev: Some(String::new()),
+                next: Some("Repeated".into()),
+                path: Some("dialog/one".into()),
+                source: "Repeated".into(),
+                translation: String::new(),
+                note: String::new(),
+                comment: String::new(),
+                default_translation: true,
+                revision: 1,
+                from_tm_exact: false,
+                properties: vec![],
+            },
+            Entry {
+                file: "same.po".into(),
+                id: "message".into(),
+                prev: Some("Repeated".into()),
+                next: Some(String::new()),
+                path: Some("dialog/two".into()),
+                source: "Repeated".into(),
+                translation: String::new(),
+                note: String::new(),
+                comment: String::new(),
+                default_translation: true,
+                revision: 1,
+                from_tm_exact: false,
+                properties: vec![],
+            },
+        ];
+        let first = session.entries[0].key();
+        let second = session.entries[1].key();
+        let mut changed_key = first.clone();
+        changed_key.path = Some("dialog/reloaded".into());
+        assert!(matches!(
+            session.set_entry(&omegat_ipc::SetEntryParams {
+                index: 0,
+                key: Some(changed_key),
+                translation: "wrong occurrence".into(),
+                note: None,
+                revision: 1,
+                default_translation: false,
+            }),
+            Err(CoreError::InvalidProject(_))
+        ));
+
+        session
+            .set_entry(&omegat_ipc::SetEntryParams {
+                index: 0,
+                key: Some(first.clone()),
+                translation: "Premier".into(),
+                note: Some("first note".into()),
+                revision: 1,
+                default_translation: false,
+            })
+            .unwrap();
+        session
+            .set_entry(&omegat_ipc::SetEntryParams {
+                index: 1,
+                key: Some(second.clone()),
+                translation: "Deuxième".into(),
+                note: Some("second note".into()),
+                revision: 1,
+                default_translation: false,
+            })
+            .unwrap();
+        session.save().unwrap();
+
+        let loaded = crate::tmx::ProjectTmx::load(
+            &session.props.save_tmx_path(),
+            &session.props.source_lang,
+            &session.props.target_lang,
+        )
+        .unwrap();
+        assert_eq!(
+            (
+                loaded
+                    .get_translation_for_key(&first)
+                    .map(|entry| (
+                        entry.translation.as_str(),
+                        entry.note.as_deref(),
+                        entry.prev.as_deref(),
+                        entry.next.as_deref(),
+                        entry.path.as_deref(),
+                    )),
+                loaded
+                    .get_translation_for_key(&second)
+                    .map(|entry| (
+                        entry.translation.as_str(),
+                        entry.note.as_deref(),
+                        entry.prev.as_deref(),
+                        entry.next.as_deref(),
+                        entry.path.as_deref(),
+                    )),
+            ),
+            (
+                Some((
+                    "Premier",
+                    Some("first note"),
+                    Some(""),
+                    Some("Repeated"),
+                    Some("dialog/one"),
+                )),
+                Some((
+                    "Deuxième",
+                    Some("second note"),
+                    Some("Repeated"),
+                    Some(""),
+                    Some("dialog/two"),
+                )),
+            )
+        );
+    }
+
+    #[test]
     fn tag_validation_abort_on_set() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("proj3");

@@ -310,6 +310,70 @@ describe("editor markers vs Java-exported goldens", () => {
     }]);
   });
 
+  it("recomputes only the remarked async marker and expires its prior callback", async () => {
+    const ctrl = new MarkerController();
+    const firstPending: ((marks: Mark[]) => void)[] = [];
+    const secondPending: ((marks: Mark[]) => void)[] = [];
+    ctrl.registerPluginMarker("example.FirstAsyncMarker", {
+      getMarksForEntryAsync: () =>
+        new Promise<Mark[]>((resolve) => {
+          firstPending.push(resolve);
+        }),
+    });
+    ctrl.registerPluginMarker("example.SecondAsyncMarker", {
+      getMarksForEntryAsync: () =>
+        new Promise<Mark[]>((resolve) => {
+          secondPending.push(resolve);
+        }),
+    });
+    const input: MarkerInput = {
+      sourceText: "source",
+      translationText: "current",
+      isActive: true,
+    };
+
+    const initial = ctrl.processEntryAsync("entry", input);
+    firstPending[0]!([]);
+    secondPending[0]!([]);
+    await initial;
+
+    ctrl.remarkOneMarker("example.FirstAsyncMarker");
+    const stale = ctrl.processEntryAsync("entry", input);
+    ctrl.remarkOneMarker("example.FirstAsyncMarker");
+    const current = ctrl.processEntryAsync("entry", input);
+    expect({
+      firstCalls: firstPending.length,
+      secondCalls: secondPending.length,
+    }).toEqual({
+      firstCalls: 3,
+      secondCalls: 1,
+    });
+
+    firstPending[2]!([{
+      startOffset: 4,
+      endOffset: 7,
+      painter: "remark-current",
+      entryPart: "TRANSLATION",
+    }]);
+    await current;
+    firstPending[1]!([{
+      startOffset: 0,
+      endOffset: 3,
+      painter: "remark-stale",
+      entryPart: "TRANSLATION",
+    }]);
+    await stale;
+
+    expect(
+      ctrl.getCached("entry")!.marks.filter((mark) => mark.painter.startsWith("remark-")),
+    ).toEqual([{
+      startOffset: 4,
+      endOffset: 7,
+      painter: "remark-current",
+      entryPart: "TRANSLATION",
+    }]);
+  });
+
   it("bridges sidecar spell tokens into Java-style translation marks", async () => {
     const calls: string[] = [];
     const marker = new SpellCheckerMarker(async (text) => {

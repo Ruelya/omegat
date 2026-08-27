@@ -9,7 +9,7 @@ export type EntryKeyDto = {
 };
 export type EntryDto = {
   index: number;
-  key?: EntryKeyDto;
+  key: EntryKeyDto;
   file: string;
   id: string;
   source: string;

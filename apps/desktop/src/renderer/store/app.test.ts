@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDocument3 } from "../editor/Document3";
+import { bindMarkerRemark } from "../editor/IEditor";
 import { marksFromPrefs, prefsFromMarks } from "../lib/editor-doc";
 import { defaultPreferences } from "../lib/preferences";
 import { toSearchParams } from "../lib/search-params";
@@ -39,6 +40,14 @@ function installBridge() {
 
 const sampleEntry = {
   index: 0,
+  key: {
+    file: "a.txt",
+    source_text: "Hello <f0>world</f0>",
+    id: "1",
+    prev: "",
+    next: "",
+    path: null,
+  },
   file: "a.txt",
   id: "1",
   source: "Hello <f0>world</f0>",
@@ -224,7 +233,12 @@ describe("app store", () => {
     });
     useApp.setState({
       entries: [
-        { ...sampleEntry, index: 0, source: "one" },
+        {
+          ...sampleEntry,
+          key: { ...sampleEntry.key, source_text: "one" },
+          index: 0,
+          source: "one",
+        },
         { ...sampleEntry, index: 1, source: "two", translated: true, translation: "deux" },
         { ...sampleEntry, index: 2, source: "three" },
       ],
@@ -243,6 +257,7 @@ describe("app store", () => {
       "entry.set",
       {
         index: 0,
+        key: { ...sampleEntry.key, source_text: "one" },
         translation: "未提交",
         note: "",
         revision: 1,
@@ -335,6 +350,7 @@ describe("app store", () => {
       };
       expect(input).toEqual({
         index: 0,
+        key: repeated[0]!.key,
         translation: "shared",
         note: "shared note",
         revision: 1,
@@ -460,6 +476,7 @@ describe("app store", () => {
         };
         expect(input).toEqual({
           index: 0,
+          key: remote.key,
           translation: "local edit",
           note: "local note",
           revision: 4,
@@ -569,6 +586,48 @@ describe("app store", () => {
       conflict: null,
       dirty: false,
     });
+  });
+
+  it("learns and ignores words through one spell-marker refresh each", async () => {
+    const remarked: string[] = [];
+    const unbind = bindMarkerRemark((name) => remarked.push(name));
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "spell.learn" || method === "spell.ignore") return { ok: true };
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+        || method === "completer.query"
+      ) {
+        return [];
+      }
+      return {};
+    });
+    useApp.setState({
+      entries: [{ ...sampleEntry }],
+      index: 0,
+      document3: createDocument3(sampleEntry.source, sampleEntry.translation),
+    });
+
+    try {
+      await useApp.getState().learnWord("wrng");
+      await useApp.getState().ignoreWord("typo");
+    } finally {
+      unbind();
+    }
+
+    expect(
+      rpc.mock.calls
+        .filter(([method]) => method === "spell.learn" || method === "spell.ignore")
+        .map(([method, params]) => [method, params]),
+    ).toEqual([
+      ["spell.learn", { word: "wrng" }],
+      ["spell.ignore", { word: "typo" }],
+    ]);
+    expect(remarked).toEqual([
+      "org.omegat.core.spellchecker.SpellCheckerMarker",
+      "org.omegat.core.spellchecker.SpellCheckerMarker",
+    ]);
   });
 
   it("dispatches the remaining Java menu actions", async () => {

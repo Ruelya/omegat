@@ -701,7 +701,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const response = await rpc<EntrySetResult | EntryDto>("entry.set", {
         index,
-        ...(e.key ? { key: e.key } : {}),
+        key: e.key,
         translation: draft,
         note,
         revision: e.revision,

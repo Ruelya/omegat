@@ -195,6 +195,9 @@ export class MarkerController {
       try {
         marks = await result;
       } catch {
+        if (this.pending.get(pendingKey) === token) {
+          this.pending.delete(pendingKey);
+        }
         return;
       }
       if (this.pending.get(pendingKey) !== token) return;

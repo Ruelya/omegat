@@ -157,7 +157,6 @@ export const IEditor = {
   },
   remarkOneMarker(name: string) {
     remarkMarker(name);
-    this.refreshView();
   },
   removeFilter() {
     filter = { kind: "none" };

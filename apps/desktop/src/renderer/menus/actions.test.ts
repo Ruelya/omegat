@@ -36,6 +36,14 @@ function installBridge() {
 
 const SAMPLE_ENTRY: EntryDto = {
   index: 0,
+  key: {
+    file: "a.txt",
+    source_text: "Hi there",
+    id: "1",
+    prev: "",
+    next: "",
+    path: null,
+  },
   file: "a.txt",
   id: "1",
   source: "Hi there",
