@@ -20,8 +20,9 @@ export function MultipleTranslationsDock() {
     getCurrentTranslation: () => draft,
     replaceEditText: setDraft,
     insertText: (text) => setDraft(draft + text),
-    commitTranslationVariant: (defaultTranslation) =>
-      commitCurrent({ default_translation: defaultTranslation }),
+    commitTranslationVariant: async (defaultTranslation) => {
+      await commitCurrent({ default_translation: defaultTranslation });
+    },
     gotoEntry: async (source, key) => {
       const target = entries.findIndex((entry) =>
         entry.source === source
