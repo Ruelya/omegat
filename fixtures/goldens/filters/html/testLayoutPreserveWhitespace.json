@@ -1,0 +1,45 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2-layout.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testLayoutPreserveWhitespace",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "rewriteEncoding": "NEVER"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "test",
+    "ltr",
+    "test spaces",
+    "test spaces",
+    "outoftags",
+    "This <b0>is bold</b0>!",
+    "\n\n    ",
+    "  formatted\n    text\n    ",
+    "a"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "  <hTmL>\n\n    <head>\n        <meta  charset=\"utf-8\" />\n        <title>  test  </title>\n    </head>\n    <body  dir=\"ltr\">\n       test    spaces\n       <p>   test   spaces   </p>  outoftags\n       <p>  This <b>is bold</b>! </p>\n    <p>   </p>\n\n      <p>  <BR>  </p>\n    <pre>\n\n    </pre>\n    <pre>  formatted\n    text\n    </pre>\n       <!--    a   comment  -->\n\n    <p>  a  <!--   com   mment   -->    </p>\n    </body>\n\n  </hTmL>"
+}

@@ -1,0 +1,6 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.TransTipsMarkerTest#testGetMarksForEntryNullSourceText",
+  "null_marks": true,
+  "marks": 0
+}

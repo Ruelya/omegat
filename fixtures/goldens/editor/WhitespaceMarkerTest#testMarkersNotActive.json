@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.WhitespaceMarkerTest#testMarkersNotActive",
+  "enabled": true,
+  "source": "source",
+  "translation": null,
+  "is_active": false,
+  "marks": [],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

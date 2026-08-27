@@ -1,0 +1,24 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.WhitespaceMarkerTest#testMarkersSP",
+  "enabled": true,
+  "source": "source text with \tTAB.",
+  "translation": "source text with \tTAB.",
+  "is_active": true,
+  "display_source": true,
+  "marks_size": 8,
+  "marks": [
+    {
+      "startOffset": 6,
+      "endOffset": 7,
+      "entryPart": "SOURCE"
+    },
+    {
+      "index": 3,
+      "startOffset": 17,
+      "endOffset": 18,
+      "toolTipText": "Tab",
+      "entryPart": "SOURCE"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
