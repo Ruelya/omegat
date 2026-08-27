@@ -1,0 +1,5 @@
+{
+  "java_test": "org.omegat.gui.editor.SegmentExportImportTest#testFlushExportedSegments",
+  "after_flush": "",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

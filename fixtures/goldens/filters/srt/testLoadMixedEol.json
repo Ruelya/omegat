@@ -1,0 +1,27 @@
+{
+  "id": "srt",
+  "fixture": "srt/file-SrtFilter-mixedEol.srt",
+  "java_test": "org.omegat.filters.SrtFilterTest#testLoadMixedEol",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "First title\r",
+    "Second title\r",
+    "Third title\r\nand again\r"
+  ],
+  "ids": [
+    "00:00:11,201 --> 00:01:00,005",
+    "00:01:00,407 --> 00:01:02,300",
+    "00:01:04,002 --> 00:01:05,200"
+  ],
+  "paths": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "1\r\r\n00:00:11,201 --> 00:01:00,005\r\r\nFirst title\r\r\n\r\n2\r\r\n00:01:00,407 --> 00:01:02,300\r\r\nSecond title\r\r\n\r\n3\r\r\n00:01:04,002 --> 00:01:05,200\r\r\nThird title\r\r\nand again\r\r\n"
+}
