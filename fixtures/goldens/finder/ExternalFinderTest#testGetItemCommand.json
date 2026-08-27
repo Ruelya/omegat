@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand",
+  "command": "/usr/bin/open|dict://{target}",
+  "keystroke": "ctrl shift K",
+  "keys": [
+    "org.omegat.externalfinder.ExternalFinderTest#testGetItemCommand"
+  ]
+}

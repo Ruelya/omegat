@@ -1,0 +1,18 @@
+{
+  "id": "xtag",
+  "fixture": "xtag/file-XtagFilter.xtg",
+  "java_test": "org.omegat.filters2.xtagqxp.XtagFilter#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "Hello world",
+    "Second <b1/>line"
+  ],
+  "ids": [
+    "",
+    ""
+  ],
+  "empty_write_text": "@$:Hello world\r\n#boxname Cover\r\nSkip this\r\n@$:Second <B>line"
+}

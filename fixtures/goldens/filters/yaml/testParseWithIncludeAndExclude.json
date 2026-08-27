@@ -1,0 +1,22 @@
+{
+  "id": "yaml",
+  "fixture": "yaml/sample1.yaml",
+  "java_test": "org.omegat.filters.YamlFilterTest#testParseWithIncludeAndExclude",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "exclude": "**/links/**",
+    "include": "footer/copyright"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "(c) 2025 Example Co."
+  ],
+  "ids": [
+    "footer/copyright_0"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "---\ntitle: \"Welcome\"\nmenu:\n  items:\n  - \"Home\"\n  - \"About\"\n  - \"Contact\"\nfooter:\n  copyright: \"(c) 2025 Example Co.\"\n  links:\n    help: \"/help\"\n    terms: \"/terms\"\nfeatures:\n  description: \"Enabled features\"\n  enabled: true\n  count: 3\n"
+}
