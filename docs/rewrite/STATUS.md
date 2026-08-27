@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **54145** lines; `apps/desktop/src`
-  TS/TSX/CSS **14523** lines (**~44%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **14523**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5586**
+- Rewrite Rust: `crates/**/*.rs` **56089** lines; `apps/desktop/src`
+  TS/TSX/CSS **15706** lines (**~45%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **15706**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **6311**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -56,9 +56,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-27 verification:** core selected suites **145 passed**, filters
+**2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **4 passed**, and desktop **18 files / 104
+**4 passed**, sidecar contract **4 passed**, and desktop **18 files / 108
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
@@ -217,7 +217,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**571** vs **963**, `EditorController` **767** vs **2365**. The headless
+**571** vs **963**, `EditorController` **801** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -265,21 +265,30 @@ relative caret or selection while marker spans are recalculated. The live
 Zustand product path persists a changed draft/note through `entry.set` before
 selection, history, or cyclic navigation; an optimistic-write failure leaves
 the original dirty document active instead of discarding it. Desktop
-verification is now **18 files / 104 tests**, including exact success and
+verification is now **18 files / 108 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
-headless controller paths. File/id-scoped alternatives remain independent;
-converting an alternative back to default removes that occurrence override and
-propagates the new default without overwriting other alternatives. Optimistic
+headless controller paths. Renderer writes require the full Java-shaped
+`EntryKey` (`file` / source text / `id` / `prev` / `next` / `path`), reject a
+stale index whose key changed, and preserve empty boundary context separately
+from null. Project TMX save/load resolves alternatives with the complete key;
+an exact product test keeps two alternatives with the same file, id, and source
+independent solely through prev/next/path. Converting an alternative back to
+default removes only that complete-key override and propagates the new default
+without overwriting other alternatives. Optimistic
 revision failures preserve the dirty `Document3`, expose base/ours/theirs in
 the active editor, and resolve through exact ours/theirs/manual product paths
 using the live remote revision.
 `MarkerController` caches per-entry generations, maps translation/source marks
 into `Document3` spans, and invalidates those spans after edits. It now also
 registers and unloads named plugin markers, rejects duplicate registrations,
-and invalidates/recomputes one marker independently before replacing stale
-document spans.
+and supports synchronous or asynchronous providers. Per-entry/per-marker
+request tokens are invalidated by edits, `remarkOneMarker`, and unload, so an
+expired callback cannot replace current ranges. `SpellCheckerMarker` calls the
+real sidecar `spell.check` path, maps its UTF-16 token offsets to translation
+spans, and learn/ignore each trigger one spell-only recomputation; exact tests
+discard both an older-document callback and a pre-remark callback.
 `FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.
