@@ -349,10 +349,11 @@ try {
   await client.evaluate(`(() => {
     window.__omegatE2ePointer = null;
     window.__omegatE2eImeEvents = [];
-    window.__omegatE2eMouseDrag = {
+    window.__omegatE2ePointerDrag = {
       sequence: [],
       trusted: [],
       buttons: [],
+      pointerTypes: [],
     };
     document.addEventListener("pointermove", (event) => {
       window.__omegatE2ePointer = {
@@ -371,36 +372,39 @@ try {
         });
       }, true);
     }
-    for (const type of ["mousedown", "mousemove", "mouseup"]) {
+    for (const type of ["pointerdown", "pointermove", "pointerup"]) {
       document.addEventListener(type, (event) => {
-        const drag = window.__omegatE2eMouseDrag;
+        const drag = window.__omegatE2ePointerDrag;
         const editor = Boolean(event.target?.closest?.(".editor-surface"));
-        if (type === "mousedown" && editor && event.button === 0) {
-          drag.sequence = ["mousedown"];
+        if (type === "pointerdown" && editor && event.button === 0) {
+          drag.sequence = ["pointerdown"];
           drag.trusted = [event.isTrusted];
           drag.buttons = [event.buttons];
+          drag.pointerTypes = [event.pointerType];
           return;
         }
         if (
-          type === "mousemove"
+          type === "pointermove"
           && drag.sequence.length === 1
           && editor
           && (event.buttons & 1) === 1
         ) {
-          drag.sequence.push("mousemove");
+          drag.sequence.push("pointermove");
           drag.trusted.push(event.isTrusted);
           drag.buttons.push(event.buttons);
+          drag.pointerTypes.push(event.pointerType);
           return;
         }
         if (
-          type === "mouseup"
+          type === "pointerup"
           && drag.sequence.length === 2
           && editor
           && event.button === 0
         ) {
-          drag.sequence.push("mouseup");
+          drag.sequence.push("pointerup");
           drag.trusted.push(event.isTrusted);
           drag.buttons.push(event.buttons);
+          drag.pointerTypes.push(event.pointerType);
         }
       }, true);
     }
@@ -499,7 +503,7 @@ try {
         text: selection?.textContent ?? null,
         caretAfter: selection?.nextElementSibling?.classList.contains("caret") ?? false,
         focusedProxy: document.activeElement?.classList.contains("ime-proxy") ?? false,
-        drag: window.__omegatE2eMouseDrag,
+        drag: window.__omegatE2ePointerDrag,
       };
     })()`);
     if (state.text === "alpha" && state.drag.sequence.length === 3) return state;
@@ -510,9 +514,10 @@ try {
     caretAfter: true,
     focusedProxy: true,
     drag: {
-      sequence: ["mousedown", "mousemove", "mouseup"],
+      sequence: ["pointerdown", "pointermove", "pointerup"],
       trusted: [true, true, true],
       buttons: [1, 1, 0],
+      pointerTypes: ["mouse", "mouse", "mouse"],
     },
   });
 
@@ -665,7 +670,8 @@ try {
       result: "passed",
       package: executable,
       pointerInput: "XTEST mousedown-mousemove-mouseup",
-      mouseSequence: selected.drag.sequence,
+      xtestCommands: ["mousedown", "mousemove", "mouseup"],
+      nativePointerSequence: selected.drag.sequence,
       nativeInput: "Chromium Input.imeSetComposition",
       selected: selected.text,
       translation: persisted.translation,
