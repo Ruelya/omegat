@@ -277,6 +277,58 @@ describe("app store", () => {
     });
   });
 
+  it("runs the file-scoped issue check after a successful leave commit", async () => {
+    const committed = {
+      ...sampleEntry,
+      translation: "Bonjour",
+      translated: true,
+      revision: 2,
+    };
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "entry.set") return { entry: committed, updated: [committed] };
+      if (method === "issues.list") {
+        return [
+          { kind: "tag", index: 0, file: "a.txt", message: "Tag Missing", severity: "error" },
+          { kind: "tag", index: 1, file: "b.txt", message: "Tag Order", severity: "warn" },
+        ];
+      }
+      return [];
+    });
+    useApp.setState({
+      props: {
+        root: "/p",
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        source_dir: "/p/source",
+        target_dir: "/p/target",
+        tm_dir: "/p/tm",
+        glossary_dir: "/p/glossary",
+        glossary_file: "/p/glossary/glossary.txt",
+        dictionary_dir: "/p/dictionary",
+        support_default_translations: true,
+        remove_tags: false,
+        has_repositories: false,
+        repositories: [],
+      },
+      prefs: defaultPreferences({ tag_validation: "warn" }),
+      entries: [{ ...sampleEntry }],
+      draft: "Bonjour",
+      document3: createDocument3(sampleEntry.source, "Bonjour"),
+    });
+
+    await useApp.getState().commitCurrent();
+
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "entry.set",
+      "issues.list",
+    ]);
+    expect(useApp.getState().issues).toEqual([
+      { kind: "tag", index: 0, file: "a.txt", message: "Tag Missing", severity: "error" },
+    ]);
+    expect(useApp.getState().windows.issues).toBe(true);
+  });
+
   it("keeps an uncommitted draft active when navigation persistence fails", async () => {
     rpc.mockImplementation(async (method: string) => {
       if (method === "entry.set") throw new Error("optimistic revision conflict");

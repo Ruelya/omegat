@@ -10,7 +10,7 @@ import {
   type MarkerInput,
   type MarkerProvider,
 } from "./mark/IMarker";
-import type { Mark } from "./mark/Mark";
+import type { EntryPart, Mark } from "./mark/Mark";
 import type { Document3State, StyledSpan } from "./Document3";
 import { NBSPMarker } from "./mark/NBSPMarker";
 import { ProtectedPartsMarker } from "./mark/ProtectedPartsMarker";
@@ -24,6 +24,33 @@ export type MarkerSnapshot = {
   generation: number;
   marks: Mark[];
 };
+
+export function tooltipTextsAt(
+  marks: readonly Mark[],
+  entryPart: EntryPart,
+  offset: number,
+): string[] {
+  return marks.flatMap((mark) =>
+    mark.entryPart === entryPart
+    && mark.toolTipText
+    && mark.startOffset <= offset
+    && mark.endOffset >= offset
+      ? [mark.toolTipText]
+      : []
+  );
+}
+
+export function javaTooltipAt(
+  marks: readonly Mark[],
+  entryPart: EntryPart,
+  offset: number,
+): string | null {
+  const text = tooltipTextsAt(marks, entryPart, offset)
+    .join("<br>")
+    .replaceAll("<suggestion>", "<b>")
+    .replaceAll("</suggestion>", "</b>");
+  return text ? `<html>${text}</html>` : null;
+}
 
 type CachedMarkers = MarkerSnapshot & {
   fingerprint: string;
@@ -292,6 +319,11 @@ export class MarkerController {
           marks: cached.marks.map((mark) => ({ ...mark })),
         }
       : null;
+  }
+
+  getToolTips(entryKey: string, entryPart: EntryPart, offset: number): string | null {
+    const cached = this.cache.get(entryKey);
+    return cached ? javaTooltipAt(cached.marks, entryPart, offset) : null;
   }
 
   /**

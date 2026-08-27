@@ -293,6 +293,36 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(area.getOmDocument().dirty).toBe(true);
   });
 
+  it("EditorTextArea3 hit-tests arbitrary protected parts and expands bidi selection", () => {
+    const area = new EditorTextArea3("source %s", "a\u200e%s\u200fb");
+    area.setProtectedRanges([{ start: 2, end: 4, tooltip: "printf %s" }]);
+
+    area.setCaretFromRenderedOffset(3, "before");
+    expect(area.getCaretPosition()).toBe(2);
+    area.setCaretFromRenderedOffset(3, "after");
+    expect(area.getCaretPosition()).toBe(4);
+    expect(area.getProtectedTooltipAt(3)).toBe("printf %s");
+
+    expect(area.selectProtectedPartAt(3)).toBe(true);
+    expect({
+      selected: area.getSelectedText(),
+      anchor: area.getSelectionAnchor(),
+      focus: area.getSelectionFocus(),
+    }).toEqual({
+      selected: "%s",
+      anchor: 1,
+      focus: 5,
+    });
+    expect(area.replaceSelection("X")).toBe(true);
+    expect(area.getText()).toBe("aXb");
+
+    const deletion = new EditorTextArea3("source %s", "a%s b");
+    deletion.setProtectedRanges([{ start: 1, end: 3 }]);
+    deletion.setCaretPosition(3);
+    expect(deletion.deleteBackward()).toBe(true);
+    expect(deletion.getText()).toBe("a b");
+  });
+
   it("EditorController inserts at its relative selection through Document3", () => {
     const controller = new EditorController();
     controller.loadProject([
@@ -605,6 +635,62 @@ describe("Document3 / IEditor / completer classes", () => {
       { key: "third", top: 285, bottom: 355 },
     ])).toBe(135);
     expect(controller.scrollAdjustmentForAnchor(anchor, 100, [])).toBe(0);
+  });
+
+  it("EditorController handles project/file drops and scopes leave issues to the old file", async () => {
+    const controller = new EditorController();
+    const actions: string[] = [];
+    expect(await controller.handleFileDrop(
+      { kind: "project", root: "/tmp/project" },
+      false,
+      {
+        openProject: (root) => actions.push(`open:${root}`),
+        importFiles: (paths) => actions.push(`import:${paths.join(",")}`),
+      },
+    )).toEqual({
+      accepted: true,
+      action: "open-project",
+      paths: ["/tmp/project"],
+    });
+    expect(await controller.handleFileDrop(
+      { kind: "files", paths: ["/tmp/a.txt", "/tmp/b.po"] },
+      true,
+      {
+        openProject: (root) => actions.push(`open:${root}`),
+        importFiles: (paths) => actions.push(`import:${paths.join(",")}`),
+      },
+    )).toEqual({
+      accepted: true,
+      action: "import-files",
+      paths: ["/tmp/a.txt", "/tmp/b.po"],
+    });
+    expect(await controller.handleFileDrop(
+      { kind: "files", paths: ["/tmp/rejected.txt"] },
+      false,
+      {
+        openProject: () => undefined,
+        importFiles: () => {
+          throw new Error("must not import without a project");
+        },
+      },
+    )).toEqual({
+      accepted: false,
+      action: "none",
+      paths: ["/tmp/rejected.txt"],
+    });
+    expect(actions).toEqual([
+      "open:/tmp/project",
+      "import:/tmp/a.txt,/tmp/b.po",
+    ]);
+
+    const current = { file: "a.txt", source: "source", translation: "target" };
+    const issues = [
+      { kind: "tag", index: 0, file: "a.txt", message: "missing", severity: "error" },
+      { kind: "tag", index: 3, file: "a.txt", message: "order", severity: "warn" },
+      { kind: "spell", index: 1, file: "b.txt", message: "word", severity: "info" },
+    ];
+    expect(controller.checkIssuesOnLeave(current, 0, issues)).toEqual(issues.slice(0, 2));
+    expect(controller.checkIssuesOnLeave(current, 0, issues, false)).toEqual([]);
   });
 
   it("EditorController synchronizes immutable renderer snapshots into stable segment pages", () => {

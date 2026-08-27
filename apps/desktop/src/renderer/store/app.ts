@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { createDocument3, replaceEditText, type Document3State } from "../editor/Document3";
+import { issuesForEntryOnLeave } from "../editor/EditorController";
 import { IEditor } from "../editor/IEditor";
 import {
   marksFromPrefs,
@@ -151,6 +152,7 @@ export type AppState = {
   selectSource: () => void;
   exportSelection: () => Promise<void>;
   importFiles: () => Promise<void>;
+  importPaths: (paths: string[]) => Promise<void>;
   clearRecent: () => void;
   exitApp: () => Promise<void>;
   restartApp: () => Promise<void>;
@@ -641,10 +643,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
   importFiles: async () => {
     const files = (await window.omegat?.pickFiles?.()) ?? [];
-    if (!files.length) return;
-    await rpc("project.import", { files });
+    await get().importPaths(files);
+  },
+  importPaths: async (files) => {
+    const paths = files.filter((path) => path.trim().length > 0);
+    if (!paths.length || !get().props) return;
+    await rpc("project.import", { files: paths });
     await get().reloadProject();
-    get().logLine(`imported ${files.length} file(s)`);
+    get().logLine(`imported ${paths.length} file(s)`);
   },
   clearRecent: () => {
     writeLocal("omegat.recent", "[]");
@@ -711,11 +717,30 @@ export const useApp = create<AppState>((set, get) => ({
       const updates = new Map(result.updated.map((entry) => [entry.index, entry]));
       updates.set(result.entry.index, result.entry);
       const next = entries.map((entry) => updates.get(entry.index) ?? entry);
+      let leaveIssues: IssueDto[] = [];
+      if (get().prefs?.tag_validation !== "none") {
+        try {
+          const allIssues = await rpc<IssueDto[]>("issues.list");
+          leaveIssues = issuesForEntryOnLeave(
+            result.entry,
+            Array.isArray(allIssues) ? allIssues : [],
+          );
+        } catch {
+          // Java runs leave checks asynchronously; a checker failure must not
+          // discard an otherwise successful editor commit.
+        }
+      }
       set({
         entries: next,
         document3: { ...get().document3, dirty: false },
         editConflict: null,
         error: null,
+        ...(leaveIssues.length > 0
+          ? {
+              issues: leaveIssues,
+              windows: { ...get().windows, issues: true },
+            }
+          : {}),
       });
       return result.entry;
     } catch (error) {

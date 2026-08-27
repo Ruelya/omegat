@@ -314,6 +314,11 @@ declare global {
       pickDir: () => Promise<string | null>;
       pickFile: () => Promise<string | null>;
       pickFiles?: () => Promise<string[] | null>;
+      pathForFile?: (file: File) => string;
+      inspectDrop?: (paths: string[]) => Promise<
+        | { kind: "project"; root: string }
+        | { kind: "files"; paths: string[] }
+      >;
       saveText?: (name: string, text: string) => Promise<string | null>;
       quit?: () => Promise<void>;
       relaunch?: () => Promise<void>;

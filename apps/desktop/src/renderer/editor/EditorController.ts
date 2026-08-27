@@ -9,11 +9,11 @@ import { makeFilter, type IEditorFilter } from "./IEditorFilter";
 import { MarkerController, type MarkerSnapshot } from "./MarkerController";
 import { buildActiveDocument } from "./SegmentBuilder";
 import { SegmentHistory } from "./SegmentHistory";
-import { EditorTextArea3 } from "./EditorTextArea3";
+import { EditorTextArea3, type ProtectedRange } from "./EditorTextArea3";
 import { TranslationUndoManager } from "./TranslationUndoManager";
 import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
 import type { Mark } from "./mark/Mark";
-import type { EntryKeyDto } from "../lib/types";
+import type { EntryKeyDto, IssueDto } from "../lib/types";
 
 export type LoadedEntry = {
   key?: EntryKeyDto;
@@ -59,6 +59,31 @@ export type EditorCaretPosition = {
   selectionEnd?: number;
 };
 
+export type EditorFileDrop =
+  | { kind: "project"; root: string }
+  | { kind: "files"; paths: string[] };
+
+export type EditorFileDropHandlers = {
+  openProject: (root: string) => void | Promise<void>;
+  importFiles: (paths: string[]) => void | Promise<void>;
+};
+
+export type EditorFileDropResult =
+  | { accepted: true; action: "open-project" | "import-files"; paths: string[] }
+  | { accepted: false; action: "none"; paths: string[] };
+
+export function issuesForEntryOnLeave(
+  entry: Pick<LoadedEntry, "file">,
+  issues: readonly IssueDto[],
+  enabled = true,
+): IssueDto[] {
+  return enabled
+    ? issues
+      .filter((issue) => issue.file === entry.file)
+      .map((issue) => ({ ...issue }))
+    : [];
+}
+
 type EditorUndoState = {
   translation: string;
   caret: EditorCaretPosition;
@@ -103,6 +128,7 @@ export class EditorController {
   sourceLangIsRTL = false;
   targetLangIsRTL = false;
   markerSnapshot: MarkerSnapshot | null = null;
+  leaveIssues: IssueDto[] = [];
   private entriesFilter: IEditorFilter = makeFilter("none");
   private visibleEntryIndices: number[] = [];
   private pageRadius = 25;
@@ -122,7 +148,7 @@ export class EditorController {
     this.document = replaceDocumentText(this.document, text);
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document);
+    this.bindDocumentToTextArea();
   }
 
   /** Java `replacePartOfText`: offsets are UTF-16 positions in the translation. */
@@ -139,7 +165,7 @@ export class EditorController {
     ) {
       throw new RangeError(`translation range ${start}..${end} outside 0..${length}`);
     }
-    this.textArea.setDocument(this.document, true);
+    this.bindDocumentToTextArea(true);
     this.textArea.setSelection(
       this.document.translationStart + start,
       this.document.translationStart + end,
@@ -150,7 +176,7 @@ export class EditorController {
     this.document = this.textArea.getOmDocument();
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document, true);
+    this.bindDocumentToTextArea(true);
     return true;
   }
 
@@ -160,7 +186,7 @@ export class EditorController {
       return;
     }
     this.adoptLiveDocument();
-    this.textArea.setDocument(this.document, true);
+    this.bindDocumentToTextArea(true);
     this.textArea.clampSelectionToTranslation();
     const before = this.currentUndoState();
     if (!this.textArea.replaceSelection(text)) return;
@@ -168,7 +194,7 @@ export class EditorController {
     this.document = this.textArea.getOmDocument();
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document, true);
+    this.bindDocumentToTextArea(true);
   }
 
   async commitAndDeactivate(): Promise<void> {
@@ -237,7 +263,7 @@ export class EditorController {
   setCaretPosition(position: EditorCaretPosition): void {
     const doc = this.document;
     if (!doc?.editMode) return;
-    this.textArea.setDocument(doc, true);
+    this.bindDocumentToTextArea(true);
     if (position.position !== undefined) {
       this.textArea.setCaretPosition(doc.translationStart + position.position);
     } else if (
@@ -255,13 +281,46 @@ export class EditorController {
   getSelectedText(): string {
     if (!this.document?.editMode) return "";
     if (this.textArea.getOmDocument() !== this.document) {
-      this.textArea.setDocument(this.document, true);
+      this.bindDocumentToTextArea(true);
     }
     return this.textArea.getSelectedText();
   }
 
   getCurrentEntry(): LoadedEntry | null {
     return this.entries[this.displayedEntryIndex] ?? null;
+  }
+
+  checkIssuesOnLeave(
+    entry: LoadedEntry,
+    _entryIndex: number,
+    issues: readonly IssueDto[],
+    enabled = true,
+  ): IssueDto[] {
+    this.leaveIssues = issuesForEntryOnLeave(entry, issues, enabled);
+    return this.leaveIssues.map((issue) => ({ ...issue }));
+  }
+
+  async handleFileDrop(
+    drop: EditorFileDrop,
+    projectLoaded: boolean,
+    handlers: EditorFileDropHandlers,
+  ): Promise<EditorFileDropResult> {
+    if (drop.kind === "project" && drop.root.trim()) {
+      await handlers.openProject(drop.root);
+      return {
+        accepted: true,
+        action: "open-project",
+        paths: [drop.root],
+      };
+    }
+    const paths = drop.kind === "files"
+      ? drop.paths.filter((path) => path.trim().length > 0)
+      : [];
+    if (!projectLoaded || paths.length === 0) {
+      return { accepted: false, action: "none", paths };
+    }
+    await handlers.importFiles(paths);
+    return { accepted: true, action: "import-files", paths };
   }
 
   setCurrentTranslationVariant(defaultTranslation: boolean): void {
@@ -344,7 +403,7 @@ export class EditorController {
       this.entryKey(safeIndex, active),
       this.markerInput(active, true),
     );
-    this.textArea.setDocument(document, true);
+    this.bindDocumentToTextArea(true);
     this.loadWindowAround(safeIndex);
     return this.getLoadedPage();
   }
@@ -408,7 +467,7 @@ export class EditorController {
     this.currentEntryNumber = index + 1;
     this.document = buildActiveDocument(this.currentEntryNumber, e.source, e.translation);
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document);
+    this.bindDocumentToTextArea();
     this.setCaretPosition(position);
     this.undo.undoStack = [];
     this.undo.redoStack = [];
@@ -689,7 +748,7 @@ export class EditorController {
     this.document = replaceDocumentText(this.document, state.translation);
     this.syncActiveEntry();
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document);
+    this.bindDocumentToTextArea();
     this.setCaretPosition(state.caret);
   }
 
@@ -720,7 +779,7 @@ export class EditorController {
     if (!deactivate || !this.document.editMode) return;
     this.document = commitDocument(this.document);
     this.refreshCurrentMarkers();
-    this.textArea.setDocument(this.document, true);
+    this.bindDocumentToTextArea(true);
     this.undo.undoStack = [];
     this.undo.redoStack = [];
   }
@@ -796,7 +855,7 @@ export class EditorController {
     const marked = this.markers.applyToDocument(key, this.document, input);
     this.document = marked.document;
     this.markerSnapshot = marked.snapshot;
-    this.textArea.setDocument(this.document, true);
+    this.bindDocumentToTextArea(true);
     return true;
   }
 
@@ -817,6 +876,22 @@ export class EditorController {
     );
     this.document = marked.document;
     this.markerSnapshot = marked.snapshot;
+  }
+
+  private bindDocumentToTextArea(preserveSelection = false): void {
+    if (!this.document) return;
+    this.textArea.setDocument(this.document, preserveSelection);
+    this.textArea.setProtectedRanges(
+      this.markerSnapshot?.marks.flatMap((mark): ProtectedRange[] =>
+        mark.entryPart === "TRANSLATION" && mark.painter === "protected"
+          ? [{
+              start: mark.startOffset,
+              end: mark.endOffset,
+              tooltip: mark.toolTipText,
+            }]
+          : []
+      ) ?? [],
+    );
   }
 
   /** Drop per-project document state (EditorProjectReloadLeakTest). */

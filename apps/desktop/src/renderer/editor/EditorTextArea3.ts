@@ -31,6 +31,12 @@ type CompositionSession = {
 
 export type SelectionDirection = "forward" | "backward" | "none";
 
+export type ProtectedRange = {
+  start: number;
+  end: number;
+  tooltip?: string;
+};
+
 export class EditorTextArea3 {
   doc: Document3State;
   private caretPosition = 0;
@@ -45,6 +51,7 @@ export class EditorTextArea3 {
   private focused = false;
   private composition: CompositionSession | null = null;
   private mouseSelectionActive = false;
+  private protectedRanges: ProtectedRange[] = [];
   private readonly popupConstructors: PopupMenuConstructor[] = [];
   private readonly wordListeners = new Set<(word: string | null, locale: string) => void>();
   private readonly focusListeners = new Set<(focused: boolean) => void>();
@@ -61,6 +68,7 @@ export class EditorTextArea3 {
     const focus = this.selectionFocus - this.doc.translationStart;
     this.composition = null;
     this.mouseSelectionActive = false;
+    this.protectedRanges = [];
     this.doc = doc;
     if (preserveSelection) {
       this.setSelection(
@@ -78,6 +86,34 @@ export class EditorTextArea3 {
 
   getText(): string {
     return this.doc.translation;
+  }
+
+  /**
+   * Install Java `ProtectedPart` intervals resolved by MarkerController.
+   * Positions are UTF-16 offsets relative to the active translation.
+   */
+  setProtectedRanges(ranges: readonly ProtectedRange[]): void {
+    this.protectedRanges = ranges
+      .filter(({ start, end }) =>
+        Number.isInteger(start)
+        && Number.isInteger(end)
+        && start >= 0
+        && end > start
+        && end <= this.doc.translation.length
+      )
+      .map((range) => ({ ...range }))
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+  }
+
+  getProtectedRanges(): ProtectedRange[] {
+    return this.protectedRanges.map((range) => ({ ...range }));
+  }
+
+  getProtectedTooltipAt(offset: number): string | null {
+    const tips = this.protectedRanges
+      .filter((range) => offset >= range.start && offset <= range.end)
+      .flatMap((range) => range.tooltip ? [range.tooltip] : []);
+    return tips.length ? tips.join("<br>") : null;
   }
 
   setText(text: string): void {
@@ -199,8 +235,12 @@ export class EditorTextArea3 {
   }
 
   replaceSelection(text: string): boolean {
-    const start = this.getSelectionStart();
-    const end = this.getSelectionEnd();
+    const relative = this.expandProtectedSelection(
+      this.getSelectionStart() - this.doc.translationStart,
+      this.getSelectionEnd() - this.doc.translationStart,
+    );
+    const start = this.doc.translationStart + relative.start;
+    const end = this.doc.translationStart + relative.end;
     const before = this.doc;
     this.doc = applyDocumentEdit(this.doc, start, end - start, text);
     if (this.doc === before) return false;
@@ -287,8 +327,15 @@ export class EditorTextArea3 {
   beginComposition(): boolean {
     this.clampSelectionToTranslation();
     if (this.composition || !this.isInActiveTranslation(this.caretPosition)) return false;
-    const start = this.getSelectionStart();
-    const end = this.getSelectionEnd();
+    const relative = this.expandProtectedSelection(
+      this.getSelectionStart() - this.doc.translationStart,
+      this.getSelectionEnd() - this.doc.translationStart,
+    );
+    const start = this.doc.translationStart + relative.start;
+    const end = this.doc.translationStart + relative.end;
+    this.selectionAnchor = start;
+    this.selectionFocus = end;
+    this.caretPosition = end;
     this.composition = {
       snapshot: this.doc,
       start,
@@ -346,6 +393,19 @@ export class EditorTextArea3 {
   deleteBackward(): boolean {
     if (this.getSelectionStart() !== this.getSelectionEnd()) return this.replaceSelection("");
     const relative = this.caretPosition - this.doc.translationStart;
+    const protectedPart = this.protectedRanges.find(
+      ({ start, end }) => start < relative && relative <= end,
+    );
+    if (protectedPart) {
+      this.doc = applyDocumentEdit(
+        this.doc,
+        this.doc.translationStart + protectedPart.start,
+        protectedPart.end - protectedPart.start,
+        "",
+      );
+      this.setCaretPosition(this.doc.translationStart + protectedPart.start);
+      return true;
+    }
     const next = deleteBackwardAtomic(this.doc.translation, relative);
     if (next.text === this.doc.translation) return false;
     const removed = this.doc.translation.length - next.text.length;
@@ -357,6 +417,19 @@ export class EditorTextArea3 {
   deleteForward(): boolean {
     if (this.getSelectionStart() !== this.getSelectionEnd()) return this.replaceSelection("");
     const relative = this.caretPosition - this.doc.translationStart;
+    const protectedPart = this.protectedRanges.find(
+      ({ start, end }) => start <= relative && relative < end,
+    );
+    if (protectedPart) {
+      this.doc = applyDocumentEdit(
+        this.doc,
+        this.doc.translationStart + protectedPart.start,
+        protectedPart.end - protectedPart.start,
+        "",
+      );
+      this.setCaretPosition(this.doc.translationStart + protectedPart.start);
+      return true;
+    }
     const next = deleteForwardAtomic(this.doc.translation, relative);
     if (next.text === this.doc.translation) return false;
     const removed = this.doc.translation.length - next.text.length;
@@ -366,9 +439,11 @@ export class EditorTextArea3 {
   }
 
   deleteSelectionAtomic(): boolean {
-    const start = this.getSelectionStart() - this.doc.translationStart;
-    const end = this.getSelectionEnd() - this.doc.translationStart;
-    const next = deleteRangeAtomic(this.doc.translation, start, end);
+    const range = this.expandProtectedSelection(
+      this.getSelectionStart() - this.doc.translationStart,
+      this.getSelectionEnd() - this.doc.translationStart,
+    );
+    const next = deleteRangeAtomic(this.doc.translation, range.start, range.end);
     if (next.text === this.doc.translation) return false;
     const expandedLength = this.doc.translation.length - next.text.length;
     this.doc = applyDocumentEdit(
@@ -383,7 +458,16 @@ export class EditorTextArea3 {
 
   moveCaret(direction: -1 | 1, extendSelection = false): number {
     const relative = this.caretPosition - this.doc.translationStart;
-    const next = this.doc.translationStart + moveCaret(this.doc.translation, relative, direction);
+    const protectedPart = this.protectedRanges.find(({ start, end }) =>
+      direction < 0
+        ? start < relative && relative <= end
+        : start <= relative && relative < end
+    );
+    const next = this.doc.translationStart + (
+      protectedPart
+        ? direction < 0 ? protectedPart.start : protectedPart.end
+        : moveCaret(this.doc.translation, relative, direction)
+    );
     if (extendSelection) {
       this.caretPosition = next;
       this.selectionFocus = next;
@@ -447,7 +531,23 @@ export class EditorTextArea3 {
     return this.deleteSelectionAtomic() ? selected : null;
   }
 
+  selectProtectedPartAt(position: number): boolean {
+    if (!this.isInActiveTranslation(position)) return false;
+    const relative = position - this.doc.translationStart;
+    const range = this.protectedRanges.find(
+      ({ start, end }) => relative >= start && relative < end,
+    );
+    if (range) {
+      const start = this.expandDirectionStart(range.start);
+      const end = this.expandDirectionEnd(range.end);
+      this.setSelection(this.doc.translationStart + start, this.doc.translationStart + end);
+      return true;
+    }
+    return false;
+  }
+
   selectTagAt(position: number): boolean {
+    if (this.selectProtectedPartAt(position)) return true;
     if (!this.isInActiveTranslation(position)) return false;
     const relative = position - this.doc.translationStart;
     const tag = /<\/?[A-Za-z][\w:-]*\d*\/?>/g;
@@ -455,7 +555,10 @@ export class EditorTextArea3 {
       const start = match.index ?? 0;
       const end = start + match[0].length;
       if (relative >= start && relative < end) {
-        this.setSelection(this.doc.translationStart + start, this.doc.translationStart + end);
+        this.setSelection(
+          this.doc.translationStart + this.expandDirectionStart(start),
+          this.doc.translationStart + this.expandDirectionEnd(end),
+        );
         return true;
       }
     }
@@ -548,9 +651,47 @@ export class EditorTextArea3 {
     }
     const relative = next - this.doc.translationStart;
     if (relative >= 0 && relative <= this.doc.translation.length) {
-      next = this.doc.translationStart + snapCaret(this.doc.translation, relative, bias);
+      const protectedPart = this.protectedRanges.find(
+        ({ start, end }) => start < relative && relative < end,
+      );
+      const protectedOffset = protectedPart
+        ? bias === "before" ? protectedPart.start : protectedPart.end
+        : relative;
+      next = this.doc.translationStart + snapCaret(
+        this.doc.translation,
+        protectedOffset,
+        bias,
+      );
     }
     return next;
+  }
+
+  private expandProtectedSelection(start: number, end: number): { start: number; end: number } {
+    let expandedStart = Math.max(0, Math.min(start, end));
+    let expandedEnd = Math.min(this.doc.translation.length, Math.max(start, end));
+    for (const range of this.protectedRanges) {
+      if (expandedStart < range.end && expandedEnd > range.start) {
+        expandedStart = Math.min(expandedStart, range.start);
+        expandedEnd = Math.max(expandedEnd, range.end);
+      }
+    }
+    return { start: expandedStart, end: expandedEnd };
+  }
+
+  private expandDirectionStart(start: number): number {
+    for (let count = 0; count < 2 && start > 0; count += 1) {
+      if (!isDirectionChar(this.doc.translation[start - 1]!)) break;
+      start -= 1;
+    }
+    return start;
+  }
+
+  private expandDirectionEnd(end: number): number {
+    for (let count = 0; count < 2 && end < this.doc.translation.length; count += 1) {
+      if (!isDirectionChar(this.doc.translation[end]!)) break;
+      end += 1;
+    }
+    return end;
   }
 
   private notifyWordAtCaret(): void {
@@ -568,4 +709,12 @@ export class EditorTextArea3 {
     this.currentWordLocale = locale;
     for (const listener of this.wordListeners) listener(word, locale);
   }
+}
+
+function isDirectionChar(char: string): boolean {
+  return char === "\u200e"
+    || char === "\u200f"
+    || char === "\u202a"
+    || char === "\u202b"
+    || char === "\u202c";
 }

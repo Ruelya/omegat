@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import {
   createApplicationLifecycle,
@@ -45,6 +45,26 @@ function manualPath(locale = "en"): string {
   if (existsSync(bundled)) return bundled;
   if (existsSync(javaHtml)) return javaHtml;
   return dev;
+}
+
+function inspectDroppedPaths(paths: unknown) {
+  const safe = Array.isArray(paths)
+    ? paths.filter((path): path is string => typeof path === "string" && path.trim().length > 0)
+    : [];
+  const first = safe[0];
+  if (!first) return { kind: "files" as const, paths: [] };
+  let candidate = basename(first) === "omegat.project" ? dirname(first) : first;
+  try {
+    if (
+      statSync(candidate).isDirectory()
+      && existsSync(join(candidate, "omegat.project"))
+    ) {
+      return { kind: "project" as const, root: candidate };
+    }
+  } catch {
+    // The renderer will reject inaccessible paths through project.import.
+  }
+  return { kind: "files" as const, paths: safe };
 }
 
 function startSidecar() {
@@ -142,6 +162,7 @@ app.whenReady().then(() => {
     const r = await dialog.showOpenDialog({ properties: ["openFile", "multiSelections"] });
     return r.canceled ? null : r.filePaths;
   });
+  ipcMain.handle("inspect-drop", (_e, paths: unknown) => inspectDroppedPaths(paths));
   ipcMain.handle("save-text", async (_e, name: string, text: string) => {
     const r = await dialog.showSaveDialog({ defaultPath: name });
     if (r.canceled || !r.filePath) return null;

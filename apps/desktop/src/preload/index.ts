@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("omegat", {
   rpc: (method: string, params?: unknown) => ipcRenderer.invoke("rpc", method, params ?? {}),
@@ -11,6 +11,12 @@ contextBridge.exposeInMainWorld("omegat", {
   pickDir: () => ipcRenderer.invoke("pick-dir") as Promise<string | null>,
   pickFile: () => ipcRenderer.invoke("pick-file") as Promise<string | null>,
   pickFiles: () => ipcRenderer.invoke("pick-files") as Promise<string[] | null>,
+  pathForFile: (file: File) => webUtils.getPathForFile(file),
+  inspectDrop: (paths: string[]) =>
+    ipcRenderer.invoke("inspect-drop", paths) as Promise<
+      | { kind: "project"; root: string }
+      | { kind: "files"; paths: string[] }
+    >,
   saveText: (name: string, text: string) => ipcRenderer.invoke("save-text", name, text) as Promise<string | null>,
   quit: () => ipcRenderer.invoke("app-quit") as Promise<void>,
   relaunch: () => ipcRenderer.invoke("app-relaunch") as Promise<void>,

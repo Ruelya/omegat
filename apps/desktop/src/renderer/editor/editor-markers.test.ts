@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createDocument3 } from "./Document3";
-import { MarkerController } from "./MarkerController";
+import { javaTooltipAt, MarkerController } from "./MarkerController";
 import { AltTranslationsMarker } from "./mark/AltTranslationsMarker";
 import { BidiMarkers } from "./mark/BidiMarkers";
 import { NBSPMarker } from "./mark/NBSPMarker";
@@ -267,6 +267,36 @@ describe("editor markers vs Java-exported goldens", () => {
     expect(() => ctrl.registerPluginMarker("NBSPMarker", plugin)).toThrow(
       "marker already registered: NBSPMarker",
     );
+  });
+
+  it("returns Java-shaped overlapping marker tooltips at a UTF-16 hit", () => {
+    const marks: Mark[] = [
+      {
+        startOffset: 1,
+        endOffset: 4,
+        painter: "first",
+        toolTipText: "plain",
+        entryPart: "TRANSLATION",
+      },
+      {
+        startOffset: 3,
+        endOffset: 6,
+        painter: "second",
+        toolTipText: "<suggestion>replacement</suggestion>",
+        entryPart: "TRANSLATION",
+      },
+      {
+        startOffset: 3,
+        endOffset: 6,
+        painter: "source-only",
+        toolTipText: "source",
+        entryPart: "SOURCE",
+      },
+    ];
+    expect(javaTooltipAt(marks, "TRANSLATION", 3)).toBe(
+      "<html>plain<br><b>replacement</b></html>",
+    );
+    expect(javaTooltipAt(marks, "TRANSLATION", 7)).toBeNull();
   });
 
   it("discards an asynchronous marker callback from an older translation generation", async () => {

@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type DragEvent,
   type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -25,6 +26,7 @@ import {
   type ScrollAnchorCandidate,
 } from "./EditorController";
 import { bindMarkerRemark } from "./IEditor";
+import { tooltipTextsAt } from "./MarkerController";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
 import type { EntryPart, Mark } from "./mark/Mark";
@@ -154,18 +156,27 @@ function renderRichText(
     return points.slice(0, -1).flatMap((sliceStart, sliceIndex) => {
       const sliceEnd = points[sliceIndex + 1]!;
       const raw = tok.value.slice(sliceStart, sliceEnd);
-      const markerClasses = relevant
-        .filter((mark) => mark.startOffset < start + sliceEnd && mark.endOffset > start + sliceStart)
+      const sliceMarks = relevant.filter((mark) =>
+        mark.startOffset < start + sliceEnd
+        && mark.endOffset > start + sliceStart
+      );
+      const markerClasses = sliceMarks
         .map((mark) =>
           mark.painter === "spell"
             ? "mark-spell"
             : `product-marker-${mark.painter.replace(/[^a-z0-9_-]/gi, "-")}`,
         );
+      const markerTooltip = tooltipTextsAt(
+        sliceMarks,
+        entryPart,
+        start + sliceStart,
+      ).join("\n");
       return decorateText(raw, marks, terms).map((span, decoratedIndex) => (
         <span
           key={`${keyPrefix}-text-${i}-${sliceIndex}-${decoratedIndex}`}
           className={[...span.cls, ...markerClasses].join(" ")}
           data-offset={start + sliceStart}
+          title={markerTooltip || undefined}
         >
           {span.text}
         </span>
@@ -205,6 +216,9 @@ export function SegmentEditor() {
   const setDraft = useApp((s) => s.setDraft);
   const commit = useApp((s) => s.commit);
   const select = useApp((s) => s.select);
+  const open = useApp((s) => s.open);
+  const importPaths = useApp((s) => s.importPaths);
+  const projectLoaded = useApp((s) => Boolean(s.props));
   const completer = useApp((s) => s.completer);
   const queryCompleter = useApp((s) => s.queryCompleter);
   const marks = useApp((s) => s.marks);
@@ -231,6 +245,7 @@ export function SegmentEditor() {
   const suppressClick = useRef(false);
   editorController.setPageRadius(pageRadius);
   const loadedPage = editorController.synchronizeRendererProject(entries, activeIndex, document3);
+  const activeLoadedEntry = loadedPage.find((entry) => entry.active);
   const loadedPageSignature = loadedPage.map(({ key }) => key).join("\u0000");
 
   useEffect(() => {
@@ -336,6 +351,17 @@ export function SegmentEditor() {
   function prepareInteraction(): EditorTextArea3 {
     const area = interaction.current;
     area.setDocument(document3);
+    area.setProtectedRanges(
+      activeLoadedEntry?.marks.flatMap((mark) =>
+        mark.entryPart === "TRANSLATION" && mark.painter === "protected"
+          ? [{
+              start: mark.startOffset,
+              end: mark.endOffset,
+              tooltip: mark.toolTipText,
+            }]
+          : []
+      ) ?? [],
+    );
     area.setSelection(
       document3.translationStart + selection.anchor,
       document3.translationStart + selection.focus,
@@ -519,14 +545,26 @@ export function SegmentEditor() {
   }
 
   function onPointerMove(ev: PointerEvent<HTMLDivElement>) {
+    const root = surface.current;
+    const hit = root
+      ? renderedCaretFromPoint(root, ev.clientX, ev.clientY)
+      : null;
+    const tooltip = hit && activeLoadedEntry
+      ? editorController.markers.getToolTips(
+          activeLoadedEntry.key,
+          "TRANSLATION",
+          hit.offset,
+        )
+      : null;
+    if (tooltip) ev.currentTarget.dataset.markerTooltip = tooltip;
+    else delete ev.currentTarget.dataset.markerTooltip;
+
     if (dragPointer.current !== ev.pointerId || !interaction.current.isMouseSelecting()) return;
     if ((ev.buttons & 1) === 0) {
       finishPointerSelection(ev);
       return;
     }
-    const root = surface.current;
     if (!root) return;
-    const hit = renderedCaretFromPoint(root, ev.clientX, ev.clientY);
     if (!hit) return;
     ev.preventDefault();
     if (interaction.current.updateMouseSelection(hit.offset, hit.bias)) {
@@ -557,12 +595,41 @@ export function SegmentEditor() {
   }
 
   function onDoubleClick(ev: MouseEvent<HTMLDivElement>) {
-    const target = (ev.target as HTMLElement).closest("[data-tag]") as HTMLElement | null;
-    if (!target?.dataset.tag) return;
-    const offset = Number(target.dataset.offset);
-    if (!Number.isFinite(offset)) return;
+    const root = surface.current;
+    if (!root) return;
+    const hit = renderedCaretFromPoint(root, ev.clientX, ev.clientY);
+    if (!hit) return;
     const area = prepareInteraction();
-    if (area.selectTagAt(document3.translationStart + offset)) readSelection(area);
+    if (area.selectProtectedPartAt(document3.translationStart + hit.offset)) {
+      ev.preventDefault();
+      readSelection(area);
+    }
+  }
+
+  function onFileDragOver(ev: DragEvent<HTMLDivElement>) {
+    if (![...ev.dataTransfer.types].includes("Files")) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = projectLoaded ? "copy" : "link";
+  }
+
+  async function onFileDrop(ev: DragEvent<HTMLDivElement>) {
+    if (![...ev.dataTransfer.types].includes("Files")) return;
+    ev.preventDefault();
+    const paths = [...ev.dataTransfer.files]
+      .map((file) => window.omegat.pathForFile?.(file) ?? "")
+      .filter(Boolean);
+    const drop = window.omegat.inspectDrop
+      ? await window.omegat.inspectDrop(paths)
+      : { kind: "files" as const, paths };
+    const result = await editorController.handleFileDrop(drop, projectLoaded, {
+      openProject: open,
+      importFiles: importPaths,
+    });
+    useApp.getState().logLine(
+      result.accepted
+        ? `editor drop ${result.action}: ${result.paths.join(", ")}`
+        : "editor drop rejected",
+    );
   }
 
   function onCopy(ev: ClipboardEvent<HTMLDivElement>) {
@@ -632,6 +699,8 @@ export function SegmentEditor() {
       data-first-loaded={editorController.getLoadedRange().first}
       data-last-loaded={editorController.getLoadedRange().last}
       onScroll={onPageScroll}
+      onDragOver={onFileDragOver}
+      onDrop={(event) => void onFileDrop(event)}
     >
       {editConflict?.index === activeIndex && (
         <div className="hit" role="alert" data-editor-conflict>
