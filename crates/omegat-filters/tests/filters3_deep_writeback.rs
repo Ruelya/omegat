@@ -182,3 +182,94 @@ fn opendoc_deep_writeback_distinguishes_content_meta_and_intact_styles() {
         vec!["Metadata title"]
     );
 }
+
+#[test]
+fn opendoc_attributes_and_out_of_turn_notes_write_by_unique_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("attributes-and-notes.odt");
+    let output = temp.path().join("translated-attributes-and-notes.odt");
+    let content = r#"<office:document-content xmlns:office="urn:office" xmlns:text="urn:text" xmlns:xlink="urn:xlink"><office:body><office:text><text:p><text:alphabetical-index-mark text:string-value="Index" text:key1="First" text:key2="Second"/></text:p><text:p><text:a xlink:href="Original link"/></text:p><text:p><text:note><text:note-body><text:p>Original note</text:p></text:note-body></text:note></text:p></office:text></office:body></office:document-content>"#;
+    write_zip(&source, &[("content.xml", content)]);
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("opendoc").unwrap();
+    let mut context = FilterContext::default();
+    context
+        .options
+        .insert("translateLinks".into(), "true".into());
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Index"),
+            ("content.xml#1", "First"),
+            ("content.xml#2", "Second"),
+            ("content.xml#3", "Original link"),
+            ("content.xml#4", "Original note"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("content.xml#4".into(), "Translated note".into()),
+        ("content.xml#2".into(), "Translated second".into()),
+        ("content.xml#0".into(), "Translated & \"index\"".into()),
+        ("content.xml#3".into(), "Translated link".into()),
+        ("content.xml#1".into(), "Translated first".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Translated & \"index\""),
+            ("content.xml#1", "Translated first"),
+            ("content.xml#2", "Translated second"),
+            ("content.xml#3", "Translated link"),
+            ("content.xml#4", "Translated note"),
+        ]
+    );
+
+    let rewritten = read_part(&output, "content.xml");
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let index = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "alphabetical-index-mark")
+        .unwrap();
+    assert_eq!(
+        index.attribute(("urn:text", "string-value")),
+        Some("Translated & \"index\"")
+    );
+    assert_eq!(
+        index.attribute(("urn:text", "key1")),
+        Some("Translated first")
+    );
+    assert_eq!(
+        index.attribute(("urn:text", "key2")),
+        Some("Translated second")
+    );
+    let link = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "a")
+        .unwrap();
+    assert_eq!(
+        link.attribute(("urn:xlink", "href")),
+        Some("Translated link")
+    );
+    let note_text = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "note-body")
+        .unwrap()
+        .text();
+    assert_eq!(note_text, Some("Translated note"));
+}
