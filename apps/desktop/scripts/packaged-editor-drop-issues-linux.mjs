@@ -355,7 +355,7 @@ try {
   });
 
   const leaveIssue = await waitFor("file-scoped leave issue window", async () => {
-    const state = await client.evaluate(`(() => {
+    const state = await client.evaluate(`(async () => {
       const issue = document.querySelector('[data-issue-kind="tag"]');
       return {
         activeSource: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
@@ -363,18 +363,37 @@ try {
         issueFile: issue?.dataset.issueFile ?? null,
         issueText: issue?.textContent?.trim() ?? null,
         modal: Boolean(issue?.closest(".modal")),
+        persisted: await window.omegat.rpc("entry.get", { index: 0 }),
+        allIssues: await window.omegat.rpc("issues.list", {}),
       };
-    })()`);
+    })()`, true);
     if (state.modal && state.activeSource === "Imported by packaged drag.") return state;
     throw new Error(JSON.stringify(state));
   });
-  assert.deepEqual(leaveIssue, {
+  assert.deepEqual({
+    activeSource: leaveIssue.activeSource,
+    issueIndex: leaveIssue.issueIndex,
+    issueFile: leaveIssue.issueFile,
+    issueText: leaveIssue.issueText,
+    modal: leaveIssue.modal,
+  }, {
     activeSource: "Imported by packaged drag.",
     issueIndex: 0,
     issueFile: "a-issue.txt",
     issueText: "tag Tag MISSING",
     modal: true,
   });
+  assert.equal(leaveIssue.persisted.translation, "Traduction sans balise.");
+  assert.deepEqual(
+    leaveIssue.allIssues.find(({ kind }) => kind === "tag"),
+    {
+      kind: "tag",
+      index: 0,
+      file: "a-issue.txt",
+      message: "Tag MISSING",
+      severity: "error",
+    },
+  );
 
   assert.equal(
     await client.evaluate(
