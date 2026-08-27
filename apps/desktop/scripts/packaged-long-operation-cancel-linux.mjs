@@ -1138,6 +1138,7 @@ try {
       window.__omegatExternalChangeTrace.push(event);
     });
     window.__omegatExternalRefreshProgress = null;
+    window.__omegatExternalRefreshCancelled = null;
     window.__omegatExternalRefreshCancelObserver?.disconnect();
     const app = document.querySelector(".app");
     window.__omegatExternalRefreshCancelObserver = new MutationObserver(() => {
@@ -1154,7 +1155,38 @@ try {
           stage: app.dataset.operationStage,
           status: document.querySelector("[data-operation-status]")?.textContent ?? "",
         };
-        button.click();
+      }
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "cancelled"
+        && !window.__omegatExternalRefreshCancelled
+      ) {
+        const segment = document.querySelector(".editor-segment.is-active");
+        const surface = segment?.querySelector(".editor-surface");
+        const caret = surface?.querySelector(":scope > .caret");
+        const following = caret
+          ? [...surface.children]
+              .slice([...surface.children].indexOf(caret) + 1)
+              .find((child) => child.hasAttribute("data-offset"))
+          : null;
+        window.__omegatExternalRefreshCancelled = {
+          operation: app.dataset.operation,
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          editorStatus: [...document.querySelectorAll("footer.status span")]
+            .map((node) => node.textContent ?? ""),
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+          editor: {
+            entry: Number(segment?.getAttribute("data-entry") ?? -1),
+            key: segment?.getAttribute("data-entry-key") ?? "",
+            source: segment?.querySelector(".src")?.textContent ?? "",
+            translation: surface?.textContent ?? "",
+            caret: following
+              ? Number(following.getAttribute("data-offset"))
+              : (surface?.textContent.length ?? -1),
+          },
+        };
       }
     });
     window.__omegatExternalRefreshCancelObserver.observe(app, {
@@ -1166,24 +1198,35 @@ try {
   })()`);
   const reorderPath = join(sourceDir, "0999-reorder.yaml");
   await writeFile(reorderPath, 'reorder: "First external candidate"\n', "utf8");
+  await waitFor("first external refresh progress before queued fingerprint", async () => {
+    const state = await client.evaluate(`(() => ({
+      progress: window.__omegatExternalRefreshProgress,
+      cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+    }))()`);
+    return state.progress?.stage === "project.external-refresh.sources"
+      && state.cancelVisible
+      ? state
+      : undefined;
+  });
+  await writeFile(reorderPath, 'reorder: "Committed external candidate"\n', "utf8");
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="cancel"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible external refresh cancel action disappeared before the second fingerprint",
+  );
 
   const externalRefreshCancelled = await waitFor(
     "protocol-confirmed external refresh cancellation",
     async () => {
-      const state = await client.evaluate(`(() => {
-        const app = document.querySelector(".app");
-        return {
-          operation: app?.dataset.operation ?? "",
-          phase: app?.dataset.operationPhase ?? "",
-          stage: app?.dataset.operationStage ?? "",
-          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
-          editorStatus: [...document.querySelectorAll("footer.status span")]
-            .map((node) => node.textContent ?? ""),
-          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
-        };
-      })()`);
+      const state = await client.evaluate(
+        `window.__omegatExternalRefreshCancelled`,
+      );
       if (
-        state.operation === "externalRefresh"
+        state?.operation === "externalRefresh"
         && state.phase === "cancelled"
         && state.stage === "project.external-refresh.sources"
         && state.operationStatus
@@ -1197,22 +1240,12 @@ try {
     },
   );
   const externalCancelPost = await client.evaluate(`(async () => {
-    window.__omegatExternalRefreshCancelObserver?.disconnect();
-    const stats = await window.omegat.rpc("stats.get", {});
-    const wanted = await window.omegat.rpc("entry.get", {
-      index: ${duplicateSetup.wanted.index},
-    });
-    const decoy = await window.omegat.rpc("entry.get", {
-      index: ${duplicateSetup.decoy.index},
-    });
     return {
       visibleProgress: window.__omegatExternalRefreshProgress,
+      cancelled: window.__omegatExternalRefreshCancelled,
       rpcTrace: window.__omegatRpcOperationTrace,
       domTrace: window.__omegatDomOperationTrace,
       externalTrace: window.__omegatExternalChangeTrace,
-      entryCount: stats.segments,
-      wanted,
-      decoy,
     };
   })()`, true);
   const externalCancelEvents = externalCancelPost.rpcTrace.filter(
@@ -1236,34 +1269,17 @@ try {
       "externalRefresh|cancelling|project.external-refresh.sources|externalRefresh: cancelling (project.external-refresh.sources)",
     ),
   );
-  const externalCancelRequests = [
-    ...new Set(
-      externalCancelPost.rpcTrace
-        .filter((event) => event.method === "project.external-refresh")
-        .map((event) => event.requestId),
-    ),
-  ];
-  assert.equal(
-    externalCancelRequests.length,
-    1,
-    JSON.stringify({
-      externalCancelRequests,
-      externalTrace: externalCancelPost.externalTrace,
-    }),
+  assert.deepEqual(
+    externalRefreshCancelled.editor,
+    duplicateBeforeRefresh,
+    "cancelled fingerprint batch published a partial editor list",
   );
-  assert.equal(externalCancelPost.entryCount, SOURCE_FILES);
-  assert.deepEqual(await editorState(client), duplicateBeforeRefresh);
-  assert.deepEqual(externalCancelPost.wanted.key, duplicateSetup.wanted.key);
-  assert.equal(externalCancelPost.wanted.translation, duplicateSetup.translation);
-  assert.equal(externalCancelPost.decoy.translation, "");
-
-  await client.evaluate(`(() => {
-    window.__omegatRpcOperationTrace = [];
-    window.__omegatDomOperationTrace = [];
-  })()`);
-  await writeFile(reorderPath, 'reorder: "Committed external candidate"\n', "utf8");
+  assert(
+    externalRefreshCancelled.editorStatus.includes(`0/${SOURCE_FILES}`),
+    JSON.stringify(externalRefreshCancelled.editorStatus),
+  );
   const externalRefreshSucceeded = await waitFor(
-    "successful complete-key external refresh",
+    "queued distinct fingerprint refresh after cancellation",
     async () => {
       const state = await editorState(client);
       const operation = await client.evaluate(`(() => {
@@ -1296,6 +1312,7 @@ try {
     });
     return {
       events: window.__omegatExternalChangeTrace,
+      rpcTrace: window.__omegatRpcOperationTrace,
       entryCount: stats.segments,
       wanted,
       decoy,
@@ -1305,6 +1322,34 @@ try {
   assert.deepEqual(externalSuccessPost.wanted.key, duplicateSetup.wanted.key);
   assert.equal(externalSuccessPost.wanted.translation, duplicateSetup.translation);
   assert.equal(externalSuccessPost.decoy.translation, "");
+  const externalRefreshRequests = [
+    ...new Set(
+      externalSuccessPost.rpcTrace
+        .filter((event) => event.method === "project.external-refresh")
+        .map((event) => event.requestId),
+    ),
+  ];
+  assert.equal(
+    externalRefreshRequests.length,
+    2,
+    JSON.stringify({
+      externalRefreshRequests,
+      externalTrace: externalSuccessPost.events,
+    }),
+  );
+  const firstTerminalIndex = externalSuccessPost.rpcTrace.findIndex((event) =>
+    event.requestId === externalRefreshRequests[0]
+    && event.phase === "cancelled"
+    && event.errorCode === -32800
+  );
+  const secondStartedIndex = externalSuccessPost.rpcTrace.findIndex((event) =>
+    event.requestId === externalRefreshRequests[1]
+    && event.phase === "started"
+  );
+  assert(
+    firstTerminalIndex >= 0 && secondStartedIndex > firstTerminalIndex,
+    JSON.stringify(externalSuccessPost.rpcTrace),
+  );
   assert.deepEqual(
     new Set(
       externalSuccessPost.events.flatMap((event) => event.sources),
@@ -1736,7 +1781,8 @@ try {
       },
       cancelled: externalRefreshCancelled,
       cancelTrace: externalCancelTrace,
-      rollbackEntryCount: externalCancelPost.entryCount,
+      rollbackEntryCount: SOURCE_FILES,
+      serializedRequests: externalRefreshRequests,
       succeeded: externalRefreshSucceeded,
       committedEntryCount: externalSuccessPost.entryCount,
       sources: [...new Set(
