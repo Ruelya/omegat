@@ -38,7 +38,9 @@ pub use mapping::{
 pub use passphrase_dialog::Passphrase;
 pub use prepared_file_info::PreparedFileInfo;
 pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
-pub use rebase_and_commit::{rebase_all, rebase_project, resolve, resolve_for_key};
+pub use rebase_and_commit::{
+    rebase_all, rebase_project, resolve, resolve_for_key, resolve_for_key_cancellable,
+};
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
     commit_after_version, commit_project_files, commit_project_files_cancellable, get_version,
@@ -325,6 +327,273 @@ mod tests {
                 .translation,
             "decoy stable"
         );
+    }
+
+    #[test]
+    fn cancellable_same_source_resolutions_rollback_and_advance_one_complete_key() {
+        fn key(file: &str, id: &str, path: &str) -> EntryKeyDto {
+            EntryKeyDto {
+                file: file.into(),
+                source_text: "Repeated source".into(),
+                id: Some(id.into()),
+                prev: Some(format!("{id} before")),
+                next: Some(format!("{id} after")),
+                path: Some(path.into()),
+            }
+        }
+        fn alternative(key: &EntryKeyDto, translation: &str) -> TmxEntry {
+            TmxEntry {
+                source: key.source_text.clone(),
+                translation: translation.into(),
+                default_translation: false,
+                file: Some(key.file.clone()),
+                id: key.id.clone(),
+                prev: key.prev.clone(),
+                next: key.next.clone(),
+                path: key.path.clone(),
+                ..Default::default()
+            }
+        }
+        fn conflict(key: &EntryKeyDto, ours: &str, theirs: &str) -> Conflict {
+            Conflict {
+                kind: "tmx".into(),
+                source: key.source_text.clone(),
+                ours: ours.into(),
+                theirs: theirs.into(),
+                message: format!("TMX conflict on {}", key.source_text),
+                entry_key: Some(key.clone()),
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let first = key("chapter/first.yaml", "first_0", "first");
+        let second = key("chapter/second.yaml", "second_0", "second");
+        let mut tmx = ProjectTmx::new();
+        tmx.insert(alternative(&first, "ours first"));
+        tmx.insert(alternative(&second, "ours second"));
+        tmx.write(&props.save_tmx_path(), "en", "fr").unwrap();
+        let conflicts = vec![
+            conflict(&first, "ours first", "theirs first"),
+            conflict(&second, "ours second", "theirs second"),
+        ];
+        crate::team_settings::save_conflicts(&props, &conflicts).unwrap();
+        std::fs::write(props.source_dir.join("unrelated.txt"), "project tree stays").unwrap();
+
+        let tmx_before = std::fs::read(props.save_tmx_path()).unwrap();
+        let conflicts_before = std::fs::read(
+            props
+                .root
+                .join(".repositories/prep/conflicts.json"),
+        )
+        .unwrap();
+        let (stage_tx, stage_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let cancellation = omegat_core::cancellation::CancellationToken::with_checkpoint_observer(
+            move |stage| {
+                if stage == "team.resolve.writeback" {
+                    stage_tx.send(()).unwrap();
+                    resume_rx.recv().unwrap();
+                }
+            },
+        );
+        let worker_cancellation = cancellation.clone();
+        let worker_first = first.clone();
+        let worker = std::thread::spawn(move || {
+            resolve_for_key_cancellable(
+                &props,
+                "Repeated source",
+                Some(&worker_first),
+                "theirs",
+                None,
+                &worker_cancellation,
+            )
+        });
+        stage_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("resolution did not reach TMX write-back");
+        cancellation.cancel();
+        resume_tx.send(()).unwrap();
+        assert!(matches!(worker.join().unwrap(), Err(TeamError::Cancelled)));
+
+        let root = dir.path().join("project");
+        assert_eq!(
+            std::fs::read(root.join("omegat/project_save.tmx")).unwrap(),
+            tmx_before
+        );
+        assert_eq!(
+            std::fs::read(root.join(".repositories/prep/conflicts.json")).unwrap(),
+            conflicts_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("source/unrelated.txt")).unwrap(),
+            "project tree stays"
+        );
+        assert!(!root.join(".repositories/prep/resolved.json").exists());
+        assert!(!root.join(".repositories/transactions/active.json").exists());
+        assert!(std::fs::read_dir(root.join(".repositories/transactions"))
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".snapshot")));
+
+        let props = ProjectProperties::load(&root).unwrap();
+        let remaining = resolve_for_key(&props, "Repeated source", Some(&first), "theirs", None)
+            .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].entry_key.as_ref(), Some(&second));
+        let after_first = parse_tmx(
+            &std::fs::read_to_string(props.save_tmx_path()).unwrap(),
+            "en",
+            "fr",
+        );
+        assert_eq!(
+            after_first
+                .get_multiple_translation_for_key(&first)
+                .unwrap()
+                .translation,
+            "theirs first"
+        );
+        assert_eq!(
+            after_first
+                .get_multiple_translation_for_key(&second)
+                .unwrap()
+                .translation,
+            "ours second"
+        );
+
+        let remaining =
+            resolve_for_key(&props, "Repeated source", Some(&second), "ours", None).unwrap();
+        assert!(remaining.is_empty());
+        let after_second = parse_tmx(
+            &std::fs::read_to_string(props.save_tmx_path()).unwrap(),
+            "en",
+            "fr",
+        );
+        assert_eq!(
+            after_second
+                .get_multiple_translation_for_key(&first)
+                .unwrap()
+                .translation,
+            "theirs first"
+        );
+        assert_eq!(
+            after_second
+                .get_multiple_translation_for_key(&second)
+                .unwrap()
+                .translation,
+            "ours second"
+        );
+    }
+
+    #[test]
+    fn interrupted_resolution_restores_same_project_conflict_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let props = ProjectProperties::create(root.clone(), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let key = EntryKeyDto {
+            file: "chapter/interrupted.yaml".into(),
+            source_text: "Interrupted source".into(),
+            id: Some("interrupted_0".into()),
+            prev: Some("before".into()),
+            next: Some("after".into()),
+            path: Some("interrupted".into()),
+        };
+        let mut tmx = ProjectTmx::new();
+        tmx.insert(TmxEntry {
+            source: key.source_text.clone(),
+            translation: "ours interrupted".into(),
+            default_translation: false,
+            file: Some(key.file.clone()),
+            id: key.id.clone(),
+            prev: key.prev.clone(),
+            next: key.next.clone(),
+            path: key.path.clone(),
+            ..Default::default()
+        });
+        tmx.write(&props.save_tmx_path(), "en", "fr").unwrap();
+        crate::team_settings::save_conflicts(
+            &props,
+            &[
+                Conflict {
+                    kind: "tmx".into(),
+                    source: key.source_text.clone(),
+                    ours: "ours interrupted".into(),
+                    theirs: "theirs interrupted".into(),
+                    message: "TMX conflict on Interrupted source".into(),
+                    entry_key: Some(key.clone()),
+                },
+                Conflict {
+                    kind: "glossary".into(),
+                    source: "pending glossary".into(),
+                    ours: "ours pending".into(),
+                    theirs: "theirs pending".into(),
+                    message: "glossary conflict on pending glossary".into(),
+                    entry_key: None,
+                },
+            ],
+        )
+        .unwrap();
+        let tmx_before = std::fs::read(props.save_tmx_path()).unwrap();
+        let conflicts_before =
+            std::fs::read(root.join(".repositories/prep/conflicts.json")).unwrap();
+
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::team_resolution_crash_worker",
+                "--nocapture",
+            ])
+            .env("OMEGAT_TEAM_RESOLUTION_CRASH_PROJECT", &root)
+            .env(
+                "OMEGAT_TEAM_RESOLUTION_CRASH_KEY",
+                serde_json::to_string(&key).unwrap(),
+            )
+            .status()
+            .unwrap();
+        assert!(!status.success());
+        let active = root.join(".repositories/transactions/active.json");
+        assert!(active.is_file());
+        assert_ne!(std::fs::read(props.save_tmx_path()).unwrap(), tmx_before);
+
+        assert!(recover_interrupted_sync(&props).unwrap());
+        assert!(!active.exists());
+        assert_eq!(std::fs::read(props.save_tmx_path()).unwrap(), tmx_before);
+        assert_eq!(
+            std::fs::read(root.join(".repositories/prep/conflicts.json")).unwrap(),
+            conflicts_before
+        );
+        assert_eq!(list_conflicts(&props).len(), 2);
+        assert!(!root.join(".repositories/prep/resolved.json").exists());
+    }
+
+    #[test]
+    fn team_resolution_crash_worker() {
+        let (Ok(root), Ok(raw_key)) = (
+            std::env::var("OMEGAT_TEAM_RESOLUTION_CRASH_PROJECT"),
+            std::env::var("OMEGAT_TEAM_RESOLUTION_CRASH_KEY"),
+        ) else {
+            return;
+        };
+        let props = ProjectProperties::load(Path::new(&root)).unwrap();
+        let key: EntryKeyDto = serde_json::from_str(&raw_key).unwrap();
+        crate::rebase_and_commit::crash_after_resolution_writeback();
+        resolve_for_key(
+            &props,
+            &key.source_text,
+            Some(&key),
+            "theirs",
+            None,
+        )
+        .unwrap();
+        panic!("resolution crash injection did not terminate the worker");
     }
 
     #[test]

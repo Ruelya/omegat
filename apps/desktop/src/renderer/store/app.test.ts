@@ -178,6 +178,87 @@ describe("app store", () => {
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")[0]).toBe("/p");
   });
 
+  it("restores only the opened project generation's persisted conflict queue", async () => {
+    let activeRoot = "";
+    const firstKey = {
+      file: "first.yaml",
+      source_text: "same",
+      id: "first_0",
+      prev: null,
+      next: null,
+      path: "first",
+    };
+    const persisted = {
+      kind: "tmx",
+      source: "same",
+      ours: "ours first",
+      theirs: "theirs first",
+      message: "TMX conflict on same",
+      entry_key: firstKey,
+    };
+    rpc.mockImplementation(async (method: string, params?: { root?: string }) => {
+      if (method === "project.open") {
+        activeRoot = params?.root ?? "";
+        return {
+          root: activeRoot,
+          source_lang: "en",
+          target_lang: "fr",
+          sentence_seg: false,
+          has_repositories: true,
+        };
+      }
+      if (method === "entry.list") {
+        return [{
+          ...sampleEntry,
+          key: activeRoot === "/first-generation" ? firstKey : {
+            ...firstKey,
+            file: "second.yaml",
+            id: "second_0",
+            path: "second",
+          },
+          file: activeRoot === "/first-generation" ? "first.yaml" : "second.yaml",
+          id: activeRoot === "/first-generation" ? "first_0" : "second_0",
+          source: "same",
+        }];
+      }
+      if (method === "stats.get") {
+        return {
+          files: 1,
+          segments: 1,
+          translated: 1,
+          unique_segments: 1,
+          source_words: 1,
+          target_words: 1,
+        };
+      }
+      if (method === "team.conflicts") {
+        return { conflicts: activeRoot === "/first-generation" ? [persisted] : [] };
+      }
+      if (method === "prefs.get") {
+        return defaultPreferences({
+          insert_best_match: false,
+          dictionary_auto_search: false,
+          mt_auto_fetch: false,
+        });
+      }
+      if (method === "prefs.set") return params;
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+      ) return [];
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+
+    await useApp.getState().open("/first-generation");
+    expect(useApp.getState().teamConflicts).toEqual([
+      { ...persisted, entry_index: 0 },
+    ]);
+    await useApp.getState().open("/second-generation");
+    expect(useApp.getState().teamConflicts).toEqual([]);
+    expect(useApp.getState().props?.root).toBe("/second-generation");
+  });
+
   it("routes IEditor selection commands through Document3 without advancing the entry", async () => {
     const props = {
       root: "/p",
@@ -1222,6 +1303,7 @@ describe("app store", () => {
           side: "theirs",
           translation: undefined,
           rebind_key: wantedKey,
+          progress_token: "operation-teamResolve-1",
         });
         return { conflicts: [], rebind_key: wantedKey };
       }
@@ -1290,6 +1372,148 @@ describe("app store", () => {
       conflicts: [],
     });
     expect(rpc.mock.calls.some(([method]) => method === "entry.set")).toBe(false);
+  });
+
+  it("keeps two same-source conflicts and Document3 intact until team.resolve returns -32800", async () => {
+    const firstKey = {
+      file: "first.yaml",
+      source_text: "same",
+      id: "first_0",
+      prev: "first before",
+      next: "first after",
+      path: "first",
+    };
+    const secondKey = {
+      ...firstKey,
+      file: "second.yaml",
+      id: "second_0",
+      prev: "second before",
+      next: "second after",
+      path: "second",
+    };
+    const conflicts = [
+      {
+        kind: "tmx",
+        source: "same",
+        ours: "ours first",
+        theirs: "theirs first",
+        message: "TMX conflict on same",
+        entry_key: firstKey,
+      },
+      {
+        kind: "tmx",
+        source: "same",
+        ours: "ours second",
+        theirs: "theirs second",
+        message: "TMX conflict on same",
+        entry_key: secondKey,
+      },
+    ];
+    let rejectResolution!: (error: Error) => void;
+    const pendingResolution = new Promise((_resolve, reject) => {
+      rejectResolution = reject;
+    });
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "team.resolve") return pendingResolution;
+      throw new Error(`${method} must not run after cancelled resolution`);
+    });
+    const disconnect = connectRpcOperationEvents();
+    useApp.setState({
+      props: {
+        root: "/cancel-team-resolve",
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: false,
+        has_repositories: true,
+      },
+      screen: "workspace",
+      entries: [
+        {
+          ...sampleEntry,
+          key: firstKey,
+          file: firstKey.file,
+          id: firstKey.id,
+          source: "same",
+          translation: "ours first",
+          translated: true,
+        },
+        {
+          ...sampleEntry,
+          index: 1,
+          key: secondKey,
+          file: secondKey.file,
+          id: secondKey.id,
+          source: "same",
+          translation: "ours second",
+          translated: true,
+        },
+      ],
+      index: 0,
+      document3: createDocument3("same", "dirty active ours 😀"),
+      editorSelection: { anchor: 4, focus: 9 },
+      teamConflicts: conflicts,
+      prefs: defaultPreferences(),
+    });
+
+    const resolving = useApp
+      .getState()
+      .resolveConflict("theirs", "same", undefined, firstKey);
+    await vi.waitFor(() => {
+      expect(rpc.mock.calls.some(([method]) => method === "team.resolve")).toBe(true);
+    });
+    const requestId = "operation-teamResolve-1";
+    rpcOperationListener?.({
+      requestId,
+      method: "team.resolve",
+      phase: "progress",
+      stage: "team.resolve.writeback",
+    });
+    await expect(useApp.getState().cancelLongOperation()).resolves.toBe(true);
+    expect(useApp.getState().longOperation?.phase).toBe("cancelling");
+    expect(useApp.getState().teamConflicts).toEqual(conflicts);
+    expect(useApp.getState().document3.translation).toBe("dirty active ours 😀");
+    rpcOperationListener?.({
+      requestId,
+      method: "team.resolve",
+      phase: "progress",
+      stage: "team.resolve.conflicts",
+    });
+    expect(useApp.getState().longOperation?.stage).toBe("team.resolve.writeback");
+    rpcOperationListener?.({
+      requestId,
+      method: "team.resolve",
+      phase: "cancelled",
+      errorCode: -32800,
+    });
+    rejectResolution(new Error("request cancelled"));
+    await resolving;
+    disconnect();
+
+    expect(cancelRpc).toHaveBeenCalledWith(requestId);
+    expect({
+      operation: useApp.getState().longOperation,
+      teamMessage: useApp.getState().teamMessage,
+      conflicts: useApp.getState().teamConflicts,
+      translations: useApp.getState().entries.map((entry) => entry.translation),
+      document: useApp.getState().document3.translation,
+      selection: useApp.getState().editorSelection,
+      methods: rpc.mock.calls.map(([method]) => method),
+    }).toEqual({
+      operation: {
+        requestId,
+        kind: "teamResolve",
+        method: "team.resolve",
+        phase: "cancelled",
+        stage: "team.resolve.writeback",
+        error: null,
+      },
+      teamMessage: "resolve cancelled (same)",
+      conflicts,
+      translations: ["ours first", "ours second"],
+      document: "dirty active ours 😀",
+      selection: { anchor: 4, focus: 9 },
+      methods: ["team.resolve"],
+    });
   });
 
   it("serializes distinct watcher fingerprints across cancellation and rejects queued stale generations", async () => {

@@ -178,6 +178,16 @@ impl App {
             }
             "project.open" => {
                 let p: OpenProjectParams = serde_json::from_value(params).map_err(invalid)?;
+                let recovery_props = omegat_core::properties::ProjectProperties::load(
+                    std::path::Path::new(&p.root),
+                )
+                .map_err(core_err)?;
+                omegat_team::recover_interrupted_sync(&recovery_props).map_err(|error| {
+                    (
+                        error_code::INTERNAL_ERROR,
+                        format!("team transaction recovery: {error}"),
+                    )
+                })?;
                 let s = ProjectSession::open_with_filters(
                     std::path::Path::new(&p.root),
                     self.prefs.clone(),
@@ -431,14 +441,21 @@ impl App {
                     .and_then(|v| v.as_str())
                     .unwrap_or("ours");
                 let translation = params.get("translation").and_then(|v| v.as_str());
-                let left = omegat_team::resolve_for_key(
+                let left = omegat_team::resolve_for_key_cancellable(
                     &self.session()?.props,
                     source,
                     rebind_key.as_ref(),
                     side,
                     translation,
+                    cancellation,
                 )
-                .map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
+                .map_err(|error| match error {
+                    omegat_team::TeamError::Cancelled => (
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ),
+                    other => (error_code::TEAM_CONFLICT, other.to_string()),
+                })?;
                 Ok(json!({"conflicts": left, "rebind_key": rebind_key}))
             }
             "wiki.import" => {

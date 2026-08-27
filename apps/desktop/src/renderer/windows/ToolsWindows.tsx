@@ -666,7 +666,11 @@ export function TeamWindow() {
   const cancelOperation = useApp((s) => s.cancelLongOperation);
   const teamOperationActive = Boolean(
     operation
-    && (operation.kind === "teamSync" || operation.kind === "teamCommit")
+    && (
+      operation.kind === "teamSync"
+      || operation.kind === "teamCommit"
+      || operation.kind === "teamResolve"
+    )
     && (
       operation.phase === "started"
       || operation.phase === "progress"
@@ -699,6 +703,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-resolve-ours"
+              disabled={teamOperationActive}
               onClick={() => void resolve("ours", c.source, undefined, c.entry_key)}
             >
               {t("keepOurs")}
@@ -706,6 +711,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-resolve-theirs"
+              disabled={teamOperationActive}
               onClick={() => void resolve("theirs", c.source, undefined, c.entry_key)}
             >
               {t("keepTheirs")}
@@ -713,6 +719,7 @@ export function TeamWindow() {
             <button
               type="button"
               data-operation-action="team-resolve-manual"
+              disabled={teamOperationActive}
               onClick={() => void resolve("manual", c.source, manual, c.entry_key)}
             >
               手工

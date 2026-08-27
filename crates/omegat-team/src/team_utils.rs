@@ -1,6 +1,7 @@
 //! Java `TeamUtils`.
 
 use crate::error::{Result, TeamError};
+use omegat_core::cancellation::CancellationToken;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -102,6 +103,16 @@ pub fn sanitize_url(url: &str) -> String {
 }
 
 pub fn copy_tree(from: &Path, to: &Path, skip_vcs: bool) -> Result<()> {
+    copy_tree_cancellable(from, to, skip_vcs, &CancellationToken::default(), None)
+}
+
+pub fn copy_tree_cancellable(
+    from: &Path,
+    to: &Path,
+    skip_vcs: bool,
+    cancellation: &CancellationToken,
+    checkpoint: Option<&'static str>,
+) -> Result<()> {
     std::fs::create_dir_all(to)?;
     for ent in walkdir::WalkDir::new(from).into_iter().flatten() {
         if !ent.file_type().is_file() {
@@ -117,11 +128,20 @@ pub fn copy_tree(from: &Path, to: &Path, skip_vcs: bool) -> Result<()> {
         {
             continue;
         }
+        if checkpoint.map_or_else(
+            || cancellation.is_cancelled(),
+            |stage| cancellation.checkpoint(stage),
+        ) {
+            return Err(TeamError::Cancelled);
+        }
         let dest = to.join(rel);
         if let Some(p) = dest.parent() {
             std::fs::create_dir_all(p)?;
         }
         std::fs::copy(ent.path(), dest)?;
+    }
+    if cancellation.is_cancelled() {
+        return Err(TeamError::Cancelled);
     }
     Ok(())
 }

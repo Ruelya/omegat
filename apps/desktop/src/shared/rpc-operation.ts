@@ -6,6 +6,7 @@ export const LONG_OPERATION_METHODS = {
   compile: "project.compile",
   teamSync: "team.sync",
   teamCommit: "team.commit",
+  teamResolve: "team.resolve",
   align: "align.run",
 } as const;
 

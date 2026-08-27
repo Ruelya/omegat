@@ -689,6 +689,22 @@ export const useApp = create<AppState>((set, get) => ({
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
+    let teamConflicts: TeamConflict[] = [];
+    if (props.has_repositories) {
+      try {
+        const queued = await rpc<{ conflicts: TeamConflict[] | string[] }>(
+          "team.conflicts",
+        );
+        if (!dockLifecycle.isCurrent(lifecycle)) return;
+        teamConflicts = Array.isArray(queued.conflicts)
+          ? queued.conflicts.map((item) =>
+              typeof item === "string" ? { message: item } : item
+            )
+          : [];
+      } catch {
+        if (!dockLifecycle.isCurrent(lifecycle)) return;
+      }
+    }
     const firstEntry = entries[0];
     const firstTranslation = firstEntry?.translation ?? "";
     set({
@@ -704,6 +720,7 @@ export const useApp = create<AppState>((set, get) => ({
         anchor: firstTranslation.length,
         focus: firstTranslation.length,
       },
+      teamConflicts: bindTeamConflictEntries(teamConflicts, entries, 0),
     });
     await get().loadPrefs();
     if (!dockLifecycle.isCurrent(lifecycle)) return;
@@ -1121,12 +1138,22 @@ export const useApp = create<AppState>((set, get) => ({
     const src = source ?? conflict?.source ?? "";
     const activeKey = before.entries[before.index]?.key;
     const rebindKey = entryKey ?? conflict?.entry_key ?? activeKey;
-    const r = await rpc<{ conflicts: TeamConflict[] }>("team.resolve", {
-      source: src,
-      side,
-      translation,
-      rebind_key: rebindKey,
-    });
+    let r: { conflicts: TeamConflict[] };
+    try {
+      r = await get().runLongOperation<{ conflicts: TeamConflict[] }>(
+        "teamResolve",
+        {
+          source: src,
+          side,
+          translation,
+          rebind_key: rebindKey,
+        },
+      );
+    } catch (error) {
+      if (!isAbortError(error)) throw error;
+      set({ teamMessage: `resolve cancelled${src ? ` (${src})` : ""}` });
+      return;
+    }
     await get().refreshEntriesAfterExternalChange(
       rebindKey ? [rebindKey] : undefined,
       true,

@@ -208,6 +208,19 @@ fn file_snapshot(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
+fn copy_product_tree(from: &std::path::Path, to: &std::path::Path) {
+    for (relative, bytes) in file_snapshot(from) {
+        if relative == ".repositories" || relative.starts_with(".repositories/") {
+            continue;
+        }
+        let destination = to.join(relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(destination, bytes).unwrap();
+    }
+}
+
 fn blocking_http_endpoint() -> (String, mpsc::Receiver<()>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -702,6 +715,244 @@ fn protocol_cancellation_rolls_back_team_sync_and_commit() {
 
     let responsive = rpc(&mut stdin, &mut stdout, 6, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn protocol_cancellation_rolls_back_team_conflict_resolution() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cancel-team-resolve");
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
+
+    let mut tmx = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body>"#,
+    );
+    tmx.push_str(
+        r#"<tu><tuv xml:lang="en"><seg>cancel me</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu>"#,
+    );
+    for index in 0..20_000 {
+        tmx.push_str(&format!(
+            r#"<tu><tuv xml:lang="en"><seg>filler {index}</seg></tuv><tuv xml:lang="fr"><seg>translation {index}</seg></tuv></tu>"#
+        ));
+    }
+    tmx.push_str("</body></tmx>");
+    let save_tmx = root.join("omegat/project_save.tmx");
+    std::fs::write(&save_tmx, tmx).unwrap();
+    let prep = root.join(".repositories/prep");
+    std::fs::create_dir_all(&prep).unwrap();
+    let conflicts: Vec<Value> = std::iter::once(json!({
+        "kind": "tmx",
+        "source": "cancel me",
+        "ours": "ours",
+        "theirs": "theirs",
+        "message": "TMX conflict on cancel me"
+    }))
+    .chain((0..20_000).map(|index| {
+        json!({
+            "kind": "tmx",
+            "source": format!("filler {index}"),
+            "ours": format!("translation {index}"),
+            "theirs": format!("remote translation {index}"),
+            "message": format!("TMX conflict on filler {index}")
+        })
+    }))
+    .collect();
+    let conflicts_path = prep.join("conflicts.json");
+    std::fs::write(
+        &conflicts_path,
+        serde_json::to_vec_pretty(&conflicts).unwrap(),
+    )
+    .unwrap();
+    let tmx_before = std::fs::read(&save_tmx).unwrap();
+    let conflicts_before = std::fs::read(&conflicts_path).unwrap();
+
+    let cancelled = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "team.resolve",
+        json!({"source": "cancel me", "side": "theirs"}),
+        "team.resolve.writeback",
+    );
+    assert_eq!(
+        cancelled["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before);
+    assert_eq!(std::fs::read(&conflicts_path).unwrap(), conflicts_before);
+    assert!(!prep.join("resolved.json").exists());
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+    assert!(std::fs::read_dir(root.join(".repositories/transactions"))
+        .unwrap()
+        .all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".snapshot")));
+
+    let responsive = rpc(&mut stdin, &mut stdout, 3, "sys.version", json!({}));
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn project_open_recovers_only_its_interrupted_resolution_generation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("recover-team-resolve");
+    let props = omegat_core::properties::ProjectProperties::create(
+        root.clone(),
+        "en".into(),
+        "fr".into(),
+        false,
+    );
+    props.ensure_dirs().unwrap();
+    props.write().unwrap();
+    std::fs::write(props.source_dir.join("source.txt"), "same source").unwrap();
+    let ours_tmx = r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>same source</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu></body></tmx>"#;
+    std::fs::write(props.save_tmx_path(), ours_tmx).unwrap();
+    let prep = root.join(".repositories/prep");
+    std::fs::create_dir_all(&prep).unwrap();
+    let conflicts = json!([
+        {
+            "kind": "tmx",
+            "source": "same source",
+            "ours": "ours",
+            "theirs": "theirs",
+            "message": "TMX conflict on same source"
+        },
+        {
+            "kind": "glossary",
+            "source": "pending glossary",
+            "ours": "ours pending",
+            "theirs": "theirs pending",
+            "message": "glossary conflict on pending glossary"
+        }
+    ]);
+    let conflicts_before = serde_json::to_vec_pretty(&conflicts).unwrap();
+    std::fs::write(prep.join("conflicts.json"), &conflicts_before).unwrap();
+
+    let transactions = root.join(".repositories/transactions");
+    let snapshot = transactions.join("interrupted-resolution.snapshot");
+    copy_product_tree(&root, &snapshot.join("project"));
+    std::fs::create_dir_all(snapshot.join("prep")).unwrap();
+    std::fs::write(snapshot.join("prep/conflicts.json"), &conflicts_before).unwrap();
+
+    let partial_tmx = ours_tmx.replace("<seg>ours</seg>", "<seg>theirs</seg>");
+    std::fs::write(props.save_tmx_path(), partial_tmx).unwrap();
+    std::fs::write(prep.join("conflicts.json"), "[]").unwrap();
+    std::fs::write(prep.join("resolved.json"), r#"["same source"]"#).unwrap();
+    std::fs::create_dir_all(&transactions).unwrap();
+    std::fs::write(
+        transactions.join("active.json"),
+        serde_json::to_vec_pretty(&json!({
+            "format": 1,
+            "id": "interrupted-resolution",
+            "operation": "resolve-conflict",
+            "phase": "mutating",
+            "snapshot": snapshot,
+            "prep_existed": true,
+            "file_remotes": [],
+            "repository_count": 0,
+            "rollback_versions": [],
+            "commit_started": [],
+            "published": [],
+            "updated_unix_ms": 1
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let other_root = temp.path().join("new-project-generation");
+    let other_props = omegat_core::properties::ProjectProperties::create(
+        other_root.clone(),
+        "en".into(),
+        "fr".into(),
+        false,
+    );
+    other_props.ensure_dirs().unwrap();
+    other_props.write().unwrap();
+    std::fs::write(other_props.source_dir.join("new.txt"), "new generation").unwrap();
+    std::fs::write(
+        other_props.save_tmx_path(),
+        ours_tmx.replace("same source", "new generation"),
+    )
+    .unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let opened = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.open",
+        json!({"root": root}),
+    );
+    assert_eq!(opened["result"]["root"], root.to_string_lossy().as_ref());
+    assert_eq!(std::fs::read_to_string(props.save_tmx_path()).unwrap(), ours_tmx);
+    assert_eq!(
+        std::fs::read(prep.join("conflicts.json")).unwrap(),
+        conflicts_before
+    );
+    assert!(!prep.join("resolved.json").exists());
+    assert!(!transactions.join("active.json").exists());
+    assert!(!snapshot.exists());
+    let restored_conflicts = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "team.conflicts",
+        json!({}),
+    );
+    assert_eq!(
+        restored_conflicts["result"]["conflicts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let opened_other = rpc(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "project.open",
+        json!({"root": other_root}),
+    );
+    assert_eq!(
+        opened_other["result"]["root"],
+        other_root.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        std::fs::read_to_string(other_props.save_tmx_path()).unwrap(),
+        ours_tmx.replace("same source", "new generation")
+    );
+    assert!(!other_root.join(".repositories/transactions/active.json").exists());
     let _ = child.kill();
 }
 

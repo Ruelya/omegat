@@ -679,6 +679,20 @@ Sync and project-file commit now check the shared cancellation token before and
 between prepare, mapped copy/delete propagation, rebase, and publication
 phases. Cancellation exits through `TeamError::Cancelled`, preserving the
 transaction rollback path instead of publishing the remaining repositories.
+Conflict resolution now uses the same persisted project transaction boundary
+and cooperative token. `team.resolve` reports snapshot/write-back/queue
+checkpoints, rolls TMX, prep state, conflict ordering, and the untouched
+project tree back together, and returns protocol `-32800`; Electron therefore
+keeps `cancelling` until the sidecar acknowledgement before publishing
+`cancelled`. Two simultaneous non-default TMX conflicts with identical source
+text are addressed only by their complete six-field `EntryKey`: cancelling one
+retains both, then keep-theirs on the first and keep-ours on the second advance
+the visible queue one item at a time. A persisted `capturing` or `mutating`
+resolution journal is recovered before `project.open`, and the renderer reloads
+only that opened project generation's persisted conflict queue. The Linux
+packaged product path kills the sidecar during the real snapshot checkpoint,
+restarts Electron, and verifies same-project queue recovery before completing
+both visible resolutions. The P10 row remains `parity_gap`.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move

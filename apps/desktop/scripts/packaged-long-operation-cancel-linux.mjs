@@ -290,29 +290,36 @@ function xmlEscape(value) {
 }
 
 async function writeAlternativeTmx(path, key, translation) {
-  const props = [
-    ["file", key.file],
-    ["id", key.id],
-    ["prev", key.prev],
-    ["next", key.next],
-    ["path", key.path],
-  ]
-    .filter(([, value]) => value !== null)
-    .map(([name, value]) =>
-      `      <prop type="${name}">${xmlEscape(value)}</prop>`
-    )
-    .join("\n");
+  return writeAlternativeEntriesTmx(path, [{ key, translation }]);
+}
+
+async function writeAlternativeEntriesTmx(path, entries) {
+  const units = entries.map(({ key, translation }) => {
+    const props = [
+      ["file", key.file],
+      ["id", key.id],
+      ["prev", key.prev],
+      ["next", key.next],
+      ["path", key.path],
+    ]
+      .filter(([, value]) => value !== null)
+      .map(([name, value]) =>
+        `      <prop type="${name}">${xmlEscape(value)}</prop>`
+      )
+      .join("\n");
+    return `    <tu>
+${props}
+      <tuv xml:lang="en"><seg>${xmlEscape(key.source_text)}</seg></tuv>
+      <tuv xml:lang="fr"><seg>${xmlEscape(translation)}</seg></tuv>
+    </tu>`;
+  }).join("\n");
   await writeFile(
     path,
     `<?xml version="1.0" encoding="UTF-8"?>
 <tmx version="1.4">
   <header creationtool="OmegaT" creationtoolversion="6.2.0" segtype="paragraph" o-tmf="OmegaT TMX" adminlang="EN-US" srclang="en" datatype="plaintext"/>
   <body>
-    <tu>
-${props}
-      <tuv xml:lang="en"><seg>${xmlEscape(key.source_text)}</seg></tuv>
-      <tuv xml:lang="fr"><seg>${xmlEscape(translation)}</seg></tuv>
-    </tu>
+${units}
   </body>
 </tmx>
 `,
@@ -356,6 +363,34 @@ async function terminate(child) {
   const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
   child.kill("SIGTERM");
   await Promise.race([exited, sleep(2_000)]);
+}
+
+async function descendantProcesses(rootPid) {
+  const found = [];
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    let children = "";
+    try {
+      children = await readFile(`/proc/${pid}/task/${pid}/children`, "utf8");
+    } catch {
+      continue;
+    }
+    for (const value of children.trim().split(/\s+/).filter(Boolean)) {
+      const childPid = Number(value);
+      if (!Number.isInteger(childPid)) continue;
+      let command = "";
+      try {
+        command = (await readFile(`/proc/${childPid}/cmdline`, "utf8"))
+          .replaceAll("\0", " ");
+      } catch {
+        // The process may have exited between /proc reads.
+      }
+      found.push({ pid: childPid, command });
+      queue.push(childPid);
+    }
+  }
+  return found;
 }
 
 async function xdotool(display, args) {
@@ -1359,11 +1394,32 @@ try {
 
   const teamConflictOurs = "packaged ours resolution 😀 tail";
   const teamConflictTheirs = "packaged them resolution 😀 tail";
+  const secondConflictOurs = "packaged decoy ours";
+  const secondConflictTheirs = "packaged decoy theirs";
   assert.equal(
     teamConflictOurs.length,
     teamConflictTheirs.length,
     "ours/theirs fixtures must preserve the UTF-16 caret exactly",
   );
+  const secondConflictSetup = await client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
+    );
+    if (!decoy) throw new Error("same-source decoy disappeared before team conflict");
+    const updated = await window.omegat.rpc("entry.set", {
+      index: decoy.index,
+      key: decoy.key,
+      translation: ${JSON.stringify(secondConflictOurs)},
+      note: "second same-source ours",
+      revision: decoy.revision,
+      default_translation: false,
+    });
+    await window.omegat.rpc("project.save", {});
+    return updated.entry;
+  })()`, true);
+  assert.deepEqual(secondConflictSetup.key, duplicateSetup.decoy.key);
+  assert.equal(secondConflictSetup.translation, secondConflictOurs);
   const conflictRemoteTmx = join(conflictRemote, "omegat", "project_save.tmx");
   await Promise.all([
     mkdir(join(conflictRemote, "omegat"), { recursive: true }),
@@ -1601,11 +1657,16 @@ try {
   assert.equal(beforeTeamConflict.caret, teamConflictOurs.length - 7);
   assert.equal(beforeTeamConflict.entry, teamOrdering.editor.entry);
 
-  await writeAlternativeTmx(
-    conflictRemoteTmx,
-    duplicateSetup.wanted.key,
-    teamConflictTheirs,
-  );
+  await writeAlternativeEntriesTmx(conflictRemoteTmx, [
+    {
+      key: duplicateSetup.wanted.key,
+      translation: teamConflictTheirs,
+    },
+    {
+      key: duplicateSetup.decoy.key,
+      translation: secondConflictTheirs,
+    },
+  ]);
   await client.evaluate(`(() => {
     window.__omegatRpcOperationTrace = [];
     window.__omegatDomOperationTrace = [];
@@ -1624,25 +1685,32 @@ try {
     async () => {
       const state = await client.evaluate(`(() => {
         const app = document.querySelector(".app");
-        const row = document.querySelector("[data-team-conflict-key]");
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        const row = rows.find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
+        );
         return {
           operation: app?.dataset.operation ?? "",
           phase: app?.dataset.operationPhase ?? "",
           key: row?.getAttribute("data-team-conflict-key") ?? "",
           text: row?.textContent ?? "",
+          keys: rows.map((candidate) =>
+            candidate.getAttribute("data-team-conflict-key") ?? ""
+          ),
           oursVisible: Boolean(
             row?.querySelector('[data-operation-action="team-resolve-ours"]')
           ),
           theirsVisible: Boolean(
             row?.querySelector('[data-operation-action="team-resolve-theirs"]')
           ),
-          count: document.querySelectorAll("[data-team-conflict-key]").length,
+          count: rows.length,
         };
       })()`);
       if (
         state.operation === "teamSync"
         && state.phase === "failed"
-        && state.count === 1
+        && state.count === 2
         && state.oursVisible
         && state.theirsVisible
       ) {
@@ -1658,6 +1726,13 @@ try {
   assert(visibleTeamConflict.text.includes(`ours: ${teamConflictOurs}`));
   assert(visibleTeamConflict.text.includes(`theirs: ${teamConflictTheirs}`));
   assert.deepEqual(
+    new Set(visibleTeamConflict.keys.map((key) => JSON.stringify(JSON.parse(key)))),
+    new Set([
+      JSON.stringify(duplicateSetup.wanted.key),
+      JSON.stringify(duplicateSetup.decoy.key),
+    ]),
+  );
+  assert.deepEqual(
     await editorState(client),
     beforeTeamConflict,
     "failed team rebase polluted the active Document3",
@@ -1672,20 +1747,421 @@ try {
     )?.translation,
     teamConflictOurs,
   );
+  assert.equal(
+    entriesDuringConflict.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    secondConflictOurs,
+  );
 
+  const resolveTmxBeforeCancel = await readFile(
+    join(project, "omegat", "project_save.tmx"),
+  );
+  const resolveQueuePath = join(
+    project,
+    ".repositories",
+    "prep",
+    "conflicts.json",
+  );
+  const resolveQueueBeforeCancel = await readFile(resolveQueuePath);
+  const resolveResolvedPath = join(
+    project,
+    ".repositories",
+    "prep",
+    "resolved.json",
+  );
+  const resolveResolvedBeforeCancel = await pathExists(resolveResolvedPath)
+    ? await readFile(resolveResolvedPath)
+    : null;
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatResolveProgress = null;
+    window.__omegatResolveCancelObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatResolveCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "teamResolve"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "team.resolve.snapshot"
+        && !window.__omegatResolveProgress
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button) return;
+        window.__omegatResolveProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        };
+        button.click();
+      }
+    });
+    window.__omegatResolveCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
   assert.equal(
     await client.evaluate(`(() => {
-      const button = document.querySelector(
+      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+        .find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
+        );
+      const button = row?.querySelector(
         '[data-operation-action="team-resolve-theirs"]'
       );
       button?.click();
       return Boolean(button);
     })()`),
     true,
-    "visible keep-theirs action was unavailable",
+    "visible keep-theirs action was unavailable for cancellation",
+  );
+  const cancelledTeamResolve = await waitFor(
+    "protocol-confirmed team.resolve cancellation",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+          progress: window.__omegatResolveProgress,
+        };
+      })()`);
+      if (
+        state.operation === "teamResolve"
+        && state.phase === "cancelled"
+        && state.stage === "team.resolve.snapshot"
+        && state.operationStatus === "teamResolve: cancelled (team.resolve.snapshot)"
+        && state.teamMessage === "resolve cancelled (Repeated packaged source)"
+        && state.conflicts === 2
+        && !state.cancelVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const resolveCancelPost = await client.evaluate(`(() => {
+    window.__omegatResolveCancelObserver?.disconnect();
+    return {
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+      editor: {
+        key: document.querySelector(".editor-segment.is-active")
+          ?.getAttribute("data-entry-key") ?? "",
+        translation: document.querySelector(
+          ".editor-segment.is-active .editor-surface"
+        )?.textContent ?? "",
+      },
+    };
+  })()`);
+  const resolveCancelEvents = resolveCancelPost.rpcTrace.filter((event) =>
+    event.method === "team.resolve"
+  );
+  const resolveCancelRequestId = cancelledTeamResolve.progress?.requestId;
+  assert(resolveCancelRequestId, "team.resolve snapshot progress was not visible");
+  assert.deepEqual(
+    resolveCancelEvents
+      .filter((event) => event.requestId === resolveCancelRequestId)
+      .map((event) => `${event.phase}:${event.stage}`)
+      .filter((value, index, values) => index === 0 || values[index - 1] !== value),
+    [
+      "started:",
+      "progress:team.resolve.snapshot",
+      "cancelling:",
+      "cancelled:",
+    ],
+  );
+  assert.equal(
+    resolveCancelEvents.find((event) =>
+      event.requestId === resolveCancelRequestId && event.phase === "cancelled"
+    )?.errorCode,
+    -32800,
+  );
+  assert.deepEqual(await editorState(client), beforeTeamConflict);
+  assert.deepEqual(
+    await readFile(join(project, "omegat", "project_save.tmx")),
+    resolveTmxBeforeCancel,
+  );
+  assert.deepEqual(await readFile(resolveQueuePath), resolveQueueBeforeCancel);
+  assert.deepEqual(
+    await pathExists(resolveResolvedPath) ? await readFile(resolveResolvedPath) : null,
+    resolveResolvedBeforeCancel,
+  );
+  assert.equal(
+    await pathExists(join(project, ".repositories", "transactions", "active.json")),
+    false,
+  );
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+        .find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
+        );
+      const button = row?.querySelector(
+        '[data-operation-action="team-resolve-theirs"]'
+      );
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible keep-theirs action was unavailable for interruption recovery",
+  );
+  const interruptedResolveProgress = await waitFor(
+    "team.resolve snapshot before process interruption",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          requestId: app?.dataset.operationRequestId ?? "",
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+        };
+      })()`);
+      if (
+        state.operation === "teamResolve"
+        && state.phase === "progress"
+        && state.stage === "team.resolve.snapshot"
+      ) return state;
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const descendants = await descendantProcesses(application.pid);
+  const sidecarProcess = descendants.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(sidecarProcess, `packaged sidecar process not found: ${JSON.stringify(descendants)}`);
+  process.kill(sidecarProcess.pid, "SIGKILL");
+  const applicationExited = new Promise((resolveExit) =>
+    application.once("exit", resolveExit)
+  );
+  application.kill("SIGKILL");
+  await applicationExited;
+  client.close();
+  client = undefined;
+  await waitFor("persisted interrupted team.resolve journal", async () =>
+    await pathExists(join(project, ".repositories", "transactions", "active.json"))
+      ? true
+      : undefined
+  );
+
+  const restartPort = await unusedPort();
+  application = spawn(
+    executable,
+    [`--remote-debugging-port=${restartPort}`, "--disable-gpu", "--no-sandbox"],
+    {
+      env: {
+        ...process.env,
+        DISPLAY: xvfb.display,
+        OMEGAT_CONFIG_DIR: configDir,
+        OMEGAT_PROJECT: project,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  application.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const restartedTarget = await waitFor(
+    "restarted packaged renderer",
+    () => pageTarget(restartPort),
+  );
+  client = new DevToolsClient(restartedTarget.webSocketDebuggerUrl);
+  await client.connect();
+  await client.command("Runtime.enable");
+  await waitFor("recovered packaged team conflict queue", async () => {
+    const state = await client.evaluate(`(() => {
+      document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
+      const app = document.querySelector(".app");
+      return {
+        project: app?.dataset.projectId ?? "",
+        source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? "",
+      };
+    })()`);
+    if (state.project !== project || !state.source) {
+      throw new Error(JSON.stringify(state));
+    }
+    return state;
+  });
+  assert.equal(
+    await pathExists(join(project, ".repositories", "transactions", "active.json")),
+    false,
+  );
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-window"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "restarted package did not expose the Team window",
+  );
+  const recoveredInterruptedResolve = await waitFor(
+    "visible same-project conflicts after sidecar restart recovery",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        return {
+          keys: rows.map((row) => row.getAttribute("data-team-conflict-key") ?? ""),
+          count: rows.length,
+        };
+      })()`);
+      if (state.count === 2) return state;
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  assert.deepEqual(
+    new Set(recoveredInterruptedResolve.keys),
+    new Set([
+      JSON.stringify(duplicateSetup.wanted.key),
+      JSON.stringify(duplicateSetup.decoy.key),
+    ]),
+  );
+  const recoveredEntries = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  assert.equal(
+    recoveredEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+    )?.translation,
+    teamConflictOurs,
+  );
+  assert.equal(
+    recoveredEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    secondConflictOurs,
+  );
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
+  })()`);
+  const restartedWindowId = await waitFor("restarted OmegaT X11 window", async () => {
+    const ids = await xdotool(xvfb.display, [
+      "search",
+      "--sync",
+      "--onlyvisible",
+      "--name",
+      "OmegaT",
+    ]);
+    return ids.split(/\s+/).filter(Boolean).at(-1);
+  });
+  await xdotool(xvfb.display, [
+    "windowfocus",
+    "--sync",
+    String(restartedWindowId),
+  ]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  const beforeRecoveredTeamConflict = await waitFor(
+    "recovered wanted same-source conflict entry",
+    async () => {
+      const state = await editorState(client);
+      return state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.translation === teamConflictOurs
+        ? state
+        : undefined;
+    },
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  assert.equal(
+    await client.evaluate(`(() => {
+      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+        .find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
+        );
+      const button = row?.querySelector(
+        '[data-operation-action="team-resolve-theirs"]'
+      );
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible keep-theirs action disappeared after cancellation",
+  );
+  const firstResolvedTeamConflict = await waitFor(
+    "first same-source complete-key keep-theirs write-back",
+    async () => {
+      const state = await editorState(client);
+      const ui = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          conflicts: rows.length,
+          remainingKey: rows[0]?.getAttribute("data-team-conflict-key") ?? "",
+          activeSurfaces: document.querySelectorAll(
+            ".editor-segment.is-active .editor-surface"
+          ).length,
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+        };
+      })()`);
+      if (
+        ui.operation === "externalRefresh"
+        && ui.phase === "succeeded"
+        && ui.conflicts === 1
+        && ui.remainingKey === JSON.stringify(duplicateSetup.decoy.key)
+        && ui.activeSurfaces === 1
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === beforeRecoveredTeamConflict.entry
+        && state.translation === teamConflictTheirs
+        && state.caret === beforeRecoveredTeamConflict.caret
+      ) {
+        return { ui, editor: state };
+      }
+      throw new Error(JSON.stringify({ ui, state }));
+    },
+  );
+  const entriesAfterFirstResolution = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  const resolvedWanted = entriesAfterFirstResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+  );
+  const untouchedDecoy = entriesAfterFirstResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+  );
+  assert.equal(resolvedWanted?.index, orderedWanted.index);
+  assert.equal(resolvedWanted?.translation, teamConflictTheirs);
+  assert.equal(untouchedDecoy?.index, orderedDecoy.index);
+  assert.equal(untouchedDecoy?.translation, secondConflictOurs);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+        .find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
+        );
+      const button = row?.querySelector(
+        '[data-operation-action="team-resolve-ours"]'
+      );
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "second same-source keep-ours action was unavailable",
   );
   const resolvedTeamConflict = await waitFor(
-    "complete-key packaged keep-theirs write-back",
+    "second same-source complete-key keep-ours write-back",
     async () => {
       const state = await editorState(client);
       const ui = await client.evaluate(`(() => {
@@ -1697,7 +2173,6 @@ try {
           activeSurfaces: document.querySelectorAll(
             ".editor-segment.is-active .editor-surface"
           ).length,
-          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
         };
       })()`);
       if (
@@ -1706,9 +2181,7 @@ try {
         && ui.conflicts === 0
         && ui.activeSurfaces === 1
         && state.key === JSON.stringify(duplicateSetup.wanted.key)
-        && state.entry === beforeTeamConflict.entry
         && state.translation === teamConflictTheirs
-        && state.caret === beforeTeamConflict.caret
       ) {
         return { ui, editor: state };
       }
@@ -1719,16 +2192,14 @@ try {
     `window.omegat.rpc("entry.list", {})`,
     true,
   );
-  const resolvedWanted = entriesAfterResolution.find((entry) =>
+  const retainedWanted = entriesAfterResolution.find((entry) =>
     JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
   );
-  const untouchedDecoy = entriesAfterResolution.find((entry) =>
+  const resolvedDecoy = entriesAfterResolution.find((entry) =>
     JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
   );
-  assert.equal(resolvedWanted?.index, orderedWanted.index);
-  assert.equal(resolvedWanted?.translation, teamConflictTheirs);
-  assert.equal(untouchedDecoy?.index, orderedDecoy.index);
-  assert.equal(untouchedDecoy?.translation, "");
+  assert.equal(retainedWanted?.translation, teamConflictTheirs);
+  assert.equal(resolvedDecoy?.translation, secondConflictOurs);
 
   console.log(JSON.stringify({
     result: "passed",
@@ -1795,10 +2266,27 @@ try {
       reorderedIndex: orderedWanted.index,
       completeEntryKey: duplicateSetup.wanted.key,
       visible: visibleTeamConflict,
-      selected: "theirs",
+      cancelled: {
+        visible: cancelledTeamResolve,
+        requestTrace: resolveCancelEvents
+          .filter((event) => event.requestId === resolveCancelRequestId)
+          .map((event) => `${event.phase}:${event.stage}`),
+        protocolErrorCode: -32800,
+        tmxRollback: true,
+        conflictQueueRollback: true,
+        editorRollback: resolveCancelPost.editor,
+      },
+      interruptedRecovery: {
+        progress: interruptedResolveProgress,
+        killedSidecarPid: sidecarProcess.pid,
+        recoveredQueue: recoveredInterruptedResolve,
+        activeJournalRemoved: true,
+      },
+      selected: ["theirs", "ours"],
+      firstResolved: firstResolvedTeamConflict,
       resolved: resolvedTeamConflict,
-      wantedTranslation: resolvedWanted.translation,
-      decoyTranslation: untouchedDecoy.translation,
+      wantedTranslation: retainedWanted.translation,
+      decoyTranslation: resolvedDecoy.translation,
       singleDocument3Surface: resolvedTeamConflict.ui.activeSurfaces,
       utf16Caret: resolvedTeamConflict.editor.caret,
     },
