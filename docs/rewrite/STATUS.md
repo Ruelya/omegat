@@ -58,9 +58,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, plugin registry **4 passed**, sidecar contract **8 passed** plus
+**4 passed**, plugin registry **4 passed**, sidecar contract **12 passed** plus
 sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 150
+passed**, and desktop **23 files / 151
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -483,7 +483,17 @@ The same token now reaches RealProject source reload/compile/export loops,
 deep XML/ZIP/Office parsing and atomic write-back, team transactions, and
 aligner extraction/decoding. Sidecar `project.reload`, `project.compile`,
 `team.sync`, `team.commit`, and `align.run` map cooperative cancellation to
-the exact protocol error `-32800`.
+the exact protocol error `-32800`. Request-scoped `$/progress` checkpoints now
+make middle-of-operation protocol cancellation reproducible rather than a
+pre-start race. The **12/12** sidecar contract waits until real product work has
+started, then strictly checks `-32800`: reload restores the prior exact entry
+list, compile leaves the complete prior target tree unchanged, team sync/commit
+restore exact project and file-remote snapshots and remove `active.json`, and
+align preserves the prior destination bytes. Compile stages every target and
+TM export privately before one rollback-capable publish phase; align writes
+through a cancellable sibling stage. Team mapping copies check cancellation per
+file inside the existing transaction, and reload commits only its candidate
+entry set.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
 on Linux without relying on recursive-watch support. They now install and
 remove per-directory watchers as nested directories appear or disappear at
@@ -500,8 +510,12 @@ Each forwarded proactive event now carries the renderer project generation and
 its native/sidecar source set. A queued event from an older same-root project
 generation is rejected before refresh. Sidecar writes bracket the Rust scanner
 with begin/end snapshots, while Electron suppresses matching native watcher
-echoes for the same write-source operation; exact product tests prove saving
-does not feed back as an external mutation and later real changes still publish.
+echoes for the same write-source operation. Electron now fingerprints project
+inputs around nested writes, so delayed native `fs.watch` delivery is suppressed
+only while it still matches the completed self-write; a later distinct external
+fingerprint publishes normally. Exact real-filesystem desktop and actual
+sidecar `project.save` tests prove saving does not feed back as an external
+mutation and later real changes still publish.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
