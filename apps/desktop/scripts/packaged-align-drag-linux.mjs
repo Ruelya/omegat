@@ -444,6 +444,13 @@ try {
     afterMotion.events.some((event) => event.type === "dragover"),
     `Native drag never reached the viewport: ${JSON.stringify(afterMotion)}`,
   );
+  assert(
+    afterMotion.scrollTop > 0,
+    `Native drag missed the viewport edge: ${JSON.stringify({
+      desiredEdge: { x: initial.edgeX, y: initial.edgeY },
+      ...afterMotion,
+    })}`,
+  );
 
   const hovered = await waitFor("stationary pointer drag autoscroll", async () => {
     const state = await client.evaluate(`(() => {
