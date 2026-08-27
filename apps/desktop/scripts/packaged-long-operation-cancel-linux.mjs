@@ -225,7 +225,7 @@ async function compileResidue(root) {
 }
 
 async function writeSources(sourceDir) {
-  const payload = "x".repeat(4_096);
+  const payload = "x".repeat(16_384);
   for (let start = 0; start < SOURCE_FILES; start += 100) {
     await Promise.all(
       Array.from(
@@ -259,7 +259,7 @@ async function writeSources(sourceDir) {
 
 async function writeRemoteSources(sourceDir) {
   await mkdir(sourceDir, { recursive: true });
-  const payload = "z".repeat(4_096);
+  const payload = "z".repeat(16_384);
   for (let start = 0; start < SOURCE_FILES; start += 100) {
     await Promise.all(
       Array.from(
