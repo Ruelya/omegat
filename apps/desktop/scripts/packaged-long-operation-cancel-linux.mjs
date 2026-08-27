@@ -413,8 +413,8 @@ try {
       state.operation === "compile"
       && state.phase === "cancelled"
       && state.stage === "project.compile.targets"
-      && state.operationStatus === "compile: project.compile.targets"
-      && state.footer.includes("compile cancelled")
+      && state.operationStatus
+        === "compile: cancelled (project.compile.targets)"
       && !state.cancelVisible
     ) {
       return state;
@@ -439,7 +439,7 @@ try {
   ]);
   assert(
     postCancel.domTrace.includes(
-      "compile|cancelling|project.compile.targets|compile: project.compile.targets",
+      "compile|cancelling|project.compile.targets|compile: cancelling (project.compile.targets)",
     ),
     `renderer never visibly entered cancelling: ${JSON.stringify(postCancel.domTrace)}`,
   );

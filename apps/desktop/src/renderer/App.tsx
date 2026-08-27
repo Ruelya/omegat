@@ -80,7 +80,11 @@ export function App() {
       || app.longOperation.phase === "cancelling"
     );
   const operationText = app.longOperation
-    ? `${app.longOperation.kind}: ${app.longOperation.stage ?? app.longOperation.phase}`
+    ? app.longOperation.phase === "progress"
+      ? `${app.longOperation.kind}: ${app.longOperation.stage ?? "progress"}`
+      : `${app.longOperation.kind}: ${app.longOperation.phase}${
+        app.longOperation.stage ? ` (${app.longOperation.stage})` : ""
+      }`
     : "";
   return (
     <div
