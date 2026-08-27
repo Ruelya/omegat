@@ -1,7 +1,7 @@
 //! Java `org.omegat.filters4.xml.openxml.OpenXmlFilter`.
 
 use super::abstract_xliff::omegat_tag;
-use super::abstract_xml::{process_xml_string_ex, StaxFilter};
+use super::abstract_xml::{process_xml_string_ex_cancellable, StaxFilter};
 use super::stax::{from_event_to_writer, QName, StaxWriter, XmlDeclStyle, XmlEvent};
 use crate::{ExtractedSegment, FilterContext, Result};
 use regex::Regex;
@@ -834,8 +834,23 @@ impl StaxFilter for OpenXmlProc {
 }
 
 pub fn parse_openxml_part(raw: &str, ctx: &FilterContext, with_comments: bool) -> Result<Vec<ExtractedSegment>> {
+    parse_openxml_part_cancellable(raw, ctx, with_comments, &|| false)
+}
+
+pub fn parse_openxml_part_cancellable(
+    raw: &str,
+    ctx: &FilterContext,
+    with_comments: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<ExtractedSegment>> {
     let mut proc = OpenXmlProc::new(ctx, with_comments, false);
-    let (segments, _) = process_xml_string_ex(raw, &mut proc, false, XmlDeclStyle::AbstractXml)?;
+    let (segments, _) = process_xml_string_ex_cancellable(
+        raw,
+        &mut proc,
+        false,
+        XmlDeclStyle::AbstractXml,
+        is_cancelled,
+    )?;
     Ok(segments)
 }
 
@@ -845,8 +860,24 @@ pub fn write_openxml_part(
     with_comments: bool,
     translations: &std::collections::HashMap<String, String>,
 ) -> Result<String> {
+    write_openxml_part_cancellable(raw, ctx, with_comments, translations, &|| false)
+}
+
+pub fn write_openxml_part_cancellable(
+    raw: &str,
+    ctx: &FilterContext,
+    with_comments: bool,
+    translations: &std::collections::HashMap<String, String>,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<String> {
     let mut proc = OpenXmlProc::new(ctx, with_comments, true);
     proc.set_translations(translations);
-    let (_, text) = process_xml_string_ex(raw, &mut proc, true, XmlDeclStyle::AbstractXml)?;
+    let (_, text) = process_xml_string_ex_cancellable(
+        raw,
+        &mut proc,
+        true,
+        XmlDeclStyle::AbstractXml,
+        is_cancelled,
+    )?;
     Ok(text)
 }

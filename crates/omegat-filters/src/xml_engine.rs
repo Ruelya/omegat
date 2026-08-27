@@ -1365,13 +1365,27 @@ pub struct ProcessResult {
     pub output: String,
 }
 
+/// Internal sentinel used to preserve `FilterError::Cancelled` across the
+/// XML engine's string-error compatibility boundary.
+pub const CANCELLED_ERROR: &str = "\u{0}omegat-filter-cancelled";
+
 pub fn process_xml(
     raw: &str,
     dialect: &dyn XmlDialect,
     hooks: &mut dyn FilterHooks,
     cfg: EngineConfig,
 ) -> Result<ProcessResult, String> {
-    process_xml_ex(raw, dialect, hooks, cfg, None, false)
+    process_xml_cancellable(raw, dialect, hooks, cfg, &|| false)
+}
+
+pub fn process_xml_cancellable(
+    raw: &str,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ProcessResult, String> {
+    process_xml_ex_cancellable(raw, dialect, hooks, cfg, None, false, is_cancelled)
 }
 
 pub fn process_xml_ex(
@@ -1382,10 +1396,31 @@ pub fn process_xml_ex(
     base: Option<&Path>,
     inline_system: bool,
 ) -> Result<ProcessResult, String> {
+    process_xml_ex_cancellable(raw, dialect, hooks, cfg, base, inline_system, &|| false)
+}
+
+pub fn process_xml_ex_cancellable(
+    raw: &str,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    base: Option<&Path>,
+    inline_system: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ProcessResult, String> {
+    if is_cancelled() {
+        return Err(CANCELLED_ERROR.into());
+    }
     let bom_utf8 = raw.starts_with('\u{feff}');
     let raw_no_bom = raw.trim_start_matches('\u{feff}');
     reject_self_nested_leaf_tags(raw_no_bom)?;
+    if is_cancelled() {
+        return Err(CANCELLED_ERROR.into());
+    }
     let prep = prepare_xml(raw_no_bom, base, inline_system)?;
+    if is_cancelled() {
+        return Err(CANCELLED_ERROR.into());
+    }
     let raw = prep.text.as_str();
     let encoding = if bom_utf8 {
         Some("UTF-8".to_string())
@@ -1399,8 +1434,13 @@ pub fn process_xml_ex(
         "<?xml version=\"1.0\"?>".to_string()
     };
 
-    if raw.chars().any(is_xml_invalid) {
-        return Err("invalid XML character".into());
+    for (index, ch) in raw.chars().enumerate() {
+        if index % 4096 == 0 && is_cancelled() {
+            return Err(CANCELLED_ERROR.into());
+        }
+        if is_xml_invalid(ch) {
+            return Err("invalid XML character".into());
+        }
     }
     let mut handler = Handler::new(dialect, hooks, cfg);
     handler.entities = prep.internal.clone();
@@ -1417,6 +1457,9 @@ pub fn process_xml_ex(
 
     let mut buf = Vec::new();
     loop {
+        if is_cancelled() {
+            return Err(CANCELLED_ERROR.into());
+        }
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
                 let (name, attrs) = decode_start(&e, &reader);
@@ -1468,6 +1511,9 @@ pub fn process_xml_ex(
         }
         buf.clear();
     }
+    if is_cancelled() {
+        return Err(CANCELLED_ERROR.into());
+    }
     handler.translate_and_flush();
     handler.translate_and_flush();
 
@@ -1483,6 +1529,9 @@ pub fn process_xml_ex(
     out = normalize_eol(&out);
     if eol != "\n" {
         out = out.replace('\n', &eol);
+    }
+    if is_cancelled() {
+        return Err(CANCELLED_ERROR.into());
     }
     Ok(ProcessResult { output: out })
 }

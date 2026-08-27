@@ -9,6 +9,8 @@ pub enum TeamError {
     Command(String),
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("request cancelled")]
+    Cancelled,
     #[error("unsupported repository type: {0}")]
     Unsupported(String),
 }

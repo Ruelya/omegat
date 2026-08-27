@@ -508,7 +508,18 @@ pub fn extract_tags(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
+    use zip::write::FileOptions;
+    use zip::ZipWriter;
+
+    fn office_zip(path: &Path, part: &str, xml: &str) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = ZipWriter::new(file);
+        writer.start_file(part, FileOptions::default()).unwrap();
+        writer.write_all(xml.as_bytes()).unwrap();
+        writer.finish().unwrap();
+    }
 
     #[test]
     fn text_roundtrip() {
@@ -557,6 +568,74 @@ mod tests {
             Err(FilterError::Cancelled)
         ));
         assert_eq!(dest.exists(), false);
+    }
+
+    #[test]
+    fn xml_zip_and_office_cancellation_is_deep_and_write_is_atomic() {
+        let dir = tempdir().unwrap();
+        let openxml = dir.path().join("deep.docx");
+        let opendoc = dir.path().join("deep.odt");
+        let office_xml = format!(
+            r#"<w:document xmlns:w="urn:word"><w:body>{}</w:body></w:document>"#,
+            (0..20_000)
+                .map(|index| format!("<w:p><w:r><w:t>segment {index}</w:t></w:r></w:p>"))
+                .collect::<String>()
+        );
+        let opendoc_xml = format!(
+            r#"<office:document-content xmlns:office="urn:office" xmlns:text="urn:text"><office:body>{}</office:body></office:document-content>"#,
+            (0..20_000)
+                .map(|index| format!("<text:p>segment {index}</text:p>"))
+                .collect::<String>()
+        );
+        office_zip(&openxml, "word/document.xml", &office_xml);
+        office_zip(&opendoc, "content.xml", &opendoc_xml);
+
+        let registry = FilterRegistry::new();
+        for (id, path) in [
+            ("openxml", openxml.as_path()),
+            ("msoffice", openxml.as_path()),
+            ("opendoc", opendoc.as_path()),
+        ] {
+            let checks = AtomicUsize::new(0);
+            let cancel_during_events = || checks.fetch_add(1, Ordering::Relaxed) >= 40;
+            assert!(
+                matches!(
+                    registry.by_id(id).unwrap().parse_cancellable(
+                        path,
+                        &FilterContext::default(),
+                        &cancel_during_events,
+                    ),
+                    Err(FilterError::Cancelled)
+                ),
+                "{id} must observe cancellation inside ZIP/XML traversal"
+            );
+            assert!(
+                checks.load(Ordering::Relaxed) > 40,
+                "{id} only checked at its outer boundary"
+            );
+        }
+
+        for id in ["openxml", "msoffice"] {
+            let dest = dir.path().join(format!("{id}-target.docx"));
+            std::fs::write(&dest, b"previous complete target").unwrap();
+            let checks = AtomicUsize::new(0);
+            let cancel_during_write = || checks.fetch_add(1, Ordering::Relaxed) >= 80;
+            assert!(matches!(
+                registry.by_id(id).unwrap().write_cancellable(
+                    &openxml,
+                    &dest,
+                    &HashMap::from([("segment 0".into(), "translated".into())]),
+                    &FilterContext::default(),
+                    &cancel_during_write,
+                ),
+                Err(FilterError::Cancelled)
+            ));
+            assert_eq!(
+                std::fs::read(&dest).unwrap(),
+                b"previous complete target",
+                "{id} published a partial cancelled package"
+            );
+        }
     }
 
     #[test]

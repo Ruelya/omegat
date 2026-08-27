@@ -41,8 +41,8 @@ pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
 pub use rebase_and_commit::{rebase_all, rebase_project, resolve};
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    commit_after_version, commit_project_files, get_version, recover_interrupted_sync,
-    switch_to_version, sync,
+    commit_after_version, commit_project_files, commit_project_files_cancellable, get_version,
+    recover_interrupted_sync, switch_to_version, sync, sync_cancellable,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;

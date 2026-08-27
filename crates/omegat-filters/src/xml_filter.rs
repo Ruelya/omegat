@@ -3,8 +3,8 @@
 use crate::xml_dialect::{file_looks_like, XmlDialect};
 use crate::xml_engine::{EngineConfig, FilterHooks, ProcessResult};
 use crate::{
-    ensure_parent, read_to_string, ExtractedSegment, FilterContext, ParsedFile, ProtectedPart,
-    Result,
+    ensure_parent, read_to_string, read_to_string_cancellable, ExtractedSegment, FilterContext,
+    FilterError, ParsedFile, ProtectedPart, Result,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,6 +17,21 @@ fn run_xml(
     cfg: EngineConfig,
     inline_system: bool,
 ) -> Result<String> {
+    run_xml_cancellable(raw, path, dialect, hooks, cfg, inline_system, &|| false)
+}
+
+fn run_xml_cancellable(
+    raw: &str,
+    path: Option<&Path>,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    inline_system: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<String> {
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
     let base = path.and_then(|p| p.parent());
     let mut owned = raw.to_string();
     if let Some(p) = path {
@@ -26,12 +41,28 @@ fn run_xml(
             }
         }
     }
-    let ProcessResult { output } =
-        crate::xml_engine::process_xml_ex(&owned, dialect, hooks, cfg, base, inline_system)
-            .map_err(|e| crate::FilterError::Parse {
+    let ProcessResult { output } = crate::xml_engine::process_xml_ex_cancellable(
+        &owned,
+        dialect,
+        hooks,
+        cfg,
+        base,
+        inline_system,
+        is_cancelled,
+    )
+    .map_err(|e| {
+        if e == crate::xml_engine::CANCELLED_ERROR || is_cancelled() {
+            FilterError::Cancelled
+        } else {
+            FilterError::Parse {
                 format: "xml".into(),
                 message: e,
-            })?;
+            }
+        }
+    })?;
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
     Ok(output)
 }
 
@@ -170,6 +201,25 @@ pub fn parse_xml_cfg(
     run_xml(&raw, Some(path), dialect, hooks, cfg, true)
 }
 
+pub fn parse_xml_cfg_cancellable(
+    path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<String> {
+    let raw = read_to_string_cancellable(path, is_cancelled)?;
+    run_xml_cancellable(
+        &raw,
+        Some(path),
+        dialect,
+        hooks,
+        cfg,
+        true,
+        is_cancelled,
+    )
+}
+
 pub fn write_xml(
     source_path: &Path,
     dest_path: &Path,
@@ -199,6 +249,35 @@ pub fn write_xml_cfg(
     Ok(())
 }
 
+pub fn write_xml_cfg_cancellable(
+    source_path: &Path,
+    dest_path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+    cfg: EngineConfig,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<()> {
+    let raw = read_to_string_cancellable(source_path, is_cancelled)?;
+    let output = run_xml_cancellable(
+        &raw,
+        Some(source_path),
+        dialect,
+        hooks,
+        cfg,
+        false,
+        is_cancelled,
+    )?;
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
+    ensure_parent(dest_path)?;
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
+    std::fs::write(dest_path, output)?;
+    Ok(())
+}
+
 pub fn parse_to_file(
     path: &Path,
     dialect: &dyn XmlDialect,
@@ -215,6 +294,25 @@ pub fn parse_to_file_cfg(
 ) -> Result<ParsedFile> {
     let raw = read_to_string(path)?;
     parse_raw_cfg_at(&raw, Some(path), dialect, hooks, cfg, true)
+}
+
+pub fn parse_to_file_cfg_cancellable(
+    path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut DefaultHooks,
+    cfg: EngineConfig,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ParsedFile> {
+    let raw = read_to_string_cancellable(path, is_cancelled)?;
+    parse_raw_cfg_at_cancellable(
+        &raw,
+        Some(path),
+        dialect,
+        hooks,
+        cfg,
+        true,
+        is_cancelled,
+    )
 }
 
 pub fn parse_raw(
@@ -234,6 +332,16 @@ pub fn parse_raw_cfg(
     parse_raw_cfg_at(raw, None, dialect, hooks, cfg, false)
 }
 
+pub fn parse_raw_cfg_cancellable(
+    raw: &str,
+    dialect: &dyn XmlDialect,
+    hooks: &mut DefaultHooks,
+    cfg: EngineConfig,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ParsedFile> {
+    parse_raw_cfg_at_cancellable(raw, None, dialect, hooks, cfg, false, is_cancelled)
+}
+
 fn parse_raw_cfg_at(
     raw: &str,
     path: Option<&Path>,
@@ -242,7 +350,35 @@ fn parse_raw_cfg_at(
     cfg: EngineConfig,
     inline_system: bool,
 ) -> Result<ParsedFile> {
-    let output = run_xml(raw, path, dialect, hooks, cfg, inline_system)?;
+    parse_raw_cfg_at_cancellable(
+        raw,
+        path,
+        dialect,
+        hooks,
+        cfg,
+        inline_system,
+        &|| false,
+    )
+}
+
+fn parse_raw_cfg_at_cancellable(
+    raw: &str,
+    path: Option<&Path>,
+    dialect: &dyn XmlDialect,
+    hooks: &mut DefaultHooks,
+    cfg: EngineConfig,
+    inline_system: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ParsedFile> {
+    let output = run_xml_cancellable(
+        raw,
+        path,
+        dialect,
+        hooks,
+        cfg,
+        inline_system,
+        is_cancelled,
+    )?;
     Ok(ParsedFile {
         segments: std::mem::take(&mut hooks.segments),
         skeleton: Some(output),

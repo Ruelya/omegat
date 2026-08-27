@@ -1,7 +1,11 @@
 //! Java `org.omegat.filters4.xml.openxml.MsOfficeFileFilter`.
 
-use super::abstract_zip::{parse_zip_parts, short_name, write_zip_parts};
-use super::openxml_filter::{parse_openxml_part, write_openxml_part};
+use super::abstract_zip::{
+    parse_zip_parts_cancellable, short_name, write_zip_parts_cancellable,
+};
+use super::openxml_filter::{
+    parse_openxml_part_cancellable, write_openxml_part_cancellable,
+};
 use crate::{Filter, FilterContext, ParsedFile, Result};
 use regex::Regex;
 use std::collections::HashMap;
@@ -140,6 +144,61 @@ pub fn cmp_entries(a: &str, b: &str, documents: &str) -> std::cmp::Ordering {
     i1.cmp(&i2).then_with(|| a.cmp(b))
 }
 
+fn parse_msoffice(
+    path: &Path,
+    ctx: &FilterContext,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<ParsedFile> {
+    let docs = documents_pattern(&ctx.options);
+    let options = ctx.options.clone();
+    let ctx = ctx.clone();
+    let with_comments = docs.contains("comments");
+    let segments = parse_zip_parts_cancellable(
+        path,
+        accept_internal,
+        |n| must_translate(n, false, &options),
+        |_name, raw| {
+            parse_openxml_part_cancellable(raw, &ctx, with_comments, is_cancelled)
+        },
+        Some(|a: &str, b: &str| cmp_entries(a, b, &docs)),
+        is_cancelled,
+    )?;
+    Ok(ParsedFile {
+        segments,
+        skeleton: None,
+    })
+}
+
+fn write_msoffice(
+    source_path: &Path,
+    dest_path: &Path,
+    translations: &HashMap<String, String>,
+    ctx: &FilterContext,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<()> {
+    let docs = documents_pattern(&ctx.options);
+    let options = ctx.options.clone();
+    let ctx = ctx.clone();
+    let with_comments = docs.contains("comments");
+    let translations = translations.clone();
+    write_zip_parts_cancellable(
+        source_path,
+        dest_path,
+        |n| must_translate(n, true, &options),
+        |n| must_delete(n, &options),
+        |_name, raw| {
+            write_openxml_part_cancellable(
+                raw,
+                &ctx,
+                with_comments,
+                &translations,
+                is_cancelled,
+            )
+        },
+        is_cancelled,
+    )
+}
+
 impl Filter for MsOfficeFileFilter {
     fn id(&self) -> &'static str {
         "msoffice"
@@ -178,21 +237,15 @@ impl Filter for MsOfficeFileFilter {
         false
     }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
-        let docs = documents_pattern(&ctx.options);
-        let options = ctx.options.clone();
-        let ctx = ctx.clone();
-        let with_comments = docs.contains("comments");
-        let segments = parse_zip_parts(
-            path,
-            accept_internal,
-            |n| must_translate(n, false, &options),
-            |_name, raw| parse_openxml_part(raw, &ctx, with_comments),
-            Some(|a: &str, b: &str| cmp_entries(a, b, &docs)),
-        )?;
-        Ok(ParsedFile {
-            segments,
-            skeleton: None,
-        })
+        parse_msoffice(path, ctx, &|| false)
+    }
+    fn parse_cancellable(
+        &self,
+        path: &Path,
+        ctx: &FilterContext,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ParsedFile> {
+        parse_msoffice(path, ctx, is_cancelled)
     }
     fn write(
         &self,
@@ -201,17 +254,22 @@ impl Filter for MsOfficeFileFilter {
         translations: &HashMap<String, String>,
         ctx: &FilterContext,
     ) -> Result<()> {
-        let docs = documents_pattern(&ctx.options);
-        let options = ctx.options.clone();
-        let ctx = ctx.clone();
-        let with_comments = docs.contains("comments");
-        let translations = translations.clone();
-        write_zip_parts(
+        write_msoffice(source_path, dest_path, translations, ctx, &|| false)
+    }
+    fn write_cancellable(
+        &self,
+        source_path: &Path,
+        dest_path: &Path,
+        translations: &HashMap<String, String>,
+        ctx: &FilterContext,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<()> {
+        write_msoffice(
             source_path,
             dest_path,
-            |n| must_translate(n, true, &options),
-            |n| must_delete(n, &options),
-            |_name, raw| write_openxml_part(raw, &ctx, with_comments, &translations),
+            translations,
+            ctx,
+            is_cancelled,
         )
     }
 }

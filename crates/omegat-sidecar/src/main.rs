@@ -208,11 +208,16 @@ impl App {
             }
             "project.compile" => {
                 let file = params.get("file").and_then(|v| v.as_str());
-                let n = self.session_mut()?.compile(file).map_err(core_err)?;
+                let n = self
+                    .session_mut()?
+                    .compile_cancellable(file, cancellation)
+                    .map_err(core_err)?;
                 Ok(json!({"files": n}))
             }
             "project.reload" => {
-                self.session_mut()?.reload().map_err(core_err)?;
+                self.session_mut()?
+                    .reload_cancellable(cancellation)
+                    .map_err(core_err)?;
                 let list: Vec<EntryDto> = self
                     .session()?
                     .entries
@@ -671,10 +676,14 @@ impl App {
             }
             "team.sync" => {
                 let s = self.session()?;
-                match omegat_team::sync(&s.props) {
+                match omegat_team::sync_cancellable(&s.props, cancellation) {
                     Ok(r) => Ok(
                         json!({"action": r.action, "message": r.message, "conflicts": r.conflicts}),
                     ),
+                    Err(omegat_team::TeamError::Cancelled) => Err((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    )),
                     Err(omegat_team::TeamError::Conflict(msg)) => {
                         Err((error_code::TEAM_CONFLICT, msg))
                     }
@@ -686,8 +695,18 @@ impl App {
                     .get("which")
                     .and_then(|v| v.as_str())
                     .unwrap_or("target");
-                let r = omegat_team::commit_project_files(&self.session()?.props, which)
-                    .map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
+                let r = omegat_team::commit_project_files_cancellable(
+                    &self.session()?.props,
+                    which,
+                    cancellation,
+                )
+                .map_err(|error| match error {
+                    omegat_team::TeamError::Cancelled => (
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ),
+                    other => (error_code::INTERNAL_ERROR, other.to_string()),
+                })?;
                 Ok(json!({"action": r.action, "message": r.message}))
             }
             "script.run" => {
@@ -809,14 +828,21 @@ impl App {
                     .map(|s| s.to_string())
                     .or_else(|| self.session().ok().map(|s| s.props.target_lang.clone()))
                     .unwrap_or_else(|| "fr".into());
-                let tmx = omegat_core::align::align_files_cfg(
+                let tmx = omegat_core::align::align_files_cfg_cancellable(
                     std::path::Path::new(source),
                     std::path::Path::new(target),
                     &sl,
                     &tl,
                     &cfg,
+                    cancellation,
                 )
                 .map_err(core_err)?;
+                if cancellation.is_cancelled() {
+                    return Err((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ));
+                }
                 if !dest.is_empty() {
                     omegat_core::align::write_aligned_tmx(
                         &tmx,
@@ -1192,6 +1218,7 @@ fn invalid(e: serde_json::Error) -> (i32, String) {
 
 fn core_err(e: omegat_core::CoreError) -> (i32, String) {
     let code = match e {
+        omegat_core::CoreError::Cancelled => error_code::REQUEST_CANCELLED,
         omegat_core::CoreError::OptimisticLock(_) => error_code::OPTIMISTIC_LOCK,
         omegat_core::CoreError::ProjectNotOpen => error_code::PROJECT_NOT_OPEN,
         omegat_core::CoreError::Io(_) => error_code::IO,

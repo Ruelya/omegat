@@ -5,7 +5,8 @@
 //! ID: pair units that share a filter id (Resource Bundle keys).
 //! Viterbi is a min-cost path; Forward-Backward is a posterior / soft path — not an alias.
 
-use crate::error::Result;
+use crate::cancellation::CancellationToken;
+use crate::error::{CoreError, Result};
 use crate::language::Language;
 use crate::segment::split_sentences_lang;
 use crate::tmx::{ProjectTmx, TmxEntry};
@@ -1020,11 +1021,21 @@ pub fn realign_pending(beads: &[MutableBead], algo: AlignAlgo) -> Result<Vec<Mut
 }
 
 pub fn extract_units(path: &Path) -> Result<Vec<AlignUnit>> {
+    extract_units_cancellable(path, &CancellationToken::default())
+}
+
+pub fn extract_units_cancellable(
+    path: &Path,
+    cancellation: &CancellationToken,
+) -> Result<Vec<AlignUnit>> {
+    if cancellation.is_cancelled() {
+        return Err(CoreError::Cancelled);
+    }
     let reg = FilterRegistry::new();
     let ctx = FilterContext::default();
     if let Some(f) = reg.for_path(path) {
-        let parsed = f.parse(path, &ctx)?;
-        return Ok(parsed
+        let parsed = f.parse_cancellable(path, &ctx, &|| cancellation.is_cancelled())?;
+        let units = parsed
             .segments
             .into_iter()
             .filter(|s| !s.source.trim().is_empty())
@@ -1032,13 +1043,24 @@ pub fn extract_units(path: &Path) -> Result<Vec<AlignUnit>> {
                 id: if s.id.is_empty() { None } else { Some(s.id) },
                 text: s.source,
             })
-            .collect());
+            .collect();
+        return if cancellation.is_cancelled() {
+            Err(CoreError::Cancelled)
+        } else {
+            Ok(units)
+        };
     }
-    let raw = std::fs::read_to_string(path)?;
-    Ok(paragraphs(&raw)
+    let raw =
+        omegat_filters::read_to_string_cancellable(path, &|| cancellation.is_cancelled())?;
+    let units = paragraphs(&raw)
         .into_iter()
         .map(|text| AlignUnit { id: None, text })
-        .collect())
+        .collect();
+    if cancellation.is_cancelled() {
+        Err(CoreError::Cancelled)
+    } else {
+        Ok(units)
+    }
 }
 
 pub fn align_files(
@@ -1057,9 +1079,30 @@ pub fn align_files_cfg(
     tgt_lang: &str,
     cfg: &AlignConfig,
 ) -> Result<ProjectTmx> {
-    let left = extract_units(source)?;
-    let right = extract_units(target)?;
-    let pairs = align_units(&left, &right, src_lang, tgt_lang, cfg);
+    align_files_cfg_cancellable(
+        source,
+        target,
+        src_lang,
+        tgt_lang,
+        cfg,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn align_files_cfg_cancellable(
+    source: &Path,
+    target: &Path,
+    src_lang: &str,
+    tgt_lang: &str,
+    cfg: &AlignConfig,
+    cancellation: &CancellationToken,
+) -> Result<ProjectTmx> {
+    let left = extract_units_cancellable(source, cancellation)?;
+    let right = extract_units_cancellable(target, cancellation)?;
+    let pairs = align_units_cancellable(&left, &right, src_lang, tgt_lang, cfg, cancellation)?;
+    if cancellation.is_cancelled() {
+        return Err(CoreError::Cancelled);
+    }
     Ok(pairs_to_tmx(&pairs, src_lang, tgt_lang))
 }
 
@@ -1083,27 +1126,52 @@ pub fn align_units(
     tgt_lang: &str,
     cfg: &AlignConfig,
 ) -> Vec<(String, String)> {
+    align_units_cancellable(
+        left,
+        right,
+        src_lang,
+        tgt_lang,
+        cfg,
+        &CancellationToken::default(),
+    )
+    .expect("default cancellation token cannot be cancelled")
+}
+
+pub fn align_units_cancellable(
+    left: &[AlignUnit],
+    right: &[AlignUnit],
+    src_lang: &str,
+    tgt_lang: &str,
+    cfg: &AlignConfig,
+    cancellation: &CancellationToken,
+) -> Result<Vec<(String, String)>> {
+    if cancellation.is_cancelled() {
+        return Err(CoreError::Cancelled);
+    }
     match cfg.mode {
-        AlignMode::Id => align_by_id(left, right),
+        AlignMode::Id => Ok(align_by_id(left, right)),
         AlignMode::Parsewise => {
             if left.len() == right.len() && !left.is_empty() {
                 let mut out = Vec::new();
                 for (a, b) in left.iter().zip(right.iter()) {
+                    if cancellation.is_cancelled() {
+                        return Err(CoreError::Cancelled);
+                    }
                     let ls = maybe_segment(&a.text, src_lang, cfg.segment);
                     let rs = maybe_segment(&b.text, tgt_lang, cfg.segment);
-                    out.extend(hmm_align(&ls, &rs, cfg));
+                    out.extend(hmm_align_cancellable(&ls, &rs, cfg, cancellation)?);
                 }
-                out
+                Ok(out)
             } else {
                 let ls = flatten_segmented(left, src_lang, cfg.segment);
                 let rs = flatten_segmented(right, tgt_lang, cfg.segment);
-                hmm_align(&ls, &rs, cfg)
+                hmm_align_cancellable(&ls, &rs, cfg, cancellation)
             }
         }
         AlignMode::Heapwise => {
             let ls = flatten_segmented(left, src_lang, cfg.segment);
             let rs = flatten_segmented(right, tgt_lang, cfg.segment);
-            hmm_align(&ls, &rs, cfg)
+            hmm_align_cancellable(&ls, &rs, cfg, cancellation)
         }
     }
 }
@@ -1348,18 +1416,31 @@ fn has_real_ids(units: &[AlignUnit]) -> bool {
 }
 
 fn hmm_align(ls: &[String], rs: &[String], cfg: &AlignConfig) -> Vec<(String, String)> {
+    hmm_align_cancellable(ls, rs, cfg, &CancellationToken::default())
+        .expect("default cancellation token cannot be cancelled")
+}
+
+fn hmm_align_cancellable(
+    ls: &[String],
+    rs: &[String],
+    cfg: &AlignConfig,
+    cancellation: &CancellationToken,
+) -> Result<Vec<(String, String)>> {
+    if cancellation.is_cancelled() {
+        return Err(CoreError::Cancelled);
+    }
     if ls.is_empty() && rs.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
     if ls.is_empty() {
-        return rs.iter().cloned().map(|t| (String::new(), t)).collect();
+        return Ok(rs.iter().cloned().map(|t| (String::new(), t)).collect());
     }
     if rs.is_empty() {
-        return ls.iter().cloned().map(|s| (s, String::new())).collect();
+        return Ok(ls.iter().cloned().map(|s| (s, String::new())).collect());
     }
     match cfg.algo {
-        AlignAlgo::Viterbi => viterbi(ls, rs, cfg),
-        AlignAlgo::ForwardBackward => forward_backward(ls, rs, cfg),
+        AlignAlgo::Viterbi => decode_min_cancellable(ls, rs, cfg, 0.2, cancellation),
+        AlignAlgo::ForwardBackward => decode_posterior_cancellable(ls, rs, cfg, cancellation),
     }
 }
 
@@ -1448,12 +1529,32 @@ fn decode_min(
     cfg: &AlignConfig,
     merge_pen: f64,
 ) -> Vec<(String, String)> {
+    decode_min_cancellable(
+        ls,
+        rs,
+        cfg,
+        merge_pen,
+        &CancellationToken::default(),
+    )
+    .expect("default cancellation token cannot be cancelled")
+}
+
+fn decode_min_cancellable(
+    ls: &[String],
+    rs: &[String],
+    cfg: &AlignConfig,
+    merge_pen: f64,
+    cancellation: &CancellationToken,
+) -> Result<Vec<(String, String)>> {
     let n = ls.len();
     let m = rs.len();
     let mut dp = vec![vec![f64::INFINITY; m + 1]; n + 1];
     let mut bt = vec![vec![(0isize, 0isize); m + 1]; n + 1];
     dp[0][0] = 0.0;
     for i in 0..=n {
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         for j in 0..=m {
             let cur = dp[i][j];
             if !cur.is_finite() {
@@ -1468,7 +1569,11 @@ fn decode_min(
             );
         }
     }
-    backtrack(ls, rs, &bt, n, m)
+    if cancellation.is_cancelled() {
+        Err(CoreError::Cancelled)
+    } else {
+        Ok(backtrack(ls, rs, &bt, n, m))
+    }
 }
 
 fn consider_min(
@@ -1499,6 +1604,21 @@ fn consider_min(
 }
 
 fn decode_posterior(ls: &[String], rs: &[String], cfg: &AlignConfig) -> Vec<(String, String)> {
+    decode_posterior_cancellable(
+        ls,
+        rs,
+        cfg,
+        &CancellationToken::default(),
+    )
+    .expect("default cancellation token cannot be cancelled")
+}
+
+fn decode_posterior_cancellable(
+    ls: &[String],
+    rs: &[String],
+    cfg: &AlignConfig,
+    cancellation: &CancellationToken,
+) -> Result<Vec<(String, String)>> {
     let n = ls.len();
     let m = rs.len();
     // Soft path: unmatched 1-0 / 0-1 are cheap; 2-1 / 1-2 are expensive.
@@ -1514,6 +1634,9 @@ fn decode_posterior(ls: &[String], rs: &[String], cfg: &AlignConfig) -> Vec<(Str
     let mut bt = vec![vec![(0isize, 0isize); m + 1]; n + 1];
     fwd[0][0] = 1.0;
     for i in 0..=n {
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         for j in 0..=m {
             let mass = fwd[i][j];
             if mass <= 0.0 {
@@ -1547,7 +1670,11 @@ fn decode_posterior(ls: &[String], rs: &[String], cfg: &AlignConfig) -> Vec<(Str
             }
         }
     }
-    backtrack(ls, rs, &bt, n, m)
+    if cancellation.is_cancelled() {
+        Err(CoreError::Cancelled)
+    } else {
+        Ok(backtrack(ls, rs, &bt, n, m))
+    }
 }
 
 fn backtrack(

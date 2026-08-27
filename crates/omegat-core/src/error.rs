@@ -16,13 +16,18 @@ pub enum CoreError {
     InvalidProject(String),
     #[error("tag validation failed: {0}")]
     TagValidation(String),
+    #[error("request cancelled")]
+    Cancelled,
     #[error("unimplemented: {0}")]
     Unimplemented(String),
 }
 
 impl From<omegat_filters::FilterError> for CoreError {
     fn from(e: omegat_filters::FilterError) -> Self {
-        Self::Filter(e.to_string())
+        match e {
+            omegat_filters::FilterError::Cancelled => Self::Cancelled,
+            other => Self::Filter(other.to_string()),
+        }
     }
 }
 

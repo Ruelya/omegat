@@ -143,6 +143,16 @@ fn split_name(raw: &str) -> (String, String) {
 }
 
 pub fn read_xml_events(raw: &str) -> Result<Vec<XmlEvent>, String> {
+    read_xml_events_cancellable(raw, &|| false)
+}
+
+pub fn read_xml_events_cancellable(
+    raw: &str,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<XmlEvent>, String> {
+    if is_cancelled() {
+        return Err(crate::xml_engine::CANCELLED_ERROR.into());
+    }
     let mut reader = Reader::from_str(raw);
     let cfg = reader.config_mut();
     cfg.trim_text(false);
@@ -154,6 +164,9 @@ pub fn read_xml_events(raw: &str) -> Result<Vec<XmlEvent>, String> {
     let mut ns_stack: Vec<NsScope> = vec![NsScope::default()];
 
     loop {
+        if is_cancelled() {
+            return Err(crate::xml_engine::CANCELLED_ERROR.into());
+        }
         match reader.read_event_into(&mut buf) {
             Ok(Event::Decl(d)) => {
                 let version = d
@@ -292,6 +305,9 @@ pub fn read_xml_events(raw: &str) -> Result<Vec<XmlEvent>, String> {
             Err(e) => return Err(e.to_string()),
         }
         buf.clear();
+    }
+    if is_cancelled() {
+        return Err(crate::xml_engine::CANCELLED_ERROR.into());
     }
     Ok(events)
 }

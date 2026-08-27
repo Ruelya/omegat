@@ -2,7 +2,8 @@
 
 use super::stax::{
     detect_eol, detect_xml_encoding, detect_xml_standalone, finalize_xml_writer_ex,
-    from_event_to_writer, java_xml_declaration, read_xml_events, StaxWriter, XmlDeclStyle, XmlEvent,
+    from_event_to_writer, java_xml_declaration, read_xml_events_cancellable, StaxWriter,
+    XmlDeclStyle, XmlEvent,
 };
 use crate::{ensure_parent, ExtractedSegment, FilterError, Result};
 use std::path::Path;
@@ -24,7 +25,22 @@ pub fn process_xml(
     filter: &mut dyn StaxFilter,
     writing: bool,
 ) -> Result<(Vec<ExtractedSegment>, String)> {
-    process_xml_ex(raw, filter, writing, XmlDeclStyle::Woodstox)
+    process_xml_cancellable(raw, filter, writing, &|| false)
+}
+
+pub fn process_xml_cancellable(
+    raw: &str,
+    filter: &mut dyn StaxFilter,
+    writing: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<ExtractedSegment>, String)> {
+    process_xml_ex_cancellable(
+        raw,
+        filter,
+        writing,
+        XmlDeclStyle::Woodstox,
+        is_cancelled,
+    )
 }
 
 /// `decl` selects Java `AbstractXmlFilter` prolog vs Woodstox `writeStartDocument`.
@@ -34,9 +50,28 @@ pub fn process_xml_ex(
     writing: bool,
     decl: XmlDeclStyle,
 ) -> Result<(Vec<ExtractedSegment>, String)> {
-    let events = read_xml_events(raw).map_err(|e| FilterError::Parse {
-        format: "filters4".into(),
-        message: e,
+    process_xml_ex_cancellable(raw, filter, writing, decl, &|| false)
+}
+
+pub fn process_xml_ex_cancellable(
+    raw: &str,
+    filter: &mut dyn StaxFilter,
+    writing: bool,
+    decl: XmlDeclStyle,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<ExtractedSegment>, String)> {
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
+    let events = read_xml_events_cancellable(raw, is_cancelled).map_err(|e| {
+        if e == crate::xml_engine::CANCELLED_ERROR || is_cancelled() {
+            FilterError::Cancelled
+        } else {
+            FilterError::Parse {
+                format: "filters4".into(),
+                message: e,
+            }
+        }
     })?;
     let encoding = detect_xml_encoding(raw);
     let standalone = detect_xml_standalone(raw);
@@ -53,6 +88,9 @@ pub fn process_xml_ex(
     let mut is_event_mode = false;
     let mut depth: i32 = 0;
     for ev in &events {
+        if is_cancelled() {
+            return Err(FilterError::Cancelled);
+        }
         if matches!(ev, XmlEvent::StartDocument { .. } | XmlEvent::EndDocument) {
             continue;
         }
@@ -113,6 +151,9 @@ pub fn process_xml_ex(
     if writing {
         writer.close_remaining();
     }
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
     let segments = filter.take_segments();
     let text = if writing {
         finalize_xml_writer_ex(
@@ -125,6 +166,9 @@ pub fn process_xml_ex(
     } else {
         String::new()
     };
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
     Ok((segments, text))
 }
 
@@ -161,4 +205,14 @@ pub fn process_xml_string_ex(
     decl: XmlDeclStyle,
 ) -> Result<(Vec<ExtractedSegment>, String)> {
     process_xml_ex(raw, filter, writing, decl)
+}
+
+pub fn process_xml_string_ex_cancellable(
+    raw: &str,
+    filter: &mut dyn StaxFilter,
+    writing: bool,
+    decl: XmlDeclStyle,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<ExtractedSegment>, String)> {
+    process_xml_ex_cancellable(raw, filter, writing, decl, is_cancelled)
 }

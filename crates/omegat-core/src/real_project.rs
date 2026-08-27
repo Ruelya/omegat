@@ -132,7 +132,14 @@ impl ProjectSession {
     }
 
     pub fn reload(&mut self) -> Result<()> {
-        self.reload_sources()?;
+        self.reload_cancellable(&CancellationToken::default())
+    }
+
+    pub fn reload_cancellable(&mut self, cancellation: &CancellationToken) -> Result<()> {
+        self.reload_sources_cancellable(cancellation)?;
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         self.apply_memory();
         Ok(())
     }
@@ -185,10 +192,20 @@ impl ProjectSession {
     }
 
     fn reload_sources(&mut self) -> Result<()> {
-        self.entries.clear();
+        self.reload_sources_cancellable(&CancellationToken::default())
+    }
+
+    fn reload_sources_cancellable(&mut self, cancellation: &CancellationToken) -> Result<()> {
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         let ctx = self.filter_ctx();
         let excludes = build_excludes(&self.props.source_dir_excludes);
+        let mut entries = Vec::new();
         for file in walk_sources(&self.props.source_dir, &excludes) {
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
             let rel = file
                 .strip_prefix(&self.props.source_dir)
                 .unwrap_or(&file)
@@ -197,9 +214,12 @@ impl ProjectSession {
             let Some(filter) = self.filters.for_path(&file) else {
                 continue;
             };
-            let parsed = filter.parse(&file, &ctx)?;
+            let parsed = filter.parse_cancellable(&file, &ctx, &|| cancellation.is_cancelled())?;
             let mut file_entries = Vec::new();
             for seg in parsed.segments {
+                if cancellation.is_cancelled() {
+                    return Err(CoreError::Cancelled);
+                }
                 let custom = (!self.prefs.srx_path.is_empty())
                     .then(|| std::fs::read_to_string(&self.prefs.srx_path).ok())
                     .flatten()
@@ -210,6 +230,9 @@ impl ProjectSession {
                     &self.props.source_lang,
                     custom.as_ref(),
                 ) {
+                    if cancellation.is_cancelled() {
+                        return Err(CoreError::Cancelled);
+                    }
                     if sentence.trim().is_empty() {
                         continue;
                     }
@@ -244,8 +267,12 @@ impl ProjectSession {
                 );
                 entry.next = Some(sources.get(index + 1).cloned().unwrap_or_default());
             }
-            self.entries.extend(file_entries);
+            entries.extend(file_entries);
         }
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        self.entries = entries;
         Ok(())
     }
 
@@ -453,9 +480,21 @@ impl ProjectSession {
     }
 
     pub fn compile(&mut self, source_pattern: Option<&str>) -> Result<usize> {
+        self.compile_cancellable(source_pattern, &CancellationToken::default())
+    }
+
+    pub fn compile_cancellable(
+        &mut self,
+        source_pattern: Option<&str>,
+        cancellation: &CancellationToken,
+    ) -> Result<usize> {
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         if self.prefs.tag_validation == "abort" {
             let bad = self
-                .issues()
+                .issues_cancellable(cancellation)
+                .ok_or(CoreError::Cancelled)?
                 .iter()
                 .filter(|i| i.kind == "tag" && i.severity == "error")
                 .count();
@@ -465,7 +504,13 @@ impl ProjectSession {
                 )));
             }
         }
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         self.save()?;
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
         let ctx = self.filter_ctx();
         let mut by_file: HashMap<String, Vec<&Entry>> = HashMap::new();
         for e in &self.entries {
@@ -478,14 +523,21 @@ impl ProjectSession {
         }
         let mut n = 0;
         for (rel, segs) in by_file {
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
             let src = self.props.source_dir.join(&rel);
             let dest = self.props.target_dir.join(&rel);
             let Some(filter) = self.filters.for_path(&src) else {
                 continue;
             };
-            let parsed = filter.parse(&src, &ctx)?;
+            let parsed =
+                filter.parse_cancellable(&src, &ctx, &|| cancellation.is_cancelled())?;
             let mut map = HashMap::new();
             for (i, p) in parsed.segments.iter().enumerate() {
+                if cancellation.is_cancelled() {
+                    return Err(CoreError::Cancelled);
+                }
                 let trans = segs
                     .iter()
                     .filter(|e| {
@@ -513,14 +565,23 @@ impl ProjectSession {
                     map.insert(p.source.clone(), trans);
                 }
             }
-            filter.write(&src, &dest, &map, &ctx)?;
+            filter.write_cancellable(
+                &src,
+                &dest,
+                &map,
+                &ctx,
+                &|| cancellation.is_cancelled(),
+            )?;
             n += 1;
         }
-        self.export_tm_levels()?;
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
+        }
+        self.export_tm_levels_cancellable(cancellation)?;
         Ok(n)
     }
 
-    fn export_tm_levels(&self) -> Result<()> {
+    fn export_tm_levels_cancellable(&self, cancellation: &CancellationToken) -> Result<()> {
         let levels = self.props.export_tm_levels.to_ascii_lowercase();
         let stem = self
             .props
@@ -534,6 +595,9 @@ impl ProjectSession {
             &self.props.export_tm_dir
         };
         for level in ["omegat", "level1", "level2"] {
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
             if levels.contains(level) {
                 let path = dir.join(format!("{stem}-{level}.tmx"));
                 std::fs::write(
@@ -542,6 +606,9 @@ impl ProjectSession {
                         .to_xml_level(&self.props.source_lang, &self.props.target_lang, level),
                 )?;
             }
+        }
+        if cancellation.is_cancelled() {
+            return Err(CoreError::Cancelled);
         }
         Ok(())
     }

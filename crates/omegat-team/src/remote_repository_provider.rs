@@ -9,6 +9,7 @@ use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::{team_enabled, SyncReport};
 use fs2::FileExt;
+use omegat_core::cancellation::CancellationToken;
 use omegat_core::properties::ProjectProperties;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
@@ -24,6 +25,14 @@ static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
 #[cfg(test)]
 static CRASH_AFTER_PUBLISH_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(TeamError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
 
 pub(crate) struct ProjectTransactionLock {
     _file: std::fs::File,
@@ -488,8 +497,18 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
 }
 
 pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
+    sync_cancellable(props, &CancellationToken::default())
+}
+
+pub fn sync_cancellable(
+    props: &ProjectProperties,
+    cancellation: &CancellationToken,
+) -> Result<SyncReport> {
+    check_cancelled(cancellation)?;
     let _lock = acquire_project_transaction_lock(props)?;
+    check_cancelled(cancellation)?;
     let recovered = recover_interrupted_sync_locked(props)?;
+    check_cancelled(cancellation)?;
     if !team_enabled() {
         return Ok(SyncReport {
             action: "skipped".into(),
@@ -519,14 +538,18 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
     let mut commit_started = Vec::new();
     let mut pending_conflicts = None;
     let transaction = (|| -> Result<()> {
+        check_cancelled(cancellation)?;
         journal.phase = "preparing".into();
         journal.persist(props)?;
         std::fs::create_dir_all(prep_dir(props))?;
         for repo in &props.repositories {
+            check_cancelled(cancellation)?;
             remote_repository_factory::prepare(props, repo)?;
+            check_cancelled(cancellation)?;
         }
         let mut deleted = Vec::with_capacity(props.repositories.len());
         for (index, repo) in props.repositories.iter().enumerate() {
+            check_cancelled(cancellation)?;
             if repo.repo_type == "git" {
                 rollback_versions[index] =
                     remote_repository_factory::file_version(props, repo, "")?;
@@ -540,6 +563,7 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             deleted.push(remote_repository_factory::recently_deleted_files(
                 props, repo,
             )?);
+            check_cancelled(cancellation)?;
         }
         journal.rollback_versions.clone_from(&rollback_versions);
         journal.phase = "prepared".into();
@@ -547,12 +571,16 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
         journal.phase = "copying-remote".into();
         journal.persist(props)?;
         for (repo, deleted) in props.repositories.iter().zip(&deleted) {
+            check_cancelled(cancellation)?;
             copy_mapped(props, repo, CopyDir::RepoToProject)?;
             propagate_deleted(props, repo, deleted)?;
+            check_cancelled(cancellation)?;
         }
         journal.phase = "rebasing".into();
         journal.persist(props)?;
+        check_cancelled(cancellation)?;
         let conflicts = rebase_all(props)?;
+        check_cancelled(cancellation)?;
         if !conflicts.is_empty() {
             pending_conflicts = Some(conflicts.clone());
             return Err(TeamError::Conflict(
@@ -566,11 +594,14 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
         journal.phase = "staging".into();
         journal.persist(props)?;
         for repo in &props.repositories {
+            check_cancelled(cancellation)?;
             copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
+            check_cancelled(cancellation)?;
         }
         journal.phase = "publishing".into();
         journal.persist(props)?;
         for index in 0..props.repositories.len() {
+            check_cancelled(cancellation)?;
             commit_started.push(index);
             journal.commit_started.clone_from(&commit_started);
             journal.persist(props)?;
@@ -585,12 +616,15 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
             published.push(index);
             journal.published.clone_from(&published);
             journal.persist(props)?;
+            check_cancelled(cancellation)?;
         }
         journal.phase = "saving-bases".into();
         journal.persist(props)?;
+        check_cancelled(cancellation)?;
         save_bases(props)?;
         save_conflicts(props, &[])?;
         clear_resolved(props);
+        check_cancelled(cancellation)?;
         Ok(())
     })();
 
@@ -637,8 +671,19 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
 }
 
 pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<SyncReport> {
+    commit_project_files_cancellable(props, which, &CancellationToken::default())
+}
+
+pub fn commit_project_files_cancellable(
+    props: &ProjectProperties,
+    which: &str,
+    cancellation: &CancellationToken,
+) -> Result<SyncReport> {
+    check_cancelled(cancellation)?;
     let _lock = acquire_project_transaction_lock(props)?;
+    check_cancelled(cancellation)?;
     let recovered = recover_interrupted_sync_locked(props)?;
+    check_cancelled(cancellation)?;
     let label = match which {
         "source" | "target" => which,
         _ => {
@@ -661,9 +706,11 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
         let mut published = Vec::new();
         let mut commit_started = Vec::new();
         let transaction = (|| -> Result<()> {
+            check_cancelled(cancellation)?;
             journal.phase = "observing".into();
             journal.persist(props)?;
             for (index, repo) in props.repositories.iter().enumerate() {
+                check_cancelled(cancellation)?;
                 if repo.repo_type == "git" {
                     rollback_versions[index] =
                         remote_repository_factory::file_version(props, repo, "")?;
@@ -673,11 +720,14 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
             journal.phase = "staging".into();
             journal.persist(props)?;
             for repo in &props.repositories {
+                check_cancelled(cancellation)?;
                 copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
+                check_cancelled(cancellation)?;
             }
             journal.phase = "publishing".into();
             journal.persist(props)?;
             for index in 0..props.repositories.len() {
+                check_cancelled(cancellation)?;
                 commit_started.push(index);
                 journal.commit_started.clone_from(&commit_started);
                 journal.persist(props)?;
@@ -690,6 +740,7 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
                 published.push(index);
                 journal.published.clone_from(&published);
                 journal.persist(props)?;
+                check_cancelled(cancellation)?;
             }
             Ok(())
         })();
@@ -717,11 +768,14 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
         }
         journal.finish(props, "committed")?;
     } else if props.root.join(".git").exists() {
+        check_cancelled(cancellation)?;
         crate::git2_ops::add_all(&props.root)?;
+        check_cancelled(cancellation)?;
         crate::git_remote_repository2::commit(
             &props.root,
             &format!("OmegaT commit {label} files"),
         )?;
+        check_cancelled(cancellation)?;
     }
     Ok(SyncReport {
         action: format!("commit-{label}"),
