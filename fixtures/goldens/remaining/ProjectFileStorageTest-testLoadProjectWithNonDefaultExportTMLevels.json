@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.ProjectFileStorageTest#testLoadProjectWithNonDefaultExportTMLevels",
+  "level1": true,
+  "level2": false,
+  "omegat": false,
+  "keys": [
+    "org.omegat.util.ProjectFileStorageTest#testLoadProjectWithNonDefaultExportTMLevels"
+  ]
+}

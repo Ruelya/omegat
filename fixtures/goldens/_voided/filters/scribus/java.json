@@ -1,0 +1,15 @@
+{
+  "id": "scribus",
+  "fixture": "scribus/simple.sla",
+  "java_test": "org.omegat.filters dialect/table for scribus",
+  "options": {},
+  "sources": [
+    "Translatable text"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Translatable text",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithMixedAlphanumeric",
+  "input": "abc123 def456 ghi789",
+  "tokens": [
+    "abc123",
+    " ",
+    "def456",
+    " ",
+    "ghi789"
+  ],
+  "keys": [
+    "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithMixedAlphanumeric"
+  ]
+}

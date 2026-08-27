@@ -1,0 +1,30 @@
+{
+  "id": "sdlproject",
+  "fixture": "sdl/simple.sdlppx",
+  "java_test": "org.omegat.filters4.xml.xliff.SdlProject#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Hello SDL"
+  ],
+  "ids": [
+    "1"
+  ],
+  "paths": [
+    "//hello.txt"
+  ],
+  "empty_write_parts": {
+    "be/hello.sdlxliff": "<?xml  version=\"1.0\" encoding=\"UTF-8\" ?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" xmlns:sdl=\"http://sdl.com/FileTypes/SdlXliff/1.0\" version=\"1.2\" sdl:version=\"1.0\">\n  <file original=\"hello.txt\" source-language=\"en\" target-language=\"be\" datatype=\"plaintext\">\n    <header>\n      <sdl:cmt-defs>\n        <sdl:cmt-def id=\"c1\">\n          <sdl:Comments>\n            <sdl:Comment>A note</sdl:Comment>\n          </sdl:Comments>\n        </sdl:cmt-def>\n      </sdl:cmt-defs>\n    </header>\n    <body>\n      <trans-unit id=\"1\">\n        <source>Hello SDL</source>\n        <target>Hello SDL</target>\n      </trans-unit>\n    </body>\n  </file>\n</xliff>"
+  },
+  "translated": {
+    "source": "Hello SDL",
+    "translation": "GOLDEN_T"
+  },
+  "translated_write_parts": {
+    "be/hello.sdlxliff": "<?xml  version=\"1.0\" encoding=\"UTF-8\" ?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" xmlns:sdl=\"http://sdl.com/FileTypes/SdlXliff/1.0\" version=\"1.2\" sdl:version=\"1.0\">\n  <file original=\"hello.txt\" source-language=\"en\" target-language=\"be\" datatype=\"plaintext\">\n    <header>\n      <sdl:cmt-defs>\n        <sdl:cmt-def id=\"c1\">\n          <sdl:Comments>\n            <sdl:Comment>A note</sdl:Comment>\n          </sdl:Comments>\n        </sdl:cmt-def>\n      </sdl:cmt-defs>\n    </header>\n    <body>\n      <trans-unit id=\"1\">\n        <source>Hello SDL</source>\n        <target>GOLDEN_T</target>\n      </trans-unit>\n    </body>\n  </file>\n</xliff>"
+  }
+}

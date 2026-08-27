@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.MainWindowMenuTest#testMenuActions_invokeActions",
+  "observable": true,
+  "keys": [
+    "org.omegat.gui.main.MainWindowMenuTest#testMenuActions_invokeActions"
+  ]
+}
