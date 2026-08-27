@@ -298,8 +298,13 @@ export function SegmentEditor() {
   }
 
   function beginComposition() {
-    composing.current = true;
-    prepareInteraction().beginComposition();
+    const current = interaction.current;
+    if (current.isComposing()) {
+      composing.current = true;
+      return;
+    }
+    const area = prepareInteraction();
+    composing.current = area.beginComposition();
   }
 
   function updateComposition(data: string) {
@@ -335,7 +340,7 @@ export function SegmentEditor() {
   }
 
   function onKey(ev: KeyboardEvent<HTMLDivElement>) {
-    if (composing.current) {
+    if (interaction.current.isComposing()) {
       if (ev.key === "Escape" && interaction.current.cancelComposition()) {
         ev.preventDefault();
         composing.current = false;

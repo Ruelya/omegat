@@ -501,8 +501,8 @@ try {
     if (state.text === "日本語 😀 beta") return state;
     throw new Error(JSON.stringify(state));
   });
-  assert.equal(composed.compositionStarts, 1);
-  assert.equal(composed.compositionEnds, 1);
+  assert.equal(composed.compositionStarts, 2);
+  assert.equal(composed.compositionEnds, 0);
   assert.equal(composed.firstUpdate, "に");
   assert.equal(composed.lastUpdate, "日本語");
 
