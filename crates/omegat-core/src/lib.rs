@@ -2,6 +2,7 @@
 
 pub mod align;
 pub mod bidi;
+pub mod cancellation;
 pub mod cli_params;
 pub mod completer;
 pub mod consts;

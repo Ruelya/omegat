@@ -24,6 +24,8 @@ pub mod error_code {
     pub const TEAM_CONFLICT: i32 = -32005;
     pub const TAG_VALIDATION: i32 = -32006;
     pub const AUTH: i32 = -32007;
+    /// JSON-RPC request cancellation (shared with LSP's established code).
+    pub const REQUEST_CANCELLED: i32 = -32800;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

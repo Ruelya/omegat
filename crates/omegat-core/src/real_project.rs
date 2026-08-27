@@ -1,6 +1,7 @@
 //! Java `RealProject` — open / save / compile / apply TM / tag validation.
 
 use crate::consts::*;
+use crate::cancellation::CancellationToken;
 use crate::error::{CoreError, Result};
 use crate::external_tm::folder_is;
 use crate::glossary::{self, GlossaryEntry};
@@ -131,6 +132,32 @@ impl ProjectSession {
     }
 
     pub fn reload(&mut self) -> Result<()> {
+        self.reload_sources()?;
+        self.apply_memory();
+        Ok(())
+    }
+
+    /// Reload every project-owned input after a filesystem or team update.
+    ///
+    /// Ordinary reload keeps the in-memory TM/glossary objects because it is
+    /// used after local editor commits. External refresh must instead adopt
+    /// the on-disk project file, project TM, external TMs, and glossary before
+    /// rebuilding source entries.
+    pub fn refresh_external(&mut self) -> Result<()> {
+        let root = self.props.root.clone();
+        let props = ProjectProperties::load(&root)?;
+        props.ensure_dirs()?;
+        let tmx = ProjectTmx::load(
+            &props.save_tmx_path(),
+            &props.source_lang,
+            &props.target_lang,
+        )?;
+        let external_tm = crate::external_tm::load_external_tm(&props);
+        let glossary = glossary::load_glossary(&props.glossary_file);
+        self.props = props;
+        self.tmx = tmx;
+        self.external_tm = external_tm;
+        self.glossary = glossary;
         self.reload_sources()?;
         self.apply_memory();
         Ok(())
@@ -532,6 +559,14 @@ impl ProjectSession {
         search::search(&self.entries, params)
     }
 
+    pub fn search_cancellable(
+        &self,
+        params: &SearchParams,
+        cancellation: &CancellationToken,
+    ) -> Option<Vec<SearchHitDto>> {
+        search::search_cancellable(&self.entries, params, cancellation)
+    }
+
     pub fn search_replace(&mut self, params: &SearchParams) -> usize {
         let n = search::replace(&mut self.entries, params);
         if n > 0 {
@@ -598,17 +633,27 @@ impl ProjectSession {
     }
 
     pub fn mt(&self, index: usize, engine: &str) -> Result<MtSuggestionDto> {
+        self.mt_cancellable(index, engine, &CancellationToken::default())
+    }
+
+    pub fn mt_cancellable(
+        &self,
+        index: usize,
+        engine: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<MtSuggestionDto> {
         let e = self
             .entries
             .get(index)
             .ok_or(CoreError::InvalidProject("entry".into()))?;
-        mt::translate_with_creds(
+        mt::translate_with_creds_cancellable(
             engine,
             &e.source,
             &self.props.source_lang,
             &self.props.target_lang,
             &self.mt_cache,
             &mt::MtCreds::from_prefs(&self.prefs),
+            cancellation,
         )
         .map_err(CoreError::Filter)
     }
@@ -618,6 +663,19 @@ impl ProjectSession {
             &self.props.dictionary_dir,
             word,
             self.prefs.dictionary_fuzzy_matching,
+        )
+    }
+
+    pub fn dict_cancellable(
+        &self,
+        word: &str,
+        cancellation: &CancellationToken,
+    ) -> Option<Vec<DictHitDto>> {
+        dict::lookup_opts_cancellable(
+            &self.props.dictionary_dir,
+            word,
+            self.prefs.dictionary_fuzzy_matching,
+            cancellation,
         )
     }
 

@@ -1,3 +1,4 @@
+use crate::cancellation::CancellationToken;
 use flate2::read::GzDecoder;
 use omegat_ipc::DictHitDto;
 use std::io::Read;
@@ -9,15 +10,34 @@ pub fn lookup(dir: &Path, word: &str) -> Vec<DictHitDto> {
 }
 
 pub fn lookup_opts(dir: &Path, word: &str, fuzzy: bool) -> Vec<DictHitDto> {
+    lookup_opts_cancellable(dir, word, fuzzy, &CancellationToken::default()).unwrap_or_default()
+}
+
+/// Dictionary lookup with request-scoped cooperative cancellation.
+///
+/// Cancellation is checked around every dictionary file and before a fuzzy
+/// retry. A cancelled scan does not publish the partial hit list.
+pub fn lookup_opts_cancellable(
+    dir: &Path,
+    word: &str,
+    fuzzy: bool,
+    cancellation: &CancellationToken,
+) -> Option<Vec<DictHitDto>> {
+    if cancellation.is_cancelled() {
+        return None;
+    }
     if !dir.exists() || word.is_empty() {
-        return vec![];
+        return Some(vec![]);
     }
     let mut hits = Vec::new();
     let needle = word.to_lowercase();
     let Ok(rd) = std::fs::read_dir(dir) else {
-        return hits;
+        return Some(hits);
     };
     for ent in rd.flatten() {
+        if cancellation.is_cancelled() {
+            return None;
+        }
         let p = ent.path();
         let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
         if name.ends_with(".dsl") || name.ends_with(".dsl.dz") {
@@ -25,14 +45,17 @@ pub fn lookup_opts(dir: &Path, word: &str, fuzzy: bool) -> Vec<DictHitDto> {
         } else if name.ends_with(".ifo") {
             hits.extend(lookup_stardict(&p, &needle));
         }
+        if cancellation.is_cancelled() {
+            return None;
+        }
     }
     if hits.is_empty() && fuzzy && needle.chars().count() >= 3 {
         let prefix: String = needle.chars().take(needle.chars().count().saturating_sub(1)).collect();
         if !prefix.is_empty() {
-            return lookup_opts(dir, &prefix, false);
+            return lookup_opts_cancellable(dir, &prefix, false, cancellation);
         }
     }
-    hits
+    Some(hits)
 }
 
 fn lookup_dsl(path: &Path, needle: &str) -> Vec<DictHitDto> {

@@ -9,6 +9,7 @@ import { dispatchMenuAction } from "../menus/actions";
 import { resetAppState, useApp } from "./app";
 
 const rpc = vi.fn();
+const cancelRpc = vi.fn(async () => true);
 
 function installBridge() {
   const mem = new Map<string, string>();
@@ -24,6 +25,7 @@ function installBridge() {
   vi.stubGlobal("window", {
     omegat: {
       rpc,
+      cancelRpc,
       pickDir: async () => null,
       pickFile: async () => null,
       pickFiles: async () => [],
@@ -65,6 +67,7 @@ const sampleEntry = {
 describe("app store", () => {
   beforeEach(() => {
     rpc.mockReset();
+    cancelRpc.mockClear();
     installBridge();
     resetAppState();
   });
@@ -308,6 +311,7 @@ describe("app store", () => {
       matches: [{ source: "second", translation: "new result", score: 99, comes_from: "tm/new" }],
       staleGlossaryRequest: false,
     });
+    expect(cancelRpc).toHaveBeenCalledTimes(1);
   });
 
   it("cancels same-key dock work across project switch and close events", async () => {
@@ -398,6 +402,10 @@ describe("app store", () => {
       dict: [],
       completer: [],
     });
+    expect(cancelRpc.mock.calls.map(([requestId]) => requestId)).toHaveLength(2);
+    expect(cancelRpc.mock.calls.every(([requestId]) =>
+      /^renderer-\d+$/.test(String(requestId))
+    )).toBe(true);
   });
 
   it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {
@@ -661,6 +669,85 @@ describe("app store", () => {
       dirty: false,
       selection: { anchor: 3, focus: 5 },
       stats,
+    });
+  });
+
+  it("reloads team/filesystem state before rebinding the active Document3", async () => {
+    const props = {
+      root: "/watched",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: true,
+      has_repositories: true,
+    };
+    const refreshed = {
+      ...sampleEntry,
+      source: "changed on disk",
+      translation: "depuis disque",
+      key: {
+        ...sampleEntry.key,
+        source_text: "changed on disk",
+        path: "/watched",
+      },
+      translated: true,
+      revision: 4,
+    };
+    const stats = {
+      files: 1,
+      segments: 1,
+      translated: 1,
+      unique_segments: 1,
+      source_words: 3,
+      target_words: 2,
+    };
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "project.external-refresh") return { props, entries: 1 };
+      if (method === "entry.list") return [refreshed];
+      if (method === "stats.get") return stats;
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+      ) return [];
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [{ ...sampleEntry, translation: "stale server value" }],
+      index: 0,
+      note: "stale note",
+      document3: createDocument3(sampleEntry.source, "unsaved stale renderer value"),
+      prefs: defaultPreferences({
+        insert_best_match: false,
+        dictionary_auto_search: false,
+      }),
+      completerAuto: false,
+    });
+
+    await useApp.getState().refreshEntriesAfterExternalChange(undefined, true);
+
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "project.external-refresh",
+      "entry.list",
+      "stats.get",
+      "matches.query",
+      "glossary.query",
+      "issues.list",
+    ]);
+    expect(rpc.mock.calls.some(([method]) => method === "entry.set")).toBe(false);
+    expect({
+      event: useApp.getState().projectEvent.kind,
+      source: useApp.getState().document3.source,
+      translation: useApp.getState().document3.translation,
+      dirty: useApp.getState().document3.dirty,
+      key: useApp.getState().entries[0]?.key,
+    }).toEqual({
+      event: "entry",
+      source: "changed on disk",
+      translation: "depuis disque",
+      dirty: false,
+      key: refreshed.key,
     });
   });
 

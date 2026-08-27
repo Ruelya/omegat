@@ -176,7 +176,7 @@ export function SegmentEditor() {
     const unbind = bindMarkerRemark((name) => {
       editorController.remarkOneMarker(name);
       setMarkerRevision((revision) => revision + 1);
-      void editorController.refreshLoadedPageMarkersAsync().then((applied) => {
+      void editorController.refreshRendererPageMarkersAsync().then((applied) => {
         if (current && applied) setMarkerRevision((revision) => revision + 1);
       });
     });
@@ -192,7 +192,7 @@ export function SegmentEditor() {
     void connection.ready
       .then((installed) => {
         if (!current || !installed) return;
-        return editorController.refreshLoadedPageMarkersAsync().then((applied) => {
+        return editorController.refreshRendererPageMarkersAsync().then((applied) => {
           if (current && applied) setMarkerRevision((revision) => revision + 1);
         });
       })
@@ -233,7 +233,7 @@ export function SegmentEditor() {
 
   useEffect(() => {
     let current = true;
-    void editorController.refreshLoadedPageMarkersAsync().then((applied) => {
+    void editorController.refreshRendererPageMarkersAsync().then((applied) => {
       if (current && applied) setMarkerRevision((revision) => revision + 1);
     });
     return () => {

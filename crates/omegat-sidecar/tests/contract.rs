@@ -18,6 +18,7 @@ const METHODS: &[&str] = &[
     "project.save",
     "project.compile",
     "project.reload",
+    "project.external-refresh",
     "project.props",
     "entry.list",
     "entry.get",
@@ -107,6 +108,158 @@ fn every_listed_method_is_known() {
     let unknown = rpc(&mut stdin, &mut stdout, 999, "no.such.method", json!({}));
     assert_eq!(unknown["error"]["code"], -32601);
 
+    let _ = child.kill();
+}
+
+#[test]
+fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cancel-search");
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": true
+        }),
+    );
+    assert!(created["result"].is_object(), "{created}");
+    let source = (0..20_000)
+        .map(|index| format!("Unique segment number {index}."))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(root.join("source/many.txt"), source).unwrap();
+    let reloaded = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    assert!(
+        reloaded["result"]["entries"].as_u64().unwrap_or(0) > 10_000,
+        "{reloaded}"
+    );
+
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "search.run",
+            "params": {
+                "query": "missing phrase",
+                "source": true,
+                "translation": true
+            }
+        })
+    )
+    .unwrap();
+    writeln!(
+        stdin,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": { "id": 3 }
+        })
+    )
+    .unwrap();
+    stdin.flush().unwrap();
+    let mut cancelled_line = String::new();
+    stdout.read_line(&mut cancelled_line).unwrap();
+    let cancelled: Value = serde_json::from_str(&cancelled_line).unwrap();
+    assert_eq!(cancelled["id"], 3);
+    assert_eq!(cancelled["error"]["code"], -32800);
+    assert_eq!(cancelled["error"]["message"], "request cancelled");
+
+    let responsive = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "sys.version",
+        json!({}),
+    );
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
+fn external_refresh_reloads_source_and_glossary_over_ndjson() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("external-refresh");
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    let glossary = created["result"]["glossary_file"].as_str().unwrap();
+    std::fs::write(root.join("source/input.txt"), "Before").unwrap();
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    std::fs::write(root.join("source/input.txt"), "After term").unwrap();
+    std::fs::write(glossary, "term\tterme\texternal\n").unwrap();
+
+    let refreshed = rpc(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "project.external-refresh",
+        json!({}),
+    );
+    assert_eq!(refreshed["result"]["entries"], 1);
+    let entries = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.list",
+        json!({}),
+    );
+    assert_eq!(entries["result"][0]["source"], "After term");
+    let glossary_hits = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "glossary.query",
+        json!({ "index": 0 }),
+    );
+    assert_eq!(
+        glossary_hits["result"],
+        json!([{"source": "term", "target": "terme", "comment": "external"}])
+    );
     let _ = child.kill();
 }
 

@@ -56,11 +56,30 @@ function writeLocal(key: string, value: string) {
   }
 }
 
-async function rpc<T>(method: string, params?: unknown): Promise<T> {
+let nextRpcRequestId = 1;
+
+async function rpc<T>(
+  method: string,
+  params?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   if (!window.omegat) {
     throw new Error("sidecar bridge unavailable");
   }
-  return window.omegat.rpc(method, params) as Promise<T>;
+  if (!signal) {
+    return window.omegat.rpc(method, params) as Promise<T>;
+  }
+  stopIfCancelled(signal);
+  const requestId = `renderer-${nextRpcRequestId++}`;
+  const cancel = () => {
+    void window.omegat.cancelRpc?.(requestId);
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    return await window.omegat.rpc(method, params, requestId) as T;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+  }
 }
 
 function stopIfCancelled(signal: AbortSignal): void {
@@ -93,11 +112,13 @@ const selectedDockRequest = new LatestDockRequest<SelectedDockData>();
 const mtDockRequest = new LatestDockRequest<MtSuggestionDto>();
 const dictionaryDockRequest = new LatestDockRequest<DictHitDto[]>();
 const completerDockRequest = new LatestDockRequest<CompleterItemDto[]>();
+const searchDockRequest = new LatestDockRequest<SearchHitDto[]>();
 const dockLifecycle = new DockProjectLifecycle([
   selectedDockRequest,
   mtDockRequest,
   dictionaryDockRequest,
   completerDockRequest,
+  searchDockRequest,
 ], projectEvents);
 
 function entryLifecycleKey(key: EntryDto["key"]): string {
@@ -265,7 +286,10 @@ export type AppState = {
   ignoreWord: (word: string) => Promise<void>;
   addGlossary: (source: string, target: string, comment?: string) => Promise<void>;
   importWiki: (source: string) => Promise<void>;
-  refreshEntriesAfterExternalChange: (changedKeys?: readonly EntryKeyDto[]) => Promise<void>;
+  refreshEntriesAfterExternalChange: (
+    changedKeys?: readonly EntryKeyDto[],
+    reloadFromDisk?: boolean,
+  ) => Promise<void>;
   toggleTheme: () => void;
   setSearchForm: (patch: Partial<SearchForm>) => void;
 };
@@ -548,16 +572,20 @@ export const useApp = create<AppState>((set, get) => ({
     );
     set({ ...clearedDockData(), selectedText: "" });
     await selectedDockRequest.run(async (signal) => {
-      const matches = await rpc<MatchDto[]>("matches.query", { index });
+      const matches = await rpc<MatchDto[]>("matches.query", { index }, signal);
       stopIfCancelled(signal);
-      const glossary = await rpc<GlossaryHitDto[]>("glossary.query", { index });
+      const glossary = await rpc<GlossaryHitDto[]>("glossary.query", { index }, signal);
       stopIfCancelled(signal);
-      const issues = await rpc<IssueDto[]>("issues.list");
+      const issues = await rpc<IssueDto[]>("issues.list", undefined, signal);
       stopIfCancelled(signal);
       let mt: MtSuggestionDto[] = [];
       if (get().mtAutoFetch) {
         try {
-          mt = [await rpc<MtSuggestionDto>("mt.query", { index, engine: "mymemory" })];
+          mt = [await rpc<MtSuggestionDto>(
+            "mt.query",
+            { index, engine: "mymemory" },
+            signal,
+          )];
         } catch {
           mt = [];
         }
@@ -567,7 +595,7 @@ export const useApp = create<AppState>((set, get) => ({
         ? await rpc<DictHitDto[]>("dict.query", {
             word: e.source.split(/\s+/)[0] || "",
             fuzzy: get().prefs?.dictionary_fuzzy_matching,
-          })
+          }, signal)
         : [];
       stopIfCancelled(signal);
       let translation = e.translation;
@@ -586,7 +614,7 @@ export const useApp = create<AppState>((set, get) => ({
             index,
             prefix: "",
             text: translation,
-          })
+          }, signal)
         : [];
       stopIfCancelled(signal);
       return {
@@ -642,7 +670,7 @@ export const useApp = create<AppState>((set, get) => ({
         entryLifecycleKey(entry.key),
       );
       await mtDockRequest.run(
-        () => rpc<MtSuggestionDto>("mt.query", { index, engine }),
+        (signal) => rpc<MtSuggestionDto>("mt.query", { index, engine }, signal),
         (one) => {
           if (!dockLifecycle.isCurrent(lifecycle)) return;
           set({ mt: [one, ...get().mt.filter((m) => m.engine !== engine)] });
@@ -661,10 +689,10 @@ export const useApp = create<AppState>((set, get) => ({
       state.props?.root ?? null,
       entryLifecycleKey(entry.key),
     );
-    await dictionaryDockRequest.run(() => rpc<DictHitDto[]>("dict.query", {
+    await dictionaryDockRequest.run((signal) => rpc<DictHitDto[]>("dict.query", {
         word,
         fuzzy: state.prefs?.dictionary_fuzzy_matching,
-      }), (dict) => {
+      }, signal), (dict) => {
         if (dockLifecycle.isCurrent(lifecycle)) set({ dict });
       });
   },
@@ -681,11 +709,11 @@ export const useApp = create<AppState>((set, get) => ({
       state.props?.root ?? null,
       entryLifecycleKey(entry.key),
     );
-    await completerDockRequest.run(() => rpc<CompleterItemDto[]>("completer.query", {
+    await completerDockRequest.run((signal) => rpc<CompleterItemDto[]>("completer.query", {
         index,
         prefix,
         text: state.document3.translation,
-      }), (completer) => {
+      }, signal), (completer) => {
         if (dockLifecycle.isCurrent(lifecycle)) set({ completer });
       });
   },
@@ -707,29 +735,35 @@ export const useApp = create<AppState>((set, get) => ({
   setSearchForm: (patch) => set({ searchForm: { ...get().searchForm, ...patch } }),
   runSearch: async (preview = false) => {
     const form = get().searchForm;
-    const hits = await rpc<SearchHitDto[]>("search.run", {
-      ...persistSearchForm(form),
-      query: form.query,
-      regex: form.searchType === "regex",
-      search_type: form.searchType,
-      source: form.source,
-      translation: form.translation,
-      notes: form.notes,
-      comments: form.comments,
-      case_sensitive: form.caseSensitive,
-      whole_word: form.wholeWord,
-      untranslated: form.untranslated,
-      author: form.author || undefined,
-      date_from: form.dateFrom || undefined,
-      date_to: form.dateTo || undefined,
-      replace: preview ? form.replace : undefined,
-      preview,
-    });
-    set({ searchHits: hits });
-    if (get().prefs) {
-      void get().patchPrefs({ search_window: persistSearchForm(form) });
-    }
-    return hits;
+    let published: SearchHitDto[] = [];
+    await searchDockRequest.run(
+      (signal) => rpc<SearchHitDto[]>("search.run", {
+        ...persistSearchForm(form),
+        query: form.query,
+        regex: form.searchType === "regex",
+        search_type: form.searchType,
+        source: form.source,
+        translation: form.translation,
+        notes: form.notes,
+        comments: form.comments,
+        case_sensitive: form.caseSensitive,
+        whole_word: form.wholeWord,
+        untranslated: form.untranslated,
+        author: form.author || undefined,
+        date_from: form.dateFrom || undefined,
+        date_to: form.dateTo || undefined,
+        replace: preview ? form.replace : undefined,
+        preview,
+      }, signal),
+      (hits) => {
+        published = hits;
+        set({ searchHits: hits });
+        if (get().prefs) {
+          void get().patchPrefs({ search_window: persistSearchForm(form) });
+        }
+      },
+    );
+    return published;
   },
   replaceAll: async () => {
     const form = get().searchForm;
@@ -757,6 +791,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const r = await rpc<{ action: string; message: string }>("team.sync");
       set({ teamMessage: `${r.action}: ${r.message}` });
+      await get().refreshEntriesAfterExternalChange(undefined, true);
     } catch (e) {
       const msg = String(e);
       set({ teamMessage: msg, error: msg });
@@ -787,6 +822,7 @@ export const useApp = create<AppState>((set, get) => ({
       teamConflicts: r.conflicts ?? [],
       teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
     });
+    await get().refreshEntriesAfterExternalChange(undefined, true);
     await get().patchPrefs({ team_conflict_resolution: side });
   },
   resolveEditConflict: async (side, translation) => {
@@ -838,7 +874,7 @@ export const useApp = create<AppState>((set, get) => ({
     await rpc("wiki.import", { source });
     await get().reloadProject();
   },
-  refreshEntriesAfterExternalChange: async (changedKeys) => {
+  refreshEntriesAfterExternalChange: async (changedKeys, reloadFromDisk = false) => {
     const before = get();
     const root = before.props?.root;
     if (!root) return;
@@ -851,6 +887,14 @@ export const useApp = create<AppState>((set, get) => ({
     );
     set({ ...clearedDockData(), status: "" });
 
+    let refreshedProps: ProjectPropsDto | null = null;
+    if (reloadFromDisk) {
+      const refreshed = await rpc<{ props?: ProjectPropsDto }>(
+        "project.external-refresh",
+      );
+      if (!dockLifecycle.isCurrent(lifecycle)) return;
+      refreshedProps = refreshed.props ?? null;
+    }
     const listed = await rpc<EntryDto[]>("entry.list");
     if (!dockLifecycle.isCurrent(lifecycle)) return;
     const entries = Array.isArray(listed) ? listed : [];
@@ -861,6 +905,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         entries,
         stats,
+        props: refreshedProps ?? before.props,
         index: 0,
         note: "",
         document3: createDocument3("", ""),
@@ -879,6 +924,7 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       entries,
       stats,
+      props: refreshedProps ?? before.props,
       index,
       note: entry.note,
       document3: createDocument3(entry.source, entry.translation),
@@ -1260,6 +1306,17 @@ export const useApp = create<AppState>((set, get) => ({
 projectEvents.subscribe((projectEvent) => {
   useApp.setState({ projectEvent });
 });
+
+export function connectExternalProjectEvents(): () => void {
+  return window.omegat?.onProjectExternalChange?.(({ root, paths }) => {
+    const state = useApp.getState();
+    if (state.props?.root !== root) return;
+    void state
+      .refreshEntriesAfterExternalChange(undefined, true)
+      .then(() => state.logLine(`external project refresh (${paths.length} path(s))`))
+      .catch((error) => useApp.setState({ error: String(error) }));
+  }) ?? (() => undefined);
+}
 
 export function resetAppState() {
   projectEvents.reset();

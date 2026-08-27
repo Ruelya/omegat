@@ -305,7 +305,12 @@ export type WindowId =
 declare global {
   interface Window {
     omegat: {
-      rpc: (method: string, params?: unknown) => Promise<unknown>;
+      rpc: (
+        method: string,
+        params?: unknown,
+        clientRequestId?: string,
+      ) => Promise<unknown>;
+      cancelRpc?: (clientRequestId: string) => Promise<boolean>;
       startup?: () => Promise<{
         project: string | null;
         configDir: string;
@@ -319,6 +324,11 @@ declare global {
         | { kind: "project"; root: string }
         | { kind: "files"; paths: string[] }
       >;
+      watchProject?: (root: string) => Promise<void>;
+      unwatchProject?: () => Promise<void>;
+      onProjectExternalChange?: (
+        fn: (event: { root: string; paths: string[] }) => void,
+      ) => () => void;
       saveText?: (name: string, text: string) => Promise<string | null>;
       quit?: () => Promise<void>;
       relaunch?: () => Promise<void>;

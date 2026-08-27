@@ -3,11 +3,14 @@
 use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_core::{capabilities, version};
+use omegat_core::cancellation::CancellationToken;
 use omegat_ipc::*;
 use omegat_plugin::PluginRegistry;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 fn mutable_bead_from_json(value: &Value) -> omegat_core::align::MutableBead {
     let lines = |key: &str, fallback: &str| -> Vec<Option<String>> {
@@ -101,9 +104,17 @@ impl App {
         }
     }
 
-    fn handle(&mut self, req: RpcRequest) -> RpcResponse {
+    fn handle(&mut self, req: RpcRequest, cancellation: &CancellationToken) -> RpcResponse {
         let id = req.id.clone().unwrap_or(Value::Null);
-        match self.dispatch(&req.method, req.params) {
+        let result = self.dispatch(&req.method, req.params, cancellation);
+        if cancellation.is_cancelled() {
+            return RpcResponse::err(
+                id,
+                error_code::REQUEST_CANCELLED,
+                "request cancelled",
+            );
+        }
+        match result {
             Ok(result) => RpcResponse::ok(id, result),
             Err((code, msg)) => RpcResponse::err(id, code, msg),
         }
@@ -113,7 +124,14 @@ impl App {
         &mut self,
         method: &str,
         params: Value,
+        cancellation: &CancellationToken,
     ) -> std::result::Result<Value, (i32, String)> {
+        if cancellation.is_cancelled() {
+            return Err((
+                error_code::REQUEST_CANCELLED,
+                "request cancelled".into(),
+            ));
+        }
         match method {
             "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
             "sys.capabilities" => Ok(serde_json::to_value(capabilities()).unwrap()),
@@ -204,6 +222,19 @@ impl App {
                     json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}),
                 )
             }
+            "project.external-refresh" => {
+                self.session_mut()?.refresh_external().map_err(core_err)?;
+                let list: Vec<EntryDto> = self
+                    .session()?
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| e.to_dto(i))
+                    .collect();
+                Ok(
+                    json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}),
+                )
+            }
             "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
             "project.update" => {
                 let s = self.session_mut()?;
@@ -280,7 +311,14 @@ impl App {
             }
             "search.run" => {
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
-                Ok(serde_json::to_value(self.session()?.search(&p)).unwrap())
+                let hits = self
+                    .session()?
+                    .search_cancellable(&p, cancellation)
+                    .ok_or((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ))?;
+                Ok(serde_json::to_value(hits).unwrap())
             }
             "search.replace" => {
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
@@ -501,7 +539,11 @@ impl App {
                     let path = root.join(format!("slot{slot:02}.js"));
                     std::fs::read_to_string(path).unwrap_or_else(|_| "null".into())
                 };
-                self.dispatch("script.run", json!({ "source": src, "index": index }))
+                self.dispatch(
+                    "script.run",
+                    json!({ "source": src, "index": index }),
+                    cancellation,
+                )
             }
             "project.import" => {
                 let files = params
@@ -569,12 +611,22 @@ impl App {
                     .get("engine")
                     .and_then(|v| v.as_str())
                     .unwrap_or("mymemory");
-                let r = self.session()?.mt(index, engine).map_err(core_err)?;
+                let r = self
+                    .session()?
+                    .mt_cancellable(index, engine, cancellation)
+                    .map_err(core_err)?;
                 Ok(serde_json::to_value(r).unwrap())
             }
             "dict.query" => {
                 let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
-                Ok(serde_json::to_value(self.session()?.dict(word)).unwrap())
+                let hits = self
+                    .session()?
+                    .dict_cancellable(word, cancellation)
+                    .ok_or((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ))?;
+                Ok(serde_json::to_value(hits).unwrap())
             }
             "completer.query" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
@@ -1127,6 +1179,10 @@ fn core_err(e: omegat_core::CoreError) -> (i32, String) {
     (code, e.to_string())
 }
 
+fn request_key(id: &Value) -> String {
+    serde_json::to_string(id).unwrap_or_else(|_| "null".into())
+}
+
 fn plugin_marker_worker_main(
     library_path: &std::path::Path,
     marker_id: &str,
@@ -1165,9 +1221,20 @@ fn main() {
         return;
     }
     let _ = env_logger::try_init();
-    let app = Mutex::new(App::new());
+    let app = Arc::new(Mutex::new(App::new()));
+    let cancellations = Arc::new(Mutex::new(
+        HashMap::<String, CancellationToken>::new(),
+    ));
+    let (responses, response_lines) = std::sync::mpsc::channel::<String>();
+    let writer = thread::spawn(move || {
+        let mut stdout = io::stdout();
+        while let Ok(line) = response_lines.recv() {
+            let _ = writeln!(stdout, "{line}");
+            let _ = stdout.flush();
+        }
+    });
     let stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let mut workers = Vec::new();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         if line.trim().is_empty() {
@@ -1177,16 +1244,45 @@ fn main() {
             Ok(r) => r,
             Err(e) => {
                 let resp = RpcResponse::err(Value::Null, error_code::PARSE_ERROR, e.to_string());
-                let _ = writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap());
-                let _ = stdout.flush();
+                let _ = responses.send(serde_json::to_string(&resp).unwrap());
                 continue;
             }
         };
+        if req.id.is_none() && req.method == "$/cancelRequest" {
+            if let Some(id) = req.params.get("id") {
+                if let Some(cancellation) = cancellations
+                    .lock()
+                    .unwrap()
+                    .get(&request_key(id))
+                    .cloned()
+                {
+                    cancellation.cancel();
+                }
+            }
+            continue;
+        }
         if req.id.is_none() {
             continue;
         }
-        let resp = app.lock().unwrap().handle(req);
-        let _ = writeln!(stdout, "{}", serde_json::to_string(&resp).unwrap());
-        let _ = stdout.flush();
+        let id = req.id.clone().unwrap_or(Value::Null);
+        let key = request_key(&id);
+        let cancellation = CancellationToken::default();
+        cancellations
+            .lock()
+            .unwrap()
+            .insert(key.clone(), cancellation.clone());
+        let app = Arc::clone(&app);
+        let cancellations = Arc::clone(&cancellations);
+        let responses = responses.clone();
+        workers.push(thread::spawn(move || {
+            let resp = app.lock().unwrap().handle(req, &cancellation);
+            cancellations.lock().unwrap().remove(&key);
+            let _ = responses.send(serde_json::to_string(&resp).unwrap());
+        }));
     }
+    for worker in workers {
+        let _ = worker.join();
+    }
+    drop(responses);
+    let _ = writer.join();
 }

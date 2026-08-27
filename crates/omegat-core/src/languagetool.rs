@@ -1,5 +1,10 @@
+use crate::cancellation::CancellationToken;
 use crate::language::Language;
 use omegat_ipc::IssueDto;
+use std::io::Read;
+use std::process::Stdio;
+use std::thread;
+use std::time::Duration;
 
 /// Java `LanguageToolNativeBridge.getLTLanguage` class names.
 pub fn lt_language_class(code: &str) -> Option<&'static str> {
@@ -105,8 +110,33 @@ pub fn http_get(url: &str) -> Result<String, String> {
 }
 
 pub fn http_exchange(method: &str, url: &str, body: Option<(&str, &str)>) -> Result<String, String> {
+    http_exchange_cancellable(
+        method,
+        url,
+        body,
+        &CancellationToken::default(),
+    )
+}
+
+/// Run curl while allowing the NDJSON request that owns it to terminate the
+/// process. Reader threads drain both pipes so a large response cannot block
+/// the child before `try_wait` observes its exit.
+pub fn http_exchange_cancellable(
+    method: &str,
+    url: &str,
+    body: Option<(&str, &str)>,
+    cancellation: &CancellationToken,
+) -> Result<String, String> {
+    if cancellation.is_cancelled() {
+        return Err("request cancelled".into());
+    }
     if let Some(path) = url.strip_prefix("fixture:") {
-        return std::fs::read_to_string(path).map_err(|e| e.to_string());
+        let result = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        return if cancellation.is_cancelled() {
+            Err("request cancelled".into())
+        } else {
+            Ok(result)
+        };
     }
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("unsupported URL".into());
@@ -116,12 +146,47 @@ pub fn http_exchange(method: &str, url: &str, body: Option<(&str, &str)>) -> Res
     if let Some((ct, b)) = body {
         cmd.args(["-H", &format!("Content-Type: {ct}"), "--data-binary", b]);
     }
-    cmd.arg(url);
-    let out = cmd.output().map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+    let mut child = cmd
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut stdout = child.stdout.take().ok_or("curl stdout unavailable")?;
+    let mut stderr = child.stderr.take().ok_or("curl stderr unavailable")?;
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stderr.read_to_end(&mut bytes);
+        bytes
+    });
+    let status = loop {
+        if cancellation.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            return Err("request cancelled".into());
+        }
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => break status,
+            None => thread::sleep(Duration::from_millis(10)),
+        }
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "curl stdout reader failed".to_string())?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "curl stderr reader failed".to_string())?;
+    if !status.success() {
+        return Err(String::from_utf8_lossy(&stderr).into_owned());
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
 #[cfg(test)]

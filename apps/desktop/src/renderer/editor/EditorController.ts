@@ -90,6 +90,12 @@ type EditorUndoState = {
   caret: EditorCaretPosition;
 };
 
+type RendererMarkerJob = {
+  index: number;
+  key: string;
+  input: MarkerInput;
+};
+
 /**
  * Find the next matching entry with Java's project-wide wraparound behavior.
  * The current entry is considered last, after every other entry was checked.
@@ -153,6 +159,8 @@ export class EditorController {
   private filterOriginIndex = 0;
   private loadedMarkerKeys = new Set<string>();
   private loadedPageGeneration = 0;
+  private rendererMarkerJobs: RendererMarkerJob[] = [];
+  private rendererPageGeneration = 0;
 
   getCurrentTranslation(): string {
     return this.document?.translation ?? this.editor.getCurrentTranslation();
@@ -533,9 +541,12 @@ export class EditorController {
   }
 
   /**
-   * Bind the renderer's immutable project snapshot to the same paging model
-   * used by the headless controller. This deliberately does not touch
-   * navigation or undo history: Zustand owns those while React is mounted.
+   * Project a renderer page without adopting its active segment.
+   *
+   * Zustand owns the active index and selection, and its Document3 is the only
+   * active translation. The controller retains only immutable marker jobs and
+   * integer page bounds; its headless `document`, `entries`, and caret remain
+   * untouched.
    */
   synchronizeRendererProject(
     entries: readonly LoadedEntry[],
@@ -543,41 +554,70 @@ export class EditorController {
     document: Document3State,
     filter: IEditorFilter = makeFilter("none"),
   ): LoadedPageEntry[] {
-    const filterChanged =
-      filter.kind !== this.entriesFilter.kind
-      || filter.query !== this.entriesFilter.query;
-    if (filterChanged) {
-      this.entriesFilter = filter;
-      this.markers.invalidate();
-      this.loadedMarkerKeys.clear();
-      this.loadedPageGeneration += 1;
-      this.markerSnapshot = null;
-    }
-    this.entries = entries.map((entry, index) => ({
-      ...entry,
-      translation: index === activeIndex ? document.translation : entry.translation,
-    }));
-    this.rebuildVisibleEntries();
-    const safeIndex = Math.max(0, Math.min(activeIndex, this.entries.length - 1));
-    const active = this.entries[safeIndex];
+    this.visibleEntryIndices = entries.flatMap((entry, index) =>
+      filter.allowed(entry) ? [index] : []
+    );
+    const safeIndex = Math.max(0, Math.min(activeIndex, entries.length - 1));
+    const active = entries[safeIndex];
     if (!active || !this.visibleEntryIndices.includes(safeIndex)) {
-      this.clearActiveView(safeIndex);
+      this.firstLoaded = -1;
+      this.lastLoaded = -1;
+      this.updateRendererMarkerJobs([]);
       return [];
     }
-    const files = [...new Set(this.entries.map((entry) => entry.file))];
-    this.previousDisplayedFileIndex = this.displayedFileIndex;
-    this.displayedFileIndex = Math.max(0, files.indexOf(active.file));
-    this.displayedEntryIndex = safeIndex;
-    this.currentFile = active.file;
-    this.currentEntryNumber = safeIndex + 1;
-    this.document = document;
-    this.markerSnapshot = this.markers.processEntry(
-      this.entryKey(safeIndex, active),
-      this.markerInput(active, true),
+    const visiblePosition = this.visibleEntryIndices.indexOf(safeIndex);
+    const first = Math.max(0, visiblePosition - this.pageRadius);
+    const last = Math.min(
+      this.visibleEntryIndices.length - 1,
+      visiblePosition + this.pageRadius,
     );
-    this.bindDocumentToTextArea(true);
-    this.loadWindowAround(safeIndex);
-    return this.getLoadedPage();
+    const pageIndices = this.visibleEntryIndices.slice(first, last + 1);
+    this.firstLoaded = pageIndices[0] ?? -1;
+    this.lastLoaded = pageIndices.at(-1) ?? -1;
+    const jobs = pageIndices.map((index): RendererMarkerJob => {
+      const stored = entries[index]!;
+      const entry = index === safeIndex
+        ? {
+            ...stored,
+            source: document.source,
+            translation: document.translation,
+          }
+        : stored;
+      return {
+        index,
+        key: this.entryKey(index, entry),
+        input: this.markerInput(entry, index === safeIndex),
+      };
+    });
+    this.updateRendererMarkerJobs(jobs);
+    return jobs.map(({ index, key, input }) => {
+      const entry = entries[index]!;
+      return {
+        key,
+        index,
+        entryNumber: index + 1,
+        file: entry.file,
+        source: input.sourceText,
+        translation: input.translationText,
+        active: input.isActive,
+        marks: this.markers.processEntry(key, input).marks,
+      };
+    });
+  }
+
+  async refreshRendererPageMarkersAsync(): Promise<boolean> {
+    const generation = this.rendererPageGeneration;
+    const jobs = this.rendererMarkerJobs.map(({ index, key, input }) => ({
+      index,
+      key,
+      input: { ...input },
+    }));
+    if (jobs.length === 0) return false;
+    await Promise.all(jobs.map(({ key, input }) =>
+      this.markers.processEntryAsync(key, input)
+    ));
+    return generation === this.rendererPageGeneration
+      && JSON.stringify(jobs) === JSON.stringify(this.rendererMarkerJobs);
   }
 
   loadEmptyProject(): void {
@@ -968,6 +1008,19 @@ export class EditorController {
     this.loadedMarkerKeys = new Set(keys);
     this.loadedPageGeneration += 1;
     this.markers.retainEntries(keys);
+  }
+
+  private updateRendererMarkerJobs(jobs: readonly RendererMarkerJob[]): void {
+    const previous = JSON.stringify(this.rendererMarkerJobs);
+    const next = jobs.map(({ index, key, input }) => ({
+      index,
+      key,
+      input: { ...input },
+    }));
+    if (previous === JSON.stringify(next)) return;
+    this.rendererMarkerJobs = next;
+    this.rendererPageGeneration += 1;
+    this.markers.retainEntries(next.map(({ key }) => key));
   }
 
   private clearActiveView(originIndex: number): void {

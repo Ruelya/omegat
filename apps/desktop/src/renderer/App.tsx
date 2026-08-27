@@ -5,7 +5,7 @@ import { t } from "./i18n";
 import { useMenuBindings } from "./menus/useMenuBindings";
 import { PrefsWindow } from "./prefs/PrefsWindow";
 import { SearchWindow } from "./search/SearchWindow";
-import { useApp } from "./store/app";
+import { connectExternalProjectEvents, useApp } from "./store/app";
 import { Welcome } from "./welcome/Welcome";
 import { AboutWindow, ChangesWindow, LicenseWindow, LogWindow } from "./windows/AboutLicenseLog";
 import { FilesWindow, IssuesWindow } from "./windows/FilesIssues";
@@ -42,6 +42,20 @@ export function App() {
       if (useApp.getState().firstRun) app.openWindow("tip");
     })();
   }, []);
+
+  useEffect(() => connectExternalProjectEvents(), []);
+
+  useEffect(() => {
+    const root = app.props?.root;
+    if (root) {
+      void window.omegat?.watchProject?.(root);
+    } else {
+      void window.omegat?.unwatchProject?.();
+    }
+    return () => {
+      if (root) void window.omegat?.unwatchProject?.();
+    };
+  }, [app.props?.root]);
 
   useEffect(() => {
     const seconds = app.prefs?.autosave_seconds ?? 0;

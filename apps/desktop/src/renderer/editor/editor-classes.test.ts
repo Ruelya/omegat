@@ -873,6 +873,17 @@ describe("Document3 / IEditor / completer classes", () => {
       { key: JSON.stringify(keys[1]), entryNumber: 2, translation: "DEUX", active: true },
       { key: JSON.stringify(keys[2]), entryNumber: 3, translation: "trois", active: false },
     ]);
+    expect({
+      controllerEntries: controller.entries,
+      controllerDocument: controller.getOmDocument(),
+      controllerEntryNumber: controller.getCurrentEntryNumber(),
+      controllerSelection: controller.getCurrentPositionInEntryTranslationInEditor(),
+    }).toEqual({
+      controllerEntries: [],
+      controllerDocument: null,
+      controllerEntryNumber: 0,
+      controllerSelection: { position: -1 },
+    });
   });
 
   it("filters renderer pages and preserves caret only for the same complete EntryKey", () => {

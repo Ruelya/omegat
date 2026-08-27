@@ -9,7 +9,8 @@ pub mod mymemory;
 pub mod mymemory_human;
 pub mod yandex;
 
-use crate::languagetool::http_exchange;
+use crate::cancellation::CancellationToken;
+use crate::languagetool::http_exchange_cancellable;
 use omegat_ipc::MtSuggestionDto;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -134,6 +135,29 @@ pub fn translate_with_creds(
     cache: &MtCache,
     creds: &MtCreds,
 ) -> Result<MtSuggestionDto, String> {
+    translate_with_creds_cancellable(
+        engine,
+        source,
+        source_lang,
+        target_lang,
+        cache,
+        creds,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn translate_with_creds_cancellable(
+    engine: &str,
+    source: &str,
+    source_lang: &str,
+    target_lang: &str,
+    cache: &MtCache,
+    creds: &MtCreds,
+    cancellation: &CancellationToken,
+) -> Result<MtSuggestionDto, String> {
+    if cancellation.is_cancelled() {
+        return Err("request cancelled".into());
+    }
     let key = format!("{engine}:{source_lang}:{target_lang}:{source}");
     if let Some(text) = cache.get(&key) {
         return Ok(MtSuggestionDto { engine: engine.into(), text });
@@ -142,18 +166,52 @@ pub fn translate_with_creds(
         return Err("mock is not a production engine".into());
     }
     let _ = auth_headers(engine, creds)?;
-    let text = dispatch(engine, source, source_lang, target_lang, creds)?;
+    let text = dispatch_cancellable(
+        engine,
+        source,
+        source_lang,
+        target_lang,
+        creds,
+        cancellation,
+    )?;
+    if cancellation.is_cancelled() {
+        return Err("request cancelled".into());
+    }
     cache.put(key, text.clone());
     Ok(MtSuggestionDto { engine: engine.into(), text })
 }
 
 fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> Result<String, String> {
+    dispatch_cancellable(
+        engine,
+        source,
+        sl,
+        tl,
+        creds,
+        &CancellationToken::default(),
+    )
+}
+
+fn dispatch_cancellable(
+    engine: &str,
+    source: &str,
+    sl: &str,
+    tl: &str,
+    creds: &MtCreds,
+    cancellation: &CancellationToken,
+) -> Result<String, String> {
+    if cancellation.is_cancelled() {
+        return Err("request cancelled".into());
+    }
     if let Ok(dir) = std::env::var("OMEGAT_MT_FIXTURE_DIR") {
         let recorded = std::path::Path::new(&dir).join(engine).join("recorded.json");
         let legacy = std::path::Path::new(&dir).join(format!("{engine}.json"));
         let path = if recorded.exists() { recorded } else { legacy };
         if path.exists() {
             let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+            if cancellation.is_cancelled() {
+                return Err("request cancelled".into());
+            }
             return parse_recorded_or_engine(engine, &raw);
         }
         return Err(format!("{engine} has no recorded fixture under {dir}"));
@@ -170,7 +228,7 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 urlencoding::encode(sl),
                 urlencoding::encode(tl)
             );
-            http_exchange("GET", &url, None)?
+            http_exchange_cancellable("GET", &url, None, cancellation)?
         }
         "apertium" => {
             let url = format!(
@@ -180,7 +238,7 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 urlencoding::encode(sl),
                 urlencoding::encode(tl)
             );
-            http_exchange("GET", &url, None)?
+            http_exchange_cancellable("GET", &url, None, cancellation)?
         }
         "google" => {
             let key = creds
@@ -193,7 +251,12 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 "{{\"q\":\"{}\",\"source\":\"{}\",\"target\":\"{}\"}}",
                 escape_json(source), sl, tl
             );
-            http_exchange("POST", &url, Some(("application/json", &body)))?
+            http_exchange_cancellable(
+                "POST",
+                &url,
+                Some(("application/json", &body)),
+                cancellation,
+            )?
         }
         "ibmwatson" => {
             let url = std::env::var("OMEGAT_IBM_URL").unwrap_or_else(|_| ibmwatson::ENDPOINT.to_string());
@@ -201,7 +264,12 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 "{{\"text\":[\"{}\"],\"source\":\"{}\",\"target\":\"{}\"}}",
                 escape_json(source), sl, tl
             );
-            http_exchange("POST", &url, Some(("application/json", &body)))?
+            http_exchange_cancellable(
+                "POST",
+                &url,
+                Some(("application/json", &body)),
+                cancellation,
+            )?
         }
         "yandex" => {
             let url = std::env::var("OMEGAT_YANDEX_URL").unwrap_or_else(|_| yandex::ENDPOINT.to_string());
@@ -209,7 +277,12 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 "{{\"texts\":[\"{}\"],\"sourceLanguageCode\":\"{}\",\"targetLanguageCode\":\"{}\"}}",
                 escape_json(source), sl, tl
             );
-            http_exchange("POST", &url, Some(("application/json", &body)))?
+            http_exchange_cancellable(
+                "POST",
+                &url,
+                Some(("application/json", &body)),
+                cancellation,
+            )?
         }
         "belazar" => {
             let url = format!(
@@ -217,7 +290,7 @@ fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> 
                 belazar::ENDPOINT,
                 urlencoding::encode(source), sl, tl
             );
-            http_exchange("GET", &url, None)?
+            http_exchange_cancellable("GET", &url, None, cancellation)?
         }
         other => return Err(format!("unknown engine {other}")),
     };

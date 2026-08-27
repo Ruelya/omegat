@@ -8,17 +8,18 @@ import {
   registerApplicationLifecycle,
 } from "./lifecycle";
 import { buildApplicationMenu } from "./menu";
-
-type Pending = {
-  resolve: (v: unknown) => void;
-  reject: (e: Error) => void;
-};
+import { ProjectFileWatcher } from "./project-file-watcher";
+import { SidecarRpcClient } from "./sidecar-rpc";
 
 let sidecar: ChildProcessWithoutNullStreams | null = null;
+let rpcClient: SidecarRpcClient | null = null;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
-const pending = new Map<number, Pending>();
 let nextId = 1;
-let buf = "";
+const projectFileWatcher = new ProjectFileWatcher((event) => {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send("project:external-change", event);
+  });
+});
 
 if (process.env.OMEGAT_CONFIG_DIR) {
   app.setPath("userData", process.env.OMEGAT_CONFIG_DIR);
@@ -71,26 +72,12 @@ function inspectDroppedPaths(paths: unknown) {
 function startSidecar() {
   const bin = sidecarPath();
   sidecar = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
+  rpcClient = new SidecarRpcClient((line) => {
+    sidecar?.stdin.write(`${line}\n`);
+  });
   sidecar.stdout.setEncoding("utf8");
   sidecar.stdout.on("data", (chunk: string) => {
-    buf += chunk;
-    let idx: number;
-    while ((idx = buf.indexOf("\n")) >= 0) {
-      const line = buf.slice(0, idx).trim();
-      buf = buf.slice(idx + 1);
-      if (!line) continue;
-      try {
-        const msg = JSON.parse(line) as { id?: number; result?: unknown; error?: { message: string } };
-        if (msg.id != null && pending.has(msg.id)) {
-          const p = pending.get(msg.id)!;
-          pending.delete(msg.id);
-          if (msg.error) p.reject(new Error(msg.error.message));
-          else p.resolve(msg.result);
-        }
-      } catch {
-        /* ignore malformed */
-      }
-    }
+    rpcClient?.acceptChunk(chunk);
   });
   sidecar.stderr.on("data", (d: Buffer) => {
     process.stderr.write(d);
@@ -98,6 +85,8 @@ function startSidecar() {
 }
 
 function stopSidecar() {
+  rpcClient?.rejectAll("sidecar stopped");
+  rpcClient = null;
   sidecar?.kill();
   sidecar = null;
   for (const child of isolatedMarkerSidecars) child.kill();
@@ -153,18 +142,17 @@ function isolatedMarkerRpc(method: string, params: unknown): Promise<unknown> {
   });
 }
 
-function rpc(method: string, params: unknown = {}): Promise<unknown> {
+function rpc(
+  method: string,
+  params: unknown = {},
+  clientRequestId: string | null = null,
+): Promise<unknown> {
   // Native callbacks may take the full worker timeout. Keep project and
   // navigation RPCs responsive while each Marker runs in its own sidecar,
   // which in turn retains the cdylib crash/timeout worker boundary.
   if (method === "markers.query") return isolatedMarkerRpc(method, params);
   if (!sidecar) startSidecar();
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    const line = JSON.stringify({ jsonrpc: "2.0", id, method, params });
-    sidecar!.stdin.write(line + "\n");
-  });
+  return rpcClient!.request(method, params, clientRequestId);
 }
 
 function createWindow() {
@@ -200,7 +188,14 @@ function applyMenuLocale(locale: string) {
 
 app.whenReady().then(() => {
   startSidecar();
-  ipcMain.handle("rpc", (_e, method: string, params: unknown) => rpc(method, params));
+  ipcMain.handle(
+    "rpc",
+    (_e, method: string, params: unknown, clientRequestId?: string) =>
+      rpc(method, params, clientRequestId ?? null),
+  );
+  ipcMain.handle("rpc-cancel", (_e, clientRequestId: string) =>
+    rpcClient?.cancel(clientRequestId) ?? false
+  );
   ipcMain.handle("startup-context", () => ({
     project: process.env.OMEGAT_PROJECT || null,
     configDir: process.env.OMEGAT_CONFIG_DIR || app.getPath("userData"),
@@ -219,6 +214,10 @@ app.whenReady().then(() => {
     return r.canceled ? null : r.filePaths;
   });
   ipcMain.handle("inspect-drop", (_e, paths: unknown) => inspectDroppedPaths(paths));
+  ipcMain.handle("project-watch", (_e, root: string) => {
+    if (typeof root === "string" && root.trim()) projectFileWatcher.watch(root);
+  });
+  ipcMain.handle("project-unwatch", () => projectFileWatcher.close());
   ipcMain.handle("save-text", async (_e, name: string, text: string) => {
     const r = await dialog.showSaveDialog({ defaultPath: name });
     if (r.canceled || !r.filePath) return null;
@@ -248,6 +247,7 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
+  projectFileWatcher.close();
   stopSidecar();
   if (process.platform !== "darwin") app.quit();
 });

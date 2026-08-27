@@ -1,4 +1,5 @@
 use crate::session::Entry;
+use crate::cancellation::CancellationToken;
 use omegat_ipc::{SearchHitDto, SearchParams};
 use regex::Regex;
 use std::sync::{
@@ -14,10 +15,24 @@ enum Kind {
 }
 
 pub fn search(entries: &[Entry], params: &SearchParams) -> Vec<SearchHitDto> {
+    search_cancellable(entries, params, &CancellationToken::default()).unwrap_or_default()
+}
+
+/// Search the project while observing the sidecar request cancellation token.
+///
+/// A cancelled search never exposes a partial result as a completed result.
+pub fn search_cancellable(
+    entries: &[Entry],
+    params: &SearchParams,
+    cancellation: &CancellationToken,
+) -> Option<Vec<SearchHitDto>> {
     let kind = search_kind(params);
     let re = compile_regex(params, kind);
     let mut hits = Vec::new();
     for (index, e) in entries.iter().enumerate() {
+        if cancellation.is_cancelled() {
+            return None;
+        }
         if !entry_passes_filters(e, params) {
             continue;
         }
@@ -66,7 +81,7 @@ pub fn search(entries: &[Entry], params: &SearchParams) -> Vec<SearchHitDto> {
             re.as_ref(),
         );
     }
-    hits
+    (!cancellation.is_cancelled()).then_some(hits)
 }
 
 pub fn replace(entries: &mut [Entry], params: &SearchParams) -> usize {
