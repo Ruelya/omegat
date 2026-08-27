@@ -488,12 +488,16 @@ export const useApp = create<AppState>((set, get) => ({
     set({ longOperation: { ...active, phase: "cancelling" } });
     const accepted = await window.omegat.cancelRpc(active.requestId);
     const current = get().longOperation;
-    if (current?.requestId === active.requestId && current.phase === "cancelling") {
+    if (
+      !accepted
+      && current?.requestId === active.requestId
+      && current.phase === "cancelling"
+    ) {
       set({
         longOperation: {
           ...current,
-          phase: accepted ? "cancelled" : "failed",
-          error: accepted ? null : "operation is no longer active",
+          phase: "failed",
+          error: "operation is no longer active",
         },
       });
     }

@@ -16,6 +16,7 @@
     "test:e2e:editor-ime:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-editor-ime-linux.mjs",
     "test:e2e:editor-drop-issues:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-editor-drop-issues-linux.mjs",
     "test:e2e:native-marker:linux": "cargo build --release -p omegat-sidecar -p omegat-example-plugin && npm run build && electron-builder --dir --linux dir && node scripts/packaged-native-marker-linux.mjs",
+    "test:e2e:long-cancel:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-long-operation-cancel-linux.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },

@@ -524,23 +524,24 @@ describe("app store", () => {
       error: null,
     });
 
-    cancelRpc.mockImplementationOnce(async (cancelledId: string) => {
-      rpcOperationListener?.({
-        requestId: cancelledId,
-        method: "project.compile",
-        phase: "cancelling",
-      });
-      const error = new Error("RPC request cancelled");
-      error.name = "AbortError";
-      rejectCompile(error);
-      rpcOperationListener?.({
-        requestId: cancelledId,
-        method: "project.compile",
-        phase: "cancelled",
-      });
-      return true;
-    });
+    cancelRpc.mockResolvedValueOnce(true);
     await expect(useApp.getState().cancelLongOperation()).resolves.toBe(true);
+    expect(useApp.getState().longOperation).toEqual({
+      requestId,
+      kind: "compile",
+      method: "project.compile",
+      phase: "cancelling",
+      stage: "compile:filters",
+      error: null,
+    });
+    rpcOperationListener?.({
+      requestId,
+      method: "project.compile",
+      phase: "cancelled",
+    });
+    const error = new Error("request cancelled");
+    error.name = "AbortError";
+    rejectCompile(error);
     await compiling;
     disconnect();
 

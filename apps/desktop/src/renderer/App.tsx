@@ -91,6 +91,8 @@ export function App() {
       data-project-id={app.projectEvent.projectId ?? ""}
       data-operation={app.longOperation?.kind ?? ""}
       data-operation-phase={app.longOperation?.phase ?? ""}
+      data-operation-stage={app.longOperation?.stage ?? ""}
+      data-operation-request-id={app.longOperation?.requestId ?? ""}
     >
       <header className="topbar">
         <div className="brand">
@@ -104,6 +106,7 @@ export function App() {
             <button
               type="button"
               className="primary"
+              data-operation-action="compile"
               disabled={Boolean(operationActive)}
               onClick={() => void app.compile()}
             >
@@ -112,6 +115,7 @@ export function App() {
             {operationActive && (
               <button
                 type="button"
+                data-operation-action="cancel"
                 disabled={app.longOperation?.phase === "cancelling"}
                 onClick={() => void app.cancelLongOperation()}
               >
@@ -139,7 +143,13 @@ export function App() {
           <span>{app.stats ? `${app.stats.translated}/${app.stats.segments}` : ""}</span>
           <span>{app.props ? `${app.props.source_lang} → ${app.props.target_lang}` : ""}</span>
           <span>{app.status}</span>
-          <span role="status" aria-live="polite">{operationText}</span>
+          <span
+            role="status"
+            aria-live="polite"
+            data-operation-status
+          >
+            {operationText}
+          </span>
           <span>{app.props?.root}</span>
         </footer>
       )}

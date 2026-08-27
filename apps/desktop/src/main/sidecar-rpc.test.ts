@@ -95,6 +95,13 @@ describe("SidecarRpcClient", () => {
       { progress_token: "operation-teamSync-2" },
       "operation-teamSync-2",
     );
+    let teamSettled = false;
+    void team.finally(() => {
+      teamSettled = true;
+    }).catch(() => undefined);
+    expect(client.cancel("operation-teamSync-2")).toBe(true);
+    await Promise.resolve();
+    expect(teamSettled).toBe(false);
     client.acceptChunk(`${JSON.stringify({
       jsonrpc: "2.0",
       id: 2,
@@ -130,9 +137,19 @@ describe("SidecarRpcClient", () => {
       {
         requestId: "operation-teamSync-2",
         method: "team.sync",
+        phase: "cancelling",
+      },
+      {
+        requestId: "operation-teamSync-2",
+        method: "team.sync",
         phase: "cancelled",
         error: "request cancelled",
       },
     ]);
+    expect(lines.map((line) => JSON.parse(line)).at(-1)).toEqual({
+      jsonrpc: "2.0",
+      method: "$/cancelRequest",
+      params: { id: 2 },
+    });
   });
 });

@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import type { RpcOperationEvent } from "../shared/rpc-operation";
+import {
+  isLongOperationMethod,
+  type RpcOperationEvent,
+} from "../shared/rpc-operation";
 
 type PendingRequest = {
   clientRequestId: string | null;
   method: string;
+  cancellationRequested: boolean;
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 };
@@ -36,7 +40,13 @@ export class SidecarRpcClient {
   ): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { clientRequestId, method, resolve, reject });
+      this.pending.set(id, {
+        clientRequestId,
+        method,
+        cancellationRequested: false,
+        resolve,
+        reject,
+      });
       if (clientRequestId) this.clientRequests.set(clientRequestId, id);
       this.writeLine(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
       if (clientRequestId) {
@@ -57,30 +67,36 @@ export class SidecarRpcClient {
     const id = this.clientRequests.get(clientRequestId);
     if (id === undefined) return false;
     const request = this.pending.get(id);
-    this.clientRequests.delete(clientRequestId);
-    this.pending.delete(id);
-    if (request) {
-      this.onOperation({
-        requestId: clientRequestId,
-        method: request.method,
-        phase: "cancelling",
-      });
-    }
+    if (!request) return false;
+    if (request.cancellationRequested) return true;
+    request.cancellationRequested = true;
+    this.onOperation({
+      requestId: clientRequestId,
+      method: request.method,
+      phase: "cancelling",
+    });
     this.writeLine(JSON.stringify({
       jsonrpc: "2.0",
       method: "$/cancelRequest",
       params: { id },
     }));
+    // Long operations remain pending until the sidecar acknowledges the
+    // cooperative token with -32800. This keeps "cancelling" visibly distinct
+    // from "cancelled" and prevents a local IPC write from claiming rollback
+    // before product work has actually stopped.
+    if (isLongOperationMethod(request.method)) {
+      return true;
+    }
+    this.clientRequests.delete(clientRequestId);
+    this.pending.delete(id);
     const error = new Error("RPC request cancelled");
     error.name = "AbortError";
-    request?.reject(error);
-    if (request) {
-      this.onOperation({
-        requestId: clientRequestId,
-        method: request.method,
-        phase: "cancelled",
-      });
-    }
+    request.reject(error);
+    this.onOperation({
+      requestId: clientRequestId,
+      method: request.method,
+      phase: "cancelled",
+    });
     return true;
   }
 
