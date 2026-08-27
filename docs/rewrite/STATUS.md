@@ -60,7 +60,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **12 passed** plus
 sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 159
+passed**, and desktop **23 files / 160
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -543,6 +543,19 @@ started/progress/cancelling/cancelled trace. Only the sidecar's protocol
 `EntryKey`, source, translation, and all **2400** sidecar entries remain exact,
 and the sidecar still answers `sys.version`. This is Linux package evidence
 only.
+The same real Linux package now opens the visible Team window and cancels both
+`team.sync` and source `team.commit` from the shared status-bar control in a
+two-repository transaction: one root/main file remote plus one `/source/`
+mapping file remote over **2400** project files. Both paths visibly retain
+`cancelling` until the stateful sidecar returns protocol **-32800**, then enter
+`cancelled` with the retained `team.mapping.copy` stage. Exact base64 file-tree
+snapshots prove the project product tree and both remotes are byte-identical
+after rollback; `.repositories/transactions/active.json` is gone. The dirty
+active `Document3` retains its complete six-field `EntryKey`, exact translation,
+and UTF-16 caret **26**, while the same sidecar still returns version **6.2.0**
+and all **2400** entries. Late mapping progress after the cancel request is
+discarded, and an operation that wins the race with cancellation is no longer
+misreported as cancelled. This is Linux package evidence only.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
 on Linux without relying on recursive-watch support. They now install and
 remove per-directory watchers as nested directories appear or disappear at
