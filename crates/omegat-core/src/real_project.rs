@@ -188,7 +188,6 @@ impl ProjectSession {
                 return Err(CoreError::Cancelled);
             }
             let props = ProjectProperties::load(&root)?;
-            props.ensure_dirs()?;
             if cancellation.is_cancelled() {
                 return Err(CoreError::Cancelled);
             }
