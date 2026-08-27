@@ -3318,7 +3318,14 @@ public final class ExportGoldens {
     }
 
     private void exportAlignerGoldens() throws Exception {
-        assertJavaTestClass("org.omegat.gui.align.AlignerTest");
+        assertJavaTestSourceMethods("org.omegat.gui.align.AlignerTest",
+                "testAlignerHeapMode",
+                "testAlignerParseMode",
+                "testAlignerIDMode",
+                "testWritePairsToTMX_writesExpectedTMX",
+                "testWritePairsToTMX_missingLanguageThrows",
+                "testDoAlign_withBeads_returnsAlignedBeads",
+                "testDoAlign_missingSettingsThrows");
         List<List<String>> heapPairs = List.of(
                 List.of("This is sentence one.", "これが1つ目のセンテンス。"),
                 List.of("Short sentence.", "短い文。"),
@@ -5163,6 +5170,19 @@ public final class ExportGoldens {
         }
     }
 
+    private void assertJavaTestSourceMethods(String className, String... methods) throws Exception {
+        Path source = javaRoot.resolve("aligner/src/test/java")
+                .resolve(className.replace('.', '/') + ".java");
+        String body = Files.readString(source, StandardCharsets.UTF_8);
+        for (String method : methods) {
+            Pattern declaration = Pattern.compile(
+                    "\\bpublic\\s+void\\s+" + Pattern.quote(method) + "\\s*\\(");
+            if (!declaration.matcher(body).find()) {
+                throw new AssertionError(className + "#" + method + " is not present in " + source);
+            }
+        }
+    }
+
     private void exportMtFinderTests() throws Exception {
         writeCase("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier.json",
                 "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier",
@@ -5405,7 +5425,15 @@ public final class ExportGoldens {
     }
 
     private void exportAlignerWindowTests() throws Exception {
-        assertJavaTestClass("org.omegat.gui.align.AlignSettingsPersistenceTest");
+        assertJavaTestSourceMethods("org.omegat.gui.align.AlignSettingsPersistenceTest",
+                "testDefaultsAreKeptWhenNothingStored",
+                "testRoundTrip",
+                "testStoredValuesRestored",
+                "testLanguageFallbackWhenNothingStored",
+                "testLanguageFallbackWhenStoredCodeInvalid",
+                "testEmptyFiltersConfigFallsBackToDefaults",
+                "testInputDirRoundTrip",
+                "testLanguageRoundTrip");
         writeCase("align/AlignerWindowTest#testMergeSplitMove.json",
                 "org.omegat.gui.align.AlignerTest#testDoAlign_withBeads_returnsAlignedBeads",
                 Map.of("ops", List.of("merge", "split", "move-up", "move-down")));
