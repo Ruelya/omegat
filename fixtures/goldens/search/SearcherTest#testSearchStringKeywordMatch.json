@@ -1,0 +1,20 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringKeywordMatch",
+  "cases": [
+    {
+      "hit": true,
+      "text": "great software"
+    },
+    {
+      "hit": true,
+      "text": "OmegaT is great software"
+    },
+    {
+      "hit": false,
+      "text": "OmegaT is average software"
+    }
+  ],
+  "type": "KEYWORD",
+  "query": "great software"
+}

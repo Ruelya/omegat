@@ -1,0 +1,22 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testProgressColorThresholds",
+  "zero": [
+    240,
+    184,
+    180
+  ],
+  "half": [
+    183,
+    215,
+    183
+  ],
+  "full": [
+    184,
+    204,
+    240
+  ],
+  "keys": [
+    "org.omegat.gui.filelist.ProjectFilesListControllerTest#testProgressColorThresholds"
+  ]
+}

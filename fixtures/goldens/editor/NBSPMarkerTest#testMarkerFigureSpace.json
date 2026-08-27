@@ -1,0 +1,15 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.NBSPMarkerTest#testMarkerFigureSpace",
+  "enabled": true,
+  "source": "1 000 units",
+  "translation": null,
+  "is_active": true,
+  "marks": [
+    {
+      "startOffset": 1,
+      "endOffset": 2,
+      "entryPart": "SOURCE"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
