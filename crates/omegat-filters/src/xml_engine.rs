@@ -612,6 +612,16 @@ impl Entry {
         protected: &[ProtectedPart],
     ) {
         self.detect_and_enumerate(cfg, dialect);
+        // Java `Entry.createTextInstance` clones the first meaningful source
+        // `XMLText`, including whether it came from a CDATA section.
+        let translation_in_cdata = self
+            .elements
+            .iter()
+            .find_map(|element| match element {
+                Element::Text { text, in_cdata } if !java_trim_is_empty(text) => Some(*in_cdata),
+                _ => None,
+            })
+            .unwrap_or(false);
         let src = if self.first_good <= self.last_good && self.first_good >= 0 {
             let start = self.first_good as usize;
             let end = self.last_good as usize + 1;
@@ -630,6 +640,7 @@ impl Entry {
             self.first_good,
             self.last_good,
             protected,
+            translation_in_cdata,
         ));
     }
 
@@ -686,15 +697,16 @@ fn recover_tags(
     first_good: i32,
     last_good: i32,
     protected: &[ProtectedPart],
+    text_in_cdata: bool,
 ) -> Vec<Element> {
     let mut out = Vec::new();
     let mut protected_elements = Vec::new();
     let mut used = Vec::new();
     if first_good >= 0 && last_good >= first_good {
         for part in protected {
-            if let Some(index) = (first_good as usize..=last_good as usize).find(|index| {
-                !used.contains(index) && source[*index].to_original() == part.details
-            }) {
+            if let Some(index) = (first_good as usize..=last_good as usize)
+                .find(|index| !used.contains(index) && source[*index].to_original() == part.details)
+            {
                 used.push(index);
                 protected_elements.push((part.text.clone(), source[index].clone()));
             }
@@ -707,7 +719,7 @@ fn recover_tags(
             if rel > 0 {
                 out.push(Element::Text {
                     text: translation[pos..pos + rel].to_string(),
-                    in_cdata: false,
+                    in_cdata: text_in_cdata,
                 });
             }
             let start = pos + rel;
@@ -739,14 +751,14 @@ fn recover_tags(
                 if !found {
                     out.push(Element::Text {
                         text: tag_s.to_string(),
-                        in_cdata: false,
+                        in_cdata: text_in_cdata,
                     });
                 }
                 pos = start + end_rel + 1;
             } else {
                 out.push(Element::Text {
                     text: translation[start..].to_string(),
-                    in_cdata: false,
+                    in_cdata: text_in_cdata,
                 });
                 break;
             }
@@ -754,7 +766,7 @@ fn recover_tags(
             if pos < translation.len() {
                 out.push(Element::Text {
                     text: translation[pos..].to_string(),
-                    in_cdata: false,
+                    in_cdata: text_in_cdata,
                 });
             }
             break;

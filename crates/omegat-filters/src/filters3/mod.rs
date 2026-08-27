@@ -170,6 +170,12 @@ pub fn sniff_xml_id(raw: &str) -> Option<&'static str> {
     if file_looks_like(raw, &xmlspreadsheet_dialect::XMLSpreadsheetDialect::new()) {
         return Some("xmlss");
     }
+    if flash_dialect::file_looks_like(raw) {
+        return Some("flash");
+    }
+    if wordpress_dialect::file_looks_like(raw) {
+        return Some("wordpress");
+    }
     if file_looks_like(raw, &xhtml_dialect::XhtmlDialect::new(&Default::default())) {
         return Some("xhtml");
     }

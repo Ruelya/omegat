@@ -19,6 +19,11 @@ impl Filter for WordpressFilter {
     fn default_masks(&self) -> &'static [&'static str] {
         &["*.xml"]
     }
+    fn file_supported(&self, path: &Path, _ctx: &FilterContext) -> bool {
+        crate::read_to_string(path)
+            .map(|raw| super::wordpress_dialect::file_looks_like(&raw))
+            .unwrap_or(false)
+    }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {
         let dialect = WordpressDialect::new();
         let mut hooks = DefaultHooks::parse();
