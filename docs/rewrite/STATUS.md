@@ -44,9 +44,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 - Java `src/main/java`: **779** files / **157825** lines
 - Rewrite Rust: `crates/**/*.rs` **54145** lines; `apps/desktop/src`
-  TS/TSX/CSS **14009** lines (**~43%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **14009**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5236**
+  TS/TSX/CSS **14100** lines (**~43%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **14100**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5327**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 92
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 93
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
@@ -217,7 +217,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**571** vs **963**, `EditorController` **509** vs **2365**. The headless
+**571** vs **963**, `EditorController` **567** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -228,8 +228,13 @@ cut/copy/paste clamping, token deletion, Shift+Enter, tag double-click, focus
 transitions, atomic caret motion, and hidden-textarea IME events call
 `EditorTextArea3` rather than duplicating mutations in JSX. IME updates remain
 one replaceable composition with commit/cancel. Variable-height prepends retain
-a stable segment/viewport scroll anchor; Chromium caret range hit-testing maps
-mouse pixels to UTF-16 offsets, and native `beforeinput` operations replace
+a stable segment/viewport scroll anchor. `EditorController` now exposes Java's
+entry-relative caret/selection positions, selected text, and insertion at the
+live selection instead of always appending; selection replacement, dirty state,
+caret collapse, entry synchronization, and undo are strictly exercised through
+its `EditorTextArea3` / `Document3` product path. Chromium caret range
+hit-testing maps mouse pixels to UTF-16 offsets, and native `beforeinput`
+operations replace
 printable-key synthesis while still flowing through `Document3`.
 The hidden textarea now subscribes directly to Chromium `beforeinput` and
 composition events instead of relying on React's synthetic `onBeforeInput`.
