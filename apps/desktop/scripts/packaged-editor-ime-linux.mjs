@@ -495,9 +495,11 @@ try {
         beforeInputTypes: events
           .filter((event) => event.type === "beforeinput")
           .map((event) => event.inputType),
+        events,
       };
     })()`);
-    return state.text === "日本語 😀 beta" ? state : undefined;
+    if (state.text === "日本語 😀 beta") return state;
+    throw new Error(JSON.stringify(state));
   });
   assert.equal(composed.compositionStarts, 1);
   assert.equal(composed.compositionEnds, 1);
