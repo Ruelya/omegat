@@ -43,10 +43,7 @@ fn declared_html_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
     })
 }
 
-fn decode_html_bytes_with_fallback(
-    bytes: &[u8],
-    fallback: Option<&str>,
-) -> DecodedHtml {
+fn decode_html_bytes_with_fallback(bytes: &[u8], fallback: Option<&str>) -> DecodedHtml {
     let (encoding, bom, payload) = if bytes.starts_with(UTF8_BOM) {
         (encoding_rs::UTF_8, UTF8_BOM, &bytes[UTF8_BOM.len()..])
     } else if bytes.starts_with(UTF16LE_BOM) {
@@ -213,8 +210,7 @@ mod tests {
     fn html_filter_writes_utf16_in_the_original_encoding_with_bom() {
         let dir = tempdir().unwrap();
         let mut ctx = FilterContext::default();
-        ctx.options
-            .insert("rewriteEncoding".into(), "NEVER".into());
+        ctx.options.insert("rewriteEncoding".into(), "NEVER".into());
         for (name, little_endian, encoding) in [
             ("little.html", true, "UTF-16LE"),
             ("big.html", false, "UTF-16BE"),
@@ -261,12 +257,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let source = dir.path().join("legacy.html");
         let target = dir.path().join("legacy-out.html");
-        let html = r#"<html><head><meta charset="windows-1252"></head><body><p>café</p></body></html>"#;
+        let html =
+            r#"<html><head><meta charset="windows-1252"></head><body><p>café</p></body></html>"#;
         let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode(html);
         std::fs::write(&source, bytes.as_ref()).unwrap();
         let mut ctx = FilterContext::default();
-        ctx.options
-            .insert("rewriteEncoding".into(), "NEVER".into());
+        ctx.options.insert("rewriteEncoding".into(), "NEVER".into());
 
         HtmlFilter
             .write(
@@ -292,7 +288,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let source = dir.path().join("legacy.html");
         let target = dir.path().join("utf8.html");
-        let html = r#"<html><head><meta charset="windows-1252"></head><body><p>café</p></body></html>"#;
+        let html =
+            r#"<html><head><meta charset="windows-1252"></head><body><p>café</p></body></html>"#;
         let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode(html);
         std::fs::write(&source, bytes.as_ref()).unwrap();
         let mut ctx = FilterContext::default();
