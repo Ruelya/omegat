@@ -229,6 +229,17 @@ pub struct SetEntryParams {
     pub default_translation: bool,
 }
 
+/// Atomic result of an editor commit.
+///
+/// A default translation belongs to the source string, so committing one
+/// occurrence can refresh several displayed entries. Alternative translations
+/// remain scoped to the selected occurrence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetEntryResult {
+    pub entry: EntryDto,
+    pub updated: Vec<EntryDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchDto {
     pub source: String,

@@ -42,17 +42,25 @@ impl ProjectTmx {
     }
 
     pub fn insert(&mut self, entry: TmxEntry) {
-        if let Some(&idx) = self.by_source.get(&entry.source) {
+        let existing = self.entries.iter().position(|candidate| {
+            if candidate.source != entry.source
+                || candidate.default_translation != entry.default_translation
+            {
+                return false;
+            }
+            entry.default_translation || (candidate.file == entry.file && candidate.id == entry.id)
+        });
+        if let Some(idx) = existing {
             self.entries[idx] = entry;
         } else {
-            self.by_source
-                .insert(entry.source.clone(), self.entries.len());
             self.entries.push(entry);
         }
+        self.rebuild_source_index();
     }
 
     pub fn get(&self, source: &str) -> Option<&TmxEntry> {
-        self.by_source.get(source).map(|&i| &self.entries[i])
+        self.get_default_translation(source)
+            .or_else(|| self.by_source.get(source).map(|&i| &self.entries[i]))
     }
 
     pub fn get_default_translation(&self, source: &str) -> Option<&TmxEntry> {
@@ -60,15 +68,39 @@ impl ProjectTmx {
             .iter()
             .find(|e| e.source == source && e.default_translation)
             .or_else(|| {
-                self.get(source)
+                self.by_source
+                    .get(source)
+                    .map(|&index| &self.entries[index])
                     .filter(|e| e.default_translation || e.id.is_none())
             })
     }
 
     pub fn get_multiple_translation(&self, id: &str, source: &str) -> Option<&TmxEntry> {
-        self.entries.iter().find(|e| {
-            !e.default_translation && e.id.as_deref() == Some(id) && e.source == source
-        })
+        self.entries
+            .iter()
+            .find(|e| !e.default_translation && e.id.as_deref() == Some(id) && e.source == source)
+    }
+
+    /// Resolve an occurrence exactly as Java `RealProject#getTranslationInfo`:
+    /// occurrence-specific alternative first, then the source-wide default.
+    pub fn get_translation(&self, file: &str, id: &str, source: &str) -> Option<&TmxEntry> {
+        self.entries
+            .iter()
+            .find(|e| {
+                !e.default_translation
+                    && e.source == source
+                    && e.file.as_deref() == Some(file)
+                    && e.id.as_deref() == Some(id)
+            })
+            .or_else(|| {
+                self.entries.iter().find(|e| {
+                    !e.default_translation
+                        && e.source == source
+                        && e.file.is_none()
+                        && e.id.as_deref() == Some(id)
+                })
+            })
+            .or_else(|| self.get_default_translation(source))
     }
 
     pub fn set_default_translation(&mut self, source: &str, translation: &str) {
@@ -91,21 +123,58 @@ impl ProjectTmx {
     }
 
     pub fn set_multiple_translation(&mut self, id: &str, source: &str, translation: &str) {
+        self.set_occurrence_translation("", id, source, translation, None);
+    }
+
+    pub fn set_occurrence_translation(
+        &mut self,
+        file: &str,
+        id: &str,
+        source: &str,
+        translation: &str,
+        note: Option<String>,
+    ) {
         let entry = TmxEntry {
             source: source.into(),
             translation: translation.into(),
             default_translation: false,
+            file: (!file.is_empty()).then(|| file.into()),
             id: Some(id.into()),
+            note,
             ..Default::default()
         };
-        if let Some(idx) = self
-            .entries
-            .iter()
-            .position(|e| !e.default_translation && e.id.as_deref() == Some(id) && e.source == source)
-        {
+        if let Some(idx) = self.entries.iter().position(|e| {
+            !e.default_translation
+                && e.id.as_deref() == Some(id)
+                && e.source == source
+                && (file.is_empty() || e.file.as_deref() == Some(file))
+        }) {
             self.entries[idx] = entry;
         } else {
             self.entries.push(entry);
+        }
+        self.rebuild_source_index();
+    }
+
+    pub fn remove_occurrence_translation(&mut self, file: &str, id: &str, source: &str) {
+        self.entries.retain(|entry| {
+            entry.default_translation
+                || entry.source != source
+                || entry.id.as_deref() != Some(id)
+                || (!file.is_empty() && entry.file.as_deref() != Some(file))
+        });
+        self.rebuild_source_index();
+    }
+
+    fn rebuild_source_index(&mut self) {
+        self.by_source.clear();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let old = self.by_source.get(&entry.source).copied();
+            if old.is_none()
+                || (entry.default_translation && !self.entries[old.unwrap()].default_translation)
+            {
+                self.by_source.insert(entry.source.clone(), index);
+            }
         }
     }
 
@@ -197,17 +266,18 @@ impl ProjectTmx {
             } else {
                 xml_escape(&tgt)
             };
-            let lang_attr = if level == "level1" { "lang" } else { "xml:lang" };
+            let lang_attr = if level == "level1" {
+                "lang"
+            } else {
+                "xml:lang"
+            };
             body.push_str(&format!(
                 "      <tuv {lang_attr}=\"{}\">\n        <seg>{}</seg>\n      </tuv>\n",
                 xml_escape(source_lang),
                 src_seg
             ));
             body.push_str("      <tuv");
-            body.push_str(&format!(
-                " {lang_attr}=\"{}\"",
-                xml_escape(target_lang)
-            ));
+            body.push_str(&format!(" {lang_attr}=\"{}\"", xml_escape(target_lang)));
             if let Some(c) = e.changer.as_deref().filter(|s| !s.is_empty()) {
                 body.push_str(&format!(" changeid=\"{}\"", xml_escape(c)));
             }
@@ -218,7 +288,10 @@ impl ProjectTmx {
                 body.push_str(&format!(" creationid=\"{}\"", xml_escape(c)));
             }
             if let Some(d) = e.created.as_deref().filter(|s| !s.is_empty()) {
-                body.push_str(&format!(" creationdate=\"{}\"", xml_escape(&to_tmx_date(d))));
+                body.push_str(&format!(
+                    " creationdate=\"{}\"",
+                    xml_escape(&to_tmx_date(d))
+                ));
             }
             body.push_str(&format!(
                 ">\n        <seg>{}</seg>\n      </tuv>\n    </tu>\n",
@@ -231,7 +304,11 @@ impl ProjectTmx {
             "tmx14.dtd"
         };
         let ver = if level == "level1" { "1.1" } else { "1.4" };
-        let segtype = if sentence_seg { "sentence" } else { "paragraph" };
+        let segtype = if sentence_seg {
+            "sentence"
+        } else {
+            "paragraph"
+        };
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE tmx SYSTEM "{dtd}">
@@ -299,14 +376,28 @@ pub fn parse_tmx_date(s: Option<&str>) -> std::result::Result<i64, String> {
         return Err("date 'null' is null or not equal to YYYYMMDDThhmmssZ".into());
     };
     if s.len() != 16 || !s.as_bytes().get(8).is_some_and(|b| *b == b'T') || !s.ends_with('Z') {
-        return Err(format!("date '{s}' is null or not equal to YYYYMMDDThhmmssZ"));
+        return Err(format!(
+            "date '{s}' is null or not equal to YYYYMMDDThhmmssZ"
+        ));
     }
-    let y: i64 = s[0..4].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
-    let mo: i64 = s[4..6].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
-    let d: i64 = s[6..8].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
-    let hh: i64 = s[9..11].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
-    let mm: i64 = s[11..13].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
-    let ss: i64 = s[13..15].parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let y: i64 = s[0..4]
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let mo: i64 = s[4..6]
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let d: i64 = s[6..8]
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let hh: i64 = s[9..11]
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let mm: i64 = s[11..13]
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let ss: i64 = s[13..15]
+        .parse()
+        .map_err(|e: std::num::ParseIntError| e.to_string())?;
     Ok(ymd_hms_to_millis(y, mo, d, hh, mm, ss))
 }
 
@@ -349,8 +440,16 @@ pub fn tmx_entry_equals(a: &TmxEntry, b: &TmxEntry, compare_translation_only: bo
     if compare_translation_only {
         return a.note == b.note && a.penalty == b.penalty;
     }
-    let da = a.changed.as_deref().and_then(|s| parse_tmx_date(Some(s)).ok()).unwrap_or(0);
-    let db = b.changed.as_deref().and_then(|s| parse_tmx_date(Some(s)).ok()).unwrap_or(0);
+    let da = a
+        .changed
+        .as_deref()
+        .and_then(|s| parse_tmx_date(Some(s)).ok())
+        .unwrap_or(0);
+    let db = b
+        .changed
+        .as_deref()
+        .and_then(|s| parse_tmx_date(Some(s)).ok())
+        .unwrap_or(0);
     truncate_change_date_ms(da) == truncate_change_date_ms(db)
 }
 
@@ -440,7 +539,10 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 }
 
 fn decode_seg(seg_raw: String) -> String {
-    if seg_raw.contains("<ph") || seg_raw.contains("<bpt") || seg_raw.contains("<ept") || seg_raw.contains("<it")
+    if seg_raw.contains("<ph")
+        || seg_raw.contains("<bpt")
+        || seg_raw.contains("<ept")
+        || seg_raw.contains("<it")
     {
         unwrap_level2(&seg_raw)
     } else {
@@ -454,7 +556,11 @@ fn find_tu_start(raw: &str) -> Option<usize> {
     while let Some(rel) = raw[from..].find("<tu") {
         let at = from + rel;
         let after = raw.get(at + 3..).and_then(|s| s.chars().next());
-        if after == Some('>') || after == Some(' ') || after == Some('\n') || after == Some('\r') || after == Some('\t')
+        if after == Some('>')
+            || after == Some(' ')
+            || after == Some('\n')
+            || after == Some('\r')
+            || after == Some('\t')
         {
             return Some(at);
         }
@@ -515,9 +621,8 @@ pub fn read_tmx_text(path: &Path) -> Result<String> {
     if name.ends_with(".zip") {
         use std::io::Read;
         let file = std::fs::File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| {
-            crate::error::CoreError::InvalidProject(format!("tmx zip: {e}"))
-        })?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| crate::error::CoreError::InvalidProject(format!("tmx zip: {e}")))?;
         for i in 0..archive.len() {
             let mut inner = archive.by_index(i).map_err(|e| {
                 crate::error::CoreError::InvalidProject(format!("tmx zip entry: {e}"))
@@ -592,7 +697,11 @@ pub fn parse_external_tmx(
         let tu = &slice[..tu_end];
         let note = extract_tag(tu, "note");
         let tuvs = collect_tuvs(tu);
-        let Some(src) = tuvs.iter().find(|t| same_language(&t.lang, source_lang)).cloned() else {
+        let Some(src) = tuvs
+            .iter()
+            .find(|t| same_language(&t.lang, source_lang))
+            .cloned()
+        else {
             rest = &rest[tu_start + 3..];
             continue;
         };
@@ -644,7 +753,8 @@ pub fn resegment_entries(
     }
     let mut out = Vec::new();
     for entry in entries {
-        let sources = crate::segment::segment_sentences_lang(&entry.source, true, source_lang, None);
+        let sources =
+            crate::segment::segment_sentences_lang(&entry.source, true, source_lang, None);
         let targets =
             crate::segment::segment_sentences_lang(&entry.translation, true, target_lang, None);
         if sources.len() > 1 && sources.len() == targets.len() {
@@ -698,7 +808,8 @@ pub fn parse_tmx(raw: &str, source_lang: &str, target_lang: &str) -> ProjectTmx 
 
 /// Java `Language.equals` via locale tag (language + country).
 pub fn lang_equals(a: &str, b: &str) -> bool {
-    a.replace('_', "-").eq_ignore_ascii_case(&b.replace('_', "-"))
+    a.replace('_', "-")
+        .eq_ignore_ascii_case(&b.replace('_', "-"))
 }
 
 /// Java `Language.isSameLanguage`.
@@ -766,9 +877,7 @@ pub fn is_valid_xml_char(code: u32) -> bool {
     if code < 0x20 {
         return code == 0x09 || code == 0x0A || code == 0x0D;
     }
-    code <= 0xD7FF
-        || (0xE000..=0xFFFD).contains(&code)
-        || (0x10000..=0x10FFFF).contains(&code)
+    code <= 0xD7FF || (0xE000..=0xFFFD).contains(&code) || (0x10000..=0x10FFFF).contains(&code)
 }
 
 /// Java `StringUtil.removeXMLInvalidChars`.
@@ -848,12 +957,22 @@ impl Default for TmxReadOpts {
 }
 
 /// Read sources with Java `TMXReader2` level-2 / slash options.
-pub fn parse_tmx_sources(raw: &str, source_lang: &str, target_lang: &str, opts: TmxReadOpts) -> Vec<String> {
+pub fn parse_tmx_sources(
+    raw: &str,
+    source_lang: &str,
+    target_lang: &str,
+    opts: TmxReadOpts,
+) -> Vec<String> {
     let tmx = parse_tmx_opts(raw, source_lang, target_lang, opts);
     tmx.entries.into_iter().map(|e| e.source).collect()
 }
 
-pub fn parse_tmx_opts(raw: &str, source_lang: &str, target_lang: &str, opts: TmxReadOpts) -> ProjectTmx {
+pub fn parse_tmx_opts(
+    raw: &str,
+    source_lang: &str,
+    target_lang: &str,
+    opts: TmxReadOpts,
+) -> ProjectTmx {
     let mut rewritten = raw.to_string();
     if !opts.created_by_omegat {
         rewritten = rewrite_ext_level2(&rewritten, opts.ext_level2, opts.use_slash);
@@ -952,7 +1071,10 @@ mod tests {
         let back = parse_tmx(&omegat, "en", "fr");
         assert_eq!(
             back.entries.len(),
-            tmx.entries.iter().filter(|e| !e.translation.is_empty()).count()
+            tmx.entries
+                .iter()
+                .filter(|e| !e.translation.is_empty())
+                .count()
         );
     }
 
@@ -996,6 +1118,9 @@ mod tests {
         assert!(l2.contains("<ept i=\"0\">"));
         assert!(l2.contains("tuid=\"id-1\""));
         let back = parse_tmx(&omegat, "en-US", "fr-FR");
-        assert_eq!(back.get("Hello <f0>x</f0>").unwrap().changer.as_deref(), Some("alice"));
+        assert_eq!(
+            back.get("Hello <f0>x</f0>").unwrap().changer.as_deref(),
+            Some("alice")
+        );
     }
 }

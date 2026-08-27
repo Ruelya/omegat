@@ -13,6 +13,20 @@ export type EntryDto = {
   tags: string[];
   properties: [string, string][];
 };
+export type EntrySetResult = {
+  entry: EntryDto;
+  updated: EntryDto[];
+};
+export type EditorConflict = {
+  index: number;
+  source: string;
+  previous: string;
+  ours: string;
+  theirs: string;
+  note: string;
+  default_translation: boolean;
+  remote_revision: number;
+};
 export type MatchDto = {
   source: string;
   translation: string;

@@ -17,7 +17,9 @@ import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchFor
 import type {
   CompleterItemDto,
   DictHitDto,
+  EditorConflict,
   EntryDto,
+  EntrySetResult,
   FilterInfoDto,
   GlossaryHitDto,
   IssueDto,
@@ -55,6 +57,15 @@ async function rpc<T>(method: string, params?: unknown): Promise<T> {
   return window.omegat.rpc(method, params) as Promise<T>;
 }
 
+function normalizeEntrySetResult(result: EntrySetResult | EntryDto): EntrySetResult {
+  if ("entry" in result && Array.isArray(result.updated)) return result;
+  return { entry: result, updated: [result] };
+}
+
+function isOptimisticLock(error: unknown): boolean {
+  return /optimistic(?: lock| revision)/i.test(String(error));
+}
+
 type Screen = "welcome" | "workspace";
 
 export type AppState = {
@@ -81,6 +92,7 @@ export type AppState = {
   prefs: Preferences | null;
   teamMessage: string;
   teamConflicts: TeamConflict[];
+  editConflict: EditorConflict | null;
   history: HistoryStacks;
   navBack: number[];
   navForward: number[];
@@ -156,6 +168,7 @@ export type AppState = {
   teamSync: () => Promise<void>;
   teamCommit: (which: "source" | "target") => Promise<void>;
   resolveConflict: (side: "ours" | "theirs" | "manual", source?: string, translation?: string) => Promise<void>;
+  resolveEditConflict: (side: "ours" | "theirs" | "manual", translation?: string) => Promise<void>;
   learnWord: (word: string) => Promise<void>;
   ignoreWord: (word: string) => Promise<void>;
   addGlossary: (source: string, target: string, comment?: string) => Promise<void>;
@@ -188,6 +201,7 @@ const initialState = {
   prefs: null as Preferences | null,
   teamMessage: "",
   teamConflicts: [] as TeamConflict[],
+  editConflict: null as EditorConflict | null,
   history: { undo: [] as string[], redo: [] as string[] },
   navBack: [] as number[],
   navForward: [] as number[],
@@ -495,6 +509,39 @@ export const useApp = create<AppState>((set, get) => ({
     });
     await get().patchPrefs({ team_conflict_resolution: side });
   },
+  resolveEditConflict: async (side, translation) => {
+    const conflict = get().editConflict;
+    if (!conflict) return;
+    const latest = await rpc<EntryDto[]>("entry.list");
+    const remote = latest[conflict.index];
+    if (!remote || remote.source !== conflict.source) {
+      throw new Error("editor conflict entry is no longer available");
+    }
+    if (side === "theirs") {
+      set({
+        entries: latest,
+        draft: remote.translation,
+        note: remote.note,
+        document3: createDocument3(remote.source, remote.translation),
+        history: { undo: [], redo: [] },
+        editConflict: null,
+        error: null,
+      });
+      return;
+    }
+    const chosen = side === "manual" ? (translation ?? conflict.ours) : conflict.ours;
+    set({
+      entries: latest,
+      draft: chosen,
+      note: conflict.note,
+      document3: replaceEditText(createDocument3(remote.source, remote.translation), chosen),
+      editConflict: null,
+      error: null,
+    });
+    await get().commitCurrent({
+      default_translation: conflict.default_translation,
+    });
+  },
   learnWord: async (word) => {
     await rpc("spell.learn", { word });
     await get().select(get().index, false);
@@ -640,19 +687,44 @@ export const useApp = create<AppState>((set, get) => ({
     const { index, entries, draft, note } = get();
     const e = entries[index];
     if (!e) return null;
-    const updated = await rpc<EntryDto>("entry.set", {
-      index,
-      translation: draft,
-      note,
-      revision: e.revision,
-      default_translation: opts?.default_translation ?? true,
-    });
-    const next = entries.map((x, i) => (i === index ? updated : x));
-    set({
-      entries: next,
-      document3: { ...get().document3, dirty: false },
-    });
-    return updated;
+    const defaultTranslation = opts?.default_translation ?? e.default_translation;
+    try {
+      const response = await rpc<EntrySetResult | EntryDto>("entry.set", {
+        index,
+        translation: draft,
+        note,
+        revision: e.revision,
+        default_translation: defaultTranslation,
+      });
+      const result = normalizeEntrySetResult(response);
+      const updates = new Map(result.updated.map((entry) => [entry.index, entry]));
+      updates.set(result.entry.index, result.entry);
+      const next = entries.map((entry) => updates.get(entry.index) ?? entry);
+      set({
+        entries: next,
+        document3: { ...get().document3, dirty: false },
+        editConflict: null,
+        error: null,
+      });
+      return result.entry;
+    } catch (error) {
+      if (!isOptimisticLock(error)) throw error;
+      const remote = await rpc<EntryDto>("entry.get", { index });
+      set({
+        editConflict: {
+          index,
+          source: e.source,
+          previous: e.translation,
+          ours: draft,
+          theirs: remote.translation,
+          note,
+          default_translation: defaultTranslation,
+          remote_revision: remote.revision,
+        },
+        error: String(error),
+      });
+      throw error;
+    }
   },
   commit: async (opts) => {
     const updated = await get().commitCurrent(opts);

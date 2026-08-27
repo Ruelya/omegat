@@ -233,6 +233,29 @@ export class EditorController {
     return this.entries[this.displayedEntryIndex] ?? null;
   }
 
+  setCurrentTranslationVariant(defaultTranslation: boolean): void {
+    const entry = this.getCurrentEntry();
+    if (!entry) return;
+    entry.isAlt = !defaultTranslation;
+    this.refreshCurrentMarkers();
+  }
+
+  registerPluginMarker(name: string, marker: import("./mark/IMarker").IMarker): void {
+    this.markers.registerPluginMarker(name, marker);
+    this.refreshCurrentMarkers();
+  }
+
+  unregisterPluginMarker(name: string): boolean {
+    const removed = this.markers.unregisterPluginMarker(name);
+    if (removed) this.refreshCurrentMarkers();
+    return removed;
+  }
+
+  remarkOneMarker(name: string): void {
+    this.markers.remarkOneMarker(name);
+    this.refreshCurrentMarkers();
+  }
+
   loadProject(entries: LoadedEntry[], preferredEntryNumber = 1): void {
     this.commitCurrentDocument(true);
     this.document = null;
@@ -662,8 +685,10 @@ export class EditorController {
     if (!this.document || this.displayedEntryIndex < 0) return;
     this.adoptLiveDocument();
     this.syncActiveEntry();
+    this.propagateCurrentDefaultTranslation();
     if (!deactivate || !this.document.editMode) return;
     this.document = commitDocument(this.document);
+    this.refreshCurrentMarkers();
     this.textArea.setDocument(this.document, true);
     this.undo.undoStack = [];
     this.undo.redoStack = [];
@@ -673,6 +698,24 @@ export class EditorController {
     if (!this.document || this.displayedEntryIndex < 0) return;
     const entry = this.entries[this.displayedEntryIndex];
     if (entry) entry.translation = this.document.translation;
+  }
+
+  private propagateCurrentDefaultTranslation(): void {
+    const active = this.entries[this.displayedEntryIndex];
+    if (!active || active.isAlt || !this.document) return;
+    for (let index = 0; index < this.entries.length; index += 1) {
+      const entry = this.entries[index]!;
+      if (
+        index === this.displayedEntryIndex
+        || entry.source !== active.source
+        || entry.isAlt
+      ) {
+        continue;
+      }
+      entry.translation = this.document.translation;
+      entry.translated = this.document.translation.length > 0;
+      this.markers.invalidate(this.entryKey(index, entry));
+    }
   }
 
   private markerInput(entry: LoadedEntry, active: boolean): MarkerInput {

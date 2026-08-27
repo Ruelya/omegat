@@ -12,21 +12,21 @@ pub mod error;
 pub mod external_tm;
 pub mod file_progress;
 pub mod file_util;
-pub mod http_url;
-pub mod known_exception;
 pub mod find_matches;
 pub mod finder;
 pub mod glossary;
+pub mod http_url;
 pub mod import;
 pub mod issues;
 pub mod json_parser;
+pub mod known_exception;
 pub mod language;
 pub mod languagetool;
 pub mod last_segment;
 pub mod levenshtein;
 pub mod magic_comment;
-pub mod matches_var;
 pub mod matches_text;
+pub mod matches_var;
 pub mod matching;
 pub mod mixed_eol;
 pub mod mt;
@@ -37,10 +37,10 @@ pub mod properties;
 pub mod real_project;
 pub mod search;
 pub mod segment;
-pub mod srx;
 pub mod session;
 pub mod source_text_entry;
 pub mod spell;
+pub mod srx;
 pub mod static_utils;
 pub mod stats;
 pub mod string_util;
@@ -91,7 +91,11 @@ mod tests {
             prefs.clone(),
         )
         .unwrap();
-        std::fs::write(session.props.source_dir.join("a.txt"), "Hello world.\n\nSecond.").unwrap();
+        std::fs::write(
+            session.props.source_dir.join("a.txt"),
+            "Hello world.\n\nSecond.",
+        )
+        .unwrap();
         drop(session);
         session = ProjectSession::open(&root, prefs).unwrap();
         assert!(session.entries.len() >= 2);
@@ -143,6 +147,185 @@ mod tests {
     }
 
     #[test]
+    fn default_translation_propagates_and_alternative_is_occurrence_scoped() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("translation-kinds");
+        let prefs = Preferences::default_in(dir.path().join("cfg"));
+        let mut session = ProjectSession::create(
+            &CreateProjectParams {
+                root: root.to_string_lossy().into(),
+                source_lang: "en".into(),
+                target_lang: "fr".into(),
+                sentence_seg: false,
+            },
+            prefs,
+        )
+        .unwrap();
+        session.entries = vec![
+            Entry {
+                file: "a.txt".into(),
+                id: "first".into(),
+                source: "Repeated".into(),
+                translation: "old default".into(),
+                note: String::new(),
+                comment: String::new(),
+                default_translation: true,
+                revision: 1,
+                from_tm_exact: false,
+                properties: vec![],
+            },
+            Entry {
+                file: "a.txt".into(),
+                id: "second".into(),
+                source: "Repeated".into(),
+                translation: "old default".into(),
+                note: String::new(),
+                comment: String::new(),
+                default_translation: true,
+                revision: 1,
+                from_tm_exact: false,
+                properties: vec![],
+            },
+            Entry {
+                file: "b.txt".into(),
+                id: "third".into(),
+                source: "Repeated".into(),
+                translation: "existing alternative".into(),
+                note: "private note".into(),
+                comment: String::new(),
+                default_translation: false,
+                revision: 1,
+                from_tm_exact: false,
+                properties: vec![],
+            },
+        ];
+        session
+            .tmx
+            .set_default_translation("Repeated", "old default");
+        session.tmx.set_occurrence_translation(
+            "b.txt",
+            "third",
+            "Repeated",
+            "existing alternative",
+            Some("private note".into()),
+        );
+
+        let propagated = session
+            .set_entry(&omegat_ipc::SetEntryParams {
+                index: 0,
+                translation: "shared".into(),
+                note: Some("shared note".into()),
+                revision: 1,
+                default_translation: true,
+            })
+            .unwrap();
+        assert_eq!(
+            propagated
+                .updated
+                .iter()
+                .map(|entry| (
+                    entry.index,
+                    entry.translation.as_str(),
+                    entry.note.as_str(),
+                    entry.default_translation,
+                    entry.revision,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "shared", "shared note", true, 2),
+                (1, "shared", "shared note", true, 2),
+            ]
+        );
+        assert_eq!(
+            session
+                .entries
+                .iter()
+                .map(|entry| (
+                    entry.translation.as_str(),
+                    entry.note.as_str(),
+                    entry.default_translation,
+                    entry.revision,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("shared", "shared note", true, 2),
+                ("shared", "shared note", true, 2),
+                ("existing alternative", "private note", false, 1),
+            ]
+        );
+
+        let alternative = session
+            .set_entry(&omegat_ipc::SetEntryParams {
+                index: 1,
+                translation: "second only".into(),
+                note: Some("second note".into()),
+                revision: 2,
+                default_translation: false,
+            })
+            .unwrap();
+        assert_eq!(
+            alternative
+                .updated
+                .iter()
+                .map(|entry| (
+                    entry.index,
+                    entry.translation.as_str(),
+                    entry.default_translation
+                ))
+                .collect::<Vec<_>>(),
+            vec![(1, "second only", false)]
+        );
+        assert_eq!(
+            session
+                .entries
+                .iter()
+                .map(|entry| (entry.translation.as_str(), entry.default_translation))
+                .collect::<Vec<_>>(),
+            vec![
+                ("shared", true),
+                ("second only", false),
+                ("existing alternative", false),
+            ]
+        );
+
+        let back_to_default = session
+            .set_entry(&omegat_ipc::SetEntryParams {
+                index: 1,
+                translation: "new shared".into(),
+                note: Some("new shared note".into()),
+                revision: 3,
+                default_translation: true,
+            })
+            .unwrap();
+        assert_eq!(
+            back_to_default
+                .updated
+                .iter()
+                .map(|entry| (
+                    entry.index,
+                    entry.translation.as_str(),
+                    entry.default_translation
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, "new shared", true), (1, "new shared", true)]
+        );
+        assert_eq!(
+            session
+                .tmx
+                .get_translation("a.txt", "second", "Repeated")
+                .map(|entry| (entry.translation.as_str(), entry.default_translation)),
+            Some(("new shared", true))
+        );
+        assert_eq!(
+            session
+                .tmx
+                .get_translation("b.txt", "third", "Repeated")
+                .map(|entry| (entry.translation.as_str(), entry.default_translation)),
+            Some(("existing alternative", false))
+        );
+    }
+
+    #[test]
     fn tag_validation_abort_on_set() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("proj3");
@@ -178,7 +361,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("tmfold");
         let mut prefs = Preferences::default_in(dir.path().join("cfg"));
-        prefs.filter_context.insert("segmentOn".into(), "BREAKS".into());
+        prefs
+            .filter_context
+            .insert("segmentOn".into(), "BREAKS".into());
         let mut session = ProjectSession::create(
             &CreateProjectParams {
                 root: root.to_string_lossy().into(),
@@ -189,7 +374,11 @@ mod tests {
             prefs.clone(),
         )
         .unwrap();
-        std::fs::write(session.props.source_dir.join("a.txt"), "Hello world\n\nOther").unwrap();
+        std::fs::write(
+            session.props.source_dir.join("a.txt"),
+            "Hello world\n\nOther",
+        )
+        .unwrap();
         let tm_dir = session.props.tm_dir.clone();
         let write_tm = |folder: &str, trans: &str| {
             let tmx = format!(
@@ -206,22 +395,38 @@ mod tests {
         write_tm("penalty-010", "PENALTY_HIT");
         drop(session);
         session = ProjectSession::open(&root, prefs.clone()).unwrap();
-        let hello = session.entries.iter().find(|e| e.source == "Hello world").unwrap();
+        let hello = session
+            .entries
+            .iter()
+            .find(|e| e.source == "Hello world")
+            .unwrap();
         assert_eq!(hello.translation, "AUTO_HIT");
-        let idx = session.entries.iter().position(|e| e.source == "Hello world").unwrap();
+        let idx = session
+            .entries
+            .iter()
+            .position(|e| e.source == "Hello world")
+            .unwrap();
         let hits = session.matches_for(idx);
         assert!(hits.iter().any(|h| h.translation == "MT_HIT"));
-        assert!(hits.iter().any(|h| h.translation == "PENALTY_HIT" && h.score <= 90));
+        assert!(hits
+            .iter()
+            .any(|h| h.translation == "PENALTY_HIT" && h.score <= 90));
 
         write_tm("enforce", "ENFORCE_HIT");
         drop(session);
         session = ProjectSession::open(&root, prefs).unwrap();
-        let hello = session.entries.iter().find(|e| e.source == "Hello world").unwrap();
+        let hello = session
+            .entries
+            .iter()
+            .find(|e| e.source == "Hello world")
+            .unwrap();
         assert_eq!(hello.translation, "ENFORCE_HIT");
     }
 
     fn load_golden(rel: &str) -> serde_json::Value {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/goldens").join(rel);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/goldens")
+            .join(rel);
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
@@ -234,7 +439,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path().join("goldproj");
         let mut prefs = Preferences::default_in(dir.path().join("cfg"));
-        prefs.filter_context.insert("skipHeader".into(), "true".into());
+        prefs
+            .filter_context
+            .insert("skipHeader".into(), "true".into());
         let mut session = ProjectSession::create(
             &CreateProjectParams {
                 root: root.to_string_lossy().into(),
@@ -246,9 +453,21 @@ mod tests {
         )
         .unwrap();
         let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/filters");
-        std::fs::copy(fixtures.join("text/file-TextFilter.txt"), session.props.source_dir.join("a.txt")).unwrap();
-        std::fs::copy(fixtures.join("html/file-HTMLFilter2.html"), session.props.source_dir.join("b.html")).unwrap();
-        std::fs::copy(fixtures.join("po/file-POFilter-multiple.po"), session.props.source_dir.join("c.po")).unwrap();
+        std::fs::copy(
+            fixtures.join("text/file-TextFilter.txt"),
+            session.props.source_dir.join("a.txt"),
+        )
+        .unwrap();
+        std::fs::copy(
+            fixtures.join("html/file-HTMLFilter2.html"),
+            session.props.source_dir.join("b.html"),
+        )
+        .unwrap();
+        std::fs::copy(
+            fixtures.join("po/file-POFilter-multiple.po"),
+            session.props.source_dir.join("c.po"),
+        )
+        .unwrap();
         session.reload().unwrap();
         let text_g = load_golden("filters/text/file-TextFilter.empty-lines.json");
         let html_g = load_golden("filters/html/file-HTMLFilter2.json");
@@ -272,9 +491,18 @@ mod tests {
         let txt = std::fs::read_to_string(session.props.target_dir.join("a.txt")).unwrap();
         let html = std::fs::read_to_string(session.props.target_dir.join("b.html")).unwrap();
         let po = std::fs::read_to_string(session.props.target_dir.join("c.po")).unwrap();
-        assert_eq!(normalize_ws(&txt), normalize_ws(text_g["translated_write"].as_str().unwrap()));
-        assert_eq!(normalize_ws(&html), normalize_ws(html_g["translated_write"].as_str().unwrap()));
-        assert_eq!(normalize_ws(&po), normalize_ws(po_g["translated_write"].as_str().unwrap()));
+        assert_eq!(
+            normalize_ws(&txt),
+            normalize_ws(text_g["translated_write"].as_str().unwrap())
+        );
+        assert_eq!(
+            normalize_ws(&html),
+            normalize_ws(html_g["translated_write"].as_str().unwrap())
+        );
+        assert_eq!(
+            normalize_ws(&po),
+            normalize_ws(po_g["translated_write"].as_str().unwrap())
+        );
         let omegat = session.tmx.to_xml_level("en", "fr", "omegat");
         let back = crate::tmx::parse_tmx(&omegat, "en", "fr");
         assert_eq!(back.entries.len(), session.tmx.entries.len());
@@ -299,7 +527,9 @@ mod tests {
         assert_eq!(session2.entries.len(), n);
         for e in &session2.entries {
             if e.translated() {
-                let hit = saved.get(&e.source).unwrap_or_else(|| panic!("tmx missing {}", e.source));
+                let hit = saved
+                    .get(&e.source)
+                    .unwrap_or_else(|| panic!("tmx missing {}", e.source));
                 assert_eq!(hit.translation, e.translation);
             }
         }
@@ -361,7 +591,9 @@ mod tests {
             .unwrap();
         let issues = session.issues();
         assert!(
-            issues.iter().any(|i| i.kind == "tag" && i.message.contains("MISSING")),
+            issues
+                .iter()
+                .any(|i| i.kind == "tag" && i.message.contains("MISSING")),
             "{issues:?}"
         );
     }

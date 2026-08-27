@@ -418,6 +418,68 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.getCurrentEntryNumber()).toBe(3);
   });
 
+  it("EditorController propagates defaults while alternatives remain occurrence-scoped", () => {
+    const controller = new EditorController();
+    controller.loadProject([
+      { file: "a.txt", id: "first", source: "same", translation: "old" },
+      { file: "a.txt", id: "second", source: "same", translation: "old" },
+      {
+        file: "b.txt",
+        id: "third",
+        source: "same",
+        translation: "private third",
+        isAlt: true,
+      },
+    ]);
+
+    controller.replaceEditText("shared");
+    expect(controller.entries.map(({ translation }) => translation)).toEqual([
+      "shared",
+      "old",
+      "private third",
+    ]);
+    controller.commitAndLeave();
+    expect(
+      controller.entries.map(({ translation, isAlt }) => ({
+        translation,
+        isAlt: Boolean(isAlt),
+      })),
+    ).toEqual([
+      { translation: "shared", isAlt: false },
+      { translation: "shared", isAlt: false },
+      { translation: "private third", isAlt: true },
+    ]);
+
+    expect(controller.gotoEntry(2)).toBe(true);
+    controller.setCurrentTranslationVariant(false);
+    controller.replaceEditText("private second");
+    controller.commitAndLeave();
+    expect(
+      controller.entries.map(({ translation, isAlt }) => ({
+        translation,
+        isAlt: Boolean(isAlt),
+      })),
+    ).toEqual([
+      { translation: "shared", isAlt: false },
+      { translation: "private second", isAlt: true },
+      { translation: "private third", isAlt: true },
+    ]);
+
+    controller.setCurrentTranslationVariant(true);
+    controller.replaceEditText("new shared");
+    controller.commitAndLeave();
+    expect(
+      controller.entries.map(({ translation, isAlt }) => ({
+        translation,
+        isAlt: Boolean(isAlt),
+      })),
+    ).toEqual([
+      { translation: "new shared", isAlt: false },
+      { translation: "new shared", isAlt: false },
+      { translation: "private third", isAlt: true },
+    ]);
+  });
+
   it("EditorController undo restores selection and marker intervals together", () => {
     const controller = new EditorController();
     controller.loadProject([

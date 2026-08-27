@@ -74,12 +74,20 @@ impl ProjectSession {
         Self::open_props(props, prefs, FilterRegistry::new())
     }
 
-    pub fn open_with_filters(root: &Path, prefs: Preferences, filters: FilterRegistry) -> Result<Self> {
+    pub fn open_with_filters(
+        root: &Path,
+        prefs: Preferences,
+        filters: FilterRegistry,
+    ) -> Result<Self> {
         let props = ProjectProperties::load(root)?;
         Self::open_props(props, prefs, filters)
     }
 
-    fn open_props(props: ProjectProperties, prefs: Preferences, filters: FilterRegistry) -> Result<Self> {
+    fn open_props(
+        props: ProjectProperties,
+        prefs: Preferences,
+        filters: FilterRegistry,
+    ) -> Result<Self> {
         props.ensure_dirs()?;
         let lock_path = props.root.join(DEFAULT_INTERNAL).join(".lock");
         let lock_file = File::create(&lock_path)?;
@@ -87,7 +95,11 @@ impl ProjectSession {
             CoreError::InvalidProject("project is locked by another process".into())
         })?;
 
-        let tmx = ProjectTmx::load(&props.save_tmx_path(), &props.source_lang, &props.target_lang)?;
+        let tmx = ProjectTmx::load(
+            &props.save_tmx_path(),
+            &props.source_lang,
+            &props.target_lang,
+        )?;
         let external_tm = crate::external_tm::load_external_tm(&props);
         let glossary = glossary::load_glossary(&props.glossary_file);
         let backend = match prefs.spell_backend.as_str() {
@@ -223,9 +235,10 @@ impl ProjectSession {
                 continue;
             }
             if e.translation.is_empty() {
-                if let Some(hit) = self.tmx.get(&e.source) {
+                if let Some(hit) = self.tmx.get_translation(&e.file, &e.id, &e.source) {
                     e.translation = hit.translation.clone();
                     e.note = hit.note.clone().unwrap_or_default();
+                    e.default_translation = hit.default_translation;
                     e.from_tm_exact = true;
                     apply_tm_meta(e, hit);
                 } else if let Some(hit) = auto.get(&e.source) {
@@ -263,8 +276,8 @@ impl ProjectSession {
                         Some(e.note.clone())
                     },
                     default_translation: e.default_translation,
-                    file: Some(e.file.clone()),
-                    id: Some(e.id.clone()),
+                    file: (!e.default_translation).then(|| e.file.clone()),
+                    id: (!e.default_translation).then(|| e.id.clone()),
                     changer: Some("omegat-rewrite".into()),
                     changed: Some(now_iso()),
                     ..Default::default()
@@ -273,18 +286,19 @@ impl ProjectSession {
         }
     }
 
-    pub fn set_entry(&mut self, params: &SetEntryParams) -> Result<EntryDto> {
-        let e = self
+    pub fn set_entry(&mut self, params: &SetEntryParams) -> Result<SetEntryResult> {
+        let current = self
             .entries
-            .get_mut(params.index)
+            .get(params.index)
+            .cloned()
             .ok_or_else(|| CoreError::InvalidProject("entry out of range".into()))?;
-        if e.revision != params.revision {
+        if current.revision != params.revision {
             return Err(CoreError::OptimisticLock(params.index));
         }
         if !params.translation.trim().is_empty() {
             let mode = self.prefs.tag_validation.as_str();
             if mode == "abort" || mode == "warn" {
-                let errs = tags::validate(&e.source, &params.translation);
+                let errs = tags::validate(&current.source, &params.translation);
                 if !errs.is_empty() && mode == "abort" {
                     return Err(CoreError::TagValidation(format!(
                         "TAG_VALIDATION: segment {} failed tag validation",
@@ -293,18 +307,60 @@ impl ProjectSession {
                 }
             }
         }
-        e.translation = params.translation.clone();
-        if let Some(n) = &params.note {
-            e.note = n.clone();
+
+        let note = params.note.clone().unwrap_or(current.note.clone());
+        let changed = now_iso();
+        let tmx_entry = TmxEntry {
+            source: current.source.clone(),
+            translation: params.translation.clone(),
+            note: (!note.is_empty()).then(|| note.clone()),
+            default_translation: params.default_translation,
+            file: (!params.default_translation).then(|| current.file.clone()),
+            id: (!params.default_translation).then(|| current.id.clone()),
+            changer: Some("omegat-rewrite".into()),
+            changed: Some(changed.clone()),
+            ..Default::default()
+        };
+
+        if params.default_translation {
+            if !current.default_translation {
+                self.tmx
+                    .remove_occurrence_translation(&current.file, &current.id, &current.source);
+            }
+            self.tmx.insert(tmx_entry);
+        } else {
+            self.tmx.insert(tmx_entry);
         }
-        e.default_translation = params.default_translation;
-        e.revision += 1;
-        e.from_tm_exact = false;
-        upsert_prop(e, "changeid", "omegat-rewrite");
-        upsert_prop(e, "changedate", &now_iso());
+
+        let mut updated = Vec::new();
+        for (index, entry) in self.entries.iter_mut().enumerate() {
+            let affected = if params.default_translation {
+                entry.source == current.source
+                    && (entry.default_translation || index == params.index)
+            } else {
+                index == params.index
+            };
+            if !affected {
+                continue;
+            }
+            entry.translation = params.translation.clone();
+            entry.note = note.clone();
+            entry.default_translation = params.default_translation;
+            entry.revision += 1;
+            entry.from_tm_exact = false;
+            upsert_prop(entry, "changeid", "omegat-rewrite");
+            upsert_prop(entry, "changedate", &changed);
+            updated.push(entry.to_dto(index));
+        }
+
         self.dirty = true;
         self.last_index = params.index;
-        Ok(e.to_dto(params.index))
+        let entry = updated
+            .iter()
+            .find(|entry| entry.index == params.index)
+            .cloned()
+            .ok_or_else(|| CoreError::InvalidProject("entry update was not applied".into()))?;
+        Ok(SetEntryResult { entry, updated })
     }
 
     pub fn matches_for(&self, index: usize) -> Vec<MatchDto> {
@@ -322,7 +378,8 @@ impl ProjectSession {
         .into_iter()
         .map(|m| {
             let mut dto = m.to_dto();
-            dto.similarity = matching::similarity_data(&e.source, &m.source, &self.props.source_lang);
+            dto.similarity =
+                matching::similarity_data(&e.source, &m.source, &self.props.source_lang);
             dto
         })
         .collect()
@@ -389,7 +446,9 @@ impl ProjectSession {
                     .collect::<Vec<_>>()
                     .join(" ");
                 let trans = if trans.is_empty() {
-                    segs.get(i).map(|e| e.translation.clone()).unwrap_or_default()
+                    segs.get(i)
+                        .map(|e| e.translation.clone())
+                        .unwrap_or_default()
                 } else {
                     trans
                 };
@@ -458,7 +517,8 @@ impl ProjectSession {
 
     pub fn issues(&self) -> Vec<IssueDto> {
         let mut all = Vec::new();
-        let lt = (!self.prefs.languagetool_url.is_empty()).then_some(self.prefs.languagetool_url.as_str());
+        let lt = (!self.prefs.languagetool_url.is_empty())
+            .then_some(self.prefs.languagetool_url.as_str());
         if lt.filter(|s| !s.is_empty()).is_none() {
             all.push(IssueDto {
                 kind: "languagetool".into(),
@@ -490,12 +550,19 @@ impl ProjectSession {
             }
             if e.translated() {
                 for g in glossary::lookup(&self.glossary, &e.source) {
-                    if !e.translation.to_lowercase().contains(&g.target.to_lowercase()) {
+                    if !e
+                        .translation
+                        .to_lowercase()
+                        .contains(&g.target.to_lowercase())
+                    {
                         all.push(IssueDto {
                             kind: "glossary".into(),
                             index: i,
                             file: e.file.clone(),
-                            message: format!("Glossary term '{}' not used (expected '{}')", g.source, g.target),
+                            message: format!(
+                                "Glossary term '{}' not used (expected '{}')",
+                                g.source, g.target
+                            ),
                             severity: "warn".into(),
                         });
                     }
@@ -522,15 +589,26 @@ impl ProjectSession {
     }
 
     pub fn dict(&self, word: &str) -> Vec<DictHitDto> {
-        dict::lookup_opts(&self.props.dictionary_dir, word, self.prefs.dictionary_fuzzy_matching)
+        dict::lookup_opts(
+            &self.props.dictionary_dir,
+            word,
+            self.prefs.dictionary_fuzzy_matching,
+        )
     }
 
-    pub fn completer(&self, index: usize, prefix: &str, draft: Option<&str>) -> Vec<CompleterItemDto> {
+    pub fn completer(
+        &self,
+        index: usize,
+        prefix: &str,
+        draft: Option<&str>,
+    ) -> Vec<CompleterItemDto> {
         let mut items = Vec::new();
         if let Some(e) = self.entries.get(index) {
             if self.prefs.completer_glossary {
                 for g in glossary::lookup(&self.glossary, &e.source) {
-                    if g.target.to_lowercase().starts_with(&prefix.to_lowercase()) || prefix.is_empty() {
+                    if g.target.to_lowercase().starts_with(&prefix.to_lowercase())
+                        || prefix.is_empty()
+                    {
                         items.push(CompleterItemDto {
                             kind: "glossary".into(),
                             text: g.target,
@@ -571,20 +649,32 @@ impl ProjectSession {
                 }
             }
         }
-        let translations: Vec<&str> = self.entries.iter().map(|e| e.translation.as_str()).collect();
+        let translations: Vec<&str> = self
+            .entries
+            .iter()
+            .map(|e| e.translation.as_str())
+            .collect();
         if self.prefs.history_completion {
             items.extend(crate::completer::history_complete(&translations, prefix));
         }
         if self.prefs.history_prediction {
             let model = crate::completer::train_predictor(&translations);
-            items.extend(crate::completer::history_predict(&model, draft.unwrap_or(prefix)));
+            items.extend(crate::completer::history_predict(
+                &model,
+                draft.unwrap_or(prefix),
+            ));
         }
         items.truncate(40);
         items
     }
 
     pub fn align(&self, source: &Path, target: &Path, dest: &Path) -> Result<()> {
-        let tmx = align::align_files(source, target, &self.props.source_lang, &self.props.target_lang)?;
+        let tmx = align::align_files(
+            source,
+            target,
+            &self.props.source_lang,
+            &self.props.target_lang,
+        )?;
         align::write_aligned_tmx(&tmx, dest, &self.props.source_lang, &self.props.target_lang)
     }
 
@@ -655,7 +745,8 @@ fn build_excludes(masks: &[String]) -> globset::GlobSet {
             b.add(g);
         }
     }
-    b.build().unwrap_or_else(|_| globset::GlobSetBuilder::new().build().unwrap())
+    b.build()
+        .unwrap_or_else(|_| globset::GlobSetBuilder::new().build().unwrap())
 }
 
 fn walk_sources(root: &Path, excludes: &globset::GlobSet) -> Vec<PathBuf> {
@@ -684,4 +775,3 @@ impl Drop for ProjectSession {
         }
     }
 }
-

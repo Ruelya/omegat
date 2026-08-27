@@ -200,6 +200,8 @@ export function SegmentEditor() {
   const glossary = useApp((s) => s.glossary);
   const focus = useApp((s) => s.focusPanel);
   const tabAdvance = useApp((s) => Boolean(s.prefs?.tab_advance));
+  const editConflict = useApp((s) => s.editConflict);
+  const resolveEditConflict = useApp((s) => s.resolveEditConflict);
   const scrollViewport = useRef<HTMLDivElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const ime = useRef<HTMLTextAreaElement>(null);
@@ -210,6 +212,7 @@ export function SegmentEditor() {
     focus: document3.translation.length,
   });
   const [pageRadius, setPageRadius] = useState(8);
+  const [manualConflict, setManualConflict] = useState("");
   const composing = useRef(false);
   const discardCompositionEnd = useRef(false);
   const dragPointer = useRef<number | null>(null);
@@ -229,6 +232,10 @@ export function SegmentEditor() {
     const end = document3.translation.length;
     setSelection({ anchor: end, focus: end });
   }, [activeIndex]);
+
+  useEffect(() => {
+    if (editConflict) setManualConflict(editConflict.ours);
+  }, [editConflict]);
 
   useEffect(() => {
     if (focus === "editor") surface.current?.focus();
@@ -370,7 +377,7 @@ export function SegmentEditor() {
     }
     if (ev.key === "Enter" && !ev.shiftKey) {
       ev.preventDefault();
-      void commit();
+      void commit().catch(() => undefined);
       return;
     }
     if (ev.key === "Enter" && ev.shiftKey) {
@@ -380,7 +387,7 @@ export function SegmentEditor() {
     }
     if (ev.key === "Tab" && tabAdvance) {
       ev.preventDefault();
-      void commit();
+      void commit().catch(() => undefined);
       return;
     }
     if (ev.key === "Tab" && !tabAdvance && completer[0]) {
@@ -572,6 +579,40 @@ export function SegmentEditor() {
       data-last-loaded={editorController.getLoadedRange().last}
       onScroll={onPageScroll}
     >
+      {editConflict?.index === activeIndex && (
+        <div className="hit" role="alert" data-editor-conflict>
+          <strong>Translation conflict</strong>
+          <div>previous: {editConflict.previous || "—"}</div>
+          <div>ours: {editConflict.ours || "—"}</div>
+          <div>theirs: {editConflict.theirs || "—"}</div>
+          <input
+            aria-label="Manual conflict translation"
+            value={manualConflict}
+            onChange={(event) => setManualConflict(event.target.value)}
+          />
+          <div className="btn-row">
+            <button
+              type="button"
+              onClick={() => void resolveEditConflict("ours").catch(() => undefined)}
+            >
+              {t("keepOurs")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void resolveEditConflict("theirs").catch(() => undefined)}
+            >
+              {t("keepTheirs")}
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void resolveEditConflict("manual", manualConflict).catch(() => undefined)}
+            >
+              Manual
+            </button>
+          </div>
+        </div>
+      )}
       {loadedPage.map((entry) => entry.active ? (
         <section
           className="editor-segment is-active"

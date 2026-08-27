@@ -265,6 +265,14 @@ describe("app store", () => {
   it("keeps an uncommitted draft active when navigation persistence fails", async () => {
     rpc.mockImplementation(async (method: string) => {
       if (method === "entry.set") throw new Error("optimistic revision conflict");
+      if (method === "entry.get") {
+        return {
+          ...sampleEntry,
+          source: "one",
+          translation: "remote",
+          revision: 2,
+        };
+      }
       return [];
     });
     useApp.setState({
@@ -290,6 +298,276 @@ describe("app store", () => {
       draft: "不要丢失",
       translation: "不要丢失",
       dirty: true,
+    });
+    expect(useApp.getState().editConflict).toEqual({
+      index: 0,
+      source: "one",
+      previous: "",
+      ours: "不要丢失",
+      theirs: "remote",
+      note: "",
+      default_translation: true,
+      remote_revision: 2,
+    });
+  });
+
+  it("applies the sidecar's atomic default propagation but keeps alternatives private", async () => {
+    const repeated = [
+      { ...sampleEntry, index: 0, id: "first", source: "same", translation: "old" },
+      { ...sampleEntry, index: 1, id: "second", source: "same", translation: "old" },
+      {
+        ...sampleEntry,
+        index: 2,
+        id: "third",
+        source: "same",
+        translation: "private",
+        default_translation: false,
+      },
+    ];
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method !== "entry.set") return {};
+      const input = params as {
+        index: number;
+        translation: string;
+        note: string;
+        revision: number;
+        default_translation: boolean;
+      };
+      expect(input).toEqual({
+        index: 0,
+        translation: "shared",
+        note: "shared note",
+        revision: 1,
+        default_translation: true,
+      });
+      const updated = repeated.slice(0, 2).map((entry) => ({
+        ...entry,
+        translation: input.translation,
+        note: input.note,
+        translated: true,
+        revision: 2,
+      }));
+      return { entry: updated[0], updated };
+    });
+    useApp.setState({
+      entries: repeated,
+      index: 0,
+      draft: "shared",
+      note: "shared note",
+      document3: createDocument3("same", "shared"),
+    });
+
+    await useApp.getState().commitCurrent();
+
+    expect(
+      useApp.getState().entries.map((entry) => ({
+        index: entry.index,
+        translation: entry.translation,
+        note: entry.note,
+        default_translation: entry.default_translation,
+        revision: entry.revision,
+      })),
+    ).toEqual([
+      {
+        index: 0,
+        translation: "shared",
+        note: "shared note",
+        default_translation: true,
+        revision: 2,
+      },
+      {
+        index: 1,
+        translation: "shared",
+        note: "shared note",
+        default_translation: true,
+        revision: 2,
+      },
+      {
+        index: 2,
+        translation: "private",
+        note: "",
+        default_translation: false,
+        revision: 1,
+      },
+    ]);
+  });
+
+  it("preserves the current alternative mode when committing without an override", async () => {
+    const alternative = {
+      ...sampleEntry,
+      source: "same",
+      translation: "private",
+      default_translation: false,
+    };
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method !== "entry.set") return {};
+      const input = params as {
+        default_translation: boolean;
+        translation: string;
+      };
+      expect(input.default_translation).toBe(false);
+      const entry = {
+        ...alternative,
+        translation: input.translation,
+        revision: 2,
+      };
+      return { entry, updated: [entry] };
+    });
+    useApp.setState({
+      entries: [alternative],
+      index: 0,
+      draft: "private edit",
+      note: "",
+      document3: createDocument3("same", "private edit"),
+    });
+
+    await useApp.getState().commitCurrent();
+
+    expect(
+      useApp.getState().entries.map((entry) => ({
+        translation: entry.translation,
+        default_translation: entry.default_translation,
+        revision: entry.revision,
+      })),
+    ).toEqual([
+      {
+        translation: "private edit",
+        default_translation: false,
+        revision: 2,
+      },
+    ]);
+  });
+
+  it("resolves an editor optimistic conflict through the live entry API", async () => {
+    const remote = {
+      ...sampleEntry,
+      source: "same",
+      translation: "remote edit",
+      revision: 4,
+      translated: true,
+    };
+    let writes = 0;
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.set") {
+        writes += 1;
+        if (writes === 1) throw new Error("optimistic lock failed for entry 0");
+        const input = params as {
+          index: number;
+          translation: string;
+          note: string;
+          revision: number;
+          default_translation: boolean;
+        };
+        expect(input).toEqual({
+          index: 0,
+          translation: "local edit",
+          note: "local note",
+          revision: 4,
+          default_translation: true,
+        });
+        const entry = {
+          ...remote,
+          translation: input.translation,
+          note: input.note,
+          revision: 5,
+        };
+        return { entry, updated: [entry] };
+      }
+      if (method === "entry.get") return remote;
+      if (method === "entry.list") return [remote];
+      return {};
+    });
+    useApp.setState({
+      entries: [{ ...sampleEntry, source: "same", translation: "base" }],
+      index: 0,
+      draft: "local edit",
+      note: "local note",
+      document3: createDocument3("same", "local edit"),
+    });
+
+    await expect(useApp.getState().commitCurrent()).rejects.toThrow(
+      "optimistic lock failed for entry 0",
+    );
+    expect(useApp.getState().editConflict).toEqual({
+      index: 0,
+      source: "same",
+      previous: "base",
+      ours: "local edit",
+      theirs: "remote edit",
+      note: "local note",
+      default_translation: true,
+      remote_revision: 4,
+    });
+
+    await useApp.getState().resolveEditConflict("ours");
+
+    expect({
+      writes,
+      entry: useApp.getState().entries[0],
+      draft: useApp.getState().draft,
+      conflict: useApp.getState().editConflict,
+      dirty: useApp.getState().document3.dirty,
+    }).toEqual({
+      writes: 2,
+      entry: {
+        ...remote,
+        translation: "local edit",
+        note: "local note",
+        revision: 5,
+      },
+      draft: "local edit",
+      conflict: null,
+      dirty: false,
+    });
+  });
+
+  it("adopts the remote editor conflict without issuing a second write", async () => {
+    const remote = {
+      ...sampleEntry,
+      source: "same",
+      translation: "remote edit",
+      note: "remote note",
+      revision: 4,
+      translated: true,
+    };
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "entry.list") return [remote];
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      entries: [{ ...sampleEntry, source: "same", translation: "base" }],
+      index: 0,
+      draft: "local edit",
+      note: "local note",
+      document3: createDocument3("same", "local edit"),
+      editConflict: {
+        index: 0,
+        source: "same",
+        previous: "base",
+        ours: "local edit",
+        theirs: "remote edit",
+        note: "local note",
+        default_translation: true,
+        remote_revision: 4,
+      },
+    });
+
+    await useApp.getState().resolveEditConflict("theirs");
+
+    expect({
+      calls: rpc.mock.calls,
+      entry: useApp.getState().entries[0],
+      draft: useApp.getState().draft,
+      note: useApp.getState().note,
+      conflict: useApp.getState().editConflict,
+      dirty: useApp.getState().document3.dirty,
+    }).toEqual({
+      calls: [["entry.list"]],
+      entry: remote,
+      draft: "remote edit",
+      note: "remote note",
+      conflict: null,
+      dirty: false,
     });
   });
 
