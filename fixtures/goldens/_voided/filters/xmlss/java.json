@@ -1,0 +1,15 @@
+{
+  "id": "xmlss",
+  "fixture": "XMLSpreadsheet/simple.xml",
+  "java_test": "org.omegat.filters dialect/table for xmlss",
+  "options": {},
+  "sources": [
+    "This is a test sentence with HTML tags inside."
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "This is a test sentence with HTML tags inside.",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

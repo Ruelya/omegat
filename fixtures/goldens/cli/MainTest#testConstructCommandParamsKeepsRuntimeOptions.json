@@ -1,0 +1,26 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.MainTest#testConstructCommandParamsKeepsRuntimeOptions",
+  "config_file": "/tmp/omegat.properties",
+  "resource_bundle": "/tmp/Bundle_xx.properties",
+  "project_locking": false,
+  "location_save": false,
+  "tokenizer_source": "org.omegat.tokenizer.LuceneEnglishTokenizer",
+  "tokenizer_target": "org.omegat.tokenizer.LuceneGermanTokenizer",
+  "argv": [
+    "--config-file",
+    "/tmp/omegat.properties",
+    "--resource-bundle",
+    "/tmp/Bundle_xx.properties",
+    "--disable-project-locking",
+    "--disable-location-save",
+    "start",
+    "--ITokenizer",
+    "org.omegat.tokenizer.LuceneEnglishTokenizer",
+    "--ITokenizerTarget",
+    "org.omegat.tokenizer.LuceneGermanTokenizer"
+  ],
+  "keys": [
+    "org.omegat.MainTest#testConstructCommandParamsKeepsRuntimeOptions"
+  ]
+}
