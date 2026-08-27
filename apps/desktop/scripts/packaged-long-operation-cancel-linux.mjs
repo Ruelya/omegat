@@ -277,6 +277,45 @@ async function writeRemoteSources(sourceDir) {
   }
 }
 
+function xmlEscape(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function writeAlternativeTmx(path, key, translation) {
+  const props = [
+    ["file", key.file],
+    ["id", key.id],
+    ["prev", key.prev],
+    ["next", key.next],
+    ["path", key.path],
+  ]
+    .filter(([, value]) => value !== null)
+    .map(([name, value]) =>
+      `      <prop type="${name}">${xmlEscape(value)}</prop>`
+    )
+    .join("\n");
+  await writeFile(
+    path,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="OmegaT" creationtoolversion="6.2.0" segtype="paragraph" o-tmf="OmegaT TMX" adminlang="EN-US" srclang="en" datatype="plaintext"/>
+  <body>
+    <tu>
+${props}
+      <tuv xml:lang="en"><seg>${xmlEscape(key.source_text)}</seg></tuv>
+      <tuv xml:lang="fr"><seg>${xmlEscape(translation)}</seg></tuv>
+    </tu>
+  </body>
+</tmx>
+`,
+    "utf8",
+  );
+}
+
 async function pathExists(path) {
   try {
     await access(path);
@@ -547,6 +586,7 @@ const sourceDir = join(project, "source");
 const targetDir = join(project, "target");
 const mainRemote = join(workDir, "main-file-remote");
 const mappingRemote = join(workDir, "mapping-file-remote");
+const conflictRemote = join(workDir, "complete-key-conflict-remote");
 await mkdir(configDir, { recursive: true });
 await rpcOnce(configDir, "project.create", {
   root: project,
@@ -1269,6 +1309,325 @@ try {
     "packaged refresh did not traverse both project.files-changed sources",
   );
 
+  const teamConflictOurs = "packaged ours resolution 😀 tail";
+  const teamConflictTheirs = "packaged them resolution 😀 tail";
+  assert.equal(
+    teamConflictOurs.length,
+    teamConflictTheirs.length,
+    "ours/theirs fixtures must preserve the UTF-16 caret exactly",
+  );
+  const conflictRemoteTmx = join(conflictRemote, "omegat", "project_save.tmx");
+  await Promise.all([
+    mkdir(join(conflictRemote, "omegat"), { recursive: true }),
+    mkdir(join(conflictRemote, "source"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeAlternativeTmx(
+      conflictRemoteTmx,
+      duplicateSetup.wanted.key,
+      duplicateSetup.translation,
+    ),
+    writeFile(
+      join(conflictRemote, "source", "0998-team-order.yaml"),
+      'remote_order: "Team remote inserted before duplicate"\n',
+      "utf8",
+    ),
+  ]);
+  const conflictRepositories = [{
+    repo_type: "file",
+    url: conflictRemote,
+    branch: null,
+    mappings: [
+      {
+        local: "/source/0998-team-order.yaml",
+        repository: "/source/0998-team-order.yaml",
+        includes: [],
+        excludes: [],
+      },
+      {
+        local: "/omegat/project_save.tmx",
+        repository: "/omegat/project_save.tmx",
+        includes: [],
+        excludes: [],
+      },
+    ],
+  }];
+  const conflictConfigured = await client.evaluate(
+    `window.omegat.rpc("team.mapping", ${
+      JSON.stringify({ repositories: conflictRepositories })
+    })`,
+    true,
+  );
+  assert.equal(conflictConfigured.ok, true);
+  const beforeTeamOrdering = await editorState(client);
+  assert.equal(
+    beforeTeamOrdering.key,
+    JSON.stringify(duplicateSetup.wanted.key),
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-sync"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible team sync action was unavailable for remote ordering",
+  );
+  const teamOrdering = await waitFor(
+    "remote team insertion and complete-key rebind",
+    async () => {
+      const state = await editorState(client);
+      const ui = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+        };
+      })()`);
+      if (
+        ui.operation === "externalRefresh"
+        && ui.phase === "succeeded"
+        && ui.teamMessage.startsWith("sync:")
+        && ui.conflicts === 0
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === beforeTeamOrdering.entry + 1
+        && state.translation === duplicateSetup.translation
+        && state.caret === beforeTeamOrdering.caret
+      ) {
+        return { ui, editor: state };
+      }
+      throw new Error(JSON.stringify({ ui, state }));
+    },
+  );
+  const teamOrderingEntries = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  const orderedWanted = teamOrderingEntries.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+  );
+  const orderedDecoy = teamOrderingEntries.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+  );
+  assert(orderedWanted, "wanted duplicate disappeared after remote ordering");
+  assert(orderedDecoy, "decoy duplicate disappeared after remote ordering");
+  assert.equal(orderedWanted.index, duplicateSetup.wanted.index + 2);
+  assert.equal(orderedDecoy.index, duplicateSetup.decoy.index + 2);
+  assert.equal(orderedDecoy.translation, "");
+  const teamOrderingTrace = await client.evaluate(
+    `window.__omegatRpcOperationTrace`,
+  );
+  assert(
+    teamOrderingTrace.some((event) =>
+      event.method === "team.sync" && event.phase === "succeeded"
+    ),
+    JSON.stringify(teamOrderingTrace),
+  );
+  assert(
+    teamOrderingTrace.some((event) =>
+      event.method === "project.external-refresh" && event.phase === "succeeded"
+    ),
+    JSON.stringify(teamOrderingTrace),
+  );
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await client.command("Input.insertText", { text: teamConflictOurs });
+  await waitFor("dirty packaged team ours Document3", async () => {
+    const state = await editorState(client);
+    return state.translation === teamConflictOurs ? state : undefined;
+  });
+
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(orderedDecoy.index + 1))};
+  })()`);
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  await waitFor("decoy after committing packaged team ours", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(${JSON.stringify(duplicateSetup.decoy.key)})
+      ? state
+      : undefined;
+  });
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
+  })()`);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  await waitFor("wanted after exact packaged team commit", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(${JSON.stringify(duplicateSetup.wanted.key)})
+      && state.translation === ${JSON.stringify(teamConflictOurs)}
+      ? state
+      : undefined;
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+  }
+  const beforeTeamConflict = await editorState(client);
+  assert.equal(beforeTeamConflict.translation, teamConflictOurs);
+  assert.equal(beforeTeamConflict.caret, teamConflictOurs.length - 7);
+  assert.equal(beforeTeamConflict.entry, orderedWanted.index);
+
+  await writeAlternativeTmx(
+    conflictRemoteTmx,
+    duplicateSetup.wanted.key,
+    teamConflictTheirs,
+  );
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-sync"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible team sync action was unavailable for complete-key conflict",
+  );
+  const visibleTeamConflict = await waitFor(
+    "visible complete-key ours/theirs conflict",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const row = document.querySelector("[data-team-conflict-key]");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          key: row?.getAttribute("data-team-conflict-key") ?? "",
+          text: row?.textContent ?? "",
+          oursVisible: Boolean(
+            row?.querySelector('[data-operation-action="team-resolve-ours"]')
+          ),
+          theirsVisible: Boolean(
+            row?.querySelector('[data-operation-action="team-resolve-theirs"]')
+          ),
+          count: document.querySelectorAll("[data-team-conflict-key]").length,
+        };
+      })()`);
+      if (
+        state.operation === "teamSync"
+        && state.phase === "failed"
+        && state.count === 1
+        && state.oursVisible
+        && state.theirsVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  assert.deepEqual(
+    JSON.parse(visibleTeamConflict.key),
+    duplicateSetup.wanted.key,
+  );
+  assert(visibleTeamConflict.text.includes(`ours: ${teamConflictOurs}`));
+  assert(visibleTeamConflict.text.includes(`theirs: ${teamConflictTheirs}`));
+  assert.deepEqual(
+    await editorState(client),
+    beforeTeamConflict,
+    "failed team rebase polluted the active Document3",
+  );
+  const entriesDuringConflict = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  assert.equal(
+    entriesDuringConflict.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+    )?.translation,
+    teamConflictOurs,
+  );
+  assert.equal(
+    entriesDuringConflict.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    "",
+  );
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector(
+        '[data-operation-action="team-resolve-theirs"]'
+      );
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible keep-theirs action was unavailable",
+  );
+  const resolvedTeamConflict = await waitFor(
+    "complete-key packaged keep-theirs write-back",
+    async () => {
+      const state = await editorState(client);
+      const ui = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+          activeSurfaces: document.querySelectorAll(
+            ".editor-segment.is-active .editor-surface"
+          ).length,
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+        };
+      })()`);
+      if (
+        ui.operation === "externalRefresh"
+        && ui.phase === "succeeded"
+        && ui.conflicts === 0
+        && ui.activeSurfaces === 1
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === orderedWanted.index
+        && state.translation === teamConflictTheirs
+        && state.caret === beforeTeamConflict.caret
+      ) {
+        return { ui, editor: state };
+      }
+      throw new Error(JSON.stringify({ ui, state }));
+    },
+  );
+  const entriesAfterResolution = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  const resolvedWanted = entriesAfterResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+  );
+  const untouchedDecoy = entriesAfterResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+  );
+  assert.equal(resolvedWanted?.index, orderedWanted.index);
+  assert.equal(resolvedWanted?.translation, teamConflictTheirs);
+  assert.equal(untouchedDecoy?.index, orderedDecoy.index);
+  assert.equal(untouchedDecoy?.translation, "");
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
@@ -1326,6 +1685,19 @@ try {
         externalSuccessPost.events.flatMap((event) => event.sources),
       )].sort(),
       decoyTranslation: externalSuccessPost.decoy.translation,
+    },
+    teamConflict: {
+      remoteInsertion: "source/0998-team-order.yaml",
+      initialIndex: duplicateSetup.wanted.index,
+      reorderedIndex: orderedWanted.index,
+      completeEntryKey: duplicateSetup.wanted.key,
+      visible: visibleTeamConflict,
+      selected: "theirs",
+      resolved: resolvedTeamConflict,
+      wantedTranslation: resolvedWanted.translation,
+      decoyTranslation: untouchedDecoy.translation,
+      singleDocument3Surface: resolvedTeamConflict.ui.activeSurfaces,
+      utf16Caret: resolvedTeamConflict.editor.caret,
     },
     sidecarResponsive: postCancel.version.version,
   }));

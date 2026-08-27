@@ -1259,7 +1259,9 @@ describe("app store", () => {
       completerAuto: false,
     });
 
-    await useApp.getState().resolveConflict("theirs", "same");
+    await useApp
+      .getState()
+      .resolveConflict("theirs", "same", undefined, wantedKey);
 
     expect({
       methods: rpc.mock.calls.map(([method]) => method),
@@ -1290,9 +1292,19 @@ describe("app store", () => {
     expect(rpc.mock.calls.some(([method]) => method === "entry.set")).toBe(false);
   });
 
-  it("rejects stale generations and coalesces duplicate watcher fingerprints", async () => {
+  it("serializes distinct watcher fingerprints across cancellation and rejects queued stale generations", async () => {
     const root = "/same-root";
-    const refresh = vi.fn(async () => true);
+    let finishFirst!: (value: boolean) => void;
+    let finishSecond!: (value: boolean) => void;
+    const first = new Promise<boolean>((resolve) => {
+      finishFirst = resolve;
+    });
+    const second = new Promise<boolean>((resolve) => {
+      finishSecond = resolve;
+    });
+    const refresh = vi.fn()
+      .mockImplementationOnce(() => first)
+      .mockImplementationOnce(() => second);
     let notify: ((event: {
       root: string;
       paths: string[];
@@ -1361,7 +1373,27 @@ describe("app store", () => {
       generation,
       sources: ["sidecar"],
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    finishFirst(false);
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+    expect(refresh).toHaveBeenNthCalledWith(2, undefined, true);
+
+    notify?.({
+      root,
+      paths: [currentPath],
+      fingerprints: { [currentPath]: "revision-3" },
+      generation,
+      sources: ["native"],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    projectEvents.publishProject("reload", root);
+    finishSecond(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refresh).toHaveBeenCalledTimes(2);
     disconnect();
   });
 

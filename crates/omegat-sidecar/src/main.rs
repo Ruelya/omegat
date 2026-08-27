@@ -431,8 +431,14 @@ impl App {
                     .and_then(|v| v.as_str())
                     .unwrap_or("ours");
                 let translation = params.get("translation").and_then(|v| v.as_str());
-                let left = omegat_team::resolve(&self.session()?.props, source, side, translation)
-                    .map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
+                let left = omegat_team::resolve_for_key(
+                    &self.session()?.props,
+                    source,
+                    rebind_key.as_ref(),
+                    side,
+                    translation,
+                )
+                .map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
                 Ok(json!({"conflicts": left, "rebind_key": rebind_key}))
             }
             "wiki.import" => {

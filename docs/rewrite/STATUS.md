@@ -580,8 +580,11 @@ Each forwarded proactive event now carries the renderer project generation and
 its native/sidecar source set and per-path fingerprint. A queued event from an
 older same-root project generation is rejected before refresh; a delayed second
 channel carrying the same fingerprint is folded into the first renderer
-transaction, while a later distinct fingerprint publishes normally. Sidecar
-writes bracket the Rust scanner with begin/end snapshots, while Electron
+transaction. Distinct fingerprints now enter one generation-scoped FIFO:
+only after the current six-field transaction succeeds or receives protocol
+**-32800** does the next batch start, and a generation change drops queued old
+batches instead of publishing them into the new project. Sidecar writes bracket
+the Rust scanner with begin/end snapshots, while Electron
 suppresses matching native watcher echoes for the same write-source operation.
 Electron also fingerprints project inputs around nested writes, so delayed
 native `fs.watch` delivery is suppressed only while it still matches the
@@ -597,6 +600,15 @@ and UTF-16 caret **29** stay active while the decoy remains untranslated. A
 second write with a new fingerprint succeeds, grows the project to **2401**
 entries, moves the wanted segment from **#1001 to #1002**, and preserves the
 same key/translation/caret. This is Linux package evidence only.
+Team TMX rebase now identities occurrence-specific alternatives by all six
+`EntryKey` fields rather than source text. Conflict persistence carries that
+key through the visible ours/theirs row and the sidecar resolution call, and
+the resolver updates only the matching TMX occurrence. The Linux packaged run
+also imports a lexically earlier source through a real file team repository,
+creates an ours/theirs conflict for the wanted duplicate, and selects the
+visible keep-theirs control; the wanted segment remains active at its reordered
+index with its UTF-16 caret while the same-source decoy stays untranslated and
+the conflict list clears through the shared refresh transaction.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops

@@ -678,7 +678,11 @@ export function TeamWindow() {
     <Modal id="team" title={t("team")}>
       <p data-team-message>{msg || "Git / SVN / HTTP / file · prepare → rebase → commit"}</p>
       {conflicts.map((c, i) => (
-        <div key={`${c.kind ?? "tmx"}-${c.source ?? i}`} className="hit">
+        <div
+          key={`${c.kind ?? "tmx"}-${c.source ?? i}-${JSON.stringify(c.entry_key ?? null)}`}
+          className="hit"
+          data-team-conflict-key={JSON.stringify(c.entry_key ?? null)}
+        >
           <div>
             <strong>{c.source}</strong>
             {c.kind ? ` · ${c.kind}` : ""}
@@ -692,9 +696,27 @@ export function TeamWindow() {
             onChange={(e) => setManual(e.target.value)}
           />
           <div className="btn-row">
-            <button type="button" onClick={() => void resolve("ours", c.source)}>{t("keepOurs")}</button>
-            <button type="button" onClick={() => void resolve("theirs", c.source)}>{t("keepTheirs")}</button>
-            <button type="button" onClick={() => void resolve("manual", c.source, manual)}>手工</button>
+            <button
+              type="button"
+              data-operation-action="team-resolve-ours"
+              onClick={() => void resolve("ours", c.source, undefined, c.entry_key)}
+            >
+              {t("keepOurs")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="team-resolve-theirs"
+              onClick={() => void resolve("theirs", c.source, undefined, c.entry_key)}
+            >
+              {t("keepTheirs")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="team-resolve-manual"
+              onClick={() => void resolve("manual", c.source, manual, c.entry_key)}
+            >
+              手工
+            </button>
           </div>
         </div>
       ))}

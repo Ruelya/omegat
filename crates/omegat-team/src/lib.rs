@@ -38,7 +38,7 @@ pub use mapping::{
 pub use passphrase_dialog::Passphrase;
 pub use prepared_file_info::PreparedFileInfo;
 pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
-pub use rebase_and_commit::{rebase_all, rebase_project, resolve};
+pub use rebase_and_commit::{rebase_all, rebase_project, resolve, resolve_for_key};
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
     commit_after_version, commit_project_files, commit_project_files_cancellable, get_version,
@@ -92,7 +92,8 @@ mod tests {
     use crate::mapping::default_mapping;
     use crate::team_utils::{run_cmd, which};
     use omegat_core::properties::{ProjectProperties, RepositoryDef, RepositoryMapping};
-    use omegat_core::tmx::parse_tmx;
+    use omegat_core::tmx::{parse_tmx, ProjectTmx, TmxEntry};
+    use omegat_ipc::EntryKeyDto;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{Duration, Instant};
@@ -199,6 +200,7 @@ mod tests {
         let theirs = tu("Hi", "Bonjour");
         let (tmx, conflicts) = rebase_tmx("", &ours, &theirs, "en", "fr");
         assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].entry_key, None);
         assert_eq!(tmx.get("Hi").unwrap().translation, "Salut");
         assert!(tmx
             .get("Hi")
@@ -207,6 +209,123 @@ mod tests {
             .as_ref()
             .unwrap()
             .contains("Bonjour"));
+    }
+
+    #[test]
+    fn duplicated_source_conflict_resolves_only_the_complete_entry_key() {
+        fn key(file: &str, id: &str, prev: &str, next: &str, path: &str) -> EntryKeyDto {
+            EntryKeyDto {
+                file: file.into(),
+                source_text: "Repeated source".into(),
+                id: Some(id.into()),
+                prev: Some(prev.into()),
+                next: Some(next.into()),
+                path: Some(path.into()),
+            }
+        }
+        fn alternative(key: &EntryKeyDto, translation: &str) -> TmxEntry {
+            TmxEntry {
+                source: key.source_text.clone(),
+                translation: translation.into(),
+                default_translation: false,
+                file: Some(key.file.clone()),
+                id: key.id.clone(),
+                prev: key.prev.clone(),
+                next: key.next.clone(),
+                path: key.path.clone(),
+                ..Default::default()
+            }
+        }
+        fn xml(entries: impl IntoIterator<Item = TmxEntry>) -> String {
+            let mut tmx = ProjectTmx::new();
+            entries.into_iter().for_each(|entry| tmx.insert(entry));
+            tmx.to_xml("en", "fr")
+        }
+
+        let wanted = key(
+            "chapter/wanted.yaml",
+            "wanted_0",
+            "wanted before",
+            "wanted after",
+            "wanted",
+        );
+        let decoy = key(
+            "chapter/decoy.yaml",
+            "decoy_0",
+            "decoy before",
+            "decoy after",
+            "decoy",
+        );
+        let base = xml([
+            alternative(&wanted, "base wanted"),
+            alternative(&decoy, "decoy stable"),
+        ]);
+        let ours = xml([
+            alternative(&decoy, "decoy stable"),
+            alternative(&wanted, "ours wanted"),
+        ]);
+        let theirs = xml([
+            alternative(&wanted, "theirs wanted"),
+            alternative(&decoy, "decoy stable"),
+        ]);
+
+        let (merged, conflicts) = crate::tmx_rebase::rebase_detailed(
+            &base,
+            &ours,
+            &theirs,
+            "en",
+            "fr",
+            &Default::default(),
+        );
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].source, "Repeated source");
+        assert_eq!(conflicts[0].ours, "ours wanted");
+        assert_eq!(conflicts[0].theirs, "theirs wanted");
+        assert_eq!(conflicts[0].entry_key.as_ref(), Some(&wanted));
+        assert_eq!(
+            merged
+                .get_multiple_translation_for_key(&wanted)
+                .unwrap()
+                .translation,
+            "ours wanted"
+        );
+        assert_eq!(
+            merged
+                .get_multiple_translation_for_key(&decoy)
+                .unwrap()
+                .translation,
+            "decoy stable"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        merged.write(&props.save_tmx_path(), "en", "fr").unwrap();
+        crate::team_settings::save_conflicts(&props, &conflicts).unwrap();
+
+        let remaining =
+            resolve_for_key(&props, "Repeated source", Some(&wanted), "theirs", None).unwrap();
+        assert!(remaining.is_empty());
+        let resolved = parse_tmx(
+            &std::fs::read_to_string(props.save_tmx_path()).unwrap(),
+            "en",
+            "fr",
+        );
+        assert_eq!(
+            resolved
+                .get_multiple_translation_for_key(&wanted)
+                .unwrap()
+                .translation,
+            "theirs wanted"
+        );
+        assert_eq!(
+            resolved
+                .get_multiple_translation_for_key(&decoy)
+                .unwrap()
+                .translation,
+            "decoy stable"
+        );
     }
 
     #[test]

@@ -363,7 +363,12 @@ export type AppState = {
   replaceAll: () => Promise<number>;
   teamSync: () => Promise<void>;
   teamCommit: (which: "source" | "target") => Promise<void>;
-  resolveConflict: (side: "ours" | "theirs" | "manual", source?: string, translation?: string) => Promise<void>;
+  resolveConflict: (
+    side: "ours" | "theirs" | "manual",
+    source?: string,
+    translation?: string,
+    entryKey?: EntryKeyDto,
+  ) => Promise<void>;
   resolveEditConflict: (side: "ours" | "theirs" | "manual", translation?: string) => Promise<void>;
   learnWord: (word: string) => Promise<void>;
   ignoreWord: (word: string) => Promise<void>;
@@ -1104,14 +1109,18 @@ export const useApp = create<AppState>((set, get) => ({
       set({ teamMessage: `commit ${which} cancelled` });
     }
   },
-  resolveConflict: async (side, source, translation) => {
+  resolveConflict: async (side, source, translation, entryKey) => {
     const before = get();
     const conflict = before.teamConflicts.find((item) =>
-      source ? item.source === source : true
+      entryKey
+        ? sameCompleteEntryKey(item.entry_key, entryKey)
+        : source
+          ? item.source === source
+          : true
     );
     const src = source ?? conflict?.source ?? "";
     const activeKey = before.entries[before.index]?.key;
-    const rebindKey = conflict?.entry_key ?? activeKey;
+    const rebindKey = entryKey ?? conflict?.entry_key ?? activeKey;
     const r = await rpc<{ conflicts: TeamConflict[] }>("team.resolve", {
       source: src,
       side,
@@ -1581,6 +1590,56 @@ export function connectExternalProjectEvents(): () => void {
     string,
     { fingerprint: string | null; sources: Set<"native" | "sidecar"> }
   >();
+  const pending: Array<{
+    root: string;
+    generation: number;
+    paths: string[];
+    sources: Array<"native" | "sidecar">;
+  }> = [];
+  let draining = false;
+
+  const drain = async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      while (pending.length > 0) {
+        const batch = pending.shift()!;
+        const state = useApp.getState();
+        if (
+          state.props?.root !== batch.root
+          || state.projectEvent.projectGeneration !== batch.generation
+        ) {
+          continue;
+        }
+        try {
+          await state.refreshEntriesAfterExternalChange(undefined, true);
+          const current = useApp.getState();
+          if (
+            current.props?.root === batch.root
+            && current.projectEvent.projectGeneration === batch.generation
+          ) {
+            current.logLine(
+              `external project refresh (${
+                batch.paths.length
+              } path(s), ${batch.sources.join("+")})`,
+            );
+          }
+        } catch (error) {
+          const current = useApp.getState();
+          if (
+            current.props?.root === batch.root
+            && current.projectEvent.projectGeneration === batch.generation
+          ) {
+            useApp.setState({ error: String(error) });
+          }
+        }
+      }
+    } finally {
+      draining = false;
+      if (pending.length > 0) void drain();
+    }
+  };
+
   return window.omegat?.onProjectExternalChange?.(({
     root,
     paths,
@@ -1598,40 +1657,42 @@ export function connectExternalProjectEvents(): () => void {
       observedProject = project;
       observedFingerprints.clear();
     }
-    const sourceEcho = paths.some((path) => {
-      const fingerprint = fingerprints[path] ?? null;
-      const observed = observedFingerprints.get(path);
-      return observed?.fingerprint === fingerprint
-        && sources.some((source) => !observed.sources.has(source));
-    });
-    const changed = !sourceEcho && paths.some((path) => {
-      const fingerprint = fingerprints[path] ?? null;
-      return observedFingerprints.get(path)?.fingerprint !== fingerprint;
-    });
+    const repeatedPaths = paths.filter((path) =>
+      observedFingerprints.get(path)?.fingerprint === (fingerprints[path] ?? null)
+    );
+    const changedPaths: string[] = [];
     paths.forEach((path) => {
       const fingerprint = fingerprints[path] ?? null;
       const observed = observedFingerprints.get(path);
       if (observed?.fingerprint === fingerprint) {
         sources.forEach((source) => observed.sources.add(source));
       } else {
+        const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
+        const isRepeatedPathParent = fingerprint === null
+          && repeatedPaths.some((repeated) => {
+            const child = repeated.replaceAll("\\", "/");
+            return child.startsWith(`${normalized}/`);
+          });
+        if (!isRepeatedPathParent) changedPaths.push(path);
         observedFingerprints.set(path, {
           fingerprint,
           sources: new Set(sources),
         });
       }
     });
-    if (!changed) {
+    if (changedPaths.length === 0) {
       state.logLine(
         `coalesced external project change (${paths.length} path(s), ${sources.join("+")})`,
       );
       return;
     }
-    void state
-      .refreshEntriesAfterExternalChange(undefined, true)
-      .then(() => state.logLine(
-        `external project refresh (${paths.length} path(s), ${sources.join("+")})`,
-      ))
-      .catch((error) => useApp.setState({ error: String(error) }));
+    pending.push({
+      root,
+      generation,
+      paths: changedPaths,
+      sources: [...sources],
+    });
+    void drain();
   }) ?? (() => undefined);
 }
 

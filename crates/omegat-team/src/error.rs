@@ -1,3 +1,4 @@
+use omegat_ipc::EntryKeyDto;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -24,6 +25,8 @@ pub struct Conflict {
     pub ours: String,
     pub theirs: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_key: Option<EntryKeyDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

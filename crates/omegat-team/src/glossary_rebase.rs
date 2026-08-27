@@ -75,6 +75,7 @@ pub fn rebase(
                         ours: a.target.clone(),
                         theirs: tb.target.clone(),
                         message: format!("glossary conflict on {}", a.source),
+                        entry_key: None,
                     });
                     out.push(a.clone());
                 }
