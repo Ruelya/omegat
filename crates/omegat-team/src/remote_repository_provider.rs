@@ -10,9 +10,46 @@ use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::{team_enabled, SyncReport};
 use omegat_core::properties::ProjectProperties;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+#[cfg(test)]
+pub(crate) fn fail_next_commit_for(repository_index: usize) {
+    FAIL_COMMIT_REPOSITORY.store(repository_index, Ordering::SeqCst);
+}
+
+fn commit_repository(
+    props: &ProjectProperties,
+    repository_index: usize,
+    on_versions: &[Option<String>],
+    comment: &str,
+) -> Result<Option<String>> {
+    #[cfg(test)]
+    if FAIL_COMMIT_REPOSITORY
+        .compare_exchange(
+            repository_index,
+            usize::MAX,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_ok()
+    {
+        return Err(TeamError::Command(format!(
+            "injected repository {repository_index} commit failure"
+        )));
+    }
+    remote_repository_factory::commit_after_versions(
+        props,
+        &props.repositories[repository_index],
+        on_versions,
+        comment,
+    )
+}
 
 struct FileRemoteSnapshot {
     repository_index: usize,
@@ -248,14 +285,9 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
         for repo in &props.repositories {
             copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
         }
-        for (index, repo) in props.repositories.iter().enumerate() {
+        for index in 0..props.repositories.len() {
             commit_started.push(index);
-            remote_repository_factory::commit_after_versions(
-                props,
-                repo,
-                &[observed[index].clone()],
-                "OmegaT team sync",
-            )?;
+            commit_repository(props, index, &[observed[index].clone()], "OmegaT team sync")?;
             published.push(index);
         }
         save_bases(props)?;
@@ -329,11 +361,11 @@ pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<Sy
             for repo in &props.repositories {
                 copy_mapped(props, repo, CopyDir::ProjectToRepo)?;
             }
-            for (index, repo) in props.repositories.iter().enumerate() {
+            for index in 0..props.repositories.len() {
                 commit_started.push(index);
-                remote_repository_factory::commit_after_versions(
+                commit_repository(
                     props,
-                    repo,
+                    index,
                     &[rollback_versions[index].clone()],
                     &format!("OmegaT commit {label} files"),
                 )?;

@@ -550,11 +550,8 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[test]
-    fn multi_git_push_failure_compensates_already_published_repository() {
-        use std::os::unix::fs::PermissionsExt;
-
+    fn multi_git_commit_failure_compensates_already_published_repository() {
         if Command::new("git").arg("--version").output().is_err() {
             panic!("git is required for multi-repository transaction test");
         }
@@ -563,11 +560,6 @@ mod tests {
         let bare_b = dir.path().join("remote-b.git");
         seed_bare(&bare_a, &dir.path().join("seed-a"));
         seed_bare(&bare_b, &dir.path().join("seed-b"));
-        let rejecting_hook = bare_b.join("hooks").join("pre-receive");
-        std::fs::write(&rejecting_hook, "#!/bin/sh\nexit 1\n").unwrap();
-        let mut permissions = std::fs::metadata(&rejecting_hook).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&rejecting_hook, permissions).unwrap();
 
         let mut props = team_props(
             dir.path().join("project"),
@@ -595,6 +587,7 @@ mod tests {
         std::fs::write(props.source_dir.join("first.txt"), "local first").unwrap();
         std::fs::write(props.source_dir.join("second.txt"), "local second").unwrap();
 
+        crate::remote_repository_provider::fail_next_commit_for(1);
         let error = sync(&props).unwrap_err();
         assert!(matches!(error, TeamError::Command(_)), "{error:?}");
         assert_eq!(
