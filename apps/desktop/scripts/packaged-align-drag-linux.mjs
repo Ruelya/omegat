@@ -473,7 +473,11 @@ try {
         target: document.querySelector(".drag-target")?.id ?? null,
       };
     })()`);
-    return state.scrollTop > 0 ? state : undefined;
+    return state.scrollTop > 0 &&
+      state.activeDescendant !== "align-cell-0-source" &&
+      /^align-(cell|drop-bottom)-/.test(state.target ?? "")
+      ? state
+      : undefined;
   });
   assert(hovered.maxScrollTop > 0);
   assert.notEqual(hovered.activeDescendant, "align-cell-0-source");
