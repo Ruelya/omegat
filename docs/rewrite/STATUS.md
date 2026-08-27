@@ -568,16 +568,35 @@ TM, glossary, and sources before the existing EXTERNAL_REFRESH bus rebinds the
 sole `Document3` and starts new Dock work. Sidecar contract tests exercise both
 wire cancellation/responsiveness, proactive runtime-directory events, and
 on-disk source/glossary adoption.
+Reload, native/sidecar file changes, direct external refresh, and team
+ours/theirs resolution now publish through one renderer rebind transaction.
+Only a complete authoritative entry list plus statistics may replace the live
+snapshot; the active entry, conflict rows, sole `Document3`, and selection are
+rebound by all six `EntryKey` fields. A cancelled external refresh atomically
+restores project properties, TM, glossary, and entries and publishes no
+candidate list. External refresh is filesystem-read-only, avoiding recursive
+watch notifications from directory creation.
 Each forwarded proactive event now carries the renderer project generation and
-its native/sidecar source set. A queued event from an older same-root project
-generation is rejected before refresh. Sidecar writes bracket the Rust scanner
-with begin/end snapshots, while Electron suppresses matching native watcher
-echoes for the same write-source operation. Electron now fingerprints project
-inputs around nested writes, so delayed native `fs.watch` delivery is suppressed
-only while it still matches the completed self-write; a later distinct external
-fingerprint publishes normally. Exact real-filesystem desktop and actual
-sidecar `project.save` tests prove saving does not feed back as an external
-mutation and later real changes still publish.
+its native/sidecar source set and per-path fingerprint. A queued event from an
+older same-root project generation is rejected before refresh; a delayed second
+channel carrying the same fingerprint is folded into the first renderer
+transaction, while a later distinct fingerprint publishes normally. Sidecar
+writes bracket the Rust scanner with begin/end snapshots, while Electron
+suppresses matching native watcher echoes for the same write-source operation.
+Electron also fingerprints project inputs around nested writes, so delayed
+native `fs.watch` delivery is suppressed only while it still matches the
+completed self-write. Exact real-filesystem desktop and actual sidecar
+`project.save` tests prove saving does not feed back as an external mutation and
+later real changes still publish.
+The real Linux packaged cancellation run includes two YAML entries with the
+same source but different file/id/path keys, then adds a lexically earlier file.
+The one merged native+sidecar refresh request visibly reaches
+started/progress/cancelling and becomes cancelled only with protocol **-32800**.
+The sidecar remains at **2400** entries, and the exact wanted key, translation,
+and UTF-16 caret **29** stay active while the decoy remains untranslated. A
+second write with a new fingerprint succeeds, grows the project to **2401**
+entries, moves the wanted segment from **#1001 to #1002**, and preserves the
+same key/translation/caret. This is Linux package evidence only.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
