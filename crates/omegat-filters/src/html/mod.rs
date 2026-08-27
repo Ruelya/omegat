@@ -81,6 +81,7 @@ fn decode_html_bytes_with_fallback(
     }
 }
 
+#[cfg(test)]
 fn decode_html_bytes(bytes: &[u8]) -> DecodedHtml {
     decode_html_bytes_with_fallback(bytes, None)
 }

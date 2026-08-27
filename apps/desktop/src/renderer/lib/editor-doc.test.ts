@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   decorateText,
   deleteBackwardAtomic,
+  deleteForwardAtomic,
   deleteRangeAtomic,
   insertAtomic,
   marksFromPrefs,
+  moveCaret,
   nextMissingTag,
   parseDocument,
   prefsFromMarks,
@@ -67,5 +69,12 @@ describe("segment document", () => {
     expect(ranged.text).toBe("Hello world</f0>");
     expect(ranged.text.includes("<f0>")).toBe(false);
     expect(tagsIntact(ranged.text)).toBe(true);
+  });
+
+  it("keeps supplementary code points intact during native caret edits", () => {
+    expect(deleteBackwardAtomic("a😀b", 3)).toEqual({ text: "ab", pos: 1 });
+    expect(deleteForwardAtomic("a😀b", 1)).toEqual({ text: "ab", pos: 1 });
+    expect(moveCaret("a😀b", 1, 1)).toBe(3);
+    expect(moveCaret("a😀b", 3, -1)).toBe(1);
   });
 });

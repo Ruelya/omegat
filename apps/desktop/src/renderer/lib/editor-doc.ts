@@ -79,6 +79,26 @@ export function expandToAtomic(text: string, start: number, end: number): { star
   return { start: a, end: b };
 }
 
+function previousCodePointBoundary(text: string, pos: number): number {
+  let start = Math.max(0, pos - 1);
+  const unit = text.charCodeAt(start);
+  if (unit >= 0xdc00 && unit <= 0xdfff && start > 0) {
+    const previous = text.charCodeAt(start - 1);
+    if (previous >= 0xd800 && previous <= 0xdbff) start -= 1;
+  }
+  return start;
+}
+
+function nextCodePointBoundary(text: string, pos: number): number {
+  const start = Math.max(0, Math.min(pos, text.length));
+  const unit = text.charCodeAt(start);
+  if (unit >= 0xd800 && unit <= 0xdbff && start + 1 < text.length) {
+    const next = text.charCodeAt(start + 1);
+    if (next >= 0xdc00 && next <= 0xdfff) return start + 2;
+  }
+  return Math.min(text.length, start + 1);
+}
+
 export function deleteBackwardAtomic(text: string, pos: number): { text: string; pos: number } {
   if (pos <= 0) return { text, pos: 0 };
   const prev = pos - 1;
@@ -86,7 +106,8 @@ export function deleteBackwardAtomic(text: string, pos: number): { text: string;
   if (span?.kind === "tag") {
     return { text: text.slice(0, span.start) + text.slice(span.end), pos: span.start };
   }
-  return { text: text.slice(0, pos - 1) + text.slice(pos), pos: pos - 1 };
+  const start = previousCodePointBoundary(text, pos);
+  return { text: text.slice(0, start) + text.slice(pos), pos: start };
 }
 
 export function deleteForwardAtomic(text: string, pos: number): { text: string; pos: number } {
@@ -95,7 +116,7 @@ export function deleteForwardAtomic(text: string, pos: number): { text: string; 
   if (span?.kind === "tag") {
     return { text: text.slice(0, span.start) + text.slice(span.end), pos: span.start };
   }
-  return { text: text.slice(0, pos) + text.slice(pos + 1), pos };
+  return { text: text.slice(0, pos) + text.slice(nextCodePointBoundary(text, pos)), pos };
 }
 
 export function deleteRangeAtomic(text: string, start: number, end: number): { text: string; pos: number } {
@@ -114,12 +135,12 @@ export function moveCaret(text: string, pos: number, dir: -1 | 1): number {
     const prev = pos - 1;
     const span = tokenSpans(text).find((s) => s.start <= prev && prev < s.end);
     if (span?.kind === "tag") return span.start;
-    return prev;
+    return previousCodePointBoundary(text, pos);
   }
   if (pos >= text.length) return text.length;
   const span = tokenSpans(text).find((s) => s.start <= pos && pos < s.end);
   if (span?.kind === "tag") return span.end;
-  return pos + 1;
+  return nextCodePointBoundary(text, pos);
 }
 
 export function tagsIntact(text: string): boolean {
