@@ -3,6 +3,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
+import {
+  createApplicationLifecycle,
+  registerApplicationLifecycle,
+} from "./lifecycle";
 import { buildApplicationMenu } from "./menu";
 
 type Pending = {
@@ -72,6 +76,11 @@ function startSidecar() {
   });
 }
 
+function stopSidecar() {
+  sidecar?.kill();
+  sidecar = null;
+}
+
 function rpc(method: string, params: unknown = {}): Promise<unknown> {
   if (!sidecar) startSidecar();
   const id = nextId++;
@@ -139,13 +148,10 @@ app.whenReady().then(() => {
     writeFileSync(r.filePath, text, "utf8");
     return r.filePath;
   });
-  ipcMain.handle("app-quit", () => {
-    app.quit();
-  });
-  ipcMain.handle("app-relaunch", () => {
-    app.relaunch();
-    app.quit();
-  });
+  registerApplicationLifecycle(
+    ipcMain,
+    createApplicationLifecycle(app, stopSidecar, process.argv),
+  );
   ipcMain.handle("open-path", async (_e, path: string) => {
     if (path) await shell.openPath(path);
   });
@@ -165,6 +171,6 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", () => {
-  sidecar?.kill();
+  stopSidecar();
   if (process.platform !== "darwin") app.quit();
 });
