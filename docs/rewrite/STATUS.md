@@ -43,8 +43,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **46907** lines; `apps/desktop/src`
-  TS/TSX/CSS **11982** lines (**~37%** of Java main lines, a scale check only)
+- Rewrite Rust: `crates/**/*.rs` **48543** lines; `apps/desktop/src`
+  TS/TSX/CSS **12317** lines (**~39%** of Java main lines, a scale check only)
 - Java GUI: **297** files / **61510** lines vs desktop source **11982**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **4767**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
@@ -213,7 +213,10 @@ goldens `assert_eq` Java cases. Mapping glob evaluation now distinguishes
 slash-anchored exclusions from recursive unanchored exclusions using
 separator-aware matching. The two Java all-copy cases assert exact destination
 sets (**5** unanchored / **9** slash-anchored), through the same observable copy
-path used by sync.
+path used by sync. Git checkout/update/commit no longer swallow `git2` fetch,
+missing-branch, commit, or push failures. No-change commits avoid pushes;
+tracked deletion and observed-version guards are exercised without a product
+`git` subprocess.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -225,7 +228,13 @@ output back to exact source/target pairs instead of using substring checks.
 The real CLI parser accepts the Java restart/common argument vectors, including
 post-subcommand `--no-project-locking`, `--no-location-save`, `--no-team` /
 `--team`, tokenizer overrides, alternate filename patterns, and empty
-`--config-dir=` handling.
+`--config-dir=` handling. Default/start now launches Electron instead of only
+printing a hint: config-dir, project, locale and validated scripts directory
+flow through Electron startup into the NDJSON sidecar, and the renderer opens
+the requested project. Manual align edits select source, target, or both;
+the edited rows are written through `align.write` and parsed back as exact TMX
+pairs. Pending-bead `do_align` now invokes the configured alignment algorithm
+instead of returning its input unchanged.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
@@ -412,8 +421,10 @@ ExternalFinder goldens exist).
 ## P10 notes
 
 `GITRemoteRepository2` product path is `git2` (clone/fetch/reset/commit/push
-+ credential callback). `Command::new("git")` remains only in `lib.rs`
-tests that seed a bare repo. Mapping include/exclude UI is
++ credential callback). Fetch/reset/commit/push errors propagate, an unchanged
+index is a no-op, and tracked deletion plus version guarding are tested with
+`git2`-created repositories. `Command::new("git")` remains only in `lib.rs`
+tests that seed other two-client fixtures. Mapping include/exclude UI is
 `RepositoriesMappingController`. TMX and glossary rebase plus Keep
 ours/theirs/manual stay. HTTP two-client rebase `assert_eq`s conflict
 `ours`/`theirs`. SVN product path is the `svn` binary and the
@@ -431,7 +442,11 @@ unzip; CLI leftover flags remain in `--help`. No `fallback_eval`. HEAPWISE /
 PARSEWISE / ID `assert_eq` the Java pair lists.
 `BundleTest#testBundleEncodings` `assert_eq`s US-ASCII / Windows-1252
 (not UTF-8) and forbids U+202E. The Electron aligner window wires
-merge / split / up / down through `align.edit`. The P11 row is
+column-aware merge / split / up / down through `align.edit`, then persists
+the corrected rows through `align.write`; the RPC test parses the final TMX
+back to exact pairs. CLI `start` resolves Java-style config-file locale and
+`scripts_dir`, launches Electron, passes config/project/scripts context to the
+sidecar, and auto-opens the project. The P11 row is
 `parity_gap` (unit goldens exist; `AlignerWindowTest` ops + CLI goldens
 are exported; Wiki/MED have API fixtures).
 
