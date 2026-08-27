@@ -287,6 +287,9 @@ public final class ExportGoldens {
             Core.setFilterMaster(new FilterMaster(FilterMaster.createDefaultFiltersConfig()));
             exporter.exportHonesty();
         }
+        // JUnit GUI tests can leave AWT helpers alive. This standalone export
+        // process has no further work, so do not make Gradle wait on them.
+        System.exit(0);
     }
 
     private void run() throws Exception {
