@@ -18,9 +18,27 @@ struct XliffHooks {
     resname: Option<String>,
     ignored: bool,
     entry_text: Vec<String>,
+    entry_protected_parts: Vec<Vec<ProtectedPart>>,
     alt_ids: HashSet<String>,
     next_unit_id: usize,
     entry_ordinal: usize,
+}
+
+impl XliffHooks {
+    fn unique_unit_id(&mut self, candidate: String) -> String {
+        let mut suffix = 0usize;
+        loop {
+            let id = if suffix == 0 {
+                candidate.clone()
+            } else {
+                format!("{candidate}_{suffix}")
+            };
+            if self.alt_ids.insert(id.clone()) {
+                return id;
+            }
+            suffix += 1;
+        }
+    }
 }
 
 impl FilterHooks for XliffHooks {
@@ -30,13 +48,12 @@ impl FilterHooks for XliffHooks {
                 .iter()
                 .find(|(n, _)| n == "resname")
                 .map(|(_, v)| v.clone());
-            self.id = Some(
-                attrs
-                    .iter()
-                    .find(|(n, _)| n == "id")
-                    .map(|(_, v)| v.clone())
-                    .unwrap_or_else(|| self.next_unit_id.to_string()),
-            );
+            let candidate = attrs
+                .iter()
+                .find(|(n, _)| n == "id")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| self.next_unit_id.to_string());
+            self.id = Some(self.unique_unit_id(candidate));
             self.next_unit_id += 1;
             self.entry_ordinal = 0;
         }
@@ -66,13 +83,18 @@ impl FilterHooks for XliffHooks {
                         note: self.resname.clone(),
                         comment: None,
                         path: None,
-                        protected_parts: vec![],
+                        protected_parts: self
+                            .entry_protected_parts
+                            .get(ordinal)
+                            .cloned()
+                            .unwrap_or_default(),
                     });
                 }
             }
             self.id = None;
             self.resname = None;
             self.entry_text.clear();
+            self.entry_protected_parts.clear();
             self.entry_ordinal = 0;
         }
         if path == "/xliff/file/header" {
@@ -89,12 +111,13 @@ impl FilterHooks for XliffHooks {
         self.ignored
     }
 
-    fn translate(&mut self, entry: &str, _protected: &[ProtectedPart]) -> String {
+    fn translate(&mut self, entry: &str, protected: &[ProtectedPart]) -> String {
         if entry.is_empty() {
             return String::new();
         }
         if self.collect {
             self.entry_text.push(entry.to_string());
+            self.entry_protected_parts.push(protected.to_vec());
             entry.to_string()
         } else {
             let ordinal = self.entry_ordinal;
@@ -134,6 +157,7 @@ impl Filter for XliffFilter {
             resname: None,
             ignored: false,
             entry_text: Vec::new(),
+            entry_protected_parts: Vec::new(),
             alt_ids: HashSet::new(),
             next_unit_id: 0,
             entry_ordinal: 0,
@@ -160,10 +184,17 @@ impl Filter for XliffFilter {
             resname: None,
             ignored: false,
             entry_text: Vec::new(),
+            entry_protected_parts: Vec::new(),
             alt_ids: HashSet::new(),
             next_unit_id: 0,
             entry_ordinal: 0,
         };
-        write_xml_cfg(source_path, dest_path, &dialect, &mut hooks, engine_config(ctx))
+        write_xml_cfg(
+            source_path,
+            dest_path,
+            &dialect,
+            &mut hooks,
+            engine_config(ctx),
+        )
     }
 }

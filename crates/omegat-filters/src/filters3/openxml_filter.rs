@@ -78,6 +78,63 @@ fn short_name(name: &str) -> &str {
     name.rsplit('/').next().unwrap_or(name)
 }
 
+fn numbered_part(name: &str, prefix: &str) -> Option<u32> {
+    name.strip_prefix(prefix)?
+        .strip_suffix(".xml")?
+        .parse()
+        .ok()
+}
+
+fn part_sort_key(path: &str) -> (usize, u32, &str) {
+    let name = short_name(path);
+    let (rank, number) = if name == "sharedStrings.xml" {
+        // Java's comparator special-cases this part ahead of every other
+        // family so Excel comments are visited only after their shared text.
+        (0, 0)
+    } else if name == "document.xml" {
+        (1, 0)
+    } else if let Some(number) = numbered_part(name, "document") {
+        (1, number)
+    } else if name == "comments.xml" {
+        (2, 0)
+    } else if name == "footnotes.xml" {
+        (3, 0)
+    } else if name == "endnotes.xml" {
+        (4, 0)
+    } else if let Some(number) = numbered_part(name, "header") {
+        (5, number)
+    } else if let Some(number) = numbered_part(name, "footer") {
+        (6, number)
+    } else if name == "core.xml" {
+        (7, 0)
+    } else if let Some(number) = numbered_part(name, "comments") {
+        (8, number)
+    } else if let Some(number) = numbered_part(name, "slide") {
+        (9, number)
+    } else if let Some(number) = numbered_part(name, "slideMaster") {
+        (10, number)
+    } else if let Some(number) = numbered_part(name, "slideLayout") {
+        (11, number)
+    } else if let Some(number) = numbered_part(name, "notesSlide") {
+        (12, number)
+    } else if let Some(number) = numbered_part(name, "data") {
+        (13, number)
+    } else if let Some(number) = numbered_part(name, "chart") {
+        (14, number)
+    } else if let Some(number) = numbered_part(name, "drawing") {
+        (15, number)
+    } else if name == "workbook.xml" {
+        (16, 0)
+    } else if let Some(number) = numbered_part(name, "page") {
+        (18, number)
+    } else {
+        // External relationship parts appear immediately before Visio pages in
+        // Java's configured document order.
+        (17, 0)
+    };
+    (rank, number, path)
+}
+
 impl Filter for OpenXmlFilter {
     fn id(&self) -> &'static str {
         "openxml"
@@ -99,7 +156,7 @@ impl Filter for OpenXmlFilter {
             format: "openxml".into(),
             message: e.to_string(),
         })?;
-        let mut segments = Vec::new();
+        let mut parts = Vec::new();
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).map_err(|e| FilterError::Parse {
                 format: "openxml".into(),
@@ -110,10 +167,16 @@ impl Filter for OpenXmlFilter {
                 continue;
             }
             let mut raw = String::new();
-            if entry.read_to_string(&mut raw).is_err() {
-                continue;
+            if entry.read_to_string(&mut raw).is_ok() {
+                parts.push((name, raw));
             }
-            let mut hooks = DefaultHooks::parse_with_prefix(format!("{name}#"));
+        }
+        parts.sort_by(|(left, _), (right, _)| part_sort_key(left).cmp(&part_sort_key(right)));
+
+        let mut segments = Vec::new();
+        let mut hooks = DefaultHooks::parse();
+        for (name, raw) in parts {
+            hooks.enter_part(format!("{name}#"));
             if let Ok(parsed) = parse_raw_cfg(&raw, &dialect, &mut hooks, engine_config(ctx)) {
                 segments.extend(parsed.segments);
             }
@@ -133,13 +196,14 @@ impl Filter for OpenXmlFilter {
         let dialect = OpenXmlDialect::new(&ctx.options);
         let re = translatable_re(&ctx.options);
         let translations = translations.clone();
+        let mut hooks = DefaultHooks::write(&translations);
         rewrite_zip_xml(
             source_path,
             dest_path,
             |n| re.is_match(short_name(n)),
             &dialect,
             |name, raw| {
-                let mut hooks = DefaultHooks::write_with_prefix(&translations, format!("{name}#"));
+                hooks.enter_part(format!("{name}#"));
                 Ok(
                     crate::xml_zip::run_part_cfg(raw, &dialect, &mut hooks, engine_config(ctx))?
                         .output,

@@ -871,13 +871,31 @@ fn xliff_double_nested_sub_and_content_tags_write_back_in_depth_first_id_order()
             ("nested#2", "Before <s0/> after"),
         ]
     );
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| {
+                segment
+                    .protected_parts
+                    .iter()
+                    .map(|part| (part.text.as_str(), part.details.as_str()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            vec![("<b0/>", r#"<ph id="2">&lt;br/&gt;</ph>"#)],
+            vec![
+                ("<b0>", r#"<bpt id="1">&lt;b&gt;</bpt>"#),
+                ("</b0>", r#"<ept id="1">&lt;/b&gt;</ept>"#),
+            ],
+            vec![],
+        ]
+    );
 
     let translations = HashMap::from([
         ("nested#2".into(), "Avant <s0/> après".into()),
-        (
-            "nested#0".into(),
-            "Imbriqué <b0/> texte".into(),
-        ),
+        ("nested#0".into(), "Imbriqué <b0/> texte".into()),
         (
             "nested#1".into(),
             "Extérieur <b0>gras</b0> <s2/> fin".into(),
@@ -1036,10 +1054,7 @@ fn xhtml_nested_intact_and_inline_attributes_keep_independent_writeback_ids() {
         .find(|node| node.tag_name().name() == "span")
         .unwrap();
     assert_eq!(
-        (
-            locked_span.attribute("title"),
-            locked_span.text(),
-        ),
+        (locked_span.attribute("title"), locked_span.text(),),
         (Some("Locked nested title"), Some("nested"))
     );
     assert_eq!(paragraphs[2].text(), Some("Avant la rupture"));
@@ -1057,4 +1072,198 @@ fn xhtml_nested_intact_and_inline_attributes_keep_independent_writeback_ids() {
             .collect::<Vec<_>>(),
         vec!["Avant la rupture", "Après la rupture"]
     );
+}
+
+#[test]
+fn xliff_duplicate_unit_ids_keep_nested_callback_streams_independent() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("duplicate-units.xlf");
+    let output = temp.path().join("translated-duplicate-units.xlf");
+    std::fs::write(
+        &source,
+        r#"<xliff version="1.2"><file><body><trans-unit id="duplicate"><source>First source</source><target state="new">First outer <sub>First inner</sub> tail</target></trans-unit><trans-unit id="duplicate"><source>Second source</source><target state="new">Second outer <sub>Second inner</sub> tail</target></trans-unit></body></file></xliff>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("xliff").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("duplicate#0", "First inner"),
+            ("duplicate#1", "First outer <s0/> tail"),
+            ("duplicate_1#0", "Second inner"),
+            ("duplicate_1#1", "Second outer <s0/> tail"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        (
+            "duplicate_1#1".into(),
+            "Deuxième extérieur <s0/> fin".into(),
+        ),
+        ("duplicate#0".into(), "Premier intérieur".into()),
+        ("duplicate#1".into(), "Premier extérieur <s0/> fin".into()),
+        ("duplicate_1#0".into(), "Deuxième intérieur".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("duplicate#0", "Premier intérieur"),
+            ("duplicate#1", "Premier extérieur <s0/> fin"),
+            ("duplicate_1#0", "Deuxième intérieur"),
+            ("duplicate_1#1", "Deuxième extérieur <s0/> fin"),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let targets: Vec<_> = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "target")
+        .collect();
+    assert_eq!(targets.len(), 2);
+    let first_sub = targets[0]
+        .descendants()
+        .find(|node| node.tag_name().name() == "sub")
+        .unwrap();
+    let second_sub = targets[1]
+        .descendants()
+        .find(|node| node.tag_name().name() == "sub")
+        .unwrap();
+    assert_eq!(first_sub.text(), Some("Premier intérieur"));
+    assert_eq!(second_sub.text(), Some("Deuxième intérieur"));
+    assert_eq!(
+        element_names_and_text(&rewritten).1,
+        vec![
+            "First source",
+            "Premier extérieur",
+            "Premier intérieur",
+            "fin",
+            "Second source",
+            "Deuxième extérieur",
+            "Deuxième intérieur",
+            "fin",
+        ]
+    );
+}
+
+#[test]
+fn openxml_nested_callbacks_write_to_reversed_zip_parts_by_qualified_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("reversed-parts.docx");
+    let output = temp.path().join("translated-reversed-parts.docx");
+    let header = r#"<w:hdr xmlns:w="urn:w"><w:p><w:instrText>Header hidden</w:instrText><w:r><w:t>Header visible</w:t></w:r></w:p></w:hdr>"#;
+    let document = r#"<w:document xmlns:w="urn:w"><w:body><w:p><w:instrText>Document hidden</w:instrText><w:r><w:t>Document visible</w:t></w:r></w:p></w:body></w:document>"#;
+    write_zip(
+        &source,
+        &[
+            ("word/header10.xml", header),
+            ("word/header2.xml", header),
+            ("word/document.xml", document),
+        ],
+    );
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("openxml").unwrap();
+    let mut context = FilterContext::default();
+    context
+        .options
+        .insert("translateHiddenText".into(), "true".into());
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("word/document.xml#0", "Document hidden"),
+            ("word/document.xml#1", "Document visible"),
+            ("word/header2.xml#0", "Header hidden"),
+            ("word/header2.xml#1", "Header visible"),
+            ("word/header10.xml#0", "Header hidden"),
+            ("word/header10.xml#1", "Header visible"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("word/header10.xml#1".into(), "En-tête dix visible".into()),
+        ("word/document.xml#0".into(), "Document masqué".into()),
+        ("word/header2.xml#0".into(), "En-tête deux masqué".into()),
+        (
+            "word/document.xml#1".into(),
+            "Document visible traduit".into(),
+        ),
+        ("word/header10.xml#0".into(), "En-tête dix masqué".into()),
+        ("word/header2.xml#1".into(), "En-tête deux visible".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("word/document.xml#0", "Document masqué"),
+            ("word/document.xml#1", "Document visible traduit"),
+            ("word/header2.xml#0", "En-tête deux masqué"),
+            ("word/header2.xml#1", "En-tête deux visible"),
+            ("word/header10.xml#0", "En-tête dix masqué"),
+            ("word/header10.xml#1", "En-tête dix visible"),
+        ]
+    );
+
+    for (part, hidden, visible) in [
+        (
+            "word/document.xml",
+            "Document masqué",
+            "Document visible traduit",
+        ),
+        (
+            "word/header2.xml",
+            "En-tête deux masqué",
+            "En-tête deux visible",
+        ),
+        (
+            "word/header10.xml",
+            "En-tête dix masqué",
+            "En-tête dix visible",
+        ),
+    ] {
+        let rewritten = read_part(&output, part);
+        let document = roxmltree::Document::parse(&rewritten).unwrap();
+        assert_eq!(
+            document
+                .descendants()
+                .find(|node| node.tag_name().name() == "instrText")
+                .and_then(|node| node.text()),
+            Some(hidden)
+        );
+        assert_eq!(
+            document
+                .descendants()
+                .find(|node| node.tag_name().name() == "t")
+                .and_then(|node| node.text()),
+            Some(visible)
+        );
+    }
 }

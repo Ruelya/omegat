@@ -87,6 +87,13 @@ impl DefaultHooks {
         }
     }
 
+    pub(crate) fn enter_part(&mut self, prefix: impl Into<String>) {
+        self.current_id = None;
+        self.current_comment = None;
+        self.id_prefix = prefix.into();
+        self.next_id = 0;
+    }
+
     fn next_segment_id(&mut self) -> String {
         let id = self
             .current_id
