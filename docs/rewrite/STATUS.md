@@ -593,13 +593,16 @@ completed self-write. Exact real-filesystem desktop and actual sidecar
 later real changes still publish.
 The real Linux packaged cancellation run includes two YAML entries with the
 same source but different file/id/path keys, then adds a lexically earlier file.
-The one merged native+sidecar refresh request visibly reaches
-started/progress/cancelling and becomes cancelled only with protocol **-32800**.
-The sidecar remains at **2400** entries, and the exact wanted key, translation,
-and UTF-16 caret **29** stay active while the decoy remains untranslated. A
-second write with a new fingerprint succeeds, grows the project to **2401**
-entries, moves the wanted segment from **#1001 to #1002**, and preserves the
-same key/translation/caret. This is Linux package evidence only.
+While the first merged native+sidecar refresh is visibly in source progress,
+the run writes a second fingerprint and then cancels the first request. The
+first request reaches started/progress/cancelling and becomes cancelled only
+with protocol **-32800**, still exposing the **2400**-entry snapshot with the
+exact wanted key, translation, and UTF-16 caret **29** while the decoy remains
+untranslated. The queued fingerprint uses a distinct request id whose started
+event occurs strictly after that cancelled terminal event; it succeeds
+automatically, grows the project to **2401** entries, moves the wanted segment
+from **#1001 to #1002**, and preserves the same key/translation/caret. This is
+Linux package evidence only.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
