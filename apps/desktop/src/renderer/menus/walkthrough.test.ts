@@ -38,6 +38,14 @@ function installBridge() {
 
 type E = {
   index: number;
+  key: {
+    file: string;
+    source_text: string;
+    id: string;
+    prev: string;
+    next: string;
+    path: string;
+  };
   file: string;
   id: string;
   source: string;
@@ -54,6 +62,14 @@ type E = {
 function entry(index: number, source: string): E {
   return {
     index,
+    key: {
+      file: "source.txt",
+      source_text: source,
+      id: String(index + 1),
+      prev: index === 0 ? "" : `entry-${index}`,
+      next: index === 2 ? "" : `entry-${index + 2}`,
+      path: `/unit/${index + 1}`,
+    },
     file: "source.txt",
     id: String(index + 1),
     source,
