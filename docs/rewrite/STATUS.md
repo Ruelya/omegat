@@ -57,7 +57,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**70 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **3 passed**, and desktop **18 files / 91
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -145,7 +145,7 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **17/17**: in addition to seven ZIP cases,
+The deep write-back suites are now **31/31**: in addition to seven ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
 translated attributes/text under out-of-order translation maps. OpenXML
 hidden field text, external relationship targets, and intact fallback content
@@ -178,7 +178,15 @@ source-key fallback. ResX also keeps decoded `>` names, `FieldName`, `type`,
 and `mimetype` data intact. TXML writes duplicate targets by occurrence ID,
 restores each protected `ut`, keeps `source`/`skeleton`/`revisions` intact,
 and accepts an explicitly empty target translation through the common XML
-product path.
+product path. Fourteen further `FilterRegistry.for_path` cases give every one
+of the **23/23** filters3 dialects a strict parse/write/reparse product-path
+case. Properties XML, Schematron, RELAX NG, SVG, Camtasia, Scribus, VDX Visio,
+XML Spreadsheet, Flash, WordPress, Help & Manual, Typo3, L10nmgr, and Infix
+write translated occurrences while keeping their numeric, metadata, geometry,
+schema-value, `translate=false`, and dialect-specific intact regions exact.
+Flash and WordPress now use their Java namespace read-ahead checks during
+public `.xml` registry selection, and translated XML Spreadsheet/Flash/
+WordPress text keeps the source `XMLText` CDATA mode during write-back.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
