@@ -57,8 +57,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **143 passed**, filters
-**56 passed**, team **25 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 87
+**57 passed**, team **28 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 88
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
@@ -131,12 +131,15 @@ broken tag cannot hide a later paragraph, including through the public
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported. OpenDoc/OpenXML now assign
 part-qualified segment IDs (`content.xml#0`, `word/header1.xml#0`) during both
-parse and write. **3/3** deep ZIP write-back tests strictly distinguish
+parse and write. **4/4** deep ZIP write-back tests strictly distinguish
 same-source segments across parts, retain OpenXML protected nested tags, and
 leave OpenDocument intact `office:styles` content unchanged. OpenDocument
 attribute translation and out-of-turn note translation share the same
 part-qualified ID stream; translated notes retain the original
-`text:note-body` / paragraph structure around the translated span.
+`text:note-body` / paragraph structure around the translated span. Nested
+note/annotation out-of-turn regions translate their own attributes, descendant
+link/index attributes, and both text spans through one stable ID stream even
+when the translation map is supplied out of order.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -241,8 +244,14 @@ publishing. A later repository failure restores the project/prep snapshots and
 unpublished checkouts; already-published Git repositories receive a
 fast-forward compensating commit with the pre-transaction tree instead of a
 history rewrite. Prepare failure and second-repository commit failure have
-deterministic product-path tests. The suite is **25 passed / 1 ignored** (the
-preserved SVN binary prerequisite).
+deterministic product-path tests. Active state, phase history, rollback
+versions, publication checkpoints, and project/file-remote snapshots persist
+under `.repositories/transactions`; the next product operation recovers an
+interrupted transaction before writing. A child test process terminates after
+its first real Git publication, then its parent verifies restart recovery and
+compensating history. Two pre-observed clients also race actual libgit2 pushes,
+producing exactly one remote acceptance and one non-fast-forward rejection.
+The suite is **28 passed / 1 ignored** (the preserved SVN binary prerequisite).
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -268,7 +277,12 @@ flattened pairs. Source/target selection now addresses contiguous visual row
 spans across bead boundaries. Merge, move, replace, and pinpoint mutate the
 exact selected line range, reset touched review state, and preserve the
 shorter-side empty cells; React renders those rows and sends the row bounds to
-the sidecar. The sidecar contract is **3/3**, including strict multiline
+the sidecar. The focusable table now routes arrow/Home/End/Page navigation,
+shift-extended selection, source/target column movement, and Java's unmodified
+U/D/S/M/E/A/R/C/K/Space/Escape accelerators through a tested product keyboard
+model. Mixed enabled selections toggle each bead once, and pinpoint completion
+requires a different row and column as in `AlignPanelController`. The sidecar
+contract is **3/3**, including strict multiline
 split/review/span-merge/span-replace/pinpoint output.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
