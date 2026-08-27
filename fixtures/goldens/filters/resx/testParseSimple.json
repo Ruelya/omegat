@@ -1,0 +1,21 @@
+{
+  "id": "resx",
+  "fixture": "ResX/Simple.resx",
+  "java_test": "org.omegat.filters.ResXFilterTest#testParseSimple",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "\"Hochtüddel\""
+  ],
+  "ids": [
+    "OmegaT-Test"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<root>\n  <data name=\"OmegaT-Test\" xml:space=\"preserve\">\n    <value>&quot;Hochtüddel&quot;</value>\n  </data>\n</root>"
+}

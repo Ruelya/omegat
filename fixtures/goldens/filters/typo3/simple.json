@@ -1,0 +1,26 @@
+{
+  "id": "typo3",
+  "fixture": "typo3/simple.xml",
+  "java_test": "org.omegat.filters3.xml.typo3.Typo3Filter#processFile",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Hello Typo3"
+  ],
+  "ids": [
+    ""
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\"?>\n<t3_tt_content>\n  <title localizable=\"1\">Hello Typo3</title>\n</t3_tt_content>",
+  "translated": {
+    "source": "Hello Typo3",
+    "translation": "GOLDEN_T"
+  },
+  "translated_write": "<?xml version=\"1.0\"?>\n<t3_tt_content>\n  <title localizable=\"1\">GOLDEN_T</title>\n</t3_tt_content>"
+}

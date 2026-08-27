@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testNormalizeWidthEdgeCases",
+  "empty": "",
+  "plain": "Already normalized",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testNormalizeWidthEdgeCases"
+  ]
+}
