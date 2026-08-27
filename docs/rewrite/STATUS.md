@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **20 files / 122
+native plugin RPC/fault isolation **1 passed**, and desktop **20 files / 123
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -71,7 +71,16 @@ The real Linux unpacked native Marker E2E builds the release sidecar and
 example cdylib, loads that plugin through the packaged Electron application,
 renders its exact tooltip, deliberately aborts one callback worker, then
 strictly verifies that the same sidecar and renderer remain responsive and a
-later Marker callback still succeeds.
+later Marker callback still succeeds. The same packaged path now starts a
+delayed native callback for an inactive page-edge entry, pages that entry out,
+waits for every old worker to return, and proves the entry has no cached mark
+when it re-enters the page; only a newly started callback may publish. It also
+uses native F5 after adding a lexically earlier source file: the active entry
+moves from **#1 to #2** while its complete EntryKey, exact translation, and
+UTF-16 caret **16** remain unchanged. Enabling “Untranslated only” through the
+packaged Preferences UI rebuilds the actual renderer page, removes translated
+entries **#2/#3**, and selects empty entry **#4**. This is Linux evidence only;
+Windows and macOS input/package behavior was not run.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
 `test*` (`util/` `search/` `engine/` `glossary/` `gui/` `mt/` `finder/`
@@ -313,7 +322,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**20 files / 122 tests**, including exact success and
+**20 files / 123 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -354,7 +363,12 @@ Marker callbacks now run in five-second, short-lived sidecar worker processes;
 an abort, signal exit, timeout, or malformed worker result becomes an error for
 that `markers.query` only. Unit/RPC tests and the real Linux packaged Electron
 E2E prove the long-running sidecar and renderer survive an actual callback
-`abort` and can execute a subsequent callback.
+`abort` and can execute a subsequent callback. Electron now routes each native
+Marker query through a dedicated short-lived sidecar, so a slow plugin worker
+cannot serialize project navigation on the stateful sidecar. The packaged E2E
+uses that product route to remove an inactive entry while its native callback
+is still running, rejects all late results by page generation, and requires a
+fresh callback before the entry can display a mark after returning.
 `FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.
