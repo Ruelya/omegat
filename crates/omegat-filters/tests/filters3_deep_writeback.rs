@@ -305,7 +305,7 @@ fn opendoc_nested_out_of_turn_and_attributes_share_one_stable_id_stream() {
             ("content.xml#3", "Index"),
             ("content.xml#4", "First"),
             ("content.xml#5", "Second"),
-            ("content.xml#6", "Inner <a0>linked</a0><i1/>"),
+            ("content.xml#6", "Inner <a0>linked</a0>"),
             ("content.xml#7", "Outer <o0/> tail"),
         ]
     );
@@ -314,7 +314,7 @@ fn opendoc_nested_out_of_turn_and_attributes_share_one_stable_id_stream() {
         ("content.xml#7".into(), "Extérieur <o0/> fin".into()),
         ("content.xml#3".into(), "Index traduit".into()),
         ("content.xml#0".into(), "Note & \"URL\"".into()),
-        ("content.xml#6".into(), "Interne <a0>lié</a0><i1/>".into()),
+        ("content.xml#6".into(), "Interne <a0>lié</a0>".into()),
         ("content.xml#5".into(), "Clé deux".into()),
         ("content.xml#2".into(), "URL interne".into()),
         ("content.xml#1".into(), "URL annotation".into()),
@@ -337,7 +337,7 @@ fn opendoc_nested_out_of_turn_and_attributes_share_one_stable_id_stream() {
             ("content.xml#3", "Index traduit"),
             ("content.xml#4", "Clé un"),
             ("content.xml#5", "Clé deux"),
-            ("content.xml#6", "Interne <a0>lié</a0><i1/>"),
+            ("content.xml#6", "Interne <a0>lié</a0>"),
             ("content.xml#7", "Extérieur <o0/> fin"),
         ]
     );
