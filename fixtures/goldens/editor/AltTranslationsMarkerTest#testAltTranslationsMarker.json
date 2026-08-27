@@ -1,0 +1,14 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.AltTranslationsMarkerTest#testAltTranslationsMarker",
+  "default": {
+    "isAlt": false,
+    "marks": null
+  },
+  "alternative": {
+    "isAlt": true,
+    "source": "Edit",
+    "translation": "alternative",
+    "marks_size": 1
+  },
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

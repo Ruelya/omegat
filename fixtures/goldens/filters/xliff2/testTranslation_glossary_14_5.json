@@ -1,0 +1,24 @@
+{
+  "id": "xliff2",
+  "fixture": "xliff/filters4-xliff2/ex.14.5.xlf",
+  "java_test": "org.omegat.filters4.Xliff2FilterTest#testTranslation_glossary_14_5",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "It was a unique\n          bill..\n        ",
+    "Many birds have unique bills."
+  ],
+  "ids": [
+    "1",
+    "1"
+  ],
+  "paths": [
+    "//f1/1",
+    "//f1/g1"
+  ],
+  "empty_write_text": "<?xml version=\"1.0\"?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:2.0\" xmlns:gls=\"urn:oasis:names:tc:xliff:glossary:2.0\" version=\"2.0\" srcLang=\"en\" trgLang=\"pt\">\n  <file id=\"f1\">\n    <unit id=\"1\">\n      <gls:glossary>\n        <gls:glossEntry id=\"g1\" ref=\"#m1\">\n          <gls:term>bill</gls:term>\n          <gls:translation>Schnabel</gls:translation>\n          <gls:definition source=\"dictionary.com\">The hard usually pointed\n            parts that cover a bird's mouth.</gls:definition>\n        </gls:glossEntry>\n      </gls:glossary>\n      <segment>\n        <source>It was a unique\n          <mrk id=\"m1\" type=\"term\" ref=\"my_file.xlf/#f=f1/u=1/gls=g1\">bill.</mrk>.\n        </source>\n        <!-- note, the ref attribute above shows the absolute fragment\n             identification. In many cases (including this example),\n             a reference to just the term will suffice, such as\n             ref=\"gls=g1\" -->\n      </segment>\n    </unit>\n    <unit id=\"g1\">\n      <segment>\n        <source>Many birds have unique bills.</source>\n      </segment>\n    </unit>\n  </file>\n</xliff>"
+}

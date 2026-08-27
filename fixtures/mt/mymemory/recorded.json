@@ -1,0 +1,7 @@
+{
+  "request": {
+    "method": "GET",
+    "url": "https://api.mymemory.translated.net/get?q=Hello&langpair=en|fr"
+  },
+  "response": { "responseData": { "translatedText": "Bonjour le monde" } }
+}

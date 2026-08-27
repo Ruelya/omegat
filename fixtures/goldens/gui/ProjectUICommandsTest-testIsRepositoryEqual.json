@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.ProjectUICommandsTest#testIsRepositoryEqual",
+  "different_url": false,
+  "same_object": true,
+  "mappings_ignored": true,
+  "keys": [
+    "org.omegat.gui.main.ProjectUICommandsTest#testIsRepositoryEqual"
+  ]
+}

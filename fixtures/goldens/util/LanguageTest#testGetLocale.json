@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.LanguageTest#testGetLocale",
+  "XXX-yy": "xxx_YY",
+  "keys": [
+    "org.omegat.util.LanguageTest#testGetLocale"
+  ]
+}

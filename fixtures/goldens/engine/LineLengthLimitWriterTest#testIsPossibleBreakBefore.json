@@ -1,0 +1,23 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.text.LineLengthLimitWriterTest#testIsPossibleBreakBefore",
+  "text": "Example:Test,Special«A",
+  "cases": [
+    {
+      "pos": 3,
+      "ok": true
+    },
+    {
+      "pos": 7,
+      "ok": false
+    },
+    {
+      "pos": 12,
+      "ok": false
+    },
+    {
+      "pos": 21,
+      "ok": false
+    }
+  ]
+}
