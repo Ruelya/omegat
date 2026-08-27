@@ -252,9 +252,7 @@ describe("app store", () => {
     });
 
     await useApp.getState().open("/first-generation");
-    expect(useApp.getState().teamConflicts).toEqual([
-      { ...persisted, entry_index: 0 },
-    ]);
+    expect(useApp.getState().teamConflicts).toEqual([persisted]);
     await useApp.getState().open("/second-generation");
     expect(useApp.getState().teamConflicts).toEqual([]);
     expect(useApp.getState().props?.root).toBe("/second-generation");

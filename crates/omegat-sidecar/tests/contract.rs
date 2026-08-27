@@ -753,25 +753,31 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     tmx.push_str("</body></tmx>");
     let save_tmx = root.join("omegat/project_save.tmx");
     std::fs::write(&save_tmx, tmx).unwrap();
+    for index in 0..2_000 {
+        std::fs::write(
+            root.join("source").join(format!("{index:04}.txt")),
+            format!("snapshot cancellation source {index}"),
+        )
+        .unwrap();
+    }
     let prep = root.join(".repositories/prep");
     std::fs::create_dir_all(&prep).unwrap();
-    let conflicts: Vec<Value> = std::iter::once(json!({
-        "kind": "tmx",
-        "source": "cancel me",
-        "ours": "ours",
-        "theirs": "theirs",
-        "message": "TMX conflict on cancel me"
-    }))
-    .chain((0..20_000).map(|index| {
+    let conflicts = vec![
         json!({
             "kind": "tmx",
-            "source": format!("filler {index}"),
-            "ours": format!("translation {index}"),
-            "theirs": format!("remote translation {index}"),
-            "message": format!("TMX conflict on filler {index}")
-        })
-    }))
-    .collect();
+            "source": "cancel me",
+            "ours": "ours",
+            "theirs": "theirs",
+            "message": "TMX conflict on cancel me"
+        }),
+        json!({
+            "kind": "glossary",
+            "source": "other conflict",
+            "ours": "other ours",
+            "theirs": "other theirs",
+            "message": "glossary conflict on other conflict"
+        }),
+    ];
     let conflicts_path = prep.join("conflicts.json");
     std::fs::write(
         &conflicts_path,
@@ -787,7 +793,7 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
         2,
         "team.resolve",
         json!({"source": "cancel me", "side": "theirs"}),
-        "team.resolve.writeback",
+        "team.resolve.snapshot",
     );
     assert_eq!(
         cancelled["error"],
