@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import {
   alignmentRows,
+  alignmentSelectionAfterEdit,
   alignTableDrop,
   alignTableKey,
   selectionBounds,
@@ -107,12 +108,20 @@ export function AlignWindow() {
       target_lang: useApp.getState().props?.target_lang ?? "fr",
       ...rowSpan,
       ...extra,
-    })) as { beads?: AlignBead[] };
+    })) as {
+      beads?: AlignBead[];
+      row_count?: number;
+      selection?: { anchor_row: number; focus_row: number } | null;
+    };
     if (r?.beads) {
       setBeads(r.beads);
       const rowCount = alignmentRows(r.beads).length;
-      setSel((current) => Math.min(current, Math.max(0, rowCount - 1)));
-      setAnchor((current) => Math.min(current, Math.max(0, rowCount - 1)));
+      const restored = alignmentSelectionAfterEdit(
+        { anchor, focus: sel },
+        { row_count: r.row_count ?? rowCount, selection: r.selection },
+      );
+      setAnchor(restored.anchor);
+      setSel(restored.focus);
       setMessage("");
     }
   }
@@ -178,6 +187,27 @@ export function AlignWindow() {
           targetSide,
         })
       : { allowed: false };
+  }
+  function tableDragOver(
+    event: React.DragEvent<HTMLTableCellElement>,
+    row: number,
+    targetSide: Exclude<AlignSide, "both">,
+  ) {
+    if (tableDropResult(row, targetSide).allowed) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    }
+  }
+  function dropTableRows(
+    event: React.DragEvent<HTMLTableCellElement>,
+    row: number,
+    targetSide: Exclude<AlignSide, "both">,
+  ) {
+    const drop = tableDropResult(row, targetSide);
+    draggedRows.current = null;
+    if (!drop.allowed || !drop.action || !drop.extra) return;
+    event.preventDefault();
+    void edit(drop.action, drop.extra);
   }
   return (
     <Modal id="align" title={t("aligner")} wide>
@@ -267,6 +297,19 @@ export function AlignWindow() {
             <tr><th>#</th><th>source</th><th>target</th></tr>
           </thead>
           <tbody>
+            <tr className="align-drop-edge" aria-label="alignment top boundary">
+              <td />
+              <td
+                aria-label="move source before first alignment"
+                onDragOver={(event) => tableDragOver(event, -1, "source")}
+                onDrop={(event) => dropTableRows(event, -1, "source")}
+              />
+              <td
+                aria-label="move target before first alignment"
+                onDragOver={(event) => tableDragOver(event, -1, "target")}
+                onDrop={(event) => dropTableRows(event, -1, "target")}
+              />
+            </tr>
             {rows.map((row) => {
               const bead = beads[row.beadIndex];
               const selected =
@@ -307,19 +350,12 @@ export function AlignWindow() {
                     onDragEnd={() => {
                       draggedRows.current = null;
                     }}
-                    onDragOver={(event) => {
-                      if (tableDropResult(row.rowIndex, "source").allowed) {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = "move";
-                      }
-                    }}
-                    onDrop={(event) => {
-                      const drop = tableDropResult(row.rowIndex, "source");
-                      draggedRows.current = null;
-                      if (!drop.allowed || !drop.action || !drop.extra) return;
-                      event.preventDefault();
-                      void edit(drop.action, drop.extra);
-                    }}
+                    onDragOver={(event) =>
+                      tableDragOver(event, row.rowIndex, "source")
+                    }
+                    onDrop={(event) =>
+                      dropTableRows(event, row.rowIndex, "source")
+                    }
                   >
                     {row.source ?? ""}
                   </td>
@@ -332,25 +368,31 @@ export function AlignWindow() {
                     onDragEnd={() => {
                       draggedRows.current = null;
                     }}
-                    onDragOver={(event) => {
-                      if (tableDropResult(row.rowIndex, "target").allowed) {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = "move";
-                      }
-                    }}
-                    onDrop={(event) => {
-                      const drop = tableDropResult(row.rowIndex, "target");
-                      draggedRows.current = null;
-                      if (!drop.allowed || !drop.action || !drop.extra) return;
-                      event.preventDefault();
-                      void edit(drop.action, drop.extra);
-                    }}
+                    onDragOver={(event) =>
+                      tableDragOver(event, row.rowIndex, "target")
+                    }
+                    onDrop={(event) =>
+                      dropTableRows(event, row.rowIndex, "target")
+                    }
                   >
                     {row.target ?? ""}
                   </td>
                 </tr>
               );
             })}
+            <tr className="align-drop-edge" aria-label="alignment bottom boundary">
+              <td />
+              <td
+                aria-label="move source after last alignment"
+                onDragOver={(event) => tableDragOver(event, rows.length, "source")}
+                onDrop={(event) => dropTableRows(event, rows.length, "source")}
+              />
+              <td
+                aria-label="move target after last alignment"
+                onDragOver={(event) => tableDragOver(event, rows.length, "target")}
+                onDrop={(event) => dropTableRows(event, rows.length, "target")}
+              />
+            </tr>
           </tbody>
         </table>
       </div>

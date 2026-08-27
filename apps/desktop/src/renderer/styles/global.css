@@ -163,6 +163,20 @@ input, textarea, select {
 .prop-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; padding: 8px; font-family: var(--mono); font-size: 11px; }
 .stats { width: 100%; border-collapse: collapse; }
 .stats td, .stats th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.align-table { width: 100%; border-collapse: collapse; }
+.align-table td, .align-table th {
+  border-bottom: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: left;
+}
+.align-table tr.sel { background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); }
+.align-table .align-drop-edge td { height: 8px; padding: 0; }
+.align-table .align-drop-edge td:not(:first-child) {
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.align-table .align-drop-edge td:not(:first-child):hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
 .license, .log { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; max-height: 50vh; overflow: auto; }
 .mod-info { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); padding: 4px 10px; }
 .hit.active { background: color-mix(in srgb, var(--accent) 12%, var(--bg-raised)); }

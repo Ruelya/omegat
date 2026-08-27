@@ -690,6 +690,18 @@ pub fn can_move_bead_row_span_to(
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BeadRowSelection {
+    pub anchor_row: usize,
+    pub focus_row: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MoveBeadRowSpanResult {
+    pub beads: Vec<MutableBead>,
+    pub selection: Option<BeadRowSelection>,
+}
+
 /// Move selected source/target cells into the bead at an arbitrary drop row.
 ///
 /// Insertion order follows Java `BeadTableModel.move`: moving upward appends
@@ -701,8 +713,28 @@ pub fn move_bead_row_span_to(
     side: AlignSide,
     target_row: isize,
 ) -> Vec<MutableBead> {
+    move_bead_row_span_to_with_selection(beads, start_row, end_row, side, target_row).beads
+}
+
+/// Move a row span and return the moved cells' new anchor/focus rows.
+///
+/// Java's `moveRows` clears the JTable selection before changing the model,
+/// then restores it from the exact moved `String` instances. Returning the
+/// rows from the product mutation avoids content matching (which is ambiguous
+/// for duplicate lines) and lets non-Swing clients preserve the same lead
+/// direction after a move.
+pub fn move_bead_row_span_to_with_selection(
+    beads: &[MutableBead],
+    start_row: usize,
+    end_row: usize,
+    side: AlignSide,
+    target_row: isize,
+) -> MoveBeadRowSpanResult {
     if !can_move_bead_row_span_to(beads, start_row, end_row, side, target_row) {
-        return beads.to_vec();
+        return MoveBeadRowSpanResult {
+            beads: beads.to_vec(),
+            selection: None,
+        };
     }
     let rows = bead_rows(beads);
     let locations = real_line_rows(beads, start_row, end_row, side);
@@ -731,6 +763,7 @@ pub fn move_bead_row_span_to(
         lines_mut(&mut out[bead], side).remove(line);
     }
     let target = lines_mut(&mut out[target_bead], side);
+    let insertion_start = target.len();
     if moving_up {
         target.extend(values);
     } else {
@@ -744,8 +777,33 @@ pub fn move_bead_row_span_to(
     for bead in touched {
         out[bead].status = BeadStatus::Default;
     }
+    let moved_count = locations.len();
+    let first_line = if moving_up {
+        insertion_start
+    } else {
+        moved_count - 1
+    };
+    let last_line = if moving_up {
+        insertion_start + moved_count - 1
+    } else {
+        0
+    };
+    let target_after_retain = out[..target_bead]
+        .iter()
+        .filter(|bead| !bead.is_empty())
+        .count();
     out.retain(|bead| !bead.is_empty());
-    out
+    let first_row = out[..target_after_retain]
+        .iter()
+        .map(|bead| bead.source_lines.len().max(bead.target_lines.len()))
+        .sum::<usize>();
+    MoveBeadRowSpanResult {
+        beads: out,
+        selection: Some(BeadRowSelection {
+            anchor_row: first_row + first_line,
+            focus_row: first_row + last_line,
+        }),
+    }
 }
 
 pub fn set_bead_status(
@@ -1933,7 +1991,17 @@ mod tests {
             "a nullable visual cell is not transferable"
         );
 
-        let moved = move_bead_row_span_to(&beads, 1, 2, AlignSide::Source, 4);
+        let moved_result =
+            move_bead_row_span_to_with_selection(&beads, 1, 2, AlignSide::Source, 4);
+        assert_eq!(
+            moved_result.selection,
+            Some(BeadRowSelection {
+                anchor_row: 4,
+                focus_row: 3,
+            }),
+            "the JTable lead follows the original first/last line identities"
+        );
+        let moved = moved_result.beads;
         assert_eq!(moved[0].source_lines, vec![Some("a".into())]);
         assert_eq!(moved[0].target_lines, vec![Some("A".into())]);
         assert_eq!(moved[1].source_lines, Vec::<Option<String>>::new());
@@ -1959,18 +2027,55 @@ mod tests {
             can_move_bead_row_span_to(&beads, 2, 2, AlignSide::Target, 0),
             true
         );
-        let upward = move_bead_row_span_to(&beads, 2, 2, AlignSide::Target, 0);
+        let upward_result =
+            move_bead_row_span_to_with_selection(&beads, 2, 2, AlignSide::Target, 0);
+        assert_eq!(
+            upward_result.selection,
+            Some(BeadRowSelection {
+                anchor_row: 1,
+                focus_row: 1,
+            })
+        );
+        let upward = upward_result.beads;
         assert_eq!(
             upward[0].target_lines,
             vec![Some("A".into()), Some("C".into())]
         );
         assert_eq!(upward[1].target_lines, vec![Some("D".into())]);
 
-        let new_top = move_bead_row_span_to(&beads, 0, 0, AlignSide::Source, -1);
+        let new_top_result =
+            move_bead_row_span_to_with_selection(&beads, 0, 0, AlignSide::Source, -1);
+        assert_eq!(
+            new_top_result.selection,
+            Some(BeadRowSelection {
+                anchor_row: 0,
+                focus_row: 0,
+            })
+        );
+        let new_top = new_top_result.beads;
         assert_eq!(new_top[0].source_lines, vec![Some("a".into())]);
         assert_eq!(new_top[0].target_lines, Vec::<Option<String>>::new());
         assert_eq!(new_top[1].source_lines, vec![Some("b".into())]);
         assert_eq!(new_top[1].target_lines, vec![Some("A".into())]);
+
+        let new_bottom = move_bead_row_span_to_with_selection(
+            &beads,
+            4,
+            4,
+            AlignSide::Target,
+            bead_rows(&beads).len() as isize,
+        );
+        assert_eq!(
+            new_bottom.selection,
+            Some(BeadRowSelection {
+                anchor_row: 5,
+                focus_row: 5,
+            })
+        );
+        assert_eq!(
+            new_bottom.beads.last().unwrap().target_lines,
+            vec![Some("E".into())]
+        );
     }
 
     #[test]

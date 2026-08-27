@@ -785,6 +785,7 @@ impl App {
                         .get("end_row")
                         .and_then(Value::as_u64)
                         .unwrap_or(start_row as u64) as usize;
+                    let mut restored_selection = None;
                     let next = match action {
                         "merge" if has_row_span => omegat_core::align::merge_bead_row_span(
                             &beads,
@@ -816,16 +817,22 @@ impl App {
                             (index + 1).min(beads.len().saturating_sub(1)),
                             side,
                         ),
-                        "move-to-row" => omegat_core::align::move_bead_row_span_to(
-                            &beads,
-                            start_row,
-                            end_row,
-                            side,
-                            params
-                                .get("target_row")
-                                .and_then(Value::as_i64)
-                                .unwrap_or(start_row as i64) as isize,
-                        ),
+                        "move-to-row" => {
+                            let result =
+                                omegat_core::align::move_bead_row_span_to_with_selection(
+                                    &beads,
+                                    start_row,
+                                    end_row,
+                                    side,
+                                    params
+                                        .get("target_row")
+                                        .and_then(Value::as_i64)
+                                        .unwrap_or(start_row as i64)
+                                        as isize,
+                                );
+                            restored_selection = result.selection;
+                            result.beads
+                        }
                         "accepted" => omegat_core::align::set_bead_status(
                             &beads,
                             &indexes,
@@ -960,7 +967,8 @@ impl App {
                     return Ok(json!({
                         "pairs": pairs,
                         "beads": response_beads,
-                        "row_count": omegat_core::align::bead_rows(&next).len()
+                        "row_count": omegat_core::align::bead_rows(&next).len(),
+                        "selection": restored_selection
                     }));
                 }
                 let raw = params

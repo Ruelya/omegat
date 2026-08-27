@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   alignmentRows,
+  alignmentSelectionAfterEdit,
   alignTableDrop,
   alignTableKey,
   selectionBounds,
@@ -70,6 +71,21 @@ describe("alignment visual rows", () => {
       },
     ]);
     expect(selectionBounds(3, 1, 4)).toEqual({ start: 1, end: 3 });
+    expect(
+      alignmentSelectionAfterEdit(
+        { anchor: 1, focus: 2 },
+        {
+          row_count: 6,
+          selection: { anchor_row: 4, focus_row: 3 },
+        },
+      ),
+    ).toEqual({ anchor: 4, focus: 3 });
+    expect(
+      alignmentSelectionAfterEdit(
+        { anchor: 8, focus: 7 },
+        { row_count: 3, selection: null },
+      ),
+    ).toEqual({ anchor: 2, focus: 2 });
   });
 
   it("models Swing-style navigation, accelerators, and pinpoint constraints", () => {
@@ -232,5 +248,41 @@ describe("alignment visual rows", () => {
         targetSide: "source",
       }),
     ).toEqual({ allowed: false });
+    expect(
+      alignTableDrop(beads, {
+        startRow: 0,
+        endRow: 0,
+        side: "source",
+        targetRow: -1,
+        targetSide: "source",
+      }),
+    ).toEqual({
+      allowed: true,
+      action: "move-to-row",
+      extra: {
+        start_row: 0,
+        end_row: 0,
+        side: "source",
+        target_row: -1,
+      },
+    });
+    expect(
+      alignTableDrop(beads, {
+        startRow: 4,
+        endRow: 4,
+        side: "target",
+        targetRow: 5,
+        targetSide: "target",
+      }),
+    ).toEqual({
+      allowed: true,
+      action: "move-to-row",
+      extra: {
+        start_row: 4,
+        end_row: 4,
+        side: "target",
+        target_row: 5,
+      },
+    });
   });
 });

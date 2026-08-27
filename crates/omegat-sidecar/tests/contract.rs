@@ -333,6 +333,10 @@ fn alignment_mutable_beads_preserve_review_pinpoint_and_multiline_state() {
         ])
     );
     assert_eq!(dropped["result"]["row_count"], 6);
+    assert_eq!(
+        dropped["result"]["selection"],
+        json!({"anchor_row":4,"focus_row":3})
+    );
 
     let _ = child.kill();
 }

@@ -49,6 +49,35 @@ export function selectionBounds(anchor: number, focus: number, rowCount: number)
   };
 }
 
+export type AlignEditSelection = {
+  anchor_row: number;
+  focus_row: number;
+};
+
+export function alignmentSelectionAfterEdit(
+  current: { anchor: number; focus: number },
+  response: { row_count?: number; selection?: AlignEditSelection | null },
+) {
+  const rowCount = Math.max(0, response.row_count ?? 0);
+  const last = Math.max(0, rowCount - 1);
+  const clamp = (row: number) => Math.max(0, Math.min(row, last));
+  const restored = response.selection;
+  if (
+    restored &&
+    Number.isInteger(restored.anchor_row) &&
+    Number.isInteger(restored.focus_row)
+  ) {
+    return {
+      anchor: clamp(restored.anchor_row),
+      focus: clamp(restored.focus_row),
+    };
+  }
+  return {
+    anchor: clamp(current.anchor),
+    focus: clamp(current.focus),
+  };
+}
+
 export type AlignTableDrop = {
   startRow: number;
   endRow: number;
