@@ -638,11 +638,11 @@ export const useApp = create<AppState>((set, get) => ({
     } catch (error) {
       if (!isAbortError(error)) throw error;
       if (get().props?.root === root) {
-        set({ status: "reload cancelled" });
         await get().select(
           Math.max(0, Math.min(committed.index, committed.entries.length - 1)),
           false,
         );
+        set({ status: "reload cancelled" });
       }
       return;
     }

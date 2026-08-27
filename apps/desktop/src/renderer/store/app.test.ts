@@ -557,6 +557,134 @@ describe("app store", () => {
     expect(rpc.mock.calls.map(([method]) => method)).toEqual(["project.compile"]);
   });
 
+  it("cancels reload, keeps the rolled-back entry, and republishes its visible status", async () => {
+    let rejectReload!: (error: Error) => void;
+    const pendingReload = new Promise((_resolve, reject) => {
+      rejectReload = reject;
+    });
+    const props = {
+      root: "/reload-cancel",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: true,
+      has_repositories: false,
+    };
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "project.save") return { ok: true };
+      if (method === "project.reload") return pendingReload;
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+      ) {
+        return [];
+      }
+      if (method === "entry.list" || method === "stats.get") {
+        throw new Error(`${method} must not publish after cancellation`);
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    cancelRpc.mockImplementationOnce(async () => {
+      const error = new Error("RPC request cancelled");
+      error.name = "AbortError";
+      rejectReload(error);
+      return true;
+    });
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [{ ...sampleEntry, translation: "kept", translated: true }],
+      index: 0,
+      note: "",
+      document3: createDocument3(sampleEntry.source, "kept"),
+      prefs: defaultPreferences({
+        insert_best_match: false,
+        dictionary_auto_search: false,
+      }),
+      completerAuto: false,
+    });
+
+    const reloading = useApp.getState().reloadProject();
+    await vi.waitFor(() => {
+      expect(rpc.mock.calls.some(([method]) => method === "project.reload")).toBe(true);
+    });
+    await expect(useApp.getState().cancelLongOperation()).resolves.toBe(true);
+    await reloading;
+
+    expect({
+      status: useApp.getState().status,
+      entry: useApp.getState().entries[0]?.translation,
+      document: useApp.getState().document3.translation,
+      operation: useApp.getState().longOperation,
+      methods: rpc.mock.calls.map(([method]) => method),
+    }).toEqual({
+      status: "reload cancelled",
+      entry: "kept",
+      document: "kept",
+      operation: {
+        requestId: "operation-reload-1",
+        kind: "reload",
+        method: "project.reload",
+        phase: "cancelled",
+        stage: null,
+        error: null,
+      },
+      methods: [
+        "project.save",
+        "project.reload",
+        "matches.query",
+        "glossary.query",
+        "issues.list",
+      ],
+    });
+  });
+
+  it("treats team cancellation as a terminal UI state, not a conflict", async () => {
+    let rejectSync!: (error: Error) => void;
+    const pendingSync = new Promise((_resolve, reject) => {
+      rejectSync = reject;
+    });
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "team.sync") return pendingSync;
+      if (method === "team.conflicts") {
+        throw new Error("cancelled sync must not query conflicts");
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    cancelRpc.mockImplementationOnce(async () => {
+      const error = new Error("RPC request cancelled");
+      error.name = "AbortError";
+      rejectSync(error);
+      return true;
+    });
+
+    const syncing = useApp.getState().teamSync();
+    await vi.waitFor(() => {
+      expect(rpc.mock.calls.some(([method]) => method === "team.sync")).toBe(true);
+    });
+    await useApp.getState().cancelLongOperation();
+    await syncing;
+
+    expect({
+      teamMessage: useApp.getState().teamMessage,
+      error: useApp.getState().error,
+      operation: useApp.getState().longOperation,
+      methods: rpc.mock.calls.map(([method]) => method),
+    }).toEqual({
+      teamMessage: "sync cancelled",
+      error: null,
+      operation: {
+        requestId: "operation-teamSync-1",
+        kind: "teamSync",
+        method: "team.sync",
+        phase: "cancelled",
+        stage: null,
+        error: null,
+      },
+      methods: ["team.sync"],
+    });
+  });
+
   it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {
     const props = {
       root: "/p",

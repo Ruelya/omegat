@@ -43,10 +43,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **59103** lines; `apps/desktop/src`
-  TS/TSX/CSS **21846** lines (**~51%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **21846**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **9015**
+- Rewrite Rust: `crates/**/*.rs` **59846** lines; `apps/desktop/src`
+  TS/TSX/CSS **22869** lines (**~52%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **22869**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **9164**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -60,7 +60,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **86 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **12 passed** plus
 sidecar watcher unit **2 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 151
+passed**, and desktop **23 files / 157
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -241,7 +241,8 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**720** vs **963**, `EditorController` **1106** vs **2365**; its standalone
+**720** vs **963**, `EditorController` **1076** plus extracted
+`EditorNavigation` **102** vs Java controller **2365**; its standalone
 headless `HeadlessLoadedWindow` is **141** lines, and the mounted renderer's
 independent `RendererPageProjection` is **248** lines. The headless
 product model now shares document mutations across the surface/controller,
@@ -311,6 +312,12 @@ chooses a deterministic next visible entry (or a truly empty view) when a
 reload or rebuilt filter removes the active segment. Exact Zustand and
 controller tests cover commit-before-reload, reordered same-source entries,
 caret clamping, filter retention, and empty-filter recovery.
+Complete `EntryKey` matching, source/default lookup, file lookup, filtered
+cyclic traversal, and reload rebinding now live in the imported
+`EditorNavigation` product module. Both the headless controller and mounted
+Zustand renderer call that module instead of maintaining two navigation
+algorithms; exact tests distinguish alternatives by prev/next/path and verify
+deterministic reload fallback.
 The controller no longer stores visible indices, loaded bounds, page radius,
 marker-key membership, or loaded-page generation itself; those concerns live
 in `HeadlessLoadedWindow`, with exact isolation/paging/generation tests.
@@ -494,6 +501,16 @@ TM export privately before one rollback-capable publish phase; align writes
 through a cancellable sibling stage. Team mapping copies check cancellation per
 file inside the existing transaction, and reload commits only its candidate
 entry set.
+Electron now carries those long operations through an explicit request id and
+progress token. The main-process RPC client emits started/progress/cancelling/
+cancelled/succeeded/failed events, preload forwards them, and Zustand exposes
+the exact operation and stage to the status bar plus cancel controls in the
+main, team, and aligner views. Reload, compile, team sync/commit, and align run
+all use this path. Cancellation rejects the matching request before stale
+success can publish; compile skips its post-operation stats/log, team skips
+conflict/refresh publication, reload reactivates the rolled-back project
+entry, and align keeps the prior bead model. Exact desktop tests cover the
+NDJSON lifecycle, `$/progress` stage, renderer IPC state, and cancel outcome.
 Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
 on Linux without relying on recursive-watch support. They now install and
 remove per-directory watchers as nested directories appear or disappear at
