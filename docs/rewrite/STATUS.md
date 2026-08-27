@@ -44,9 +44,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 - Java `src/main/java`: **779** files / **157825** lines
 - Rewrite Rust: `crates/**/*.rs` **56750** lines; `apps/desktop/src`
-  TS/TSX/CSS **16639** lines (**~46%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **16639**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **7134**
+  TS/TSX/CSS **17711** lines (**~47%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **17711**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **7952**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **20 files / 118
+native plugin RPC/fault isolation **1 passed**, and desktop **20 files / 122
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -224,7 +224,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**571** vs **963**, `EditorController` **831** vs **2365**. The headless
+**720** vs **963**, `EditorController` **1069** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -265,6 +265,14 @@ sidecar. Entering the
 workspace in that E2E also exposed and fixed a React 19 infinite-update defect
 by keeping the Multiple Translations Zustand snapshot stable. This is Linux
 Electron evidence only, not Windows/macOS evidence.
+The same real `linux-unpacked` workflow now enables whitespace, NBSP, BiDi, and
+glossary decorations through the Preferences UI, then inserts one translation
+containing an emoji, NBSP, LRM, glossary hit, and protected tag. Exact
+Chromium DOM assertions keep rendered and UTF-16 model lengths separate,
+including stacked product Marker classes. A native XTEST hover returns the
+strict `<html>NBSP</html>` tooltip, and trusted XTEST
+`pointerdown`/`pointermove`/`pointerup` over the decorated fragments selects
+exactly `gamma`. This remains Linux packaged evidence only.
 Controller navigation now adopts direct `EditorTextArea3` edits, commits an
 active IME composition, synchronizes the old entry, and deactivates its
 `Document3` before opening another segment. New entries start at relative
@@ -275,6 +283,15 @@ relative caret or selection while marker spans are recalculated. The live
 Zustand product path persists a changed draft/note through `entry.set` before
 selection, history, or cyclic navigation; an optimistic-write failure leaves
 the original dirty document active instead of discarding it.
+Project reload now commits and saves the live document before asking the
+sidecar to reload, then rebinds the active segment with the complete
+Java-shaped `EntryKey` after reordering instead of trusting the old numeric
+index. The headless controller preserves and clamps the translation-relative
+caret or selection for that exact key, clears stale history/undo state, and
+chooses a deterministic next visible entry (or a truly empty view) when a
+reload or rebuilt filter removes the active segment. Exact Zustand and
+controller tests cover commit-before-reload, reordered same-source entries,
+caret clamping, filter retention, and empty-filter recovery.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
@@ -296,7 +313,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**20 files / 118 tests**, including exact success and
+**20 files / 122 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -320,6 +337,11 @@ expired callback cannot replace current ranges. `SpellCheckerMarker` calls the
 real sidecar `spell.check` path, maps its UTF-16 token offsets to translation
 spans, and learn/ignore each trigger one spell-only recomputation; exact tests
 discard both an older-document callback and a pre-remark callback.
+Asynchronous providers now run for every active and inactive entry in the
+rendered page. Page-generation checks plus key-based cache retention expire all
+in-flight results when filtering, reloading, editing, or lazy page contraction
+removes an entry; an exact deferred-provider test proves callbacks from both
+inactive page edges cannot repopulate cache or `Document3` spans.
 The append-only cdylib host ABI now accepts executable Marker registrations.
 `markers.list` discovers them through the sidecar and `markers.query` sends
 the complete EntryKey plus editor context into the native callback. The
