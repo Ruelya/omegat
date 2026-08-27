@@ -100,6 +100,7 @@ impl<'a> Visitor<'a> {
         kind: VisitorKind,
         options: &'a HtmlOptions,
         ctx: &'a FilterContext,
+        encoding: &str,
         process: Box<dyn FnMut(&str, Option<&str>) -> String + 'a>,
     ) -> Self {
         let skip_re = if options.skip_regexp.trim().is_empty() {
@@ -111,7 +112,7 @@ impl<'a> Visitor<'a> {
             kind,
             options,
             ctx,
-            encoding: "UTF-8".into(),
+            encoding: encoding.into(),
             skip_re,
             process,
             sources: Vec::new(),
@@ -665,6 +666,16 @@ pub fn process_html(
     kind: VisitorKind,
     translations: Option<&HashMap<String, String>>,
 ) -> HtmlOutcome {
+    process_html_with_encoding(raw, ctx, kind, translations, "UTF-8")
+}
+
+pub(super) fn process_html_with_encoding(
+    raw: &str,
+    ctx: &FilterContext,
+    kind: VisitorKind,
+    translations: Option<&HashMap<String, String>>,
+    encoding: &str,
+) -> HtmlOutcome {
     let options = HtmlOptions::from_ctx(ctx);
     let lookup = translations.cloned().unwrap_or_default();
     let process = Box::new(move |entry: &str, _comment: Option<&str>| {
@@ -673,7 +684,7 @@ pub fn process_html(
             .cloned()
             .unwrap_or_else(|| entry.to_string())
     });
-    let mut v = Visitor::new(kind, &options, ctx, process);
+    let mut v = Visitor::new(kind, &options, ctx, encoding, process);
     let collapse = kind == VisitorKind::Html;
     let ignore_tag_pairs = options.ignore_tag_pairs();
     let nodes = tokenize_with_protected(raw, collapse, |node| {
@@ -795,6 +806,38 @@ mod tests {
         let outcome = process_html(raw, &ctx, VisitorKind::Html, None);
         assert_eq!(sources(&outcome), vec!["Hello"]);
         assert_eq!(outcome.written, raw);
+    }
+
+    #[test]
+    fn ignored_optional_element_ends_at_htmlparser_implicit_close() {
+        let raw = r#"<p class="notrans">secret<p>Shown</p>"#;
+        let mut ctx = FilterContext::default();
+        ctx.options
+            .insert("ignoreTags".into(), "class=notrans".into());
+        let translations = HashMap::from([("Shown".to_string(), "Visible".to_string())]);
+        let outcome = process_html(raw, &ctx, VisitorKind::Html, Some(&translations));
+        assert_eq!(sources(&outcome), vec!["Shown"]);
+        assert_eq!(
+            outcome.written,
+            r#"<p class="notrans">secret<p>Visible</p>"#
+        );
+    }
+
+    #[test]
+    fn script_text_with_opening_tag_literal_does_not_hide_following_segments() {
+        let raw = r#"<script>const fake = "<script>";</script><p>Shown</p>"#;
+        let translations = HashMap::from([("Shown".to_string(), "Visible".to_string())]);
+        let outcome = process_html(
+            raw,
+            &FilterContext::default(),
+            VisitorKind::Html,
+            Some(&translations),
+        );
+        assert_eq!(sources(&outcome), vec!["Shown"]);
+        assert_eq!(
+            outcome.written,
+            r#"<script>const fake = "<script>";</script><p>Visible</p>"#
+        );
     }
 
     #[test]

@@ -106,7 +106,7 @@ symlink-safe deletion replaced the last three API-name-only fixtures.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
 isSpaces / break-before / outLine / no-break word. FilterMaster /
 PluginUtils / Latex unit goldens exist (plugin ABI replacement, not JAR
-loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **824**.
+loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **867**.
 The Rust tokenizer now collapses arbitrary paired elements matched by
 `ignoreTags` (including nested same-name elements), so protected subtree text
 is neither extracted nor rewritten; exact identity and translated write-back
@@ -114,7 +114,11 @@ tests cover that traversal boundary. EOF-terminated comments, unclosed
 script/style/ignoreTags elements, quoted tag delimiters, DOCTYPE internal
 subsets, and UTF-16 LE/BE BOM inputs now have explicit product-path boundary
 tests; incomplete protected subtrees stay intact after decoding instead of
-leaking child text as segments.
+leaking child text as segments. HTML write-back retains detected UTF-8,
+UTF-16 LE/BE (including BOM), and declared legacy encodings instead of always
+emitting UTF-8. Raw script/style closing and optional P/LI/DT/DD/table/option
+implicit boundaries follow HTMLParser-style closure without swallowing later
+segments.
 
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported.
@@ -148,7 +152,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**445** vs **963**, `EditorController` **467** vs **2365**. The headless
+**521** vs **963**, `EditorController` **509** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -158,7 +162,11 @@ click/keyboard activation uses store navigation. Directional selection,
 cut/copy/paste clamping, token deletion, Shift+Enter, tag double-click, focus
 transitions, atomic caret motion, and hidden-textarea IME events call
 `EditorTextArea3` rather than duplicating mutations in JSX. IME updates remain
-one replaceable composition with commit/cancel; MarkerController caches
+one replaceable composition with commit/cancel. Variable-height prepends retain
+a stable segment/viewport scroll anchor; Chromium caret range hit-testing maps
+mouse pixels to UTF-16 offsets, and native `beforeinput` operations replace
+printable-key synthesis while still flowing through `Document3`.
+MarkerController caches
 per-entry generations, maps translation/source marks into `Document3` spans,
 and invalidates those spans after edits.
 `FontFallbackMarker` uses canvas

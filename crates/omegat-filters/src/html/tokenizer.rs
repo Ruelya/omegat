@@ -233,7 +233,12 @@ pub fn tokenize_with_protected(
                 };
                 if collapse {
                     let name = node.tag_name().to_string();
-                    if let Some(close) = find_matching_end_tag(input, end, &name) {
+                    let close = if matches!(name.as_str(), "SCRIPT" | "STYLE") {
+                        find_raw_text_end_tag(input, end, &name)
+                    } else {
+                        find_matching_end_tag(input, end, &name)
+                    };
+                    if let Some(close) = close {
                         if let Node::Tag { protected_html, .. } = &mut node {
                             *protected_html = Some(input[i..close].to_string());
                         }
@@ -448,8 +453,13 @@ fn find_matching_end_tag(input: &str, from: usize, name: &str) -> Option<usize> 
                         return Some(end);
                     }
                 } else if !node.is_empty_xml() {
+                    if depth == 1 && implicitly_closes(name, &node) {
+                        return Some(at);
+                    }
                     depth += 1;
                 }
+            } else if depth == 1 && implicitly_closes(name, &node) {
+                return Some(at);
             }
             cursor = end;
         } else {
@@ -457,6 +467,108 @@ fn find_matching_end_tag(input: &str, from: usize, name: &str) -> Option<usize> 
         }
     }
     None
+}
+
+fn find_raw_text_end_tag(input: &str, from: usize, name: &str) -> Option<usize> {
+    let mut cursor = from;
+    while cursor < input.len() {
+        let rel = input[cursor..].find('<')?;
+        let at = cursor + rel;
+        if let Some((node, end)) = parse_tag(input, at) {
+            if node.is_end_tag() && node.tag_name().eq_ignore_ascii_case(name) {
+                return Some(end);
+            }
+            cursor = end;
+        } else {
+            cursor = at + 1;
+        }
+    }
+    None
+}
+
+fn implicitly_closes(open: &str, candidate: &Node) -> bool {
+    let name = candidate.tag_name();
+    if candidate.is_end_tag() {
+        return match open {
+            "P" => matches!(
+                name,
+                "ADDRESS"
+                    | "ARTICLE"
+                    | "ASIDE"
+                    | "BLOCKQUOTE"
+                    | "BODY"
+                    | "DIV"
+                    | "DL"
+                    | "FIELDSET"
+                    | "FOOTER"
+                    | "FORM"
+                    | "H1"
+                    | "H2"
+                    | "H3"
+                    | "H4"
+                    | "H5"
+                    | "H6"
+                    | "HEADER"
+                    | "HTML"
+                    | "MAIN"
+                    | "NAV"
+                    | "OL"
+                    | "PRE"
+                    | "SECTION"
+                    | "TABLE"
+                    | "UL"
+            ),
+            "LI" => matches!(name, "OL" | "UL" | "MENU"),
+            "DT" | "DD" => name == "DL",
+            "RT" | "RP" => name == "RUBY",
+            "OPTION" => matches!(name, "SELECT" | "DATALIST" | "OPTGROUP"),
+            "OPTGROUP" => name == "SELECT",
+            "THEAD" | "TBODY" | "TFOOT" => name == "TABLE",
+            "TR" => matches!(name, "TABLE" | "THEAD" | "TBODY" | "TFOOT"),
+            "TD" | "TH" => matches!(name, "TR" | "TABLE" | "THEAD" | "TBODY" | "TFOOT"),
+            _ => false,
+        };
+    }
+    match open {
+        "P" => matches!(
+            name,
+            "ADDRESS"
+                | "ARTICLE"
+                | "ASIDE"
+                | "BLOCKQUOTE"
+                | "DIV"
+                | "DL"
+                | "FIELDSET"
+                | "FOOTER"
+                | "FORM"
+                | "H1"
+                | "H2"
+                | "H3"
+                | "H4"
+                | "H5"
+                | "H6"
+                | "HEADER"
+                | "HR"
+                | "MAIN"
+                | "NAV"
+                | "OL"
+                | "P"
+                | "PRE"
+                | "SECTION"
+                | "TABLE"
+                | "UL"
+        ),
+        "LI" => name == "LI",
+        "DT" | "DD" => matches!(name, "DT" | "DD"),
+        "RT" | "RP" => matches!(name, "RT" | "RP"),
+        "OPTION" => matches!(name, "OPTION" | "OPTGROUP"),
+        "OPTGROUP" => name == "OPTGROUP",
+        "THEAD" => matches!(name, "TBODY" | "TFOOT"),
+        "TBODY" => matches!(name, "TBODY" | "TFOOT"),
+        "TR" => name == "TR",
+        "TD" | "TH" => matches!(name, "TD" | "TH"),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -492,6 +604,47 @@ mod tests {
             tokenize_with_protected(raw, true, |node| node.attr("data-i18n") == Some("off"));
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].to_html(), raw);
+    }
+
+    #[test]
+    fn raw_text_closes_at_the_first_matching_end_tag() {
+        let raw = r#"<script>const fake = "<script>";</script><p>shown</p>"#;
+        let nodes = tokenize(raw, true);
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(
+            nodes[0].to_html(),
+            r#"<script>const fake = "<script>";</script>"#
+        );
+        assert_eq!(nodes[2].to_html(), "shown");
+    }
+
+    #[test]
+    fn optional_end_tag_stops_dynamic_protection_at_implicit_close() {
+        let raw = r#"<p class="notrans">hidden<p>shown</p>"#;
+        let nodes =
+            tokenize_with_protected(raw, true, |node| node.attr("class") == Some("notrans"));
+        assert_eq!(nodes.len(), 4);
+        assert_eq!(nodes[0].to_html(), r#"<p class="notrans">hidden"#);
+        assert_eq!(nodes[1].to_html(), "<p>");
+        assert_eq!(nodes[2].to_html(), "shown");
+        assert_eq!(nodes[3].to_html(), "</p>");
+    }
+
+    #[test]
+    fn optional_list_item_stops_at_parent_or_next_item() {
+        let raw = r#"<ul><li class="notrans">one<li>two</ul>"#;
+        let nodes =
+            tokenize_with_protected(raw, true, |node| node.attr("class") == Some("notrans"));
+        assert_eq!(
+            nodes.iter().map(Node::to_html).collect::<Vec<_>>(),
+            vec![
+                "<ul>",
+                r#"<li class="notrans">one"#,
+                "<li>",
+                "two",
+                "</ul>",
+            ]
+        );
     }
 
     #[test]

@@ -8,9 +8,96 @@ mod tokenizer;
 pub use filter_visitor::{process_html, VisitorKind};
 pub use html_writer::entities_to_chars;
 
-use crate::{ensure_parent, read_to_string, Filter, FilterContext, ParsedFile, Result};
+use crate::{ensure_parent, Filter, FilterContext, ParsedFile, Result};
+use encoding_rs::Encoding;
+use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
+
+const UTF8_BOM: &[u8] = &[0xef, 0xbb, 0xbf];
+const UTF16LE_BOM: &[u8] = &[0xff, 0xfe];
+const UTF16BE_BOM: &[u8] = &[0xfe, 0xff];
+
+struct DecodedHtml {
+    text: String,
+    encoding: &'static Encoding,
+    bom: &'static [u8],
+}
+
+fn declared_html_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
+    // Encoding declarations are ASCII-compatible. Mirroring Java's sniffer,
+    // only inspect the beginning of the document and prefer the XML header.
+    let prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]);
+    static XML_ENCODING: OnceLock<Regex> = OnceLock::new();
+    let xml = XML_ENCODING.get_or_init(|| {
+        Regex::new(r#"(?i)<\?xml[^>]*\bencoding\s*=\s*["']?\s*([^"'\s?>]+)"#).unwrap()
+    });
+    static META_ENCODING: OnceLock<Regex> = OnceLock::new();
+    let meta = META_ENCODING.get_or_init(|| {
+        Regex::new(r#"(?i)<meta\b[^>]*\bcharset\s*=\s*["']?\s*([^"'\s/>;]+)"#).unwrap()
+    });
+    [xml, meta].into_iter().find_map(|pattern| {
+        let label = pattern.captures(&prefix)?.get(1)?.as_str();
+        Encoding::for_label(label.as_bytes())
+    })
+}
+
+fn decode_html_bytes(bytes: &[u8]) -> DecodedHtml {
+    let (encoding, bom, payload) = if bytes.starts_with(UTF8_BOM) {
+        (encoding_rs::UTF_8, UTF8_BOM, &bytes[UTF8_BOM.len()..])
+    } else if bytes.starts_with(UTF16LE_BOM) {
+        (
+            encoding_rs::UTF_16LE,
+            UTF16LE_BOM,
+            &bytes[UTF16LE_BOM.len()..],
+        )
+    } else if bytes.starts_with(UTF16BE_BOM) {
+        (
+            encoding_rs::UTF_16BE,
+            UTF16BE_BOM,
+            &bytes[UTF16BE_BOM.len()..],
+        )
+    } else {
+        let encoding = declared_html_encoding(bytes).unwrap_or_else(|| {
+            if std::str::from_utf8(bytes).is_ok() {
+                encoding_rs::UTF_8
+            } else {
+                encoding_rs::WINDOWS_1252
+            }
+        });
+        (encoding, &[][..], bytes)
+    };
+    let (text, _, _) = encoding.decode(payload);
+    DecodedHtml {
+        text: text.into_owned(),
+        encoding,
+        bom,
+    }
+}
+
+fn read_html(path: &Path) -> Result<DecodedHtml> {
+    Ok(decode_html_bytes(&std::fs::read(path)?))
+}
+
+fn encode_html(text: &str, source: &DecodedHtml) -> Vec<u8> {
+    let body = if source.encoding == encoding_rs::UTF_16LE {
+        text.encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>()
+    } else if source.encoding == encoding_rs::UTF_16BE {
+        text.encode_utf16()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<_>>()
+    } else {
+        let (bytes, _, _) = source.encoding.encode(text);
+        bytes.into_owned()
+    };
+    let mut encoded = Vec::with_capacity(source.bom.len() + body.len());
+    encoded.extend_from_slice(source.bom);
+    encoded.extend_from_slice(&body);
+    encoded
+}
 
 pub struct HtmlFilter;
 
@@ -25,7 +112,15 @@ impl Filter for HtmlFilter {
         &["*.html", "*.htm", "*.xhtml", "*.xht"]
     }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
-        Ok(process_html(&read_to_string(path)?, ctx, VisitorKind::Html, None).parsed)
+        let source = read_html(path)?;
+        Ok(filter_visitor::process_html_with_encoding(
+            &source.text,
+            ctx,
+            VisitorKind::Html,
+            None,
+            source.encoding.name(),
+        )
+        .parsed)
     }
     fn write(
         &self,
@@ -34,15 +129,17 @@ impl Filter for HtmlFilter {
         translations: &HashMap<String, String>,
         ctx: &FilterContext,
     ) -> Result<()> {
-        let out = process_html(
-            &read_to_string(source_path)?,
+        let source = read_html(source_path)?;
+        let out = filter_visitor::process_html_with_encoding(
+            &source.text,
             ctx,
             VisitorKind::Html,
             Some(translations),
+            source.encoding.name(),
         )
         .written;
         ensure_parent(dest_path)?;
-        std::fs::write(dest_path, out)?;
+        std::fs::write(dest_path, encode_html(&out, &source))?;
         Ok(())
     }
 }
@@ -87,5 +184,83 @@ mod tests {
                 .collect();
             assert_eq!(sources, vec!["Zażółć 😀"], "{name}");
         }
+    }
+
+    #[test]
+    fn html_filter_writes_utf16_in_the_original_encoding_with_bom() {
+        let dir = tempdir().unwrap();
+        let mut ctx = FilterContext::default();
+        ctx.options
+            .insert("rewriteEncoding".into(), "NEVER".into());
+        for (name, little_endian, encoding) in [
+            ("little.html", true, "UTF-16LE"),
+            ("big.html", false, "UTF-16BE"),
+        ] {
+            let source = dir.path().join(name);
+            let target = dir.path().join(format!("out-{name}"));
+            let html = format!(
+                r#"<html><head><meta charset="{encoding}"></head><body><p>Hello 😀</p></body></html>"#
+            );
+            std::fs::write(&source, utf16_bytes(&html, little_endian)).unwrap();
+            HtmlFilter
+                .write(
+                    &source,
+                    &target,
+                    &HashMap::from([("Hello 😀".into(), "Bonjour 🦀".into())]),
+                    &ctx,
+                )
+                .unwrap();
+
+            let bytes = std::fs::read(&target).unwrap();
+            assert_eq!(
+                bytes.starts_with(if little_endian {
+                    UTF16LE_BOM
+                } else {
+                    UTF16BE_BOM
+                }),
+                true,
+                "{name}"
+            );
+            let decoded = decode_html_bytes(&bytes);
+            assert_eq!(decoded.encoding.name(), encoding, "{name}");
+            assert_eq!(
+                decoded.text,
+                format!(
+                    r#"<html><head><meta charset="{encoding}"></head><body><p>Bonjour 🦀</p></body></html>"#
+                ),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn html_filter_writes_declared_legacy_encoding_without_utf8_conversion() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("legacy.html");
+        let target = dir.path().join("legacy-out.html");
+        let html = r#"<html><head><meta charset="windows-1252"></head><body><p>café</p></body></html>"#;
+        let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode(html);
+        std::fs::write(&source, bytes.as_ref()).unwrap();
+        let mut ctx = FilterContext::default();
+        ctx.options
+            .insert("rewriteEncoding".into(), "NEVER".into());
+
+        HtmlFilter
+            .write(
+                &source,
+                &target,
+                &HashMap::from([("café".into(), "été".into())]),
+                &ctx,
+            )
+            .unwrap();
+
+        let bytes = std::fs::read(&target).unwrap();
+        assert_eq!(std::str::from_utf8(&bytes).is_err(), true);
+        let decoded = decode_html_bytes(&bytes);
+        assert_eq!(decoded.encoding.name(), "windows-1252");
+        assert_eq!(
+            decoded.text,
+            r#"<html><head><meta charset="windows-1252"></head><body><p>été</p></body></html>"#
+        );
     }
 }
