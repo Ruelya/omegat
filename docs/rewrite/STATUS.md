@@ -44,9 +44,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 - Java `src/main/java`: **779** files / **157825** lines
 - Rewrite Rust: `crates/**/*.rs` **54145** lines; `apps/desktop/src`
-  TS/TSX/CSS **13875** lines (**~43%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **13875**
-- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5102**
+  TS/TSX/CSS **14009** lines (**~43%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **14009**
+- Java `gui/editor`: **63** files / **14288** lines vs TS editor **5236**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
   API-less product-class fixtures)
@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 91
+**4 passed**, sidecar contract **3 passed**, and desktop **18 files / 92
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
@@ -217,7 +217,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**534** vs **963**, `EditorController` **509** vs **2365**. The headless
+**571** vs **963**, `EditorController` **509** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -236,13 +236,17 @@ composition events instead of relying on React's synthetic `onBeforeInput`.
 Repeated native `compositionstart` events retain one replaceable
 `EditorTextArea3` composition session, and both `insertFromComposition` and
 Chromium's final `insertText` commit route through `Document3`. A real Linux
-`linux-unpacked` E2E uses XTEST clicks/Shift-clicks to select exactly `alpha`,
-then Chromium `Input.imeSetComposition` updates replace that selection and
-XTEST Tab commits a second active composition on real focus loss. After
-refocusing with a real click, XTEST Escape cancels `取消中` and restores the
-exact pre-composition text; a late native `compositionend` is discarded
-instead of reinserting cancelled text. Enter then persists the exact
-`日本語失焦 😀 beta` translation through the NDJSON sidecar. Entering the
+`linux-unpacked` E2E now uses XTEST `mousedown`/mouse motion/`mouseup` to
+select exactly `alpha`; Chromium reports the exact trusted
+`pointerdown`/`pointermove`/`pointerup` mouse sequence, and renderer pointer
+capture maps both pixel hits through `EditorTextArea3`'s directional selection
+over the active `Document3`. Chromium `Input.imeSetComposition` updates then
+replace that selection and XTEST Tab commits a second active composition on
+real focus loss. After refocusing with a real click, XTEST Escape cancels
+`取消中` and restores the exact pre-composition text; a late native
+`compositionend` is discarded instead of reinserting cancelled text. Enter
+then persists the exact `日本語失焦 😀 beta` translation through the NDJSON
+sidecar. Entering the
 workspace in that E2E also exposed and fixed a React 19 infinite-update defect
 by keeping the Multiple Translations Zustand snapshot stable. This is Linux
 Electron evidence only, not Windows/macOS evidence.
