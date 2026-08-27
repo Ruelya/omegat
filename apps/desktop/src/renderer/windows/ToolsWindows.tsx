@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { t } from "../i18n";
 import {
   alignmentRows,
+  alignTableKey,
   selectionBounds,
   type AlignBead,
+  type AlignPinpoint,
+  type AlignSide,
 } from "../lib/align-rows";
 import {
   repositoriesFromEditorRows,
@@ -22,13 +25,14 @@ export function AlignWindow() {
   const [algo, setAlgo] = useState("viterbi");
   const [counter, setCounter] = useState("word");
   const [calculator, setCalculator] = useState("normal");
-  const [side, setSide] = useState("both");
+  const [side, setSide] = useState<AlignSide>("both");
   const [beads, setBeads] = useState<AlignBead[]>([]);
   const [sel, setSel] = useState(0);
   const [anchor, setAnchor] = useState(0);
-  const [pinpoint, setPinpoint] = useState<{ row: number; side: string } | null>(null);
+  const [pinpoint, setPinpoint] = useState<AlignPinpoint | null>(null);
   const [spanText, setSpanText] = useState("");
   const [message, setMessage] = useState("");
+  const spanEditor = useRef<HTMLTextAreaElement>(null);
   const rows = useMemo(() => alignmentRows(beads), [beads]);
   const selectedRows = selectionBounds(anchor, sel, rows.length);
   useEffect(() => {
@@ -115,6 +119,26 @@ export function AlignWindow() {
     })) as { count?: number };
     setMessage(`${r?.count ?? beads.filter((bead) => bead.enabled).length} → ${dest}`);
   }
+  function tableKeyDown(event: React.KeyboardEvent<HTMLTableElement>) {
+    const result = alignTableKey(
+      {
+        row: sel,
+        anchor,
+        rowCount: rows.length,
+        side,
+        pinpoint,
+      },
+      event,
+    );
+    if (!result.handled) return;
+    event.preventDefault();
+    setSel(result.row);
+    setAnchor(result.anchor);
+    setSide(result.side);
+    setPinpoint(result.pinpoint);
+    if (result.focusEditor) spanEditor.current?.focus();
+    if (result.action) void edit(result.action, result.extra);
+  }
   return (
     <Modal id="align" title={t("aligner")} wide>
       <div className="form">
@@ -138,12 +162,17 @@ export function AlignWindow() {
           <option value="normal">Normal</option>
           <option value="poisson">Poisson</option>
         </select>
-        <select value={side} onChange={(e) => setSide(e.target.value)} aria-label="alignment side">
+        <select
+          value={side}
+          onChange={(e) => setSide(e.target.value as AlignSide)}
+          aria-label="alignment side"
+        >
           <option value="both">source + target</option>
           <option value="source">source</option>
           <option value="target">target</option>
         </select>
         <textarea
+          ref={spanEditor}
           aria-label="selected alignment lines"
           disabled={side === "both" || rows.length === 0}
           value={spanText}
@@ -169,9 +198,10 @@ export function AlignWindow() {
             type="button"
             disabled={side === "both"}
             onClick={() => {
+              if (side === "both") return;
               if (!pinpoint) {
                 setPinpoint({ row: sel, side });
-              } else {
+              } else if (pinpoint.row !== sel && pinpoint.side !== side) {
                 void edit("pinpoint", {
                   start_row: pinpoint.row,
                   end_row: sel,
@@ -187,7 +217,12 @@ export function AlignWindow() {
           <button type="button" disabled={!dest || !beads.length} onClick={() => void write()}>{t("save")}</button>
         </div>
         {message && <div className="meta">{message}</div>}
-        <table className="align-table">
+        <table
+          className="align-table"
+          aria-label="manual alignment table"
+          tabIndex={0}
+          onKeyDown={tableKeyDown}
+        >
           <thead>
             <tr><th>#</th><th>source</th><th>target</th></tr>
           </thead>

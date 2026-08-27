@@ -633,6 +633,21 @@ pub fn set_beads_enabled(
     out
 }
 
+/// Toggle every selected bead once, preserving mixed selections just like
+/// Java `BeadTableModel.toggleBeadsAtRows`.
+pub fn toggle_beads_enabled(beads: &[MutableBead], indexes: &[usize]) -> Vec<MutableBead> {
+    let mut out = beads.to_vec();
+    let mut unique = indexes.to_vec();
+    unique.sort_unstable();
+    unique.dedup();
+    for index in unique {
+        if let Some(bead) = out.get_mut(index) {
+            bead.enabled = !bead.enabled;
+        }
+    }
+    out
+}
+
 pub fn pinpoint_align(
     beads: &[MutableBead],
     first: (usize, AlignSide),
@@ -1589,6 +1604,12 @@ mod tests {
         ];
         let reviewed = set_bead_status(&beads, &[1], BeadStatus::NeedsReview);
         assert_eq!(reviewed[1].status, BeadStatus::NeedsReview);
+        let mixed = set_beads_enabled(&reviewed, Some(&[1]), false);
+        let toggled = toggle_beads_enabled(&mixed, &[0, 1, 1]);
+        assert_eq!(
+            toggled.iter().map(|bead| bead.enabled).collect::<Vec<_>>(),
+            vec![false, true, true]
+        );
         let split = split_bead_line(
             &reviewed,
             1,

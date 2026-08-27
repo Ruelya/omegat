@@ -841,6 +841,7 @@ impl App {
                                 .and_then(Value::as_bool)
                                 .unwrap_or(true),
                         ),
+                        "toggle-keep" => omegat_core::align::toggle_beads_enabled(&beads, &indexes),
                         "split" => {
                             let line_index = params
                                 .get("line_index")
