@@ -356,6 +356,7 @@ try {
   let edgeScreenY = Math.round(contentTop + initial.edgeY);
   await client.evaluate(`(() => {
     window.__omegatE2ePointer = null;
+    window.__omegatE2eDragEvents = [];
     document.addEventListener("pointermove", (event) => {
       window.__omegatE2ePointer = {
         clientX: event.clientX,
@@ -363,6 +364,17 @@ try {
         target: event.target?.id ?? null,
       };
     });
+    for (const type of ["pointerdown", "mousedown", "dragstart", "dragover"]) {
+      document.addEventListener(type, (event) => {
+        window.__omegatE2eDragEvents.push({
+          type,
+          target: event.target?.id ?? null,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          buttons: event.buttons,
+        });
+      });
+    }
   })()`);
   await xdotool(xvfb.display, [
     "mousemove",
@@ -394,16 +406,24 @@ try {
   await xdotool(xvfb.display, [
     "mousedown",
     "1",
-    "sleep",
-    "0.15",
+  ]);
+  await sleep(150);
+  await xdotool(xvfb.display, [
     "mousemove_relative",
     "--sync",
-    "12",
-    "6",
-    "sleep",
-    "0.15",
+    "24",
+    "8",
+  ]);
+  await sleep(500);
+  const dragStartEvents = await client.evaluate("window.__omegatE2eDragEvents");
+  assert(
+    dragStartEvents.some((event) => event.type === "dragstart"),
+    `XTEST did not initiate a native drag: ${JSON.stringify(dragStartEvents)}`,
+  );
+  await xdotool(xvfb.display, [
     "mousemove",
-    "--sync",
+    "--duration",
+    "250",
     String(edgeScreenX),
     String(edgeScreenY),
   ]);
