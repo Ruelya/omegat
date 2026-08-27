@@ -291,11 +291,12 @@ export function SegmentEditor() {
 
   function finishComposition(ev: CompositionEvent<HTMLDivElement>) {
     const area = interaction.current;
+    const hadNativeComposition = composing.current;
     if (area.isComposing()) {
       area.commitComposition(ev.data);
       const next = area.getOmDocument();
       applyDoc(next, area);
-    } else if (ev.data) {
+    } else if (!hadNativeComposition && ev.data) {
       insertAt(ev.data);
     }
     composing.current = false;
@@ -305,7 +306,9 @@ export function SegmentEditor() {
     const native = ev.nativeEvent as InputEvent;
     const isCompositionInput =
       native.inputType === "insertCompositionText"
-      || native.inputType === "deleteCompositionText";
+      || native.inputType === "deleteCompositionText"
+      || native.inputType === "insertFromComposition"
+      || (native.inputType === "insertText" && composing.current);
     const area = isCompositionInput ? interaction.current : prepareInteraction();
     if (!area.handleBeforeInput(native.inputType, native.data)) return;
     ev.preventDefault();

@@ -191,6 +191,12 @@ export class EditorTextArea3 {
   handleBeforeInput(inputType: string, data: string | null = null): boolean {
     switch (inputType) {
       case "insertText":
+        if (this.composition) {
+          this.commitComposition(data ?? undefined);
+        } else if (data !== null) {
+          this.insertText(data);
+        }
+        return true;
       case "insertReplacementText":
       case "insertFromDrop":
       case "insertFromPaste":
@@ -228,6 +234,13 @@ export class EditorTextArea3 {
         return true;
       case "deleteCompositionText":
         if (this.composition) this.updateComposition("");
+        return true;
+      case "insertFromComposition":
+        if (this.composition) {
+          this.commitComposition(data ?? undefined);
+        } else if (data !== null) {
+          this.insertText(data);
+        }
         return true;
       default:
         return false;

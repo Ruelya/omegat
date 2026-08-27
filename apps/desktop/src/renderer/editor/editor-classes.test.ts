@@ -166,6 +166,20 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(area.getText()).toBe("X<x0/>bあい");
     expect(area.cancelComposition()).toBe(true);
     expect(area.getText()).toBe("a<x0/>bあい");
+
+    area.setCaretPosition(area.getOmDocument().translationEnd);
+    expect(area.beginComposition()).toBe(true);
+    expect(area.handleBeforeInput("insertCompositionText", "日")).toBe(true);
+    expect(area.handleBeforeInput("insertFromComposition", "日本語")).toBe(true);
+    expect(area.getText()).toBe("a<x0/>bあい日本語");
+    expect(area.isComposing()).toBe(false);
+    expect(area.getOmDocument().textBeingComposed).toBe(false);
+
+    expect(area.beginComposition()).toBe(true);
+    expect(area.handleBeforeInput("insertCompositionText", "한")).toBe(true);
+    expect(area.handleBeforeInput("insertText", "한국어")).toBe(true);
+    expect(area.getText()).toBe("a<x0/>bあい日本語한국어");
+    expect(area.isComposing()).toBe(false);
   });
 
   it("EditorTextArea3 models directional selection, clipboard, token and focus events", () => {
