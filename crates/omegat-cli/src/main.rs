@@ -183,7 +183,11 @@ fn main() -> Result<()> {
     if cli.no_team {
         std::env::set_var("OMEGAT_NO_TEAM", "1");
     }
-    if let Some(dir) = &cli.config_dir.filter(|dir| !dir.as_os_str().is_empty()) {
+    if let Some(dir) = cli
+        .config_dir
+        .as_ref()
+        .filter(|dir| !dir.as_os_str().is_empty())
+    {
         std::env::set_var("OMEGAT_CONFIG_DIR", dir);
     }
     if let Some(f) = &cli.config_file {
