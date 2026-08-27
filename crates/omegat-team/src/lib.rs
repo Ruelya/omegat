@@ -392,11 +392,12 @@ mod tests {
         .unwrap();
         let (stage_tx, stage_rx) = std::sync::mpsc::sync_channel(0);
         let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        let resume_rx = std::sync::Mutex::new(resume_rx);
         let cancellation = omegat_core::cancellation::CancellationToken::with_checkpoint_observer(
             move |stage| {
                 if stage == "team.resolve.writeback" {
                     stage_tx.send(()).unwrap();
-                    resume_rx.recv().unwrap();
+                    resume_rx.lock().unwrap().recv().unwrap();
                 }
             },
         );
