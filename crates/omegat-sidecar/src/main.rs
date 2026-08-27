@@ -1233,6 +1233,24 @@ fn request_key(id: &Value) -> String {
     serde_json::to_string(id).unwrap_or_else(|_| "null".into())
 }
 
+fn writes_watched_project_input(method: &str) -> bool {
+    matches!(
+        method,
+        "project.save"
+            | "project.close"
+            | "project.update"
+            | "project.import"
+            | "team.mapping"
+            | "team.sync"
+            | "team.commit"
+            | "team.resolve"
+            | "glossary.add"
+            | "spell.ignore"
+            | "spell.learn"
+            | "wiki.import"
+    )
+}
+
 fn plugin_marker_worker_main(
     library_path: &std::path::Path,
     marker_id: &str,
@@ -1328,7 +1346,18 @@ fn main() {
         let watch_commands = watch_commands.clone();
         workers.push(thread::spawn(move || {
             let project_lifecycle_method = req.method.clone();
+            let project_input_write = writes_watched_project_input(&project_lifecycle_method);
+            if project_input_write {
+                let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
+                let _ = watch_commands.send(project_watcher::WatchCommand::BeginWrite(ready));
+                let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(2));
+            }
             let resp = app.lock().unwrap().handle(req, &cancellation);
+            if project_input_write {
+                let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
+                let _ = watch_commands.send(project_watcher::WatchCommand::EndWrite(ready));
+                let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(2));
+            }
             cancellations.lock().unwrap().remove(&key);
             if resp.error.is_none() {
                 match project_lifecycle_method.as_str() {

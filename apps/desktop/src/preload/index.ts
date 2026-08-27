@@ -20,14 +20,25 @@ contextBridge.exposeInMainWorld("omegat", {
       | { kind: "project"; root: string }
       | { kind: "files"; paths: string[] }
     >,
-  watchProject: (root: string) => ipcRenderer.invoke("project-watch", root) as Promise<void>,
+  watchProject: (root: string, generation: number) =>
+    ipcRenderer.invoke("project-watch", root, generation) as Promise<void>,
   unwatchProject: () => ipcRenderer.invoke("project-unwatch") as Promise<void>,
   onProjectExternalChange: (
-    fn: (event: { root: string; paths: string[] }) => void,
+    fn: (event: {
+      root: string;
+      paths: string[];
+      generation: number;
+      sources: Array<"native" | "sidecar">;
+    }) => void,
   ) => {
     const listener = (
       _: unknown,
-      event: { root: string; paths: string[] },
+      event: {
+        root: string;
+        paths: string[];
+        generation: number;
+        sources: Array<"native" | "sidecar">;
+      },
     ) => fn(event);
     ipcRenderer.on("project:external-change", listener);
     return () => ipcRenderer.removeListener("project:external-change", listener);

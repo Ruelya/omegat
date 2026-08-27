@@ -15,6 +15,20 @@ let sidecar: ChildProcessWithoutNullStreams | null = null;
 let rpcClient: SidecarRpcClient | null = null;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 let nextId = 1;
+const watchedProjectWriteMethods = new Set([
+  "project.save",
+  "project.close",
+  "project.update",
+  "project.import",
+  "team.mapping",
+  "team.sync",
+  "team.commit",
+  "team.resolve",
+  "glossary.add",
+  "spell.ignore",
+  "spell.learn",
+  "wiki.import",
+]);
 const projectFileWatcher = new ProjectFileWatcher((event) => {
   BrowserWindow.getAllWindows().forEach((window) => {
     window.webContents.send("project:external-change", event);
@@ -172,7 +186,10 @@ function rpc(
   // which in turn retains the cdylib crash/timeout worker boundary.
   if (method === "markers.query") return isolatedMarkerRpc(method, params);
   if (!sidecar) startSidecar();
-  return rpcClient!.request(method, params, clientRequestId);
+  const endWrite = watchedProjectWriteMethods.has(method)
+    ? projectFileWatcher.beginWriteSource(method)
+    : () => undefined;
+  return rpcClient!.request(method, params, clientRequestId).finally(endWrite);
 }
 
 function createWindow() {
@@ -234,8 +251,13 @@ app.whenReady().then(() => {
     return r.canceled ? null : r.filePaths;
   });
   ipcMain.handle("inspect-drop", (_e, paths: unknown) => inspectDroppedPaths(paths));
-  ipcMain.handle("project-watch", (_e, root: string) => {
-    if (typeof root === "string" && root.trim()) projectFileWatcher.watch(root);
+  ipcMain.handle("project-watch", (_e, root: string, generation?: number) => {
+    if (typeof root === "string" && root.trim()) {
+      projectFileWatcher.watch(
+        root,
+        typeof generation === "number" ? generation : undefined,
+      );
+    }
   });
   ipcMain.handle("project-unwatch", () => projectFileWatcher.close());
   ipcMain.handle("save-text", async (_e, name: string, text: string) => {

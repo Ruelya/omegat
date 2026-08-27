@@ -6,7 +6,7 @@ import { defaultPreferences } from "../lib/preferences";
 import { projectEvents } from "../lib/project-events";
 import { toSearchParams } from "../lib/search-params";
 import { dispatchMenuAction } from "../menus/actions";
-import { resetAppState, useApp } from "./app";
+import { connectExternalProjectEvents, resetAppState, useApp } from "./app";
 
 const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
@@ -749,6 +749,54 @@ describe("app store", () => {
       dirty: false,
       key: refreshed.key,
     });
+  });
+
+  it("rejects queued proactive events from an older same-root generation", async () => {
+    const root = "/same-root";
+    const refresh = vi.fn(async () => undefined);
+    let notify: ((event: {
+      root: string;
+      paths: string[];
+      generation: number;
+      sources: Array<"native" | "sidecar">;
+    }) => void) | undefined;
+    window.omegat!.onProjectExternalChange = (listener) => {
+      notify = listener;
+      return () => {
+        notify = undefined;
+      };
+    };
+    projectEvents.publishProject("load", root);
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        has_repositories: false,
+      },
+      refreshEntriesAfterExternalChange: refresh,
+    });
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const disconnect = connectExternalProjectEvents();
+
+    notify?.({
+      root,
+      paths: [`${root}/source/stale.txt`],
+      generation: generation - 1,
+      sources: ["sidecar"],
+    });
+    expect(refresh).not.toHaveBeenCalled();
+
+    notify?.({
+      root,
+      paths: [`${root}/source/current.txt`],
+      generation,
+      sources: ["native", "sidecar"],
+    });
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(refresh).toHaveBeenCalledWith(undefined, true);
+    disconnect();
   });
 
   it("resolves a team conflict through team.resolve", async () => {

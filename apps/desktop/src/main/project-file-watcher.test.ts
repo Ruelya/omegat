@@ -28,7 +28,7 @@ describe("ProjectFileWatcher", () => {
       },
     );
 
-    watcher.watch(root);
+    watcher.watch(root, 7);
     listeners.get(resolve(root))?.("change", "notes.txt");
     listeners.get(resolve(root))?.("change", "omegat.project");
     listeners.get(resolve(root, "source", "nested"))?.("change", "chapter.txt");
@@ -36,10 +36,12 @@ describe("ProjectFileWatcher", () => {
 
     expect(publish).toHaveBeenCalledWith({
       root: resolve(root),
+      generation: 7,
       paths: [
         resolve(root, "omegat.project"),
         resolve(root, "source", "nested", "chapter.txt"),
       ],
+      sources: ["native"],
     });
     watcher.close();
     expect(closed.sort()).toEqual([...listeners.keys()].sort());
@@ -59,7 +61,7 @@ describe("ProjectFileWatcher", () => {
       },
     );
 
-    watcher.watch(root);
+    watcher.watch(root, 11);
     expect([...listeners.keys()]).toEqual([resolve(root)]);
     mkdirSync(join(root, "source", "runtime", "deeper"), { recursive: true });
     listeners.get(resolve(root))?.("rename", "source");
@@ -85,10 +87,50 @@ describe("ProjectFileWatcher", () => {
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith({
       root: resolve(root),
+      generation: 11,
       paths: [
         resolve(root, "source"),
         resolve(root, "source", "runtime", "deeper", "created.txt"),
       ],
+      sources: ["native", "sidecar"],
+    });
+    watcher.close();
+  });
+
+  it("suppresses active write sources and advances same-root generations", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omegat-watch-generation-"));
+    roots.push(root);
+    mkdirSync(join(root, "omegat"), { recursive: true });
+    const listeners = new Map<string, (event: "change", filename: string) => void>();
+    const publish = vi.fn();
+    const watcher = new ProjectFileWatcher(
+      publish,
+      0,
+      (path, listener) => {
+        listeners.set(resolve(path), listener);
+        return { close: () => undefined };
+      },
+    );
+
+    watcher.watch(root, 20);
+    const endWrite = watcher.beginWriteSource("project.save");
+    listeners.get(resolve(root, "omegat"))?.("change", "project_save.tmx");
+    watcher.acceptExternalChange({
+      root,
+      paths: ["omegat/project_save.tmx"],
+    });
+    endWrite();
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 5));
+    expect(publish).not.toHaveBeenCalled();
+
+    watcher.watch(root, 21);
+    listeners.get(resolve(root, "omegat"))?.("change", "project_save.tmx");
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 5));
+    expect(publish).toHaveBeenCalledWith({
+      root: resolve(root),
+      generation: 21,
+      paths: [resolve(root, "omegat", "project_save.tmx")],
+      sources: ["native"],
     });
     watcher.close();
   });

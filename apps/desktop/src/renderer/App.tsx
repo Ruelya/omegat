@@ -47,15 +47,16 @@ export function App() {
 
   useEffect(() => {
     const root = app.props?.root;
+    const generation = app.projectEvent.projectGeneration;
     if (root) {
-      void window.omegat?.watchProject?.(root);
+      void window.omegat?.watchProject?.(root, generation);
     } else {
       void window.omegat?.unwatchProject?.();
     }
     return () => {
       if (root) void window.omegat?.unwatchProject?.();
     };
-  }, [app.props?.root]);
+  }, [app.props?.root, app.projectEvent.projectGeneration]);
 
   useEffect(() => {
     const seconds = app.prefs?.autosave_seconds ?? 0;

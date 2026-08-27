@@ -19,6 +19,8 @@ struct FileFingerprint {
 
 pub enum WatchCommand {
     Watch(PathBuf, SyncSender<()>),
+    BeginWrite(SyncSender<()>),
+    EndWrite(SyncSender<()>),
     Close,
     Shutdown,
 }
@@ -32,17 +34,35 @@ pub fn spawn(output: Sender<String>) -> (Sender<WatchCommand>, thread::JoinHandl
 fn run(commands: Receiver<WatchCommand>, output: Sender<String>) {
     let mut root: Option<PathBuf> = None;
     let mut snapshot = BTreeMap::new();
+    let mut write_depth = 0usize;
     loop {
         match commands.recv_timeout(SCAN_INTERVAL) {
             Ok(WatchCommand::Watch(next_root, ready)) => {
                 snapshot = scan_project(&next_root);
                 root = Some(next_root);
+                write_depth = 0;
+                let _ = ready.send(());
+                continue;
+            }
+            Ok(WatchCommand::BeginWrite(ready)) => {
+                write_depth += 1;
+                let _ = ready.send(());
+                continue;
+            }
+            Ok(WatchCommand::EndWrite(ready)) => {
+                write_depth = write_depth.saturating_sub(1);
+                if write_depth == 0 {
+                    if let Some(active_root) = root.as_ref() {
+                        snapshot = scan_project(active_root);
+                    }
+                }
                 let _ = ready.send(());
                 continue;
             }
             Ok(WatchCommand::Close) => {
                 root = None;
                 snapshot.clear();
+                write_depth = 0;
                 continue;
             }
             Ok(WatchCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -51,6 +71,9 @@ fn run(commands: Receiver<WatchCommand>, output: Sender<String>) {
         let Some(active_root) = root.as_ref() else {
             continue;
         };
+        if write_depth > 0 {
+            continue;
+        }
         let next = scan_project(active_root);
         let mut changed = Vec::new();
         for (path, fingerprint) in &next {
@@ -170,6 +193,42 @@ mod tests {
                 }
             })
         );
+
+        commands.send(WatchCommand::Shutdown).unwrap();
+        watcher.join().unwrap();
+    }
+
+    #[test]
+    fn suppresses_sidecar_write_source_before_resuming_external_events() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(root.join("source")).unwrap();
+        let input = root.join("source/chapter.txt");
+        std::fs::write(&input, "initial").unwrap();
+        let (output, notifications) = mpsc::channel();
+        let (commands, watcher) = spawn(output);
+        let (ready, ready_rx) = mpsc::sync_channel(0);
+        commands
+            .send(WatchCommand::Watch(root.clone(), ready))
+            .unwrap();
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let (started, started_rx) = mpsc::sync_channel(0);
+        commands.send(WatchCommand::BeginWrite(started)).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        std::fs::write(&input, "written by sidecar").unwrap();
+        thread::sleep(SCAN_INTERVAL * 2);
+        assert!(notifications.try_recv().is_err());
+
+        let (finished, finished_rx) = mpsc::sync_channel(0);
+        commands.send(WatchCommand::EndWrite(finished)).unwrap();
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(notifications.try_recv().is_err());
+
+        std::fs::write(&input, "external change with a different length").unwrap();
+        let line = notifications.recv_timeout(Duration::from_secs(2)).unwrap();
+        let notification: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(notification["params"]["paths"], json!([input]));
 
         commands.send(WatchCommand::Shutdown).unwrap();
         watcher.join().unwrap();

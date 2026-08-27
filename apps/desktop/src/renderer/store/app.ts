@@ -1308,12 +1308,22 @@ projectEvents.subscribe((projectEvent) => {
 });
 
 export function connectExternalProjectEvents(): () => void {
-  return window.omegat?.onProjectExternalChange?.(({ root, paths }) => {
+  return window.omegat?.onProjectExternalChange?.(({
+    root,
+    paths,
+    generation,
+    sources,
+  }) => {
     const state = useApp.getState();
-    if (state.props?.root !== root) return;
+    if (
+      state.props?.root !== root
+      || state.projectEvent.projectGeneration !== generation
+    ) return;
     void state
       .refreshEntriesAfterExternalChange(undefined, true)
-      .then(() => state.logLine(`external project refresh (${paths.length} path(s))`))
+      .then(() => state.logLine(
+        `external project refresh (${paths.length} path(s), ${sources.join("+")})`,
+      ))
       .catch((error) => useApp.setState({ error: String(error) }));
   }) ?? (() => undefined);
 }
