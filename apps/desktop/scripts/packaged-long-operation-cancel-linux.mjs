@@ -157,7 +157,7 @@ class DevToolsClient {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`DevTools command timed out: ${method}`));
-      }, 10_000);
+      }, 30_000);
       timeout.unref();
       this.pending.set(id, {
         resolve: (value) => {
