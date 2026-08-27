@@ -1,0 +1,15 @@
+{
+  "id": "ini",
+  "fixture": "ini/simple.ini",
+  "java_test": "org.omegat.filters dialect/table for ini",
+  "options": {},
+  "sources": [
+    "World"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "World",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}
