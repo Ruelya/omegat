@@ -60,8 +60,8 @@ pub use lucene_german::LuceneGermanTokenizer;
 pub use lucene_greek::LuceneGreekTokenizer;
 pub use lucene_hindi::LuceneHindiTokenizer;
 pub use lucene_hungarian::LuceneHungarianTokenizer;
-pub use lucene_indonesian::LuceneIndonesianTokenizer;
 pub use lucene_irish::LuceneIrishTokenizer;
+pub use lucene_indonesian::LuceneIndonesianTokenizer;
 pub use lucene_italian::LuceneItalianTokenizer;
 pub use lucene_japanese::LuceneJapaneseTokenizer;
 pub use lucene_latvian::LuceneLatvianTokenizer;
@@ -86,14 +86,11 @@ pub struct Token {
 impl Token {
     /// Java `Token.equals`: hash of `stripAmpersand(text)` only.
     pub fn java_equals(&self, other: &Self) -> bool {
-        java_string_hash(&strip_ampersand(&self.text))
-            == java_string_hash(&strip_ampersand(&other.text))
+        java_string_hash(&strip_ampersand(&self.text)) == java_string_hash(&strip_ampersand(&other.text))
     }
 
     pub fn java_deep_equals(&self, offset: usize, other: &Self, other_offset: usize) -> bool {
-        self.java_equals(other)
-            && offset == other_offset
-            && self.text.chars().count() == other.text.chars().count()
+        self.java_equals(other) && offset == other_offset && self.text.chars().count() == other.text.chars().count()
     }
 }
 
@@ -407,20 +404,13 @@ mod tests {
     #[test]
     fn cjk_overlapping_bigrams() {
         let t = tokenize("汉字词", "zh");
-        assert_eq!(
-            t.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(),
-            ["汉字", "字词"]
-        );
+        assert_eq!(t.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(), ["汉字", "字词"]);
     }
 
     #[test]
     fn tokenizer_matrix_covers_lucene_langs() {
         for lang in ["en", "de", "fr", "zh", "ja", "ru", "ar"] {
-            assert!(
-                tokenizer_id(lang).contains("Lucene"),
-                "{}",
-                tokenizer_id(lang)
-            );
+            assert!(tokenizer_id(lang).contains("Lucene"), "{}", tokenizer_id(lang));
         }
         assert_eq!(registered_lucene_tokenizers().len(), 34);
     }

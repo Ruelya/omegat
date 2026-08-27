@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 fn fixtures_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/filters")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/filters")
 }
 
 #[test]
@@ -13,9 +14,7 @@ fn java_filter_fixture_tree_is_present() {
     let mut files = 0usize;
     let mut dirs = 0usize;
     fn walk(dir: &std::path::Path, depth: usize, files: &mut usize, dirs: &mut usize) {
-        let Ok(rd) = std::fs::read_dir(dir) else {
-            return;
-        };
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
         for ent in rd.flatten() {
             let path = ent.path();
             if path.is_dir() {

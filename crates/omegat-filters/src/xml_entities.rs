@@ -191,10 +191,7 @@ pub fn reconstruct_doctype_from_source(body: &str) -> String {
             .ok()
             .and_then(|re| re.captures(&body).map(|c| c[1].to_string()))
     };
-    let decls = parse_dtd_decls(&format!(
-        "<!DOCTYPE {name} [ {} ]>",
-        extract_subset_from_body(&body)
-    ));
+    let decls = parse_dtd_decls(&format!("<!DOCTYPE {name} [ {} ]>", extract_subset_from_body(&body)));
     let mut res = format!("<!DOCTYPE {name}");
     if let Some(p) = &public_id {
         res.push_str(" PUBLIC \"");

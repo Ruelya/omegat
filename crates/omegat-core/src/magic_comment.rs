@@ -35,9 +35,7 @@ pub fn parse_file(path: &Path) -> BTreeMap<String, String> {
     let text = if raw.starts_with(&[0xFF, 0xFE]) || raw.starts_with(&[0xFE, 0xFF]) {
         return BTreeMap::new();
     } else {
-        String::from_utf8_lossy(&raw)
-            .trim_start_matches('\u{feff}')
-            .to_string()
+        String::from_utf8_lossy(&raw).trim_start_matches('\u{feff}').to_string()
     };
     let first = text.lines().next().unwrap_or("");
     parse(Some(first))

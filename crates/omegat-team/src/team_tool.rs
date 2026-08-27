@@ -1,9 +1,9 @@
 //! Java `TeamTool`.
 
 use crate::error::{Result, TeamError};
-use crate::git2_ops;
 use crate::git_remote_repository2;
 use crate::mapping::default_mapping;
+use crate::git2_ops;
 use omegat_core::properties::{ProjectProperties, RepositoryDef};
 use std::path::Path;
 

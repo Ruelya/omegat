@@ -265,9 +265,7 @@ fn main() -> Result<()> {
             tag_validation,
             script,
         } => {
-            let root = project
-                .or(cli.project)
-                .unwrap_or_else(|| PathBuf::from("."));
+            let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
             let prefs = Preferences::load_or_default(&default_config_dir());
             let mut session = ProjectSession::open(&root, prefs)?;
             if let Some(mode) = tag_validation.as_deref().or(cli.tag_validation.as_deref()) {
@@ -293,9 +291,7 @@ fn main() -> Result<()> {
             r#type,
             output,
         } => {
-            let root = project
-                .or(cli.project)
-                .unwrap_or_else(|| PathBuf::from("."));
+            let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
             let prefs = Preferences::load_or_default(&default_config_dir());
             let session = ProjectSession::open(&root, prefs)?;
             let stats = session.stats();
@@ -317,9 +313,7 @@ fn main() -> Result<()> {
             r#type,
             output_file,
         } => {
-            let root = project
-                .or(cli.project)
-                .unwrap_or_else(|| PathBuf::from("."));
+            let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
             let prefs = Preferences::load_or_default(&default_config_dir());
             let session = ProjectSession::open(&root, prefs)?;
             let mut tmx = omegat_core::tmx::ProjectTmx::new();
@@ -339,29 +333,19 @@ fn main() -> Result<()> {
             let dest = output_file
                 .or(cli.pseudotranslatetmx.clone())
                 .unwrap_or_else(|| root.join("pseudo.tmx"));
-            tmx.write(
-                &dest,
-                &session.props.source_lang,
-                &session.props.target_lang,
-            )?;
+            tmx.write(&dest, &session.props.source_lang, &session.props.target_lang)?;
             println!("Wrote {}", dest.display());
             Ok(())
         }
         Commands::Team { cmd } => match cmd {
-            TeamCmd::Init {
-                source,
-                target,
-                dir,
-            } => {
+            TeamCmd::Init { source, target, dir } => {
                 let dir = dir.unwrap_or_else(|| PathBuf::from("."));
                 omegat_team::init(&dir, &source, &target)?;
                 println!("Initialized team project in {}", dir.display());
                 Ok(())
             }
             TeamCmd::Sync { project } => {
-                let root = project
-                    .or(cli.project)
-                    .unwrap_or_else(|| PathBuf::from("."));
+                let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
                 let props = omegat_core::ProjectProperties::load(&root)?;
                 let r = omegat_team::sync(&props)?;
                 println!("{}: {}", r.action, r.message);
@@ -380,27 +364,16 @@ fn main() -> Result<()> {
             calculator,
         } => {
             let cfg = align_cfg(&mode, &algo, &counter, &calculator);
-            let tmx = omegat_core::align::align_files_cfg(
-                &source,
-                &target,
-                &source_lang,
-                &target_lang,
-                &cfg,
-            )?;
+            let tmx = omegat_core::align::align_files_cfg(&source, &target, &source_lang, &target_lang, &cfg)?;
             omegat_core::align::write_aligned_tmx(&tmx, &output, &source_lang, &target_lang)?;
             println!("Aligned TMX written to {}", output.display());
             Ok(())
         }
         Commands::Script { source, project } => {
-            let root = project
-                .or(cli.project)
-                .unwrap_or_else(|| PathBuf::from("."));
+            let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
             let src = std::fs::read_to_string(&source)?;
             let mut state = if root.join("omegat.project").exists() {
-                let session = ProjectSession::open(
-                    &root,
-                    Preferences::load_or_default(&default_config_dir()),
-                )?;
+                let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
                 script_state_from_session(&session, 0)
             } else {
                 omegat_script::ScriptState::default()
@@ -434,11 +407,8 @@ fn main() -> Result<()> {
             query,
             regex,
         } => {
-            let root = project
-                .or(cli.project)
-                .unwrap_or_else(|| PathBuf::from("."));
-            let session =
-                ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
+            let root = project.or(cli.project).unwrap_or_else(|| PathBuf::from("."));
+            let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
             let hits = session.search(&SearchParams {
                 query,
                 regex,
@@ -594,7 +564,11 @@ fn normalize_empty_config_dir(args: impl IntoIterator<Item = OsString>) -> Vec<O
         if arg == "--config-dir=" {
             continue;
         }
-        if arg == "--config-dir" && args.peek().is_some_and(|value| value.is_empty()) {
+        if arg == "--config-dir"
+            && args
+                .peek()
+                .is_some_and(|value| value.is_empty())
+        {
             args.next();
             continue;
         }
@@ -647,7 +621,11 @@ fn legacy_mode(mode: &str, cli: &Cli) -> Result<()> {
 fn apply_tag_validation(session: &mut ProjectSession, mode: &str) {
     session.prefs.tag_validation = mode.to_string();
     if mode == "warn" {
-        let n = session.issues().iter().filter(|i| i.kind == "tag").count();
+        let n = session
+            .issues()
+            .iter()
+            .filter(|i| i.kind == "tag")
+            .count();
         if n > 0 {
             eprintln!("TAG_VALIDATION: {n} issue(s)");
         }
@@ -679,17 +657,11 @@ fn legacy_align(cli: &Cli) -> Result<()> {
     let session = ProjectSession::open(&root, Preferences::load_or_default(&default_config_dir()))?;
     let cfg = align_cfg("heapwise", "viterbi", "word", "normal");
     let mut n = 0;
-    for ent in walkdir::WalkDir::new(&session.props.source_dir)
-        .into_iter()
-        .flatten()
-    {
+    for ent in walkdir::WalkDir::new(&session.props.source_dir).into_iter().flatten() {
         if !ent.file_type().is_file() {
             continue;
         }
-        let rel = ent
-            .path()
-            .strip_prefix(&session.props.source_dir)
-            .unwrap_or(ent.path());
+        let rel = ent.path().strip_prefix(&session.props.source_dir).unwrap_or(ent.path());
         let other = align_dir.join(rel);
         if !other.exists() {
             continue;
@@ -717,12 +689,7 @@ fn legacy_align(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-fn align_cfg(
-    mode: &str,
-    algo: &str,
-    counter: &str,
-    calculator: &str,
-) -> omegat_core::align::AlignConfig {
+fn align_cfg(mode: &str, algo: &str, counter: &str, calculator: &str) -> omegat_core::align::AlignConfig {
     omegat_core::align::AlignConfig {
         mode: match mode {
             "heapwise" => omegat_core::align::AlignMode::Heapwise,
@@ -793,3 +760,4 @@ mod tests {
         }
     }
 }
+

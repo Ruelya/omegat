@@ -1,9 +1,9 @@
 //! NDJSON JSON-RPC sidecar. One request per stdin line, one response per stdout line.
 
-use omegat_core::cancellation::CancellationToken;
 use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_core::{capabilities, version};
+use omegat_core::cancellation::CancellationToken;
 use omegat_ipc::*;
 use omegat_plugin::PluginRegistry;
 use serde_json::{json, Value};
@@ -108,7 +108,11 @@ impl App {
         let id = req.id.clone().unwrap_or(Value::Null);
         let result = self.dispatch(&req.method, req.params, cancellation);
         if cancellation.is_cancelled() {
-            return RpcResponse::err(id, error_code::REQUEST_CANCELLED, "request cancelled");
+            return RpcResponse::err(
+                id,
+                error_code::REQUEST_CANCELLED,
+                "request cancelled",
+            );
         }
         match result {
             Ok(result) => RpcResponse::ok(id, result),
@@ -123,7 +127,10 @@ impl App {
         cancellation: &CancellationToken,
     ) -> std::result::Result<Value, (i32, String)> {
         if cancellation.is_cancelled() {
-            return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
+            return Err((
+                error_code::REQUEST_CANCELLED,
+                "request cancelled".into(),
+            ));
         }
         match method {
             "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
@@ -307,7 +314,10 @@ impl App {
                 let hits = self
                     .session()?
                     .search_cancellable(&p, cancellation)
-                    .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
+                    .ok_or((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ))?;
                 Ok(serde_json::to_value(hits).unwrap())
             }
             "search.replace" => {
@@ -612,7 +622,10 @@ impl App {
                 let hits = self
                     .session()?
                     .dict_cancellable(word, cancellation)
-                    .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
+                    .ok_or((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ))?;
                 Ok(serde_json::to_value(hits).unwrap())
             }
             "completer.query" => {
@@ -1209,7 +1222,9 @@ fn main() {
     }
     let _ = env_logger::try_init();
     let app = Arc::new(Mutex::new(App::new()));
-    let cancellations = Arc::new(Mutex::new(HashMap::<String, CancellationToken>::new()));
+    let cancellations = Arc::new(Mutex::new(
+        HashMap::<String, CancellationToken>::new(),
+    ));
     let (responses, response_lines) = std::sync::mpsc::channel::<String>();
     let writer = thread::spawn(move || {
         let mut stdout = io::stdout();
@@ -1235,8 +1250,11 @@ fn main() {
         };
         if req.id.is_none() && req.method == "$/cancelRequest" {
             if let Some(id) = req.params.get("id") {
-                if let Some(cancellation) =
-                    cancellations.lock().unwrap().get(&request_key(id)).cloned()
+                if let Some(cancellation) = cancellations
+                    .lock()
+                    .unwrap()
+                    .get(&request_key(id))
+                    .cloned()
                 {
                     cancellation.cancel();
                 }

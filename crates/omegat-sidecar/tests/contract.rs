@@ -141,7 +141,13 @@ fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
         .collect::<Vec<_>>()
         .join("\n");
     std::fs::write(root.join("source/many.txt"), source).unwrap();
-    let reloaded = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
+    let reloaded = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.reload",
+        json!({}),
+    );
     assert!(
         reloaded["result"]["entries"].as_u64().unwrap_or(0) > 10_000,
         "{reloaded}"
@@ -180,7 +186,13 @@ fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
     assert_eq!(cancelled["error"]["code"], -32800);
     assert_eq!(cancelled["error"]["message"], "request cancelled");
 
-    let responsive = rpc(&mut stdin, &mut stdout, 4, "sys.version", json!({}));
+    let responsive = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "sys.version",
+        json!({}),
+    );
     assert_eq!(responsive["result"]["version"], "6.2.0");
     let _ = child.kill();
 }
@@ -211,7 +223,13 @@ fn external_refresh_reloads_source_and_glossary_over_ndjson() {
     );
     let glossary = created["result"]["glossary_file"].as_str().unwrap();
     std::fs::write(root.join("source/input.txt"), "Before").unwrap();
-    let _ = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
+    let _ = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.reload",
+        json!({}),
+    );
     std::fs::write(root.join("source/input.txt"), "After term").unwrap();
     std::fs::write(glossary, "term\tterme\texternal\n").unwrap();
 
@@ -223,7 +241,13 @@ fn external_refresh_reloads_source_and_glossary_over_ndjson() {
         json!({}),
     );
     assert_eq!(refreshed["result"]["entries"], 1);
-    let entries = rpc(&mut stdin, &mut stdout, 4, "entry.list", json!({}));
+    let entries = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.list",
+        json!({}),
+    );
     assert_eq!(entries["result"][0]["source"], "After term");
     let glossary_hits = rpc(
         &mut stdin,

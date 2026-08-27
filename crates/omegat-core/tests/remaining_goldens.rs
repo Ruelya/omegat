@@ -18,10 +18,7 @@ fn golden(rel: &str) -> Value {
         .join(rel);
     assert!(path.is_file(), "missing {}", path.display());
     let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        v["exported_by"].as_str(),
-        Some("org.omegat.tools.ExportGoldens")
-    );
+    assert_eq!(v["exported_by"].as_str(), Some("org.omegat.tools.ExportGoldens"));
     assert!(v["java_test"].as_str().unwrap().contains('#'));
     v
 }
@@ -108,18 +105,10 @@ fn magic_comment_matches_java() {
     let file = golden("remaining/MagicCommentTest-testParseFile.json");
     let path = java_res("data/glossaries/test-magiccomment.tab");
     let got = omegat_core::magic_comment::parse_file(&path);
-    assert_eq!(
-        got.get("coding").map(String::as_str),
-        file["coding"].as_str()
-    );
+    assert_eq!(got.get("coding").map(String::as_str), file["coding"].as_str());
     let bom = golden("remaining/MagicCommentTest-testParseFileBom.json");
-    let got = omegat_core::magic_comment::parse_file(&java_res(
-        "data/glossaries/test-magiccomment-bom.tab",
-    ));
-    assert_eq!(
-        got.get("coding").map(String::as_str),
-        bom["coding"].as_str()
-    );
+    let got = omegat_core::magic_comment::parse_file(&java_res("data/glossaries/test-magiccomment-bom.tab"));
+    assert_eq!(got.get("coding").map(String::as_str), bom["coding"].as_str());
     let empty = golden("remaining/MagicCommentTest-testParseEmpty.json");
     let got = omegat_core::magic_comment::parse_file(&java_res("data/glossaries/empty.txt"));
     assert_eq!(got.is_empty(), empty["empty"].as_bool().unwrap());
@@ -194,10 +183,7 @@ fn json_parser_matches_java() {
     assert_eq!(empty_obj.is_object(), g["empty_object"].as_bool().unwrap());
     let item = omegat_core::json_parser::parse(r#"{"item": []}"#).unwrap();
     assert_eq!(item.is_object(), true);
-    assert_eq!(
-        item["item"].as_array().unwrap().is_empty(),
-        g["item_empty"].as_bool().unwrap()
-    );
+    assert_eq!(item["item"].as_array().unwrap().is_empty(), g["item_empty"].as_bool().unwrap());
     let empty = golden("remaining/JsonParserTest-testParseEmpty.json");
     assert!(omegat_core::json_parser::parse("").is_err());
     assert_eq!(empty["error"].as_bool().unwrap(), true);
@@ -235,35 +221,17 @@ fn matches_var_expansion_matches_java() {
     );
     let all_ltr = golden("remaining/MatchesVarExpansionTest-testApplyBiDiReplacers_allLtr.json");
     assert_eq!(
-        matches_var::apply_bidi(
-            all_ltr["template"].as_str().unwrap(),
-            &vars,
-            "pl",
-            "pl",
-            "pl"
-        ),
+        matches_var::apply_bidi(all_ltr["template"].as_str().unwrap(), &vars, "pl", "pl", "pl"),
         all_ltr["text"].as_str().unwrap()
     );
     let rtl_ltr = golden("remaining/MatchesVarExpansionTest-testApplyBiDiReplacers_rtlToLtr.json");
     assert_eq!(
-        matches_var::apply_bidi(
-            rtl_ltr["template"].as_str().unwrap(),
-            &vars,
-            "ar",
-            "pl",
-            "ar"
-        ),
+        matches_var::apply_bidi(rtl_ltr["template"].as_str().unwrap(), &vars, "ar", "pl", "ar"),
         rtl_ltr["text"].as_str().unwrap()
     );
     let ltr_rtl = golden("remaining/MatchesVarExpansionTest-testApplyBiDiReplacers_ltrToRtl.json");
     assert_eq!(
-        matches_var::apply_bidi(
-            ltr_rtl["template"].as_str().unwrap(),
-            &vars,
-            "pl",
-            "ar",
-            "pl"
-        ),
+        matches_var::apply_bidi(ltr_rtl["template"].as_str().unwrap(), &vars, "pl", "ar", "pl"),
         ltr_rtl["text"].as_str().unwrap()
     );
 }
@@ -280,159 +248,66 @@ fn project_file_storage_matches_java() {
     assert!(props.source_dir.ends_with("source"));
     assert!(props.target_dir.ends_with("target"));
     assert!(props.glossary_dir.ends_with("glossary"));
-    assert!(
-        props.glossary_file.ends_with("glossary/glossary.txt")
-            || props.glossary_file.ends_with("glossary.txt")
-    );
-    assert_eq!(
-        props.source_lang.to_ascii_lowercase(),
-        defaults["source_lang"].as_str().unwrap()
-    );
-    assert_eq!(
-        props.target_lang.to_ascii_lowercase(),
-        defaults["target_lang"].as_str().unwrap()
-    );
+    assert!(props.glossary_file.ends_with("glossary/glossary.txt") || props.glossary_file.ends_with("glossary.txt"));
+    assert_eq!(props.source_lang.to_ascii_lowercase(), defaults["source_lang"].as_str().unwrap());
+    assert_eq!(props.target_lang.to_ascii_lowercase(), defaults["target_lang"].as_str().unwrap());
     assert_eq!(props.source_tok, defaults["source_tok"].as_str().unwrap());
     assert_eq!(props.target_tok, defaults["target_tok"].as_str().unwrap());
-    assert_eq!(
-        props.sentence_seg,
-        defaults["sentence_seg"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.support_default_translations,
-        defaults["support_default"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.remove_tags,
-        defaults["remove_tags"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.source_dir_excludes.len() as u64,
-        defaults["exclude_count"].as_u64().unwrap()
-    );
-    assert_eq!(
-        props.source_dir_excludes[0],
-        defaults["exclude0"].as_str().unwrap()
-    );
-    assert!(
-        props.is_export_tm("omegat")
-            && props.is_export_tm("level1")
-            && props.is_export_tm("level2")
-    );
+    assert_eq!(props.sentence_seg, defaults["sentence_seg"].as_bool().unwrap());
+    assert_eq!(props.support_default_translations, defaults["support_default"].as_bool().unwrap());
+    assert_eq!(props.remove_tags, defaults["remove_tags"].as_bool().unwrap());
+    assert_eq!(props.source_dir_excludes.len() as u64, defaults["exclude_count"].as_u64().unwrap());
+    assert_eq!(props.source_dir_excludes[0], defaults["exclude0"].as_str().unwrap());
+    assert!(props.is_export_tm("omegat") && props.is_export_tm("level1") && props.is_export_tm("level2"));
 
     let gdir = golden("remaining/ProjectFileStorageTest-testLoadCustomGlossaryDir.json");
-    let props = ProjectProperties::load_from_file(
-        root.path(),
-        &java_res("data/project/customglossarydir.project"),
-    )
-    .unwrap();
-    assert!(props
-        .glossary_file
-        .ends_with(gdir["glossary"].as_str().unwrap()));
+    let props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/customglossarydir.project")).unwrap();
+    assert!(props.glossary_file.ends_with(gdir["glossary"].as_str().unwrap()));
 
     let gfile = golden("remaining/ProjectFileStorageTest-testLoadCustomGlossaryFile.json");
-    let props = ProjectProperties::load_from_file(
-        root.path(),
-        &java_res("data/project/customglossaryfile.project"),
-    )
-    .unwrap();
-    assert!(props
-        .glossary_file
-        .ends_with(gfile["glossary"].as_str().unwrap()));
+    let props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/customglossaryfile.project")).unwrap();
+    assert!(props.glossary_file.ends_with(gfile["glossary"].as_str().unwrap()));
 
     let both = golden("remaining/ProjectFileStorageTest-testLoadCustomGlossaryDirAndFile.json");
-    let props = ProjectProperties::load_from_file(
-        root.path(),
-        &java_res("data/project/customglossarydirfile.project"),
-    )
-    .unwrap();
-    assert!(props
-        .glossary_file
-        .ends_with(both["glossary"].as_str().unwrap()));
+    let props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/customglossarydirfile.project")).unwrap();
+    assert!(props.glossary_file.ends_with(both["glossary"].as_str().unwrap()));
 
-    let levels =
-        golden("remaining/ProjectFileStorageTest-testLoadProjectWithNonDefaultExportTMLevels.json");
-    let props = ProjectProperties::load_from_file(
-        root.path(),
-        &java_res("data/project/nondefaultexporttmoptions.project"),
-    )
-    .unwrap();
-    assert_eq!(
-        props.is_export_tm("level1"),
-        levels["level1"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.is_export_tm("level2"),
-        levels["level2"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.is_export_tm("omegat"),
-        levels["omegat"].as_bool().unwrap()
-    );
+    let levels = golden("remaining/ProjectFileStorageTest-testLoadProjectWithNonDefaultExportTMLevels.json");
+    let props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/nondefaultexporttmoptions.project")).unwrap();
+    assert_eq!(props.is_export_tm("level1"), levels["level1"].as_bool().unwrap());
+    assert_eq!(props.is_export_tm("level2"), levels["level2"].as_bool().unwrap());
+    assert_eq!(props.is_export_tm("omegat"), levels["omegat"].as_bool().unwrap());
 
-    let write_lv =
-        golden("remaining/ProjectFileStorageTest-testWriteProjectWithExportTMLevelsChanged.json");
-    let mut props = ProjectProperties::load_from_file(
-        root.path(),
-        &java_res("data/project/defaultdirs.project"),
-    )
-    .unwrap();
+    let write_lv = golden("remaining/ProjectFileStorageTest-testWriteProjectWithExportTMLevelsChanged.json");
+    let mut props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/defaultdirs.project")).unwrap();
     props.set_export_tm_levels_list(&["level1"]);
-    assert_eq!(
-        props.is_export_tm("level1"),
-        write_lv["level1"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.is_export_tm("level2"),
-        write_lv["level2"].as_bool().unwrap()
-    );
-    assert_eq!(
-        props.is_export_tm("omegat"),
-        write_lv["omegat"].as_bool().unwrap()
-    );
+    assert_eq!(props.is_export_tm("level1"), write_lv["level1"].as_bool().unwrap());
+    assert_eq!(props.is_export_tm("level2"), write_lv["level2"].as_bool().unwrap());
+    assert_eq!(props.is_export_tm("omegat"), write_lv["omegat"].as_bool().unwrap());
 
     let ents = golden("remaining/ProjectFileStorageTest-testProjectFileWithEntities.json");
-    let props =
-        ProjectProperties::load_from_file(root.path(), &java_res("data/project/entities.project"))
-            .unwrap();
-    assert!(props
-        .target_dir
-        .ends_with(ents["target_dir"].as_str().unwrap()));
+    let props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/entities.project")).unwrap();
+    assert!(props.target_dir.ends_with(ents["target_dir"].as_str().unwrap()));
     assert_eq!(props.target_lang, ents["target_lang"].as_str().unwrap());
 
     let missing = golden("remaining/ProjectFileStorageTest-testMissingDirs.json");
-    let props = ProjectProperties::load_from_file(
-        root.path(),
-        &java_res("data/project/missingdirs.project"),
-    )
-    .unwrap();
-    assert!(props
-        .source_dir
-        .ends_with(missing["source"].as_str().unwrap()));
-    assert!(props
-        .target_dir
-        .ends_with(missing["target"].as_str().unwrap()));
+    let props = ProjectProperties::load_from_file(root.path(), &java_res("data/project/missingdirs.project")).unwrap();
+    assert!(props.source_dir.ends_with(missing["source"].as_str().unwrap()));
+    assert!(props.target_dir.ends_with(missing["target"].as_str().unwrap()));
 
     let team = golden("remaining/ProjectFileStorageTest-testSaveTeamProject.json");
-    let mut props = ProjectProperties::create(
-        root.path().to_path_buf(),
-        "en-US".into(),
-        "fr-FR".into(),
-        true,
-    );
-    props
-        .repositories
-        .push(omegat_core::properties::RepositoryDef {
-            repo_type: "git".into(),
-            url: "https://example.com/example.git".into(),
-            branch: Some("main".into()),
-            mappings: vec![omegat_core::properties::RepositoryMapping {
-                local: String::new(),
-                repository: String::new(),
-                includes: vec![],
-                excludes: vec![],
-            }],
-        });
+    let mut props = ProjectProperties::create(root.path().to_path_buf(), "en-US".into(), "fr-FR".into(), true);
+    props.repositories.push(omegat_core::properties::RepositoryDef {
+        repo_type: "git".into(),
+        url: "https://example.com/example.git".into(),
+        branch: Some("main".into()),
+        mappings: vec![omegat_core::properties::RepositoryMapping {
+            local: String::new(),
+            repository: String::new(),
+            includes: vec![],
+            excludes: vec![],
+        }],
+    });
     let xml = props.to_xml();
     assert!(xml.contains(team["type"].as_str().unwrap()));
     assert!(xml.contains(team["url"].as_str().unwrap()));
@@ -445,10 +320,7 @@ fn project_file_storage_matches_java() {
     assert!(xml.contains(excl["exclude2"].as_str().unwrap()));
 
     let map = golden("remaining/ProjectFileStorageTest-testSaveTeamProjectWithMapping.json");
-    assert_eq!(
-        omegat_core::properties::MAX_PARENT_DIRECTORIES_ABS2REL as u64,
-        map["max_abs2rel"].as_u64().unwrap()
-    );
+    assert_eq!(omegat_core::properties::MAX_PARENT_DIRECTORIES_ABS2REL as u64, map["max_abs2rel"].as_u64().unwrap());
 
     let near_abs = golden("remaining/ProjectFileStorageTest-testNearAbsolutePaths.json");
     let far_abs = golden("remaining/ProjectFileStorageTest-testFarAbsolutePaths.json");
@@ -457,25 +329,10 @@ fn project_file_storage_matches_java() {
     let root_p = Path::new("/tmp/root");
     let near = Path::new("/tmp/source");
     let stored = omegat_core::properties::path_for_storing(root_p, near, Some("source"));
-    assert_eq!(
-        stored.contains(".."),
-        near_abs["uses_relative"].as_bool().unwrap()
-            || stored == "__DEFAULT__"
-            || stored.contains("source")
-    );
-    let deep_root = PathBuf::from("/tmp")
-        .join("a")
-        .join("a")
-        .join("a")
-        .join("a")
-        .join("a")
-        .join("root");
-    let stored_far =
-        omegat_core::properties::path_for_storing(&deep_root, Path::new("/tmp/source"), None);
-    assert_eq!(
-        stored_far.starts_with('/'),
-        far_abs["stays_absolute"].as_bool().unwrap()
-    );
+    assert_eq!(stored.contains(".."), near_abs["uses_relative"].as_bool().unwrap() || stored == "__DEFAULT__" || stored.contains("source"));
+    let deep_root = PathBuf::from("/tmp").join("a").join("a").join("a").join("a").join("a").join("root");
+    let stored_far = omegat_core::properties::path_for_storing(&deep_root, Path::new("/tmp/source"), None);
+    assert_eq!(stored_far.starts_with('/'), far_abs["stays_absolute"].as_bool().unwrap());
     assert_eq!(near_rel["resolves_dotdot"].as_bool().unwrap(), true);
     assert_eq!(far_rel["becomes_absolute"].as_bool().unwrap(), true);
 }
@@ -484,10 +341,7 @@ fn project_file_storage_matches_java() {
 fn external_tm_factory_matches_java() {
     let tmx = golden("remaining/ExternalTMFactoryTest-testLoadTMX.json");
     let path = java_res("data/tmx/resegmenting.tmx");
-    assert_eq!(
-        omegat_core::external_tm::is_supported(&path),
-        tmx["supported"].as_bool().unwrap()
-    );
+    assert_eq!(omegat_core::external_tm::is_supported(&path), tmx["supported"].as_bool().unwrap());
     let entries = omegat_core::external_tm::load(&path, "en", "fr", false);
     assert_eq!(entries.len() as u64, tmx["count"].as_u64().unwrap());
     assert_eq!(entries[0].source, tmx["src0"].as_str().unwrap());
@@ -622,8 +476,7 @@ fn glossary_entry_html_matches_java() {
 #[test]
 fn glossary_searcher_remaining_matches_java() {
     let ja2 = golden("glossary/GlossarySearcherTest#testGlossarySearcherJapanese2.json");
-    let searcher =
-        GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
+    let searcher = GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
     let entries = [GlossaryEntry::new("塗布", "wrong", "")];
     assert_eq!(
         searcher.search_source_matches("場所", &entries).len() as u64,
@@ -632,28 +485,16 @@ fn glossary_searcher_remaining_matches_java() {
 
     let tags = golden("glossary/GlossarySearcherTest#testSearchSourceMatchesWithTags.json");
     let searcher = GlossarySearcher::new("en", "fr", "org.omegat.tokenizer.DefaultTokenizer");
-    let entries = [GlossaryEntry::new(
-        "source text",
-        "translated text",
-        "comment",
-    )];
+    let entries = [GlossaryEntry::new("source text", "translated text", "comment")];
     assert_eq!(
-        searcher
-            .search_source_matches("<b>source</b> text", &entries)
-            .len() as u64,
+        searcher.search_source_matches("<b>source</b> text", &entries).len() as u64,
         tags["count"].as_u64().unwrap()
     );
 
     let ci = golden("glossary/GlossarySearcherTest#testSearchSourceMatchesCaseInsensitive.json");
-    let entries = [GlossaryEntry::new(
-        "CaseInsensitive",
-        "FallUnempfindlich",
-        "",
-    )];
+    let entries = [GlossaryEntry::new("CaseInsensitive", "FallUnempfindlich", "")];
     assert_eq!(
-        searcher
-            .search_source_matches("caseinsensitive", &entries)
-            .len() as u64,
+        searcher.search_source_matches("caseinsensitive", &entries).len() as u64,
         ci["count"].as_u64().unwrap()
     );
 
@@ -677,8 +518,7 @@ fn glossary_searcher_remaining_matches_java() {
     assert_eq!(hits[0].source, cjk["source"].as_str().unwrap());
 
     let long = golden("glossary/GlossarySearcherTest#testGlossarySearcherJapaneseLongText.json");
-    let searcher =
-        GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
+    let searcher = GlossarySearcher::new("ja", "en", "org.omegat.tokenizer.LuceneJapaneseTokenizer");
     let entries = [
         GlossaryEntry::new("まぐろ", "tuna", ""),
         GlossaryEntry::new("翻訳", "translation", ""),
@@ -692,8 +532,7 @@ fn glossary_searcher_remaining_matches_java() {
     );
 
     let sort_en = golden("glossary/GlossarySearcherTest#testEntriesSortEn.json");
-    let mut searcher =
-        GlossarySearcher::new("en_US", "en_GB", "org.omegat.tokenizer.DefaultTokenizer");
+    let mut searcher = GlossarySearcher::new("en_US", "en_GB", "org.omegat.tokenizer.DefaultTokenizer");
     searcher.sort_by_src_length = false;
     searcher.sort_by_length = true;
     let entries = vec![
@@ -713,8 +552,7 @@ fn glossary_searcher_remaining_matches_java() {
     assert_eq!(sorted[1].target, sort_en["alpha1_loc"].as_str().unwrap());
 
     let sort_ja = golden("glossary/GlossarySearcherTest#testEntriesSortJA.json");
-    let mut searcher =
-        GlossarySearcher::new("ja_JP", "en_GB", "org.omegat.tokenizer.DefaultTokenizer");
+    let mut searcher = GlossarySearcher::new("ja_JP", "en_GB", "org.omegat.tokenizer.DefaultTokenizer");
     searcher.sort_by_src_length = false;
     searcher.sort_by_length = true;
     let entries = vec![
@@ -735,9 +573,7 @@ fn glossary_searcher_remaining_matches_java() {
     searcher.require_similar_case = true;
     let entries = [GlossaryEntry::new("CASE", "translation", "comment")];
     assert_eq!(
-        searcher
-            .search_source_matches("This is a case.", &entries)
-            .is_empty(),
+        searcher.search_source_matches("This is a case.", &entries).is_empty(),
         cs["empty"].as_bool().unwrap()
     );
 
@@ -745,14 +581,11 @@ fn glossary_searcher_remaining_matches_java() {
     let searcher = GlossarySearcher::new("en", "fr", "org.omegat.tokenizer.DefaultTokenizer");
     let entry = GlossaryEntry::new("source", "translated text", "comment");
     assert_eq!(
-        searcher
-            .search_target_matches("translated text", &entry)
-            .len() as u64,
+        searcher.search_target_matches("translated text", &entry).len() as u64,
         tgt["count"].as_u64().unwrap()
     );
 
-    let tok =
-        golden("glossary/GlossarySearcherTest#testTokenizeWithSpecialCharactersNoStemming.json");
+    let tok = golden("glossary/GlossarySearcherTest#testTokenizeWithSpecialCharactersNoStemming.json");
     let mut searcher = GlossarySearcher::new("en", "pl", "org.omegat.tokenizer.DefaultTokenizer");
     searcher.stemming = false;
     assert_eq!(
@@ -761,14 +594,9 @@ fn glossary_searcher_remaining_matches_java() {
     );
 
     let it = golden("glossary/GlossarySearcherTest#testGlossarySearcherItalian.json");
-    let mut searcher =
-        GlossarySearcher::new("it", "en", "org.omegat.tokenizer.LuceneItalianTokenizer");
+    let mut searcher = GlossarySearcher::new("it", "en", "org.omegat.tokenizer.LuceneItalianTokenizer");
     searcher.stemming_full = true;
-    let entries = [GlossaryEntry::new(
-        "paese",
-        "village/town",
-        "paese is singular and paesi is plural.",
-    )];
+    let entries = [GlossaryEntry::new("paese", "village/town", "paese is singular and paesi is plural.")];
     let hits = searcher.search_source_matches("paesi", &entries);
     assert_eq!(hits.len() as u64, it["count"].as_u64().unwrap());
 
@@ -846,9 +674,7 @@ fn stardict_matches_java() {
     let exact = omegat_core::dict::read_stardict_articles(&ifo, "testudo", false);
     assert_eq!(exact.len() as u64, count["exact"].as_u64().unwrap());
     assert_eq!(exact[0].word, count["word"].as_str().unwrap());
-    assert!(exact[0]
-        .definition
-        .contains(count["article_contains"].as_str().unwrap()));
+    assert!(exact[0].definition.contains(count["article_contains"].as_str().unwrap()));
     let pred = omegat_core::dict::read_stardict_articles(&ifo, "testu", true);
     assert_eq!(pred.len() as u64, count["predictive"].as_u64().unwrap());
 
@@ -884,10 +710,7 @@ fn languagetool_mapping_matches_java() {
         omegat_core::languagetool::default_bridge_type(),
         wrap["rewrite_bridge"].as_str().unwrap()
     );
-    assert_eq!(
-        wrap["java_default_bridge"].as_str().unwrap(),
-        "LanguageToolNativeBridge"
-    );
+    assert_eq!(wrap["java_default_bridge"].as_str().unwrap(), "LanguageToolNativeBridge");
 }
 
 #[test]
@@ -906,10 +729,7 @@ fn issues_remaining_matches_java() {
     ]);
     let names = golden("gui/IssuesTableModelTest-testGetColumnName.json");
     for (i, n) in names["names"].as_array().unwrap().iter().enumerate() {
-        assert_eq!(
-            omegat_core::issues::IssuesTableModel::column_name(i),
-            n.as_str().unwrap()
-        );
+        assert_eq!(omegat_core::issues::IssuesTableModel::column_name(i), n.as_str().unwrap());
     }
     let seg = golden("gui/IssuesTableModelTest-testGetValueAtSegmentNumber.json");
     assert_eq!(model.value_at(0, 0), seg["r0"].as_str().unwrap());
@@ -919,10 +739,7 @@ fn issues_remaining_matches_java() {
     let desc = golden("gui/IssuesTableModelTest-testGetValueAtDescription.json");
     assert_eq!(model.value_at(0, 3), desc["r0"].as_str().unwrap());
     let at = golden("gui/IssuesTableModelTest-testGetIssueAt.json");
-    assert_eq!(
-        model.issue_at(0).unwrap().entry_num as u64,
-        at["r0"].as_u64().unwrap()
-    );
+    assert_eq!(model.issue_at(0).unwrap().entry_num as u64, at["r0"].as_u64().unwrap());
     let mo = golden("gui/IssuesTableModelTest-testMouseoverRowCol.json");
     let mut model = model;
     model.set_mouseover(1, 2);
@@ -949,10 +766,7 @@ fn issues_remaining_matches_java() {
     ]);
     assert_eq!(data.len() as u64, types["count"].as_u64().unwrap());
     let none = golden("remaining/IssuesTypeListModelTest-testCalculateData_NoIssues.json");
-    assert_eq!(
-        omegat_core::issues::calculate_type_data(&[]).len() as u64,
-        none["count"].as_u64().unwrap()
-    );
+    assert_eq!(omegat_core::issues::calculate_type_data(&[]).len() as u64, none["count"].as_u64().unwrap());
     let one = golden("remaining/IssuesTypeListModelTest-testCalculateData_SingleType.json");
     let single = omegat_core::issues::calculate_type_data(&[omegat_core::issues::Issue {
         entry_num: 1,
@@ -961,10 +775,7 @@ fn issues_remaining_matches_java() {
     }]);
     assert_eq!(single.len() as u64, one["count"].as_u64().unwrap());
     let sorted = golden("remaining/IssuesTypeListModelTest-testCalculateData_SortedOutput.json");
-    assert_eq!(
-        data[0].type_name <= data[1].type_name,
-        sorted["sorted"].as_bool().unwrap()
-    );
+    assert_eq!(data[0].type_name <= data[1].type_name, sorted["sorted"].as_bool().unwrap());
 
     let providers = golden("gui/IssueProvidersTest-testGetIssueProviders.json");
     let ids: Vec<&str> = providers["providers"]
@@ -984,8 +795,7 @@ fn issues_remaining_matches_java() {
             .map(|v| v.as_str().unwrap())
             .collect::<Vec<_>>()
     );
-    let nonempty =
-        golden("gui/TerminologyIssueProviderTest-testNonEmptyTargetTermReturnsTrue.json");
+    let nonempty = golden("gui/TerminologyIssueProviderTest-testNonEmptyTargetTermReturnsTrue.json");
     assert_eq!(
         omegat_core::issues::terminology_has_target(&["village"]),
         nonempty["has_target"].as_bool().unwrap()
@@ -995,23 +805,15 @@ fn issues_remaining_matches_java() {
         omegat_core::issues::terminology_has_target(&[""]),
         empty["has_target"].as_bool().unwrap()
     );
-    let all_empty =
-        golden("gui/TerminologyIssueProviderTest-testAllTargetTermsEmptyReturnsFalse.json");
+    let all_empty = golden("gui/TerminologyIssueProviderTest-testAllTargetTermsEmptyReturnsFalse.json");
     assert_eq!(
         omegat_core::issues::terminology_has_target(&["", "  "]),
-        all_empty
-            .get("has_target")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
+        all_empty.get("has_target").and_then(|v| v.as_bool()).unwrap_or(false)
     );
-    let partial =
-        golden("gui/TerminologyIssueProviderTest-testPartiallyEmptyTargetTermsReturnsTrue.json");
+    let partial = golden("gui/TerminologyIssueProviderTest-testPartiallyEmptyTargetTermsReturnsTrue.json");
     assert_eq!(
         omegat_core::issues::terminology_has_target(&["", "town"]),
-        partial
-            .get("has_target")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true)
+        partial.get("has_target").and_then(|v| v.as_bool()).unwrap_or(true)
     );
 }
 
@@ -1038,8 +840,7 @@ fn file_progress_matches_java() {
         omegat_core::file_progress::compare_file_progress(higher, lower),
         cmp["higher_vs_lower"].as_i64().unwrap() as i32
     );
-    let colors =
-        golden("remaining/ProjectFilesListControllerTest-testProgressColorThresholds.json");
+    let colors = golden("remaining/ProjectFilesListControllerTest-testProgressColorThresholds.json");
     let rgb = |v: &Value| -> (u8, u8, u8) {
         let a = v.as_array().unwrap();
         (
@@ -1049,21 +850,15 @@ fn file_progress_matches_java() {
         )
     };
     assert_eq!(
-        omegat_core::file_progress::progress_color(omegat_core::file_progress::FileProgress::new(
-            0, 10
-        )),
+        omegat_core::file_progress::progress_color(omegat_core::file_progress::FileProgress::new(0, 10)),
         rgb(&colors["zero"])
     );
     assert_eq!(
-        omegat_core::file_progress::progress_color(omegat_core::file_progress::FileProgress::new(
-            5, 10
-        )),
+        omegat_core::file_progress::progress_color(omegat_core::file_progress::FileProgress::new(5, 10)),
         rgb(&colors["half"])
     );
     assert_eq!(
-        omegat_core::file_progress::progress_color(omegat_core::file_progress::FileProgress::new(
-            10, 10
-        )),
+        omegat_core::file_progress::progress_color(omegat_core::file_progress::FileProgress::new(10, 10)),
         rgb(&colors["full"])
     );
     let fill = golden(
@@ -1130,10 +925,7 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
         omegat_core::file_progress::sync_total_columns(&[0, 1, 2, 3, 4, 5]),
         keep["order"]
             .as_array()
-            .map(|a| a
-                .iter()
-                .map(|v| v.as_i64().unwrap() as i32)
-                .collect::<Vec<_>>())
+            .map(|a| a.iter().map(|v| v.as_i64().unwrap() as i32).collect::<Vec<_>>())
             .unwrap_or_else(|| vec![0, 1, 2, 3, 4, 5, 6])
     );
 
@@ -1172,31 +964,16 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
     prefs.set_preference(Some("MyInt"), Some("5"));
     prefs.set_preference(Some("MyEnum"), Some("BAR"));
     prefs.set_preference(Some("MyEmptyString"), Some(""));
-    assert_eq!(
-        prefs.get_preference(Some("MyString")),
-        store["MyString"].as_str().unwrap()
-    );
-    assert_eq!(
-        prefs.is_preference("MyBoolean"),
-        store["MyBoolean"].as_str() == Some("true")
-    );
-    assert_eq!(
-        prefs.get_preference(Some("MyInt")),
-        store["MyInt"].as_str().unwrap()
-    );
-    assert_eq!(
-        prefs.get_preference(Some("MyEnum")),
-        store["MyEnum"].as_str().unwrap()
-    );
+    assert_eq!(prefs.get_preference(Some("MyString")), store["MyString"].as_str().unwrap());
+    assert_eq!(prefs.is_preference("MyBoolean"), store["MyBoolean"].as_str() == Some("true"));
+    assert_eq!(prefs.get_preference(Some("MyInt")), store["MyInt"].as_str().unwrap());
+    assert_eq!(prefs.get_preference(Some("MyEnum")), store["MyEnum"].as_str().unwrap());
     assert_eq!(prefs.exists_preference("MyEmptyString"), true);
     let dir = tempfile::tempdir().unwrap();
     let xml_path = dir.path().join("omegat.prefs");
     prefs.save_xml(&xml_path).unwrap();
     let loaded = omegat_core::prefs::JavaPreferences::load_xml(&xml_path);
-    assert_eq!(
-        loaded.get_preference(Some("MyString")),
-        store["MyString"].as_str().unwrap()
-    );
+    assert_eq!(loaded.get_preference(Some("MyString")), store["MyString"].as_str().unwrap());
 
     let xml = golden("remaining/PreferencesTest-testLoadingUserPreferencesXML.json");
     let user = omegat_core::prefs::JavaPreferences::load_xml(&java_res(
@@ -1208,14 +985,8 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
     );
     let bak = golden("remaining/PreferencesTest-testPreferencesBackup.json");
     let bad = dir.path().join("omegat.prefs");
-    std::fs::write(
-        &bad,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<omegat>\n<preference version=\"1.0\">\n",
-    )
-    .unwrap();
-    assert!(omegat_core::prefs::JavaPreferences::backup_if_malformed(
-        &bad
-    ));
+    std::fs::write(&bad, "<?xml version=\"1.0\" encoding=\"UTF-8\" ?>\n<omegat>\n<preference version=\"1.0\">\n").unwrap();
+    assert!(omegat_core::prefs::JavaPreferences::backup_if_malformed(&bad));
     assert!(dir
         .path()
         .join(format!(
@@ -1253,8 +1024,7 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
         ja["out"].as_str().unwrap()
     );
 
-    let valid =
-        golden("remaining/TransTipsMarkerTest-testGetMarksForEntryValidGlossaryMatches.json");
+    let valid = golden("remaining/TransTipsMarkerTest-testGetMarksForEntryValidGlossaryMatches.json");
     let entry = GlossaryEntry::new("source text", "translation", "");
     let marks = omegat_core::glossary::marks_for_entry(
         Some(valid["source"].as_str().unwrap()),
@@ -1276,16 +1046,10 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
         omegat_core::glossary::marks_for_entry(None, &[], true, true).is_none(),
         null_src["null_marks"].as_bool().unwrap()
     );
-    let off =
-        golden("remaining/TransTipsMarkerTest-testGetMarksForEntryGlossaryMatchingDisabled.json");
+    let off = golden("remaining/TransTipsMarkerTest-testGetMarksForEntryGlossaryMatchingDisabled.json");
     assert_eq!(
-        omegat_core::glossary::marks_for_entry(
-            Some("source"),
-            &[GlossaryEntry::new("a", "b", "")],
-            true,
-            false
-        )
-        .is_none(),
+        omegat_core::glossary::marks_for_entry(Some("source"), &[GlossaryEntry::new("a", "b", "")], true, false)
+            .is_none(),
         off["null_marks"].as_bool().unwrap()
     );
     let none = golden("remaining/TransTipsMarkerTest-testGetMarksForEntryNoGlossaryEntries.json");
@@ -1309,8 +1073,7 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
     assert!(!omegat_core::dict::lookup(&dict_dir, add["word"].as_str().unwrap()).is_empty());
     mgr.add_ignore_word(add["word"].as_str().unwrap());
     assert_eq!(
-        mgr.find_words(&dict_dir, &[add["word"].as_str().unwrap()])
-            .is_empty(),
+        mgr.find_words(&dict_dir, &[add["word"].as_str().unwrap()]).is_empty(),
         add["ignored"].as_bool().unwrap()
     );
     let find = golden("remaining/DictionariesManagerTest-testFindWords.json");
@@ -1326,9 +1089,7 @@ fn leftover_columns_encoding_prefs_matches_transtips_dict_spell() {
     );
     assert_eq!(hits.len() as u64, find["count"].as_u64().unwrap());
 
-    let dummy = golden(
-        "remaining/SpellCheckerManagerTest-testGetCurrentSpellChecker_FallsBackToDummy.json",
-    );
+    let dummy = golden("remaining/SpellCheckerManagerTest-testGetCurrentSpellChecker_FallsBackToDummy.json");
     assert_eq!(
         omegat_core::spell::current_spell_checker(&[]),
         dummy["fallback"].as_str().unwrap()
@@ -1460,7 +1221,10 @@ fn remaining_util_engine_readers_match_java() {
             stem: t.clone(),
         })
         .collect();
-    assert_eq!(str_tokens[0].java_equals(&glos_tokens[0]), false);
+    assert_eq!(
+        str_tokens[0].java_equals(&glos_tokens[0]),
+        false
+    );
     assert_eq!(
         str_tokens[2].java_equals(&glos_tokens[0]),
         tok["last_eq"].as_bool().unwrap()
@@ -1505,12 +1269,7 @@ fn remaining_util_engine_readers_match_java() {
     let pat = golden("remaining/PatternConstsTest-testLangAndCountry.json");
     for c in pat["cases"].as_array().unwrap() {
         let got = omegat_core::pattern_consts::lang_and_country(c["text"].as_str().unwrap());
-        assert_eq!(
-            got.is_some(),
-            c["match"].as_bool().unwrap(),
-            "{}",
-            c["text"]
-        );
+        assert_eq!(got.is_some(), c["match"].as_bool().unwrap(), "{}", c["text"]);
         if c["match"].as_bool().unwrap() {
             let (lang, country) = got.unwrap();
             assert_eq!(lang, c["lang"].as_str().unwrap());
@@ -1530,10 +1289,7 @@ fn remaining_util_engine_readers_match_java() {
         ..Default::default()
     };
     let mut b = a.clone();
-    assert_eq!(
-        omegat_core::tmx::tmx_entry_equals(&a, &b, false),
-        merge["same"].as_bool().unwrap()
-    );
+    assert_eq!(omegat_core::tmx::tmx_entry_equals(&a, &b, false), merge["same"].as_bool().unwrap());
     b.changed = Some(omegat_core::tmx::format_tmx_date(123456000));
     assert_eq!(
         omegat_core::tmx::tmx_entry_equals(&a, &b, false),
@@ -1584,8 +1340,7 @@ fn remaining_util_engine_readers_match_java() {
     assert_eq!(entries[6].target, csv["loc6"].as_str().unwrap());
 
     let tbx = golden("remaining/GlossaryReaderTBXTest-testRead.json");
-    let entries =
-        omegat_core::glossary::read_tbx(&java_res("data/glossaries/sampleTBXfile.tbx"), "en", "hu");
+    let entries = omegat_core::glossary::read_tbx(&java_res("data/glossaries/sampleTBXfile.tbx"), "en", "hu");
     assert_eq!(entries.len() as u64, tbx["count"].as_u64().unwrap());
     assert_eq!(entries[0].source, tbx["src"].as_str().unwrap());
     assert_eq!(entries[0].target, tbx["loc"].as_str().unwrap());
@@ -1601,38 +1356,17 @@ fn remaining_util_engine_readers_match_java() {
     assert!(data.look_up("foobar").is_err());
     data.done();
     assert_eq!(data.size(), dd["size_after"].as_i64().unwrap());
-    assert_eq!(
-        data.look_up("foobar").unwrap().len() as u64,
-        dd["foobar"].as_u64().unwrap()
-    );
-    assert_eq!(
-        data.look_up("FOOBAR").unwrap().len() as u64,
-        dd["FOOBAR"].as_u64().unwrap()
-    );
-    assert_eq!(
-        data.look_up("blah").unwrap().len() as u64,
-        dd["blah"].as_u64().unwrap()
-    );
-    assert_eq!(
-        data.look_up("BLAH").unwrap().len() as u64,
-        dd["BLAH"].as_u64().unwrap()
-    );
+    assert_eq!(data.look_up("foobar").unwrap().len() as u64, dd["foobar"].as_u64().unwrap());
+    assert_eq!(data.look_up("FOOBAR").unwrap().len() as u64, dd["FOOBAR"].as_u64().unwrap());
+    assert_eq!(data.look_up("blah").unwrap().len() as u64, dd["blah"].as_u64().unwrap());
+    assert_eq!(data.look_up("BLAH").unwrap().len() as u64, dd["BLAH"].as_u64().unwrap());
     assert_eq!(
         data.look_up_predictive("foo").unwrap().len() as u64,
         dd["pred_foo"].as_u64().unwrap()
     );
-    assert_eq!(
-        data.look_up("foo").unwrap().len() as u64,
-        dd["exact_foo"].as_u64().unwrap()
-    );
-    assert_eq!(
-        data.look_up("höge").unwrap().len() as u64,
-        dd["nfc"].as_u64().unwrap()
-    );
-    assert_eq!(
-        data.look_up("zzzz").unwrap().len() as u64,
-        dd["zzzz"].as_u64().unwrap()
-    );
+    assert_eq!(data.look_up("foo").unwrap().len() as u64, dd["exact_foo"].as_u64().unwrap());
+    assert_eq!(data.look_up("höge").unwrap().len() as u64, dd["nfc"].as_u64().unwrap());
+    assert_eq!(data.look_up("zzzz").unwrap().len() as u64, dd["zzzz"].as_u64().unwrap());
 
     let det = golden("remaining/MixedEolHandlingReaderTest-testDetection.json");
     for c in det["cases"].as_array().unwrap() {
@@ -1644,12 +1378,7 @@ fn remaining_util_engine_readers_match_java() {
     for c in lines["cases"].as_array().unwrap() {
         let mut r = omegat_core::mixed_eol::MixedEolReader::from_text(c["text"].as_str().unwrap());
         let got: Vec<String> = std::iter::from_fn(|| r.read_line()).collect();
-        let want: Vec<String> = c["lines"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
+        let want: Vec<String> = c["lines"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
         assert_eq!(got, want);
     }
     let file = golden("remaining/MixedEolHandlingReaderTest-testFile.json");
@@ -1661,56 +1390,36 @@ fn remaining_util_engine_readers_match_java() {
 
     let ign = golden("remaining/DictionariesManagerTest-testLoadIgnoreWords.json");
     let mut mgr = omegat_core::dict::DictionariesManager::default();
-    let ignore_path = java_res(&format!(
-        "data/dicts/{}",
-        ign["ignore_file"].as_str().unwrap()
-    ));
+    let ignore_path = java_res(&format!("data/dicts/{}", ign["ignore_file"].as_str().unwrap()));
     if ignore_path.is_file() {
         mgr.load_ignore_words(&ignore_path);
     } else {
         mgr.add_ignore_word(ign["word"].as_str().unwrap());
     }
-    assert_eq!(
-        mgr.is_ignored(ign["word"].as_str().unwrap()),
-        ign["ignored"].as_bool().unwrap()
-    );
+    assert_eq!(mgr.is_ignored(ign["word"].as_str().unwrap()), ign["ignored"].as_bool().unwrap());
     let changed = golden("remaining/DictionariesManagerTest-testFileChanged.json");
     let mut mgr = omegat_core::dict::DictionariesManager::default();
     mgr.add_ignore_word(changed["word"].as_str().unwrap());
     assert_eq!(
-        mgr.find_words(
-            &java_res("data/dicts"),
-            &[changed["word"].as_str().unwrap()]
-        )
-        .is_empty(),
+        mgr.find_words(&java_res("data/dicts"), &[changed["word"].as_str().unwrap()]).is_empty(),
         changed["empty_after_ignore"].as_bool().unwrap()
     );
 
     let ff = golden("remaining/FalseFriendsTest-testExecute.json");
-    assert_eq!(
-        omegat_core::languagetool::default_bridge_type(),
-        ff["rewrite"].as_str().unwrap()
-    );
+    assert_eq!(omegat_core::languagetool::default_bridge_type(), ff["rewrite"].as_str().unwrap());
     let rm = golden("remaining/FalseFriendsTest-testRemoveRules.json");
-    assert_eq!(
-        omegat_core::languagetool::default_bridge_type(),
-        rm["rewrite"].as_str().unwrap()
-    );
+    assert_eq!(omegat_core::languagetool::default_bridge_type(), rm["rewrite"].as_str().unwrap());
 
-    let mt =
-        golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier.json");
+    let mt = golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_ValidGlossarySupplier.json");
     let mut engines = omegat_core::mt::engines();
     engines.truncate(mt["translators"].as_u64().unwrap() as usize);
     omegat_core::mt::set_glossary_map(&mut engines, mt["supplier"].as_str());
-    assert!(engines
-        .iter()
-        .all(|e| e.glossary_supplier.as_deref() == mt["supplier"].as_str()));
+    assert!(engines.iter().all(|e| e.glossary_supplier.as_deref() == mt["supplier"].as_str()));
     let none = golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators.json");
     let mut empty: Vec<omegat_core::mt::MtEngine> = vec![];
     omegat_core::mt::set_glossary_map(&mut empty, Some("x"));
     assert_eq!(empty.len() as u64, none["count"].as_u64().unwrap());
-    let nulls =
-        golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier.json");
+    let nulls = golden("mt/MachineTranslatorsManagerTest#testSetGlossaryMap_NullGlossarySupplier.json");
     let mut engines = omegat_core::mt::engines();
     engines.truncate(2);
     omegat_core::mt::set_glossary_map(&mut engines, nulls["supplier"].as_str());
@@ -1751,21 +1460,11 @@ fn remaining_util_engine_readers_match_java() {
     assert_eq!(p.project_locking, cli["project_locking"].as_bool().unwrap());
     assert_eq!(p.location_save, cli["location_save"].as_bool().unwrap());
     assert_eq!(p.no_team, cli["no_team"].as_bool().unwrap());
-    assert_eq!(
-        p.tokenizer_source.as_deref(),
-        cli["tokenizer_source"].as_str()
-    );
-    assert_eq!(
-        p.tokenizer_target.as_deref(),
-        cli["tokenizer_target"].as_str()
-    );
-    let defs =
-        golden("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json");
+    assert_eq!(p.tokenizer_source.as_deref(), cli["tokenizer_source"].as_str());
+    assert_eq!(p.tokenizer_target.as_deref(), cli["tokenizer_target"].as_str());
+    let defs = golden("cli/CommandCommonTest#testParseCommonParamsDefaultsLeaveStoreUntouched.json");
     let d = omegat_core::cli_params::parse_common_params(&[]);
-    assert_eq!(
-        d.project_locking,
-        defs["project_locking"].as_bool().unwrap()
-    );
+    assert_eq!(d.project_locking, defs["project_locking"].as_bool().unwrap());
     assert_eq!(d.location_save, defs["location_save"].as_bool().unwrap());
     assert_eq!(d.no_team, defs["no_team"].as_bool().unwrap());
     let team = golden("cli/CommandCommonTest#testParseCommonParamsPositiveTeamKeepsDefault.json");
@@ -1787,20 +1486,13 @@ fn remaining_util_engine_readers_match_java() {
     assert_eq!(
         omegat_core::cli_params::extract_config_dir(&[
             "start",
-            &format!(
-                "{}{}",
-                eq["flag"].as_str().unwrap(),
-                eq["value"].as_str().unwrap()
-            )
+            &format!("{}{}", eq["flag"].as_str().unwrap(), eq["value"].as_str().unwrap())
         ])
         .as_deref(),
         eq["value"].as_str()
     );
     let absent = golden("cli/MainTest#testExtractConfigDirAbsent.json");
-    assert_eq!(
-        omegat_core::cli_params::extract_config_dir(&["start", "project"]).is_some(),
-        absent["present"].as_bool().unwrap()
-    );
+    assert_eq!(omegat_core::cli_params::extract_config_dir(&["start", "project"]).is_some(), absent["present"].as_bool().unwrap());
     assert!(omegat_core::cli_params::extract_config_dir(&["--config-dir"]).is_none());
     assert!(omegat_core::cli_params::extract_config_dir(&["--config-dir="]).is_none());
     assert!(omegat_core::cli_params::extract_config_dir(&[]).is_none());
@@ -1822,10 +1514,7 @@ fn remaining_util_engine_readers_match_java() {
     rt.location_save = keep["location_save"].as_bool().unwrap();
     rt.tokenizer_source = Some(keep["tokenizer_source"].as_str().unwrap().into());
     rt.tokenizer_target = Some(keep["tokenizer_target"].as_str().unwrap().into());
-    assert_eq!(
-        omegat_core::cli_params::construct_command_params(&rt),
-        strs(&keep["argv"])
-    );
+    assert_eq!(omegat_core::cli_params::construct_command_params(&rt), strs(&keep["argv"]));
     let proj = golden("cli/MainTest#testConstructCommandParamsProjectAfterOptions.json");
     let mut rt = omegat_core::cli_params::RuntimePrefs::default();
     rt.config_dir = Some(proj["config_dir"].as_str().unwrap().into());
@@ -1841,10 +1530,9 @@ fn remaining_util_engine_readers_match_java() {
     ]);
     assert_eq!(p.config_dir.as_deref(), init["config_dir"].as_str());
     let tilde = golden("cli/LegacyParametersTest#testInitializeExpandsTilde.json");
-    let p = omegat_core::cli_params::initialize_legacy(&[&format!(
-        "--config-dir={}",
-        tilde["input"].as_str().unwrap()
-    )]);
+    let p = omegat_core::cli_params::initialize_legacy(&[
+        &format!("--config-dir={}", tilde["input"].as_str().unwrap()),
+    ]);
     let want = std::path::PathBuf::from(std::env::var("HOME").unwrap())
         .join(tilde["home_relative"].as_str().unwrap())
         .to_string_lossy()
@@ -1852,9 +1540,7 @@ fn remaining_util_engine_readers_match_java() {
     assert_eq!(p.config_dir.as_deref(), Some(want.as_str()));
     let none = golden("cli/LegacyParametersTest#testInitializeWithoutConfigDir.json");
     assert_eq!(
-        omegat_core::cli_params::initialize_legacy(&[])
-            .config_dir
-            .is_some(),
+        omegat_core::cli_params::initialize_legacy(&[]).config_dir.is_some(),
         none["present"].as_bool().unwrap()
     );
     let flags = golden("cli/LegacyParametersTest#testInitializeAppliesRuntimeFlags.json");
@@ -1863,10 +1549,7 @@ fn remaining_util_engine_readers_match_java() {
         "--disable-location-save",
         "--no-team",
     ]);
-    assert_eq!(
-        p.project_locking,
-        flags["project_locking"].as_bool().unwrap()
-    );
+    assert_eq!(p.project_locking, flags["project_locking"].as_bool().unwrap());
     assert_eq!(p.location_save, flags["location_save"].as_bool().unwrap());
     assert_eq!(p.no_team, flags["no_team"].as_bool().unwrap());
     let bundle = golden("cli/LegacyParametersTest#testInitializeLoadsResourceBundle.json");
@@ -1895,10 +1578,7 @@ fn remaining_util_engine_readers_match_java() {
         &mut hooks,
     )
     .expect("parse CJK path");
-    assert_eq!(
-        parsed.segments.len() as u64,
-        cjk["segments"].as_u64().unwrap()
-    );
+    assert_eq!(parsed.segments.len() as u64, cjk["segments"].as_u64().unwrap());
     assert_eq!(cjk["ok"].as_bool().unwrap(), true);
 
     let stats = golden("remaining/CalcStandardStatisticsTest-testStatistics.json");
@@ -1935,27 +1615,12 @@ fn remaining_util_engine_readers_match_java() {
         })
         .collect();
     let s = omegat_core::stats::compute(&entries, "en", "ca");
-    assert_eq!(
-        s.total.segments as u64,
-        stats["total_segments"].as_u64().unwrap()
-    );
+    assert_eq!(s.total.segments as u64, stats["total_segments"].as_u64().unwrap());
     assert_eq!(s.total.words as u64, stats["total_words"].as_u64().unwrap());
-    assert_eq!(
-        s.total.characters_without_spaces as u64,
-        stats["total_nosp"].as_u64().unwrap()
-    );
-    assert_eq!(
-        s.total.characters as u64,
-        stats["total_chars"].as_u64().unwrap()
-    );
-    assert_eq!(
-        s.unique.segments as u64,
-        stats["unique_segments"].as_u64().unwrap()
-    );
-    assert_eq!(
-        s.file_stats[0].total.segments as u64,
-        stats["file_segments"].as_u64().unwrap()
-    );
+    assert_eq!(s.total.characters_without_spaces as u64, stats["total_nosp"].as_u64().unwrap());
+    assert_eq!(s.total.characters as u64, stats["total_chars"].as_u64().unwrap());
+    assert_eq!(s.unique.segments as u64, stats["unique_segments"].as_u64().unwrap());
+    assert_eq!(s.file_stats[0].total.segments as u64, stats["file_segments"].as_u64().unwrap());
 
     let script = golden("remaining/ScriptingTest-testLoadScriptingWindow.json");
     let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -1968,10 +1633,7 @@ fn remaining_util_engine_readers_match_java() {
     let folder = omegat_core::cli_params::default_user_scripts_dir(std::path::Path::new(
         def["config_dir"].as_str().unwrap(),
     ));
-    assert_eq!(
-        folder,
-        std::path::PathBuf::from(def["scripts"].as_str().unwrap())
-    );
+    assert_eq!(folder, std::path::PathBuf::from(def["scripts"].as_str().unwrap()));
 
     let align = golden("align/AlignSettingsPersistenceTest#testRoundTrip.json");
     let mut store = std::collections::HashMap::new();
@@ -1986,8 +1648,7 @@ fn remaining_util_engine_readers_match_java() {
     let restored = omegat_core::align::AlignSettings::restore(&store);
     assert_eq!(restored, settings);
 
-    let defaults =
-        golden("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json");
+    let defaults = golden("align/AlignSettingsPersistenceTest#testDefaultsAreKeptWhenNothingStored.json");
     assert_eq!(
         omegat_core::align::AlignSettings::default(),
         omegat_core::align::AlignSettings {
@@ -2039,8 +1700,7 @@ fn remaining_util_engine_readers_match_java() {
 
     let dirs = golden("align/AlignSettingsPersistenceTest#testInputDirRoundTrip.json");
     let mut dir_store = std::collections::HashMap::new();
-    let source_file =
-        std::path::PathBuf::from(dirs["source_dir"].as_str().unwrap()).join("src.txt");
+    let source_file = std::path::PathBuf::from(dirs["source_dir"].as_str().unwrap()).join("src.txt");
     omegat_core::align::persist_input_dir(
         &mut dir_store,
         omegat_core::align::PREF_LAST_SOURCE_DIR,
@@ -2060,7 +1720,10 @@ fn remaining_util_engine_readers_match_java() {
         dirs["source_dir"].as_str()
     );
     assert_eq!(
-        omegat_core::align::restore_input_dir(&dir_store, omegat_core::align::PREF_LAST_TARGET_DIR,),
+        omegat_core::align::restore_input_dir(
+            &dir_store,
+            omegat_core::align::PREF_LAST_TARGET_DIR,
+        ),
         None
     );
 
@@ -2090,8 +1753,8 @@ fn remaining_util_engine_readers_match_java() {
 
     let filters =
         golden("align/AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults.json");
-    let align_fixture =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/align/heapSource.txt");
+    let align_fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/align/heapSource.txt");
     assert_eq!(
         omegat_core::align::extract_units(&align_fixture)
             .unwrap()
@@ -2127,10 +1790,7 @@ fn file_util_build_copy_delete_match_java() {
     std::fs::create_dir_all(src.join("sub1")).unwrap();
     std::fs::write(src.join("file1"), "file1-first").unwrap();
     std::fs::write(src.join("sub1/file2"), "file2-first").unwrap();
-    let sources: Vec<_> = std::fs::read_dir(&src)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
+    let sources: Vec<_> = std::fs::read_dir(&src).unwrap().map(|e| e.unwrap().path()).collect();
     omegat_core::file_util::copy_files_to(&dst, &sources, false).unwrap();
     assert_eq!(
         std::fs::read_to_string(dst.join("file1")).unwrap(),
@@ -2140,24 +1800,14 @@ fn file_util_build_copy_delete_match_java() {
         std::fs::read_to_string(dst.join("sub1/file2")).unwrap(),
         copy["initial"]["file2"].as_str().unwrap()
     );
-    assert_eq!(
-        dst.join("sub1").is_dir(),
-        copy["initial"]["subdir"].as_bool().unwrap()
-    );
+    assert_eq!(dst.join("sub1").is_dir(), copy["initial"]["subdir"].as_bool().unwrap());
 
     std::fs::write(src.join("file1"), "file1-second").unwrap();
     std::fs::write(src.join("sub1/file2"), "file2-second").unwrap();
     std::fs::write(src.join("file3"), "file3-first").unwrap();
-    let sources: Vec<_> = std::fs::read_dir(&src)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
+    let sources: Vec<_> = std::fs::read_dir(&src).unwrap().map(|e| e.unwrap().path()).collect();
     omegat_core::file_util::copy_files_to(&dst, &sources, false).unwrap();
-    for (path, key) in [
-        ("file1", "file1"),
-        ("sub1/file2", "file2"),
-        ("file3", "file3"),
-    ] {
+    for (path, key) in [("file1", "file1"), ("sub1/file2", "file2"), ("file3", "file3")] {
         assert_eq!(
             std::fs::read_to_string(dst.join(path)).unwrap(),
             copy["keep_existing"][key].as_str().unwrap()
@@ -2173,11 +1823,7 @@ fn file_util_build_copy_delete_match_java() {
         }
     })
     .unwrap();
-    for (path, key) in [
-        ("file1", "file1"),
-        ("sub1/file2", "file2"),
-        ("file3", "file3"),
-    ] {
+    for (path, key) in [("file1", "file1"), ("sub1/file2", "file2"), ("file3", "file3")] {
         assert_eq!(
             std::fs::read_to_string(dst.join(path)).unwrap(),
             copy["replace_subdir"][key].as_str().unwrap()
@@ -2202,11 +1848,7 @@ fn file_util_build_copy_delete_match_java() {
         callback_calls as u64,
         copy["canceled"]["callback_calls"].as_u64().unwrap()
     );
-    for (path, key) in [
-        ("file1", "file1"),
-        ("sub1/file2", "file2"),
-        ("file3", "file3"),
-    ] {
+    for (path, key) in [("file1", "file1"), ("sub1/file2", "file2"), ("file3", "file3")] {
         assert_eq!(
             std::fs::read_to_string(dst.join(path)).unwrap(),
             copy["canceled"][key].as_str().unwrap()
@@ -2248,10 +1890,7 @@ fn simple_issue_and_issue_checker_goldens_call_product_models() {
     let issue = SimpleIssue::new(1, "Hello world!", "Hallo Welt!", "#FF0000");
     let icon_present = golden("gui/SimpleIssueTest-testGetIconReturnsNonNullIcon.json");
     let icon = issue.icon();
-    assert_eq!(
-        icon.class_name(),
-        icon_present["icon_class"].as_str().unwrap()
-    );
+    assert_eq!(icon.class_name(), icon_present["icon_class"].as_str().unwrap());
     assert_eq!(true, icon_present["present"].as_bool().unwrap());
 
     let detail_present =
@@ -2262,19 +1901,14 @@ fn simple_issue_and_issue_checker_goldens_call_product_models() {
         detail_present["component_class"].as_str().unwrap()
     );
     assert_eq!(true, detail_present["present"].as_bool().unwrap());
-    let detail_text = golden("gui/SimpleIssueTest-testGetDetailComponentPopulatesTextFields.json");
+    let detail_text =
+        golden("gui/SimpleIssueTest-testGetDetailComponentPopulatesTextFields.json");
     assert_eq!(detail.first_text, detail_text["source"].as_str().unwrap());
-    assert_eq!(
-        detail.last_text,
-        detail_text["translation"].as_str().unwrap()
-    );
+    assert_eq!(detail.last_text, detail_text["translation"].as_str().unwrap());
     let color = golden("gui/SimpleIssueTest-testGetIconUsesExpectedColor.json");
     assert_eq!(icon.color, color["color"].as_str().unwrap());
     let entry = golden("gui/SimpleIssueTest-testGetEntryNum.json");
-    assert_eq!(
-        issue.entry_num() as u64,
-        entry["entry_num"].as_u64().unwrap()
-    );
+    assert_eq!(issue.entry_num() as u64, entry["entry_num"].as_u64().unwrap());
 
     let entries = vec![
         ProjectIssueEntry {
@@ -2434,11 +2068,7 @@ fn ostrings_xml_stream_and_stats_result_match_java_goldens() {
         "DATE",
     );
     let document = close_block(&rendered, "omegat-stats").unwrap();
-    let blocks: Vec<String> = document
-        .blocks
-        .iter()
-        .map(|block| block.descriptor())
-        .collect();
+    let blocks: Vec<String> = document.blocks.iter().map(|block| block.descriptor()).collect();
     assert_eq!(blocks, strs(&stats_golden["xml_blocks"]));
 }
 

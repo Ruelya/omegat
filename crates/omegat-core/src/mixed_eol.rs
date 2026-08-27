@@ -52,14 +52,7 @@ fn detect(text: &str) -> (String, bool) {
     let kinds = [crlf > 0, cr > 0, lf > 0].iter().filter(|x| **x).count();
     let mixed = kinds > 1;
     if crlf == 0 && cr == 0 && lf == 0 {
-        return (
-            std::env::consts::FAMILY
-                .eq("windows")
-                .then_some("\r\n")
-                .unwrap_or("\n")
-                .into(),
-            false,
-        );
+        return (std::env::consts::FAMILY.eq("windows").then_some("\r\n").unwrap_or("\n").into(), false);
     }
     if crlf == 0 && cr == lf && cr > 0 {
         let sys = if cfg!(windows) { "\r\n" } else { "\n" };

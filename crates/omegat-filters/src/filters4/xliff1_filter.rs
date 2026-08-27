@@ -1,6 +1,8 @@
 //! Java `org.omegat.filters4.xml.xliff.Xliff1Filter`.
 
-use super::abstract_xliff::{restore_tags, to_pair, write_events, BufferKind, XliffState};
+use super::abstract_xliff::{
+    restore_tags, to_pair, write_events, BufferKind, XliffState,
+};
 use super::abstract_xml::{parse_xml_file, write_xml_file, StaxFilter};
 use super::stax::{from_event_to_writer, StaxWriter, XmlEvent};
 use crate::{Filter, FilterContext, ParsedFile, Result};
@@ -341,8 +343,7 @@ impl StaxFilter for Xliff1Proc {
             return false;
         };
         if matches!(ev, XmlEvent::StartElement { .. }) {
-            if local == "body"
-                || (self.event_on_cmt_defs && (local == "cmt-defs" || local == "tag-defs"))
+            if local == "body" || (self.event_on_cmt_defs && (local == "cmt-defs" || local == "tag-defs"))
             {
                 return true;
             }
@@ -385,9 +386,7 @@ impl StaxFilter for Xliff1Proc {
                     self.xliff.path.push('/');
                     self.xliff.path.push_str(rn);
                 } else {
-                    self.xliff
-                        .path
-                        .push_str(&format!("/x-auto-{}", self.last_group_id));
+                    self.xliff.path.push_str(&format!("/x-auto-{}", self.last_group_id));
                     self.last_group_id += 1;
                 }
                 self.xliff.update_ignore_scope(ev);
@@ -460,8 +459,9 @@ impl StaxFilter for Xliff1Proc {
                                     .note
                                     .iter()
                                     .filter_map(|e| match e {
-                                        XmlEvent::Characters { data }
-                                        | XmlEvent::CData { data } => Some(data.as_str()),
+                                        XmlEvent::Characters { data } | XmlEvent::CData { data } => {
+                                            Some(data.as_str())
+                                        }
                                         _ => None,
                                     })
                                     .collect::<String>(),

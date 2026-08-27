@@ -3,8 +3,7 @@
 use serde_json::Value;
 
 pub const ID: &str = "ibmwatson";
-pub const ENDPOINT: &str =
-    "https://api.us-south.language-translator.watson.cloud.ibm.com/v3/translate";
+pub const ENDPOINT: &str = "https://api.us-south.language-translator.watson.cloud.ibm.com/v3/translate";
 
 pub fn parse(v: &Value) -> Option<String> {
     v.pointer("/translations/0/translation")

@@ -95,10 +95,7 @@ impl FilterHooks for AndroidHooks {
         if self.collect {
             if !e.is_empty() {
                 self.segments.push(ExtractedSegment {
-                    id: self
-                        .id
-                        .clone()
-                        .unwrap_or_else(|| self.segments.len().to_string()),
+                    id: self.id.clone().unwrap_or_else(|| self.segments.len().to_string()),
                     source: e,
                     existing_translation: None,
                     note: self.id_comment.clone(),

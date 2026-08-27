@@ -10,11 +10,7 @@ pub struct Language {
 impl Language {
     pub fn new(raw: Option<&str>) -> Self {
         let Some(str) = raw.filter(|s| !s.is_empty()) else {
-            return Self {
-                language: String::new(),
-                country: String::new(),
-                tag: String::new(),
-            };
+            return Self { language: String::new(), country: String::new(), tag: String::new() };
         };
         let normalized = str.replace('_', "-");
         let parts: Vec<&str> = normalized.split('-').collect();
@@ -33,11 +29,7 @@ impl Language {
         } else {
             format!("{language}-{country}")
         };
-        Self {
-            language,
-            country,
-            tag,
-        }
+        Self { language, country, tag }
     }
 
     pub fn get_language(&self) -> String {
@@ -76,10 +68,7 @@ impl Language {
     }
 
     pub fn is_space_delimited(&self) -> bool {
-        !matches!(
-            self.language.to_ascii_uppercase().as_str(),
-            "ZH" | "JA" | "BO"
-        )
+        !matches!(self.language.to_ascii_uppercase().as_str(), "ZH" | "JA" | "BO")
     }
 
     pub fn verify_single_lang_code(code: &str) -> bool {

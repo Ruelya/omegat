@@ -13,10 +13,7 @@ pub fn history_complete(translations: &[&str], prefix: &str) -> Vec<CompleterIte
     let p = prefix.to_lowercase();
     for text in translations {
         for w in text.split(|c: char| !c.is_alphanumeric() && c != '\'') {
-            if w.len() > 1
-                && w.to_lowercase().starts_with(&p)
-                && w.to_lowercase() != p
-                && seen.insert(w.to_string())
+            if w.len() > 1 && w.to_lowercase().starts_with(&p) && w.to_lowercase() != p && seen.insert(w.to_string())
             {
                 out.push(CompleterItemDto {
                     kind: "history".into(),
@@ -50,10 +47,7 @@ pub fn train_predictor(translations: &[&str]) -> HashMap<String, HashMap<String,
 
 /// Predict the next word after the last *completed* token. Not a prefix search
 /// over the translation vocabulary.
-pub fn history_predict(
-    model: &HashMap<String, HashMap<String, u32>>,
-    prev_text: &str,
-) -> Vec<CompleterItemDto> {
+pub fn history_predict(model: &HashMap<String, HashMap<String, u32>>, prev_text: &str) -> Vec<CompleterItemDto> {
     let (seed, context) = last_full_word(prev_text);
     if seed.is_empty() {
         return vec![];
@@ -84,10 +78,7 @@ fn last_full_word(prev: &str) -> (String, String) {
     if trailing_space {
         (tokens.last().unwrap_or(&"").to_string(), String::new())
     } else if tokens.len() >= 2 {
-        (
-            tokens[tokens.len() - 2].to_string(),
-            tokens[tokens.len() - 1].to_string(),
-        )
+        (tokens[tokens.len() - 2].to_string(), tokens[tokens.len() - 1].to_string())
     } else {
         (String::new(), tokens.last().unwrap_or(&"").to_string())
     }
@@ -103,10 +94,7 @@ mod tests {
         // After "Hello " we predict world/there — not every word starting with H.
         let hits = history_predict(&model, "Hello ");
         let words: Vec<_> = hits.iter().map(|h| h.text.as_str()).collect();
-        assert!(
-            words.contains(&"world") || words.contains(&"there"),
-            "{words:?}"
-        );
+        assert!(words.contains(&"world") || words.contains(&"there"), "{words:?}");
         assert!(!hits.iter().any(|h| h.text == "Hello"));
         let filtered = history_predict(&model, "Hello w");
         assert!(filtered.iter().all(|h| h.text.starts_with('w')));

@@ -20,10 +20,7 @@ impl Filter for TextFilter {
         &["*.txt"]
     }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
-        parse_text(
-            &read_to_string(path)?,
-            ctx.option("segmentOn").unwrap_or("EMPTYLINES"),
-        )
+        parse_text(&read_to_string(path)?, ctx.option("segmentOn").unwrap_or("EMPTYLINES"))
     }
     fn write(
         &self,
@@ -333,9 +330,7 @@ impl LineLengthLimitWriter {
         }
         for t in tokens.iter().flatten() {
             let cps = self.cp_count(t.offset);
-            if cps >= self.line_length
-                && cps < self.max_line_length
-                && self.possible_break_before(t.offset)
+            if cps >= self.line_length && cps < self.max_line_length && self.possible_break_before(t.offset)
             {
                 return t.offset;
             }

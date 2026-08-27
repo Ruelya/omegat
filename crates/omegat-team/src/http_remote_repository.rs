@@ -2,8 +2,8 @@
 
 use crate::error::{Result, TeamError};
 use crate::i_remote_repository2::IRemoteRepository2;
-use crate::mapping::{effective_mappings, file_name_from_url};
 use crate::project_team_settings::repo_work_dir;
+use crate::mapping::{effective_mappings, file_name_from_url};
 use crate::team_utils::{run_cmd, strip_slash, which};
 use omegat_core::properties::{ProjectProperties, RepositoryDef};
 use std::path::{Path, PathBuf};
@@ -67,7 +67,11 @@ pub fn download(url: &str, dest: &Path) -> Result<()> {
             "cannot download {url}: curl not installed and URL is not a local file"
         )));
     }
-    run_cmd("curl", None, &["-fsSL", "-o", &dest.to_string_lossy(), url])?;
+    run_cmd(
+        "curl",
+        None,
+        &["-fsSL", "-o", &dest.to_string_lossy(), url],
+    )?;
     Ok(())
 }
 

@@ -1,8 +1,6 @@
 //! Java `org.omegat.filters2.mozlang.MozillaLangFilter`.
 
-use crate::{
-    ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile, Result,
-};
+use crate::{ensure_parent, read_to_string, ExtractedSegment, Filter, FilterContext, ParsedFile, Result};
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;

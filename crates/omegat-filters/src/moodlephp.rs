@@ -40,11 +40,7 @@ struct Outcome {
     written: String,
 }
 
-fn process(
-    raw: &str,
-    translations: Option<&HashMap<String, String>>,
-    ctx: &FilterContext,
-) -> Outcome {
+fn process(raw: &str, translations: Option<&HashMap<String, String>>, ctx: &FilterContext) -> Outcome {
     let remove_untranslated = ctx.option_flag("unremoveStringsUntranslated");
     let re = Regex::new(r"(?s)\$string\['(.+)'] (=) '(.+)(';)$").unwrap();
     let mut segments = Vec::new();

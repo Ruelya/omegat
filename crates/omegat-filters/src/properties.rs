@@ -50,9 +50,7 @@ fn process(
     let remove_untranslated = ctx.option_flag("unremoveStringsUntranslated");
     let force_escape = ctx.option_flag("forceJava8LiteralsEscape");
     let dont_translate_comment = !matches!(
-        ctx.option("dontTargetCommentValue")
-            .map(|s| s.to_ascii_lowercase())
-            .as_deref(),
+        ctx.option("dontTargetCommentValue").map(|s| s.to_ascii_lowercase()).as_deref(),
         Some("false")
     );
 
@@ -81,12 +79,7 @@ fn process(
 
         let first = trimmed.chars().next().unwrap();
         if first == '#' || first == '!' {
-            written.push_str(&to_ascii(
-                raw_line,
-                EscapeMode::Comment,
-                force_escape,
-                dont_unescape,
-            ));
+            written.push_str(&to_ascii(raw_line, EscapeMode::Comment, force_escape, dont_unescape));
             written.push_str(br);
             comments = Some(match comments {
                 None => processed,
@@ -99,7 +92,11 @@ fn process(
         }
 
         let mut processed = processed;
-        while processed.chars().next_back().is_some_and(|c| c == '\\') {
+        while processed
+            .chars()
+            .next_back()
+            .is_some_and(|c| c == '\\')
+        {
             let next = if idx < lines.len() {
                 let (n, _) = lines[idx];
                 idx += 1;
@@ -137,19 +134,9 @@ fn process(
             };
 
             if noi18n && dont_translate_comment {
-                written.push_str(&to_ascii(
-                    &key,
-                    EscapeMode::Key,
-                    force_escape,
-                    dont_unescape,
-                ));
+                written.push_str(&to_ascii(&key, EscapeMode::Key, force_escape, dont_unescape));
                 written.push_str(&equals);
-                written.push_str(&to_ascii(
-                    &value,
-                    EscapeMode::Value,
-                    force_escape,
-                    dont_unescape,
-                ));
+                written.push_str(&to_ascii(&value, EscapeMode::Value, force_escape, dont_unescape));
                 written.push_str(br);
                 noi18n = false;
             } else {
@@ -175,12 +162,7 @@ fn process(
                     trans = format!("\\{trans}");
                 }
                 if translated || !remove_untranslated {
-                    written.push_str(&to_ascii(
-                        &key,
-                        EscapeMode::Key,
-                        force_escape,
-                        dont_unescape,
-                    ));
+                    written.push_str(&to_ascii(&key, EscapeMode::Key, force_escape, dont_unescape));
                     written.push_str(&equals);
                     written.push_str(&trans);
                     written.push_str(br);
@@ -319,10 +301,7 @@ fn contains_u_escape_at(text: &str, offset_chars: usize) -> bool {
         return false;
     }
     let hex: String = chars[offset_chars + 2..offset_chars + 6].iter().collect();
-    u32::from_str_radix(&hex, 16)
-        .ok()
-        .and_then(char::from_u32)
-        .is_some()
+    u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32).is_some()
 }
 
 fn search_equals(s: &str) -> i32 {
@@ -353,3 +332,4 @@ fn search_equals(s: &str) -> i32 {
     }
     -1
 }
+

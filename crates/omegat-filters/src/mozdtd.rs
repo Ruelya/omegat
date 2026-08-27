@@ -39,11 +39,7 @@ struct Outcome {
     written: String,
 }
 
-fn process(
-    raw: &str,
-    translations: Option<&HashMap<String, String>>,
-    ctx: &FilterContext,
-) -> Outcome {
+fn process(raw: &str, translations: Option<&HashMap<String, String>>, ctx: &FilterContext) -> Outcome {
     let remove_untranslated = ctx.option_flag("unremoveStringsUntranslated");
     let mut segments = Vec::new();
     let mut written = String::new();

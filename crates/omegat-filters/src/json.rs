@@ -1,6 +1,6 @@
 use crate::{
-    ensure_parent, placeholder, read_to_string, ExtractedSegment, Filter, FilterContext,
-    FilterError, ParsedFile, Result,
+    ensure_parent, placeholder, read_to_string, ExtractedSegment, Filter, FilterContext, FilterError,
+    ParsedFile, Result,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -45,10 +45,7 @@ impl Filter for JsonFilter {
         })?;
         apply(&mut value, "", translations);
         ensure_parent(dest_path)?;
-        std::fs::write(
-            dest_path,
-            serde_json::to_string_pretty(&value).unwrap_or(raw),
-        )?;
+        std::fs::write(dest_path, serde_json::to_string_pretty(&value).unwrap_or(raw))?;
         Ok(())
     }
 }
@@ -92,10 +89,7 @@ fn walk(value: &Value, path: &str, out: &mut Vec<ExtractedSegment>) {
 fn apply(value: &mut Value, path: &str, translations: &HashMap<String, String>) {
     match value {
         Value::String(s) => {
-            if let Some(t) = translations
-                .get(path)
-                .or_else(|| translations.get(&placeholder(0)))
-            {
+            if let Some(t) = translations.get(path).or_else(|| translations.get(&placeholder(0))) {
                 *s = t.clone();
             } else if let Some(t) = translations.values().find(|_| true) {
                 let _ = t;

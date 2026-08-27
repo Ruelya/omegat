@@ -25,21 +25,16 @@ pub fn parse_finder_xml(raw: &str) -> Vec<FinderItem> {
         let block = &slice[..end];
         let urls = tags(block, "url");
         let commands = tags(block, "command");
-        let ascii_only =
-            block.contains("target=\"ascii_only\"") && !block.contains("target=\"both\"");
+        let ascii_only = block.contains("target=\"ascii_only\"") && !block.contains("target=\"both\"");
         let non_ascii_only = block.contains("target=\"non_ascii_only\"");
         items.push(FinderItem {
-            name: unescape_xml(
-                &tag(block, "name").unwrap_or_else(|| attr(block, "name").unwrap_or_default()),
-            ),
+            name: unescape_xml(&tag(block, "name").unwrap_or_else(|| attr(block, "name").unwrap_or_default())),
             url: urls.first().cloned(),
             urls,
             command: commands.first().cloned(),
             commands,
             keystroke: tag(block, "keystroke").or_else(|| attr(block, "keystroke")),
-            scope: tag(block, "scope")
-                .or_else(|| attr(block, "scope"))
-                .unwrap_or_else(|| "selection".into()),
+            scope: tag(block, "scope").or_else(|| attr(block, "scope")).unwrap_or_else(|| "selection".into()),
             nopopup: block.contains("nopopup=\"true\""),
             ascii_only,
             non_ascii_only,
@@ -126,9 +121,7 @@ mod tests {
         assert_eq!(items[0].urls.len(), 1);
         let u = expand(&items[0], "cat", "", "").unwrap();
         assert!(u.contains("cat"));
-        let cmd = parse_finder_xml(
-            r#"<item><name>echo</name><command>echo {sourceText}</command></item>"#,
-        );
+        let cmd = parse_finder_xml(r#"<item><name>echo</name><command>echo {sourceText}</command></item>"#);
         let exp = expand(&cmd[0], "x", "hello world", "").unwrap();
         assert!(exp.contains("hello"));
     }

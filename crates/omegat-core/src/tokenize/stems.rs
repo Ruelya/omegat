@@ -364,8 +364,7 @@ pub fn brazilian(word: &str) -> String {
         len -= 2;
     } else if len > 4 && (ends_with(&s, len, "ado") || ends_with(&s, len, "ido")) {
         len -= 3;
-    } else if len > 4
-        && (ends_with(&s, len, "adas") || ends_with(&s, len, "idos") || ends_with(&s, len, "idas"))
+    } else if len > 4 && (ends_with(&s, len, "adas") || ends_with(&s, len, "idos") || ends_with(&s, len, "idas"))
     {
         len -= 4;
     } else if len > 3 && ends_with(&s, len, "as") {
@@ -612,45 +611,12 @@ fn hindi_stem(word: &str) -> String {
     let as_str: String = s.iter().collect();
     let suffixes5 = ["ाएंगी", "ाएंगे", "ाऊंगी", "ाऊंगा", "ाइयाँ", "ाइयों", "ाइयां"];
     let suffixes4 = [
-        "ाएगी",
-        "ाएगा",
-        "ाओगी",
-        "ाओगे",
-        "एंगी",
-        "ेंगी",
-        "एंगे",
-        "ेंगे",
-        "ूंगी",
-        "ूंगा",
-        "ातीं",
-        "नाओं",
-        "नाएं",
-        "ताओं",
-        "ताएं",
-        "ियाँ",
-        "ियों",
-        "ियां",
+        "ाएगी", "ाएगा", "ाओगी", "ाओगे", "एंगी", "ेंगी", "एंगे", "ेंगे", "ूंगी", "ूंगा", "ातीं",
+        "नाओं", "नाएं", "ताओं", "ताएं", "ियाँ", "ियों", "ियां",
     ];
     let suffixes3 = [
-        "ाकर",
-        "ाइए",
-        "ाईं",
-        "ाया",
-        "ेगी",
-        "ेगा",
-        "ोगी",
-        "ोगे",
-        "ाने",
-        "ाना",
-        "ाते",
-        "ाती",
-        "ाता",
-        "तीं",
-        "ाओं",
-        "ाएं",
-        "ुओं",
-        "ुएं",
-        "ुआं",
+        "ाकर", "ाइए", "ाईं", "ाया", "ेगी", "ेगा", "ोगी", "ोगे", "ाने", "ाना", "ाते", "ाती", "ाता",
+        "तीं", "ाओं", "ाएं", "ुओं", "ुएं", "ुआं",
     ];
     let suffixes2 = [
         "कर", "ाओ", "िए", "ाई", "ाए", "ने", "नी", "ना", "ते", "ीं", "ती", "ता", "ाँ", "ां", "ों", "ें",
@@ -731,8 +697,7 @@ fn cz_remove_case(s: &[char], len: usize) -> usize {
     if len > 7 && ends_with(s, len, "atech") {
         return len - 5;
     }
-    if len > 6
-        && (ends_with(s, len, "ětem") || ends_with(s, len, "etem") || ends_with(s, len, "atům"))
+    if len > 6 && (ends_with(s, len, "ětem") || ends_with(s, len, "etem") || ends_with(s, len, "atům"))
     {
         return len - 4;
     }
@@ -821,9 +786,7 @@ pub fn bulgarian(word: &str) -> String {
         if ends_with(&s[..len], len, "я") {
             len -= 1;
         }
-        if ends_with(&s[..len], len, "а")
-            || ends_with(&s[..len], len, "о")
-            || ends_with(&s[..len], len, "е")
+        if ends_with(&s[..len], len, "а") || ends_with(&s[..len], len, "о") || ends_with(&s[..len], len, "е")
         {
             len -= 1;
         }
@@ -921,10 +884,7 @@ fn lv_unpalatalize(s: &mut [char], len: usize) -> usize {
 pub fn indonesian(word: &str) -> String {
     let mut s: Vec<char> = word.to_lowercase().chars().collect();
     let mut len = s.len();
-    let mut syl = s
-        .iter()
-        .filter(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u'))
-        .count();
+    let mut syl = s.iter().filter(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u')).count();
     let mut flags = 0u32;
     const REMOVED_KE: u32 = 1;
     const REMOVED_PENG: u32 = 2;
@@ -933,8 +893,7 @@ pub fn indonesian(word: &str) -> String {
     const REMOVED_TER: u32 = 16;
     const REMOVED_BER: u32 = 32;
     const REMOVED_PE: u32 = 64;
-    if syl > 2
-        && (ends_with(&s, len, "kah") || ends_with(&s, len, "lah") || ends_with(&s, len, "pun"))
+    if syl > 2 && (ends_with(&s, len, "kah") || ends_with(&s, len, "lah") || ends_with(&s, len, "pun"))
     {
         len -= 3;
         syl -= 1;
@@ -976,9 +935,7 @@ pub fn indonesian(word: &str) -> String {
         }
     }
     if old != len {
-        if syl > 2
-            && ends_with(&s[..len], len, "kan")
-            && flags & (REMOVED_KE | REMOVED_PENG | REMOVED_PE) == 0
+        if syl > 2 && ends_with(&s[..len], len, "kan") && flags & (REMOVED_KE | REMOVED_PENG | REMOVED_PE) == 0
         {
             len -= 3;
             syl -= 1;
@@ -1001,9 +958,7 @@ pub fn indonesian(word: &str) -> String {
             len -= 3;
             syl -= 1;
         }
-        if syl > 2
-            && ends_with(&s[..len], len, "an")
-            && flags & (REMOVED_DI | REMOVED_MENG | REMOVED_TER) == 0
+        if syl > 2 && ends_with(&s[..len], len, "an") && flags & (REMOVED_DI | REMOVED_MENG | REMOVED_TER) == 0
         {
             len -= 2;
         }
@@ -1015,20 +970,7 @@ pub fn indonesian(word: &str) -> String {
 /// Snowball Armenian suffix family (`ArmenianAnalyzer`).
 pub fn armenian(word: &str) -> String {
     let mut s = word.to_lowercase();
-    for suf in [
-        "երենը",
-        "երեն",
-        "երով",
-        "երից",
-        "ները",
-        "ներ",
-        "ում",
-        "ենի",
-        "ով",
-        "ից",
-        "ը",
-        "ի",
-    ] {
+    for suf in ["երենը", "երեն", "երով", "երից", "ները", "ներ", "ում", "ենի", "ով", "ից", "ը", "ի"] {
         if s.ends_with(suf) && s.chars().count() > suf.chars().count() + 2 {
             let n = s.chars().count() - suf.chars().count();
             s = s.chars().take(n).collect();
@@ -1042,8 +984,8 @@ pub fn armenian(word: &str) -> String {
 pub fn basque(word: &str) -> String {
     let mut s = word.to_lowercase();
     for suf in [
-        "kuntza", "dunek", "tzen", "tzea", "tzat", "ko", "ka", "ta", "tu", "te", "ten", "ara",
-        "ari", "tik", "zko",
+        "kuntza", "dunek", "tzen", "tzea", "tzat", "ko", "ka", "ta", "tu", "te", "ten", "ara", "ari",
+        "tik", "zko",
     ] {
         if s.ends_with(suf) && s.chars().count() > suf.chars().count() + 2 {
             let n = s.chars().count() - suf.chars().count();
@@ -1068,10 +1010,8 @@ pub fn catalan(word: &str) -> String {
             c => c,
         })
         .collect();
-    for suf in [
-        "mente", "acions", "acio", "anca", "enc", "ista", "able", "ible", "ment", "itat", "atiu",
-        "acio",
-    ] {
+    for suf in ["mente", "acions", "acio", "anca", "enc", "ista", "able", "ible", "ment", "itat", "atiu", "acio"]
+    {
         if s.ends_with(suf) && s.len() > suf.len() + 3 {
             s.truncate(s.len() - suf.len());
             break;
@@ -1103,10 +1043,7 @@ fn irish_lower(word: &str) -> String {
     let chars: Vec<char> = word.chars().collect();
     if chars.len() > 1
         && matches!(chars[0], 'n' | 't' | 'N' | 'T')
-        && matches!(
-            chars[1],
-            'A' | 'E' | 'I' | 'O' | 'U' | 'Á' | 'É' | 'Í' | 'Ó' | 'Ú'
-        )
+        && matches!(chars[1], 'A' | 'E' | 'I' | 'O' | 'U' | 'Á' | 'É' | 'Í' | 'Ó' | 'Ú')
     {
         let mut out = String::new();
         out.push(chars[0].to_ascii_lowercase());
@@ -1243,8 +1180,7 @@ fn measure(s: &str) -> usize {
 }
 
 fn has_vowel(s: &str) -> bool {
-    s.chars()
-        .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
+    s.chars().any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y'))
 }
 
 fn step_1a(s: &mut String) {
@@ -1338,8 +1274,8 @@ fn step_3(s: &mut String) {
 
 fn step_4(s: &mut String) {
     for suf in [
-        "al", "ance", "ence", "er", "ic", "able", "ible", "ant", "ement", "ment", "ent", "ion",
-        "ou", "ism", "ate", "iti", "ous", "ive", "ize",
+        "al", "ance", "ence", "er", "ic", "able", "ible", "ant", "ement", "ment", "ent", "ion", "ou",
+        "ism", "ate", "iti", "ous", "ive", "ize",
     ] {
         if s.ends_with(suf) {
             let stem = &s[..s.len() - suf.len()];

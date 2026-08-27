@@ -20,10 +20,7 @@ pub fn import_wiki(src: &Path, project_source: &Path) -> Result<usize> {
 }
 
 fn import_one(path: &Path, dest_dir: &Path) -> Result<usize> {
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("page.txt");
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("page.txt");
     let dest = dest_dir.join(name);
     let ext = dest.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext == "xml" || name.ends_with(".xml") {
@@ -71,8 +68,7 @@ pub fn extract_mediawiki_pages(raw: &str) -> Vec<(String, String)> {
         let after = &rest[s..];
         let end = after.find("</page>").unwrap_or(after.len());
         let page = &after[..end];
-        let title =
-            extract_tag_inner(page, "title").unwrap_or_else(|| format!("page{}", out.len() + 1));
+        let title = extract_tag_inner(page, "title").unwrap_or_else(|| format!("page{}", out.len() + 1));
         if let Some(text) = extract_tag_inner(page, "text") {
             if !text.trim().is_empty() {
                 out.push((title, text));
@@ -90,13 +86,7 @@ pub fn extract_mediawiki_pages(raw: &str) -> Vec<(String, String)> {
 fn sanitize_filename(name: &str) -> String {
     let s: String = name
         .chars()
-        .map(|c| {
-            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
-                '_'
-            } else {
-                c
-            }
-        })
+        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
         .collect();
     let s = s.trim().replace(' ', "_");
     if s.is_empty() {
@@ -171,8 +161,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 
 fn unzip_to(src: &Path, dest: &Path) -> Result<()> {
     let file = File::open(src)?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| CoreError::InvalidProject(e.to_string()))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| CoreError::InvalidProject(e.to_string()))?;
     for i in 0..archive.len() {
         let mut zf = archive
             .by_index(i)
@@ -242,11 +231,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("proj");
         std::fs::create_dir_all(src.join("source")).unwrap();
-        std::fs::write(
-            src.join("omegat.project"),
-            "<source_lang>en</source_lang><target_lang>fr</target_lang>",
-        )
-        .unwrap();
+        std::fs::write(src.join("omegat.project"), "<source_lang>en</source_lang><target_lang>fr</target_lang>").unwrap();
         std::fs::write(src.join("source").join("a.txt"), "hi").unwrap();
         let zip_path = dir.path().join("pack.zip");
         {
@@ -254,8 +239,7 @@ mod tests {
             let mut zw = zip::ZipWriter::new(f);
             let opts = zip::write::FileOptions::default();
             zw.start_file("omegat.project", opts).unwrap();
-            zw.write_all(b"<source_lang>en</source_lang><target_lang>de</target_lang>")
-                .unwrap();
+            zw.write_all(b"<source_lang>en</source_lang><target_lang>de</target_lang>").unwrap();
             zw.start_file("source/a.txt", opts).unwrap();
             zw.write_all(b"hi").unwrap();
             zw.finish().unwrap();

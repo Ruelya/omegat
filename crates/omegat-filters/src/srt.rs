@@ -27,12 +27,8 @@ impl Filter for SrtFilter {
         translations: &HashMap<String, String>,
         _ctx: &FilterContext,
     ) -> Result<()> {
-        let out = crate::subtitle::process_timed(
-            &read_to_string(source_path)?,
-            &time_re(),
-            Some(translations),
-        )
-        .written;
+        let out = crate::subtitle::process_timed(&read_to_string(source_path)?, &time_re(), Some(translations))
+            .written;
         ensure_parent(dest_path)?;
         std::fs::write(dest_path, out)?;
         Ok(())
@@ -40,8 +36,6 @@ impl Filter for SrtFilter {
 }
 
 fn time_re() -> Regex {
-    Regex::new(
-        r"^([0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3})\s+-->\s+([0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3})$",
-    )
-    .unwrap()
+    Regex::new(r"^([0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3})\s+-->\s+([0-9]{2}:[0-9]{2}:[0-9]{2},[0-9]{3})$")
+        .unwrap()
 }

@@ -32,9 +32,7 @@ impl NearString {
     }
 }
 
-pub use crate::levenshtein::{
-    char_levenshtein as levenshtein, token_levenshtein, token_similarity,
-};
+pub use crate::levenshtein::{char_levenshtein as levenshtein, token_levenshtein, token_similarity};
 
 pub fn similarity(a: &str, b: &str) -> i32 {
     if a == b {

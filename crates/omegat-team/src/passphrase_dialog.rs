@@ -9,9 +9,7 @@ pub struct Passphrase {
 
 impl Passphrase {
     pub fn new(value: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-        }
+        Self { value: value.into() }
     }
 
     pub fn is_empty(&self) -> bool {

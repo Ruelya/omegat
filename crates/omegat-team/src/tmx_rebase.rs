@@ -46,12 +46,7 @@ pub fn rebase_detailed(
     let mut out = ProjectTmx::new();
     let mut conflicts = Vec::new();
     let mut keys = HashSet::new();
-    for e in b
-        .entries
-        .iter()
-        .chain(o.entries.iter())
-        .chain(t.entries.iter())
-    {
+    for e in b.entries.iter().chain(o.entries.iter()).chain(t.entries.iter()) {
         keys.insert(e.source.clone());
     }
     for k in keys {
@@ -97,10 +92,7 @@ pub fn rebase_detailed(
     (out, conflicts)
 }
 
-pub fn rebase_files(
-    props: &ProjectProperties,
-    resolved: &HashSet<String>,
-) -> Result<Vec<Conflict>> {
+pub fn rebase_files(props: &ProjectProperties, resolved: &HashSet<String>) -> Result<Vec<Conflict>> {
     let ours_path = props.save_tmx_path();
     let Some(theirs_path) = find_remote_tmx(props) else {
         return Ok(vec![]);

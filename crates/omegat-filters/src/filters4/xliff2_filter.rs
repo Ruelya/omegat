@@ -240,11 +240,7 @@ impl StaxFilter for Xliff2Proc {
             "segment" => {
                 if let Some(id) = ev.attr("id") {
                     self.seg_id = Some(id.to_string());
-                } else if self
-                    .seg_id
-                    .as_deref()
-                    .map(|s| s.chars().all(|c| c == '-' || c.is_ascii_digit()))
-                    .unwrap_or(false)
+                } else if self.seg_id.as_deref().map(|s| s.chars().all(|c| c == '-' || c.is_ascii_digit())).unwrap_or(false)
                 {
                     let n: i32 = self.seg_id.as_deref().unwrap_or("0").parse().unwrap_or(0);
                     self.seg_id = Some((n + 1).to_string());
@@ -357,9 +353,7 @@ impl Filter for Xliff2Filter {
             return false;
         }
         crate::read_to_string(path)
-            .map(|s| {
-                s.contains("urn:oasis:names:tc:xliff:document:2.0") || s.contains("version=\"2.")
-            })
+            .map(|s| s.contains("urn:oasis:names:tc:xliff:document:2.0") || s.contains("version=\"2."))
             .unwrap_or(false)
     }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> Result<ParsedFile> {

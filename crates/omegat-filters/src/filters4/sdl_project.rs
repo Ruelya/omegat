@@ -1,8 +1,8 @@
 //! Java `org.omegat.filters4.xml.xliff.SdlProject`.
 
 use super::abstract_xml::process_xml_string_ex;
-use super::abstract_zip::{parse_zip_parts, write_zip_parts};
 use super::stax::XmlDeclStyle;
+use super::abstract_zip::{parse_zip_parts, write_zip_parts};
 use super::xliff1_filter::Xliff1Proc;
 use crate::{Filter, FilterContext, ParsedFile, Result};
 use std::collections::HashMap;

@@ -14,11 +14,7 @@ pub struct QName {
 }
 
 impl QName {
-    pub fn new(
-        prefix: impl Into<String>,
-        local: impl Into<String>,
-        uri: impl Into<String>,
-    ) -> Self {
+    pub fn new(prefix: impl Into<String>, local: impl Into<String>, uri: impl Into<String>) -> Self {
         Self {
             prefix: prefix.into(),
             local: local.into(),
@@ -101,9 +97,7 @@ impl XmlEvent {
 
     pub fn local_name(&self) -> Option<&str> {
         match self {
-            XmlEvent::StartElement { name, .. } | XmlEvent::EndElement { name } => {
-                Some(&name.local)
-            }
+            XmlEvent::StartElement { name, .. } | XmlEvent::EndElement { name } => Some(&name.local),
             _ => None,
         }
     }
@@ -237,13 +231,16 @@ pub fn read_xml_events(raw: &str) -> Result<Vec<XmlEvent>, String> {
                 });
             }
             Ok(Event::Text(t)) => {
-                let data = t.unescape().map(|c| c.into_owned()).unwrap_or_else(|_| {
-                    reader
-                        .decoder()
-                        .decode(t.as_ref())
-                        .map(|c| c.into_owned())
-                        .unwrap_or_default()
-                });
+                let data = t
+                    .unescape()
+                    .map(|c| c.into_owned())
+                    .unwrap_or_else(|_| {
+                        reader
+                            .decoder()
+                            .decode(t.as_ref())
+                            .map(|c| c.into_owned())
+                            .unwrap_or_default()
+                    });
                 // XML 1.0 §2.11: parsers normalize CR LF / CR to LF.
                 events.push(XmlEvent::Characters {
                     data: normalize_xml_newlines(&data),
@@ -495,7 +492,9 @@ pub fn detect_xml_standalone(raw: &str) -> Option<String> {
 /// Java `PatternConsts.XML_ENCODING` — double quotes only.
 pub fn detect_xml_encoding(raw: &str) -> Option<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"<\?xml.*?encoding\s*=\s*"(\S+?)".*?\?>"#).unwrap());
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"<\?xml.*?encoding\s*=\s*"(\S+?)".*?\?>"#).unwrap()
+    });
     re.captures(raw).map(|c| c[1].to_string())
 }
 

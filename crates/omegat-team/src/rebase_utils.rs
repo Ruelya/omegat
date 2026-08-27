@@ -1,7 +1,9 @@
 //! Java `RebaseUtils`.
 
+use crate::project_team_settings::{
+    base_glossary_path, base_tmx_path, prep_dir, repo_work_dir,
+};
 use crate::error::Result;
-use crate::project_team_settings::{base_glossary_path, base_tmx_path, prep_dir, repo_work_dir};
 use omegat_core::properties::ProjectProperties;
 use std::path::PathBuf;
 

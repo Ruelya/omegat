@@ -19,8 +19,7 @@ const RTL: &[&str] = &["AR", "HE", "FA", "UR", "YI", "IW", "JI"];
 
 pub fn is_rtl(code: &str) -> bool {
     let lang = Language::new(Some(code));
-    RTL.iter()
-        .any(|r| lang.get_language_code().eq_ignore_ascii_case(r))
+    RTL.iter().any(|r| lang.get_language_code().eq_ignore_ascii_case(r))
 }
 
 pub fn is_locale_rtl(locale: &str) -> bool {

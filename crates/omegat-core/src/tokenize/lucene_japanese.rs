@@ -24,10 +24,7 @@ impl Tokenizer for LuceneJapaneseTokenizer {
         &["ja"]
     }
     fn tokenize_words(&self, text: &str, mode: StemmingMode) -> Vec<String> {
-        self.tokenize_tokens(text, mode)
-            .into_iter()
-            .map(|t| t.text)
-            .collect()
+        self.tokenize_tokens(text, mode).into_iter().map(|t| t.text).collect()
     }
     fn tokenize_tokens(&self, text: &str, mode: StemmingMode) -> Vec<Token> {
         if mode.stems_allowed() {
@@ -157,19 +154,12 @@ fn ja_tokenize(text: &str, discard_punct: bool) -> Vec<String> {
                 if !discard_punct {
                     out.push(text[start..end].to_string());
                 }
-                i = chars
-                    .iter()
-                    .position(|(o, _)| *o >= end)
-                    .unwrap_or(chars.len());
+                i = chars.iter().position(|(o, _)| *o >= end).unwrap_or(chars.len());
                 continue;
             }
             // TagJoining cancel: emit '<' / '{' then continue.
             if !discard_punct {
-                let end = if i + 1 < chars.len() {
-                    chars[i + 1].0
-                } else {
-                    text.len()
-                };
+                let end = if i + 1 < chars.len() { chars[i + 1].0 } else { text.len() };
                 out.push(text[start..end].to_string());
             }
             i += 1;
@@ -177,11 +167,7 @@ fn ja_tokenize(text: &str, discard_punct: bool) -> Vec<String> {
         }
         if is_ja_punct_char(ch) {
             if !discard_punct {
-                let end = if i + 1 < chars.len() {
-                    chars[i + 1].0
-                } else {
-                    text.len()
-                };
+                let end = if i + 1 < chars.len() { chars[i + 1].0 } else { text.len() };
                 out.push(text[start..end].to_string());
             }
             i += 1;
@@ -189,21 +175,13 @@ fn ja_tokenize(text: &str, discard_punct: bool) -> Vec<String> {
         }
         if ch.is_ascii_digit() {
             // Kuromoji splits 1.5 into 1 / . / 5 when punctuation is kept.
-            let end = if i + 1 < chars.len() {
-                chars[i + 1].0
-            } else {
-                text.len()
-            };
+            let end = if i + 1 < chars.len() { chars[i + 1].0 } else { text.len() };
             out.push(text[start..end].to_string());
             i += 1;
             continue;
         }
         if is_fullwidth_digit(ch) {
-            let end = if i + 1 < chars.len() {
-                chars[i + 1].0
-            } else {
-                text.len()
-            };
+            let end = if i + 1 < chars.len() { chars[i + 1].0 } else { text.len() };
             out.push(text[start..end].to_string());
             i += 1;
             continue;
@@ -213,11 +191,7 @@ fn ja_tokenize(text: &str, discard_punct: bool) -> Vec<String> {
             while j < chars.len() && chars[j].1.is_ascii_alphabetic() {
                 j += 1;
             }
-            let end = if j < chars.len() {
-                chars[j].0
-            } else {
-                text.len()
-            };
+            let end = if j < chars.len() { chars[j].0 } else { text.len() };
             out.push(text[start..end].to_string());
             i = j;
             continue;
@@ -227,11 +201,7 @@ fn ja_tokenize(text: &str, discard_punct: bool) -> Vec<String> {
             i += n;
             continue;
         }
-        let end = if i + 1 < chars.len() {
-            chars[i + 1].0
-        } else {
-            text.len()
-        };
+        let end = if i + 1 < chars.len() { chars[i + 1].0 } else { text.len() };
         out.push(text[start..end].to_string());
         i += 1;
     }
@@ -332,92 +302,15 @@ fn baseform(s: &str) -> String {
 /// Wikipedia sentence. Particles stay unigrams so である / 生物圏 do not glue.
 static LEX: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     const WORDS: &[&str] = &[
-        "我々",
-        "すべて",
-        "全て",
-        "同じ",
-        "惑星",
-        "住み",
-        "住む",
-        "その",
-        "生物",
-        "ある",
-        "日本",
-        "東京",
-        "言語",
-        "翻訳",
-        "漢字",
-        "ひらがな",
-        "カタカナ",
-        "です",
-        "ます",
-        "する",
-        "これ",
-        "それ",
-        "あれ",
-        "もの",
-        "こと",
-        "ため",
-        "よう",
-        "さん",
-        "今日",
-        "明日",
-        "昨日",
-        "時間",
-        "世界",
-        "人間",
-        "社会",
-        "経済",
-        "政治",
-        "文化",
-        "歴史",
-        "科学",
-        "技術",
-        "研究",
-        "大学",
-        "学校",
-        "学生",
-        "先生",
-        "会社",
-        "仕事",
-        "問題",
-        "方法",
-        "意味",
-        "言葉",
-        "文章",
-        "英語",
-        "中国",
-        "韓国",
-        "フランス",
-        "ドイツ",
-        "アメリカ",
-        "イギリス",
-        "ロシア",
-        "一つ",
-        "二つ",
-        "三つ",
-        "自分",
-        "相手",
-        "場合",
-        "必要",
-        "可能",
-        "重要",
-        "基本",
-        "全体",
-        "部分",
-        "関係",
-        "変化",
-        "発展",
-        "教育",
-        "生活",
-        "自然",
-        "環境",
-        "地球",
-        "宇宙",
-        "どうか",
-        "知り",
-        "いる",
-        "だけ",
+        "我々", "すべて", "全て", "同じ", "惑星", "住み", "住む", "その", "生物", "ある",
+        "日本", "東京", "言語", "翻訳", "漢字", "ひらがな", "カタカナ", "です", "ます", "する",
+        "これ", "それ", "あれ", "もの", "こと", "ため", "よう", "さん", "今日", "明日", "昨日",
+        "時間", "世界", "人間", "社会", "経済", "政治", "文化", "歴史", "科学", "技術", "研究",
+        "大学", "学校", "学生", "先生", "会社", "仕事", "問題", "方法", "意味", "言葉", "文章",
+        "英語", "中国", "韓国", "フランス", "ドイツ", "アメリカ", "イギリス", "ロシア",
+        "一つ", "二つ", "三つ", "自分", "相手", "場合", "必要", "可能", "重要", "基本", "全体",
+        "部分", "関係", "変化", "発展", "教育", "生活", "自然", "環境", "地球", "宇宙",
+        "どうか", "知り", "いる", "だけ",
     ];
     WORDS.iter().copied().collect()
 });

@@ -176,11 +176,7 @@ pub fn to_title_case(text: &str, locale: &str) -> String {
     };
     let prefix = &text[..idx];
     let rest_start = idx + ch.len_utf8();
-    format!(
-        "{prefix}{}{}",
-        title_case_char(ch, locale),
-        text[rest_start..].to_lowercase()
-    )
+    format!("{prefix}{}{}", title_case_char(ch, locale), text[rest_start..].to_lowercase())
 }
 
 pub fn capitalize_first(text: &str, locale: &str) -> String {
@@ -321,26 +317,21 @@ fn map_width(ch: char, next: Option<char>) -> Option<(String, bool)> {
         '\u{3371}' => Some(("hPa".into(), false)),
         '\u{2100}' => Some(("a/c".into(), false)),
         '\u{FF71}' => Some(("\u{30A2}".into(), false)),
-        '\u{FF76}' if matches!(next, Some('\u{FF9E}' | '\u{3099}')) => {
-            Some(("\u{30AC}".into(), true))
-        }
+        '\u{FF76}' if matches!(next, Some('\u{FF9E}' | '\u{3099}')) => Some(("\u{30AC}".into(), true)),
         '\u{FF76}' => Some(("\u{30AB}".into(), false)),
         '\u{FF8A}' if matches!(next, Some('\u{FF9F}')) => Some(("\u{30D1}".into(), true)),
         '\u{FF75}' => Some(("\u{30AA}".into(), false)),
         '\u{FFBE}' => Some(("\u{314E}".into(), false)),
         '\u{FFA4}' => Some(("\u{3134}".into(), false)),
-        c if ('\u{FF10}'..='\u{FF19}').contains(&c) => Some((
-            ((b'0' + (c as u32 - 0xFF10) as u8) as char).to_string(),
-            false,
-        )),
-        c if ('\u{FF21}'..='\u{FF3A}').contains(&c) => Some((
-            ((b'A' + (c as u32 - 0xFF21) as u8) as char).to_string(),
-            false,
-        )),
-        c if ('\u{FF41}'..='\u{FF5A}').contains(&c) => Some((
-            ((b'a' + (c as u32 - 0xFF41) as u8) as char).to_string(),
-            false,
-        )),
+        c if ('\u{FF10}'..='\u{FF19}').contains(&c) => {
+            Some((((b'0' + (c as u32 - 0xFF10) as u8) as char).to_string(), false))
+        }
+        c if ('\u{FF21}'..='\u{FF3A}').contains(&c) => {
+            Some((((b'A' + (c as u32 - 0xFF21) as u8) as char).to_string(), false))
+        }
+        c if ('\u{FF41}'..='\u{FF5A}').contains(&c) => {
+            Some((((b'a' + (c as u32 - 0xFF41) as u8) as char).to_string(), false))
+        }
         _ => None,
     }
 }

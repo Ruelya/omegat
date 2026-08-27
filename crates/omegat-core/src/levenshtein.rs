@@ -4,10 +4,7 @@
 pub const MAX_N: usize = 1000;
 
 /// Token-level Levenshtein distance. `None` inputs are rejected like Java.
-pub fn compute(
-    source: Option<&[String]>,
-    target: Option<&[String]>,
-) -> Result<usize, &'static str> {
+pub fn compute(source: Option<&[String]>, target: Option<&[String]>) -> Result<usize, &'static str> {
     let source = source.ok_or("LD_NULL_ARRAYS_ERROR")?;
     let target = target.ok_or("LD_NULL_ARRAYS_ERROR")?;
     Ok(compute_tokens(source, target))
@@ -75,19 +72,13 @@ mod tests {
 
     #[test]
     fn identical_is_zero() {
-        assert_eq!(
-            compute_tokens(&toks(&["test", "example"]), &toks(&["test", "example"])),
-            0
-        );
+        assert_eq!(compute_tokens(&toks(&["test", "example"]), &toks(&["test", "example"])), 0);
     }
 
     #[test]
     fn empty_is_other_len() {
         assert_eq!(compute_tokens(&toks(&["alpha", "beta"]), &[]), 2);
-        assert_eq!(
-            compute_tokens(&[], &toks(&["gamma", "delta", "epsilon"])),
-            3
-        );
+        assert_eq!(compute_tokens(&[], &toks(&["gamma", "delta", "epsilon"])), 3);
     }
 
     #[test]

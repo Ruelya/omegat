@@ -1,7 +1,7 @@
 //! filters4: StAX ZIP / XLIFF / SDL / Office. One Java class per file.
 
-pub mod abstract_xliff;
 pub mod abstract_xml;
+pub mod abstract_xliff;
 pub mod abstract_zip;
 pub mod msoffice_file_filter;
 pub mod openxml_filter;

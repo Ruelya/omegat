@@ -244,10 +244,6 @@ fn regex_full(pat: &str, value: &str) -> bool {
 
 /// Match Java `XMLFilter.isFileSupported` against the first 8 KiB.
 pub fn file_looks_like(raw: &str, dialect: &dyn XmlDialect) -> bool {
-    let limit = raw
-        .char_indices()
-        .nth(8192)
-        .map(|(i, _)| i)
-        .unwrap_or(raw.len());
+    let limit = raw.char_indices().nth(8192).map(|(i, _)| i).unwrap_or(raw.len());
     is_xml_supported(&raw[..limit], dialect)
 }

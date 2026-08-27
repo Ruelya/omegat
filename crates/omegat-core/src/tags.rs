@@ -1,6 +1,6 @@
 use omegat_ipc::IssueDto;
-use once_cell::sync::Lazy;
 use regex::Regex;
+use once_cell::sync::Lazy;
 
 static OMEGAT_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"</?[a-zA-Z]+[0-9]+/?>").unwrap());
 static OMEGAT_TAG_DECOMPILE: Lazy<Regex> =
@@ -120,16 +120,10 @@ pub fn extract_tags(text: &str) -> Vec<String> {
 
 pub fn validate(source: &str, target: &str) -> Vec<TagErrorKind> {
     let src = crate::tag_validation::tags_from_strings(
-        &extract_tags(source)
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>(),
+        &extract_tags(source).iter().map(|s| s.as_str()).collect::<Vec<_>>(),
     );
     let loc = crate::tag_validation::tags_from_strings(
-        &extract_tags(target)
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>(),
+        &extract_tags(target).iter().map(|s| s.as_str()).collect::<Vec<_>>(),
     );
     let report = crate::tag_validation::inspect_ordered_tags(&src, &loc, false);
     let mut errors: Vec<TagErrorKind> = report
@@ -159,10 +153,7 @@ pub fn validate(source: &str, target: &str) -> Vec<TagErrorKind> {
 
 pub fn repair(source: &str, target: &str) -> String {
     let src_tags = crate::tag_validation::tags_from_strings(
-        &extract_tags(source)
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>(),
+        &extract_tags(source).iter().map(|s| s.as_str()).collect::<Vec<_>>(),
     );
     let mut out = target.to_string();
     for t in extract_tags(target) {

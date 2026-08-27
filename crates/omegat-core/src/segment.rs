@@ -29,8 +29,9 @@ pub struct SrxDocument {
     pub cascade: bool,
 }
 
-static DEFAULT_SRX: Lazy<SrxDocument> =
-    Lazy::new(|| load_srx_file(&default_srx_path()).unwrap_or_default());
+static DEFAULT_SRX: Lazy<SrxDocument> = Lazy::new(|| {
+    load_srx_file(&default_srx_path()).unwrap_or_default()
+});
 
 static REGEX_CACHE: Lazy<Mutex<HashMap<String, Option<Regex>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
@@ -71,9 +72,8 @@ pub fn parse_srx_document(raw: &str) -> SrxDocument {
         r#"(?s)<rule\s+break="(yes|no)"\s*>.*?<beforebreak>(.*?)</beforebreak>\s*<afterbreak>(.*?)</afterbreak>"#,
     )
     .unwrap();
-    let lang_re =
-        Regex::new(r#"(?s)<languagerule\s+languagerulename="([^"]+)">(.*?)</languagerule>"#)
-            .unwrap();
+    let lang_re = Regex::new(r#"(?s)<languagerule\s+languagerulename="([^"]+)">(.*?)</languagerule>"#)
+        .unwrap();
     for cap in lang_re.captures_iter(raw) {
         let name = cap[1].to_string();
         let body = &cap[2];
@@ -87,9 +87,10 @@ pub fn parse_srx_document(raw: &str) -> SrxDocument {
         }
         languages.insert(name, SrxTable { rules });
     }
-    let map_re =
-        Regex::new(r#"<languagemap\s+languagepattern="([^"]+)"\s+languagerulename="([^"]+)""#)
-            .unwrap();
+    let map_re = Regex::new(
+        r#"<languagemap\s+languagepattern="([^"]+)"\s+languagerulename="([^"]+)""#,
+    )
+    .unwrap();
     for cap in map_re.captures_iter(raw) {
         maps.push((cap[1].to_string(), cap[2].to_string()));
     }
@@ -135,10 +136,7 @@ fn language_map_matches(pattern: &str, lang: &str) -> bool {
         return re.is_match(lang);
     }
     let stem = pattern.trim_end_matches(".*").trim_end_matches('*');
-    lang.eq_ignore_ascii_case(stem)
-        || lang
-            .to_ascii_uppercase()
-            .starts_with(&stem.to_ascii_uppercase())
+    lang.eq_ignore_ascii_case(stem) || lang.to_ascii_uppercase().starts_with(&stem.to_ascii_uppercase())
 }
 
 fn unescape_xml(s: &str) -> String {
@@ -354,9 +352,9 @@ fn get_breaks(paragraph: &str, rule: &SrxRule) -> Vec<usize> {
         return vec![];
     };
 
-    let after_starts: Option<Vec<usize>> = after_re
-        .as_ref()
-        .map(|re| re.find_iter(paragraph).map(|m| m.start()).collect());
+    let after_starts: Option<Vec<usize>> = after_re.as_ref().map(|re| {
+        re.find_iter(paragraph).map(|m| m.start()).collect()
+    });
     if let Some(starts) = &after_starts {
         if starts.is_empty() {
             return vec![];
@@ -495,11 +493,7 @@ mod tests {
         let table = table_for(&doc, "en");
         let input = "<br7>\n\n<br5>\n\nother";
         let (chunks, _) = break_paragraph(input, &table);
-        assert_eq!(
-            chunks,
-            vec!["<br7>", "\n\n<br5>", "\n\nother"],
-            "{chunks:?}"
-        );
+        assert_eq!(chunks, vec!["<br7>", "\n\n<br5>", "\n\nother"], "{chunks:?}");
         let parts = split_with_srx(input, &table);
         assert_eq!(parts, vec!["<br7>", "<br5>", "other"]);
     }

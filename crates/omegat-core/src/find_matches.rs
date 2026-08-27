@@ -77,17 +77,8 @@ pub fn tokenize_all(text: &str) -> Vec<String> {
     tokenize_verbatim(&text.to_lowercase())
 }
 
-fn scores_for(
-    query: &str,
-    candidate: &str,
-    tokenizer: &str,
-    penalty: i32,
-    fuzzy: bool,
-) -> (i32, i32, i32) {
-    let mut stem = token_similarity(
-        &tokenize_stem(query, tokenizer),
-        &tokenize_stem(candidate, tokenizer),
-    );
+fn scores_for(query: &str, candidate: &str, tokenizer: &str, penalty: i32, fuzzy: bool) -> (i32, i32, i32) {
+    let mut stem = token_similarity(&tokenize_stem(query, tokenizer), &tokenize_stem(candidate, tokenizer));
     let mut no_stem = token_similarity(
         &tokenize_no_stem(query, tokenizer),
         &tokenize_no_stem(candidate, tokenizer),
@@ -108,9 +99,9 @@ fn is_foreign(e: &TmxEntry, target_lang: &str) -> bool {
     e.props
         .iter()
         .any(|(k, v)| k == "foreignMatch" && v == "true")
-        || e.props
-            .iter()
-            .any(|(k, v)| k == "targetLanguage" && !v.is_empty() && !same_language(v, target_lang))
+        || e.props.iter().any(|(k, v)| {
+            k == "targetLanguage" && !v.is_empty() && !same_language(v, target_lang)
+        })
 }
 
 /// Search memory + extra TM + file translations + optional subsegment glue.
@@ -119,13 +110,13 @@ pub fn search(req: SearchRequest<'_>) -> Vec<NearString> {
     let query = req.query;
 
     let add = |result: &mut Vec<NearString>,
-               source: &str,
-               translation: &str,
-               comes_from: &str,
-               tmx_name: &str,
-               penalty: i32,
-               fuzzy: bool,
-               skip_exact: bool| {
+                   source: &str,
+                   translation: &str,
+                   comes_from: &str,
+                   tmx_name: &str,
+                   penalty: i32,
+                   fuzzy: bool,
+                   skip_exact: bool| {
         if translation.is_empty() {
             return;
         }
@@ -239,20 +230,8 @@ pub fn search(req: SearchRequest<'_>) -> Vec<NearString> {
                         ftrans.push(String::new());
                     }
                 }
-                let glued_src = glue(
-                    req.source_lang,
-                    req.source_lang,
-                    &fsrc,
-                    &seg.spaces,
-                    &seg.brules,
-                );
-                let glued_tr = glue(
-                    req.source_lang,
-                    req.target_lang,
-                    &ftrans,
-                    &seg.spaces,
-                    &seg.brules,
-                );
+                let glued_src = glue(req.source_lang, req.source_lang, &fsrc, &seg.spaces, &seg.brules);
+                let glued_tr = glue(req.source_lang, req.target_lang, &ftrans, &seg.spaces, &seg.brules);
                 if !glued_tr.trim().is_empty() {
                     add(
                         &mut result,
