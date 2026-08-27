@@ -57,7 +57,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**66 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**67 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **3 passed**, and desktop **18 files / 91
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -145,7 +145,7 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **13/13**: in addition to seven ZIP cases,
+The deep write-back suite is now **14/14**: in addition to seven ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
 translated attributes/text under out-of-order translation maps. OpenXML
 hidden field text, external relationship targets, and intact fallback content
@@ -166,6 +166,11 @@ attributes and paragraph-on-`br` text. The two latest product-path cases keep
 duplicate XLIFF `trans-unit` IDs and their protected callback streams
 independent, and sort physically reversed OpenXML parts by natural part order
 while writing hidden/visible nested callbacks only through part-qualified IDs.
+The Android product path now also preserves comment-based “do not translate”
+and `translatable=false` resources while writing named string/plural IDs,
+protected inline tags, apostrophe escaping, and an explicitly empty plural
+translation independently; the test checks the rewritten XML structure and
+reparsed segment set with exact equality.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -210,6 +215,17 @@ one replaceable composition with commit/cancel. Variable-height prepends retain
 a stable segment/viewport scroll anchor; Chromium caret range hit-testing maps
 mouse pixels to UTF-16 offsets, and native `beforeinput` operations replace
 printable-key synthesis while still flowing through `Document3`.
+The hidden textarea now subscribes directly to Chromium `beforeinput` and
+composition events instead of relying on React's synthetic `onBeforeInput`.
+Repeated native `compositionstart` events retain one replaceable
+`EditorTextArea3` composition session, and both `insertFromComposition` and
+Chromium's final `insertText` commit route through `Document3`. A real Linux
+`linux-unpacked` E2E uses XTEST clicks/Shift-clicks to select exactly `alpha`,
+then Chromium `Input.imeSetComposition` updates replace that selection and
+Enter persists the exact `日本語 😀 beta` translation through the NDJSON
+sidecar. Entering the workspace in that E2E also exposed and fixed a React 19
+infinite-update defect by keeping the Multiple Translations Zustand snapshot
+stable. This is Linux Electron evidence only, not Windows/macOS evidence.
 MarkerController caches
 per-entry generations, maps translation/source marks into `Document3` spans,
 and invalidates those spans after edits.
