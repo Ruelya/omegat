@@ -1154,15 +1154,21 @@ try {
   );
   const externalCancelPost = await client.evaluate(`(async () => {
     window.__omegatExternalRefreshCancelObserver?.disconnect();
-    const entries = await window.omegat.rpc("entry.list", {});
+    const stats = await window.omegat.rpc("stats.get", {});
+    const wanted = await window.omegat.rpc("entry.get", {
+      index: ${duplicateSetup.wanted.index},
+    });
+    const decoy = await window.omegat.rpc("entry.get", {
+      index: ${duplicateSetup.decoy.index},
+    });
     return {
       visibleProgress: window.__omegatExternalRefreshProgress,
       rpcTrace: window.__omegatRpcOperationTrace,
       domTrace: window.__omegatDomOperationTrace,
       externalTrace: window.__omegatExternalChangeTrace,
-      entryCount: entries.length,
-      wanted: entries.find((entry) => entry.key.file === "1000-wanted.yaml"),
-      decoy: entries.find((entry) => entry.key.file === "1001-decoy.yaml"),
+      entryCount: stats.segments,
+      wanted,
+      decoy,
     };
   })()`, true);
   const externalCancelEvents = externalCancelPost.rpcTrace.filter(
@@ -1222,12 +1228,18 @@ try {
     },
   );
   const externalSuccessPost = await client.evaluate(`(async () => {
-    const entries = await window.omegat.rpc("entry.list", {});
+    const stats = await window.omegat.rpc("stats.get", {});
+    const wanted = await window.omegat.rpc("entry.get", {
+      index: ${duplicateSetup.wanted.index + 1},
+    });
+    const decoy = await window.omegat.rpc("entry.get", {
+      index: ${duplicateSetup.decoy.index + 1},
+    });
     return {
       events: window.__omegatExternalChangeTrace,
-      entryCount: entries.length,
-      wanted: entries.find((entry) => entry.key.file === "1000-wanted.yaml"),
-      decoy: entries.find((entry) => entry.key.file === "1001-decoy.yaml"),
+      entryCount: stats.segments,
+      wanted,
+      decoy,
     };
   })()`, true);
   assert.equal(externalSuccessPost.entryCount, SOURCE_FILES + 1);
