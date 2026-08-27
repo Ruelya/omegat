@@ -284,7 +284,8 @@ try {
       };
     })()`);
     if (ready.error) throw new Error(JSON.stringify(ready));
-    return ready.preload === "function" && ready.surface ? ready : undefined;
+    if (ready.preload === "function" && ready.surface) return ready;
+    throw new Error(JSON.stringify(ready));
   });
   assert.equal(
     readyEditor.source,
