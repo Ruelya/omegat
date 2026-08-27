@@ -154,7 +154,6 @@ pub fn scan_script_catalog(root: &Path) -> Result<ScriptCatalog, ScriptError> {
         }
     }
     scripts.sort();
-    scripts.dedup();
 
     let properties = root.join("properties");
     let mut property_files = Vec::new();
