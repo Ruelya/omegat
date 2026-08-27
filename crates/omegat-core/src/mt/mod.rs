@@ -181,17 +181,6 @@ pub fn translate_with_creds_cancellable(
     Ok(MtSuggestionDto { engine: engine.into(), text })
 }
 
-fn dispatch(engine: &str, source: &str, sl: &str, tl: &str, creds: &MtCreds) -> Result<String, String> {
-    dispatch_cancellable(
-        engine,
-        source,
-        sl,
-        tl,
-        creds,
-        &CancellationToken::default(),
-    )
-}
-
 fn dispatch_cancellable(
     engine: &str,
     source: &str,

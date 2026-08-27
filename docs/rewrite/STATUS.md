@@ -58,8 +58,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 141
+**4 passed**, plugin registry **4 passed**, sidecar contract **6 passed** plus
+native plugin RPC/fault isolation **1 passed**, and desktop **23 files / 145
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -326,6 +326,11 @@ inserting docks read or publish the same document snapshot. `IEditor` also no
 longer keeps module-global selected-text or filter mirrors; source selection
 and the serializable editor filter live in the store, while
 `EditorController` remains the paging/Marker projection over that snapshot.
+The mounted renderer path no longer adopts that snapshot into
+`EditorController.document`, `entries`, active-entry fields, or its
+`EditorTextArea3` selection. It derives one immutable page plus request-scoped
+Marker inputs from Zustand's index and sole `Document3`; exact tests verify the
+headless controller retains no renderer active segment or selection.
 `EditorController.replacePartOfText` now treats start/end as translation-
 relative UTF-16 offsets, selects through `EditorTextArea3`, mutates the active
 `Document3`, synchronizes the entry, recalculates markers, and restores the
@@ -450,6 +455,19 @@ authoritative entry list without committing the stale live document, rebind by
 all six `EntryKey` fields, clamp the retained selection, and only then activate
 new Dock loaders. Exact tests assert event order, changed-key payloads, no
 `entry.set` during an external fix, and same-key cross-project cancellation.
+Dock aborts now cross Electron IPC as request IDs and NDJSON
+`$/cancelRequest` notifications. The sidecar reads cancellation concurrently
+with request workers, returns exact `-32800`, stops search/dictionary
+publication cooperatively, and terminates an in-flight MT curl process; delayed
+MT, dictionary, completer, multi-step selection, and repeated search requests
+therefore stop at the protocol boundary instead of being ignored only by React.
+Native filesystem watchers cover project/source/TM/glossary/dictionary inputs
+on Linux without relying on recursive-watch support. Their events and
+successful team sync/conflict resolution call the sidecar's
+`project.external-refresh`, which reloads project properties, project/external
+TM, glossary, and sources before the existing EXTERNAL_REFRESH bus rebinds the
+sole `Document3` and starts new Dock work. Sidecar contract tests exercise both
+wire cancellation/responsiveness and on-disk source/glossary adoption.
 Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
