@@ -57,11 +57,14 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**64 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**66 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **3 passed**, and desktop **18 files / 91
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
-packaged restart were not run in this Linux-only environment.
+packaged restart were not run in this Linux-only environment. A separate real
+Linux packaged aligner E2E now passes with XTEST pointer input through the
+native application menu, renderer drag events, stationary edge autoscroll, and
+the sidecar-backed drop result.
 
 **P0 exporter / gates:** `exportGoldens` now writes one JSON per in-scope
 `test*` (`util/` `search/` `engine/` `glossary/` `gui/` `mt/` `finder/`
@@ -133,7 +136,7 @@ broken tag cannot hide a later paragraph, including through the public
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported. OpenDoc/OpenXML now assign
 part-qualified segment IDs (`content.xml#0`, `word/header1.xml#0`) during both
-parse and write. **4/4** deep ZIP write-back tests strictly distinguish
+parse and write. **7/7** deep ZIP write-back tests strictly distinguish
 same-source segments across parts, retain OpenXML protected nested tags, and
 leave OpenDocument intact `office:styles` content unchanged. OpenDocument
 attribute translation and out-of-turn note translation share the same
@@ -142,7 +145,7 @@ part-qualified ID stream; translated notes retain the original
 note/annotation out-of-turn regions translate their own attributes, descendant
 link/index attributes, and both text spans through one stable ID stream even
 when the translation map is supplied out of order.
-The deep write-back suite is now **11/11**: in addition to six ZIP cases,
+The deep write-back suite is now **13/13**: in addition to seven ZIP cases,
 nested XLIFF `sub` and DocBook `indexterm` regions preserve both nesting and
 translated attributes/text under out-of-order translation maps. OpenXML
 hidden field text, external relationship targets, and intact fallback content
@@ -159,7 +162,10 @@ Two further nested cases exercise the same public filter parse/write API:
 double-nested XLIFF `sub` regions retain depth-first occurrence IDs alongside
 `bpt`/`ept`/`ph` shortcuts, while XHTML keeps an ignored nested subtree and
 its attributes byte-for-byte independent from translated outer/inline
-attributes and paragraph-on-`br` text.
+attributes and paragraph-on-`br` text. The two latest product-path cases keep
+duplicate XLIFF `trans-unit` IDs and their protected callback streams
+independent, and sort physically reversed OpenXML parts by natural part order
+while writing hidden/visible nested callbacks only through part-qualified IDs.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -335,7 +341,12 @@ the nearest visible row becomes the drop focus until explicit before-first or
 after-last boundaries are reached. The focusable table exposes the exact
 row/column or boundary through `aria-activedescendant`, visually marks only a
 Java-eligible drop target, and restores keyboard focus after drop or editor
-Escape.
+Escape. The Linux `linux-unpacked` E2E opens the aligner from Electron's native
+Tools menu, uses XTEST `mousedown`/mouse motion/`mouseup` (not CDP drag
+injection), observes native `dragstart`/`dragover`, holds at the visible
+viewport edge until rAF reaches `align-drop-bottom-source`, and strictly checks
+the sidecar result: moving source row 0 to the bottom creates **81** visual rows
+with the original target-only first bead and a source-only final bead.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
