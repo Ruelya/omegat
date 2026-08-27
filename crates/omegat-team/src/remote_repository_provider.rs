@@ -31,7 +31,8 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
     std::fs::create_dir_all(prep_dir(props))?;
     for repo in &props.repositories {
         remote_repository_factory::prepare(props, repo)?;
-        let version_path = effective_mappings(repo)
+        let mappings = effective_mappings(repo);
+        let version_path = mappings
             .first()
             .map(|mapping| mapping.repository.trim_matches(['/', '\\']))
             .unwrap_or("");
