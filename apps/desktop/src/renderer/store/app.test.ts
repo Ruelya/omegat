@@ -294,7 +294,19 @@ describe("app store", () => {
   });
 
   it("dispatches the remaining Java menu actions", async () => {
-    rpc.mockResolvedValue({});
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.set") {
+        const input = params as { translation: string; note: string };
+        return {
+          ...sampleEntry,
+          translation: input.translation,
+          note: input.note,
+          translated: Boolean(input.translation),
+          revision: sampleEntry.revision + 1,
+        };
+      }
+      return {};
+    });
     useApp.setState({
       prefs: defaultPreferences(),
       entries: [{ ...sampleEntry }],
