@@ -91,9 +91,19 @@ pub fn checkout_version(dir: &Path, spec: &str, local_branch: &str) -> Result<St
         .revparse_single(spec)
         .and_then(|object| object.peel_to_commit())
         .map_err(map_err)?;
-    repo.branch(local_branch, &commit, true).map_err(map_err)?;
-    repo.set_head(&format!("refs/heads/{local_branch}"))
-        .map_err(map_err)?;
+    let branch_ref = format!("refs/heads/{local_branch}");
+    match repo.find_reference(&branch_ref) {
+        Ok(mut reference) => {
+            reference
+                .set_target(commit.id(), "OmegaT switch to version")
+                .map_err(map_err)?;
+        }
+        Err(error) if error.code() == git2::ErrorCode::NotFound => {
+            repo.branch(local_branch, &commit, false).map_err(map_err)?;
+        }
+        Err(error) => return Err(map_err(error)),
+    }
+    repo.set_head(&branch_ref).map_err(map_err)?;
     let mut checkout = CheckoutBuilder::new();
     checkout.force().remove_untracked(true);
     repo.checkout_head(Some(&mut checkout)).map_err(map_err)?;

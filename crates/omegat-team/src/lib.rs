@@ -562,6 +562,11 @@ mod tests {
             "remote"
         );
 
+        crate::git2_ops::pull_ff(
+            &seed,
+            &crate::user_pass_dialog::UserPass::new("", ""),
+        )
+        .unwrap();
         std::fs::remove_file(seed.join("source/remote.txt")).unwrap();
         crate::git_remote_repository2::commit(&seed, "delete remote").unwrap();
         crate::git2_ops::push(
