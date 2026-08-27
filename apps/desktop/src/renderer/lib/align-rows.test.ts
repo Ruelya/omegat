@@ -135,7 +135,17 @@ describe("alignment visual rows", () => {
       alignTableKey({ ...state, side: "target" }, { key: "B", shiftKey: true }),
     ).toEqual({
       ...state,
-      side: "source",
+      side: "both",
+      handled: true,
+    });
+    expect(
+      alignTableKey(
+        { ...state, side: "target" },
+        { key: "ArrowLeft", shiftKey: true },
+      ),
+    ).toEqual({
+      ...state,
+      side: "both",
       handled: true,
     });
     expect(alignTableKey(state, { key: "m" })).toEqual({

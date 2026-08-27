@@ -257,9 +257,17 @@ export function alignTableKey(
     case "PageDown":
       return move(state.row + pageRows);
     case "ArrowLeft":
-      return { ...state, side: "source", handled: true };
+      return {
+        ...state,
+        side: input.shiftKey && state.side === "target" ? "both" : "source",
+        handled: true,
+      };
     case "ArrowRight":
-      return { ...state, side: "target", handled: true };
+      return {
+        ...state,
+        side: input.shiftKey && state.side === "source" ? "both" : "target",
+        handled: true,
+      };
     case "Tab":
       return {
         ...state,
@@ -275,14 +283,26 @@ export function alignTableKey(
   if (key === "f") {
     return {
       ...state,
-      side: state.side === "source" ? "target" : state.side === "both" ? "source" : "target",
+      side: input.shiftKey
+        ? state.side === "source"
+          ? "both"
+          : state.side
+        : state.side === "both"
+          ? "source"
+          : "target",
       handled: true,
     };
   }
   if (key === "b") {
     return {
       ...state,
-      side: state.side === "target" ? "source" : state.side === "both" ? "target" : "source",
+      side: input.shiftKey
+        ? state.side === "target"
+          ? "both"
+          : state.side
+        : state.side === "both"
+          ? "target"
+          : "source",
       handled: true,
     };
   }
