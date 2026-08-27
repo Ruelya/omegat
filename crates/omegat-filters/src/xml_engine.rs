@@ -639,6 +639,31 @@ impl Entry {
             self.source_to_original()
         }
     }
+
+    fn into_translation_elements(self) -> Vec<Element> {
+        if self.first_good < 0 {
+            return self.elements;
+        }
+        let Some(translated) = self.translated else {
+            return self.elements;
+        };
+        let mut elements = Vec::with_capacity(
+            self.first_good as usize
+                + translated.len()
+                + self
+                    .elements
+                    .len()
+                    .saturating_sub(self.last_good as usize + 1),
+        );
+        elements.extend(self.elements[..self.first_good as usize].iter().cloned());
+        elements.extend(translated);
+        elements.extend(
+            self.elements[(self.last_good as usize + 1)..]
+                .iter()
+                .cloned(),
+        );
+        elements
+    }
 }
 
 fn recover_tags(
@@ -1211,11 +1236,7 @@ impl<'a> Handler<'a> {
                     if let Some(Element::OutOfTurn { inner, .. }) =
                         self.curr_entry().elements.last_mut()
                     {
-                        *inner = if let Some(tr) = fin.translated {
-                            tr
-                        } else {
-                            fin.elements
-                        };
+                        *inner = fin.into_translation_elements();
                     }
                 }
             } else {
