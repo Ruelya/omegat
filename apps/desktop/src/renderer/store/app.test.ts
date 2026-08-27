@@ -554,7 +554,6 @@ describe("app store", () => {
       phase: "cancelled",
     });
     const error = new Error("request cancelled");
-    error.name = "AbortError";
     rejectCompile(error);
     await compiling;
     disconnect();
@@ -635,7 +634,6 @@ describe("app store", () => {
     });
     cancelRpc.mockImplementationOnce(async () => {
       const error = new Error("RPC request cancelled");
-      error.name = "AbortError";
       rejectReload(error);
       return true;
     });
@@ -702,7 +700,6 @@ describe("app store", () => {
     });
     cancelRpc.mockImplementationOnce(async () => {
       const error = new Error("RPC request cancelled");
-      error.name = "AbortError";
       rejectSync(error);
       return true;
     });

@@ -82,11 +82,26 @@ async function rpc<T>(
     throw new Error("sidecar bridge unavailable");
   }
   if (!signal) {
-    return (
-      clientRequestId
-        ? window.omegat.rpc(method, params, clientRequestId)
-        : window.omegat.rpc(method, params)
-    ) as Promise<T>;
+    try {
+      return await (
+        clientRequestId
+          ? window.omegat.rpc(method, params, clientRequestId)
+          : window.omegat.rpc(method, params)
+      ) as T;
+    } catch (error) {
+      // Electron serializes ipcMain handler failures as ordinary Error
+      // instances and drops Error.name. The sidecar's -32800 response has the
+      // exact "request cancelled" contract; reconstruct AbortError only after
+      // that response rejects the still-pending RPC.
+      if (
+        clientRequestId
+        && error instanceof Error
+        && error.message.toLowerCase().includes("request cancelled")
+      ) {
+        throw abortError(error.message);
+      }
+      throw error;
+    }
   }
   stopIfCancelled(signal);
   const requestId = `renderer-${nextRpcRequestId++}`;
