@@ -1,0 +1,7 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testStoredValuesRestored",
+  "algorithm": "forward-backward",
+  "segment": false,
+  "calculator": "normal",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

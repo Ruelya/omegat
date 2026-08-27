@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TMXReaderTest#testSMP",
+  "count": 1,
+  "pairs": {
+    "𝐀𝐁𝐂": "𝐃𝐄𝐅"
+  },
+  "keys": [
+    "org.omegat.util.TMXReaderTest#testSMP"
+  ]
+}

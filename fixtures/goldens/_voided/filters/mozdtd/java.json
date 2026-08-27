@@ -1,0 +1,15 @@
+{
+  "id": "mozdtd",
+  "fixture": "MozillaDTD/simple.dtd",
+  "java_test": "org.omegat.filters dialect/table for mozdtd",
+  "options": {},
+  "sources": [
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Hello",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

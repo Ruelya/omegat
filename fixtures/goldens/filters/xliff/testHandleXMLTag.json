@@ -1,0 +1,28 @@
+{
+  "id": "xliff",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testHandleXMLTag",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "handle_xml_tag": [
+    {
+      "translated": false,
+      "review": false,
+      "from": "needs-translation",
+      "to": "needs-translation"
+    },
+    {
+      "translated": true,
+      "review": false,
+      "from": "needs-translation",
+      "to": "translated"
+    },
+    {
+      "translated": true,
+      "review": true,
+      "from": "needs-translation",
+      "to": "needs-review-translation"
+    }
+  ]
+}

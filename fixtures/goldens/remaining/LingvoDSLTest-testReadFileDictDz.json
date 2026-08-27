@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadFileDictDz",
+  "hit": true,
+  "word": "space",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadFileDictDz"
+  ]
+}
