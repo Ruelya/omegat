@@ -400,10 +400,14 @@ try {
   await client.command("Input.insertText", { text: "alpha 😀 beta" });
   assert.equal(
     await waitFor("native beforeinput text", async () => {
-      const text = await client.evaluate(
-        "document.querySelector('.editor-surface')?.textContent",
-      );
-      return text === "alpha 😀 beta" ? text : undefined;
+      const state = await client.evaluate(`({
+        text: document.querySelector(".editor-surface")?.textContent ?? null,
+        proxyValue: document.querySelector(".ime-proxy")?.value ?? null,
+        active: document.activeElement?.className ?? null,
+        events: window.__omegatE2eImeEvents,
+      })`);
+      if (state.text === "alpha 😀 beta") return state.text;
+      throw new Error(JSON.stringify(state));
     }),
     "alpha 😀 beta",
   );
