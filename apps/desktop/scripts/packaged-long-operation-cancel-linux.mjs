@@ -1503,7 +1503,7 @@ try {
   const beforeTeamConflict = await editorState(client);
   assert.equal(beforeTeamConflict.translation, teamConflictOurs);
   assert.equal(beforeTeamConflict.caret, teamConflictOurs.length - 7);
-  assert.equal(beforeTeamConflict.entry, orderedWanted.index);
+  assert.equal(beforeTeamConflict.entry, teamOrdering.editor.entry);
 
   await writeAlternativeTmx(
     conflictRemoteTmx,
@@ -1616,7 +1616,7 @@ try {
         && ui.conflicts === 0
         && ui.activeSurfaces === 1
         && state.key === JSON.stringify(duplicateSetup.wanted.key)
-        && state.entry === orderedWanted.index
+        && state.entry === beforeTeamConflict.entry
         && state.translation === teamConflictTheirs
         && state.caret === beforeTeamConflict.caret
       ) {
