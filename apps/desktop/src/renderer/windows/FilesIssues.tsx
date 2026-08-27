@@ -40,9 +40,11 @@ export function IssuesWindow() {
         <div
           key={`${iss.index}-${i}`}
           className="hit"
+          data-issue-index={iss.index}
+          data-issue-file={iss.file}
+          data-issue-kind={iss.kind}
           onClick={() => {
-            void app.select(iss.index);
-            app.openWindow("issues", false);
+            void app.select(iss.index).then(() => app.openWindow("issues", false));
           }}
         >
           <span className="score">{iss.kind}</span> {iss.message}
