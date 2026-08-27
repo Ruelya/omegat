@@ -57,7 +57,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-27 verification:** core selected suites **144 passed**, filters
-**59 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
+**60 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **3 passed**, and desktop **18 files / 89
 tests passed** after a clean TypeScript check. Structural honesty is **18/18**.
 
