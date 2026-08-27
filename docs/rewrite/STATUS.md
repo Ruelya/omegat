@@ -70,14 +70,18 @@ TMXWriter / TagValidation method goldens exist. Rewrite-wave goldens now
 cover Searcher **34/34**, ProjectProperties **11/11**, TMXReader **9/9**,
 SRX **7/7**, SRXManager **8/8**, RealProject import **3/3**. `assert_eq`
 covers util + all **34/34** Searcher methods through the stateful project-search
-product model + TMX L1 + Properties + import. `ExternalTMFactoryTest` (TMX
+product model + TMX L1 + Properties + import. The product searcher now also
+traverses typed project-file / external-TM / glossary / text-file batches,
+retains source-specific preambles, reports progress, and supports cooperative
+entry-boundary cancellation without exposing incomplete results as complete.
+`ExternalTMFactoryTest` (TMX
 resegment / PO 1013 / Mozilla lang
 33 / XLIFF 3 / fuzzy TUV) and `ProjectFileStorageTest` (defaults,
 glossary paths, DTD entities, team XML, abs2rel) now `assert_eq` Java
 method results. Remaining util goldens (`EntityUtil` / `MagicComment` /
 `TagUtil` / `StaticUtils` / `EncodingDetector` / `Preferences` /
 `MatchesTextArea.substituteNumbers`) also `assert_eq`. `Searcher.java` is
-**1133** lines vs `search.rs` **1253** (size is not a completion claim): the
+**1133** lines vs `search.rs` **1457** (size is not a completion claim): the
 Rust path now retains UTF-16 match regions, source / target / note /
 key-property hits, author/date filters, project/TM/orphan origins, duplicate
 preambles, rerun lifecycle, and regex replacement groups. Remaining util
@@ -101,7 +105,11 @@ symlink-safe deletion replaced the last three API-name-only fixtures.
 `LineLengthLimitWriterTest` **10/10** goldens + `assert_eq` for
 isSpaces / break-before / outLine / no-break word. FilterMaster /
 PluginUtils / Latex unit goldens exist (plugin ABI replacement, not JAR
-loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **684**.
+loader). HTML `FilterVisitor.java` **920** vs `filter_visitor.rs` **735**.
+The Rust tokenizer now collapses arbitrary paired elements matched by
+`ignoreTags` (including nested same-name elements), so protected subtree text
+is neither extracted nor rewritten; exact identity and translated write-back
+tests cover that traversal boundary.
 
 **P3 filters3:** dialect tag snapshot exists.
 `XMLFilterTest#testLoadCJKPath` golden is exported.
@@ -134,10 +142,14 @@ for the 6 lists + 2000-stem truncation.
 Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`applyDocumentEdit`, `DocumentFilter3`, atomic delete). Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**245** vs **963**, `EditorController` **300** vs **2365**. The headless
+**315** vs **963**, `EditorController` **389** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
-and implements filtered navigation/history/undo/loaded windows.
+and implements filtered navigation/history/undo/loaded windows. Loaded windows
+now expose strict multi-segment pages; IME updates are one replaceable
+composition with commit/cancel; MarkerController caches per-entry generations,
+maps translation/source marks into `Document3` spans, and invalidates those
+spans after edits.
 `FontFallbackMarker` uses canvas
 `measureText` when a document exists. IEditor name table remains a
 surface list, not a second editor.

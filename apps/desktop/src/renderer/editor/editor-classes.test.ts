@@ -148,6 +148,26 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(calls).toEqual([10, 20]);
   });
 
+  it("EditorTextArea3 treats IME updates as one replaceable composition", () => {
+    const area = new EditorTextArea3("source", "a<x0/>b");
+    area.setCaretPosition(area.getOmDocument().translationEnd);
+    expect(area.beginComposition()).toBe(true);
+    expect(area.getOmDocument().textBeingComposed).toBe(true);
+    expect(area.updateComposition("あ")).toBe(true);
+    expect(area.updateComposition("あい")).toBe(true);
+    expect(area.getText()).toBe("a<x0/>bあい");
+    expect(area.commitComposition("あい")).toBe(true);
+    expect(area.isComposing()).toBe(false);
+    expect(area.getOmDocument().textBeingComposed).toBe(false);
+
+    area.setSelection(0, 1);
+    expect(area.beginComposition()).toBe(true);
+    expect(area.updateComposition("X")).toBe(true);
+    expect(area.getText()).toBe("X<x0/>bあい");
+    expect(area.cancelComposition()).toBe(true);
+    expect(area.getText()).toBe("a<x0/>bあい");
+  });
+
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {
     const controller = new EditorController();
     controller.loadProject([
@@ -177,5 +197,36 @@ describe("Document3 / IEditor / completer classes", () => {
     controller.removeFilter();
     expect(controller.gotoEntry(1)).toBe(true);
     expect(controller.getCurrentTranslation()).toBe("un");
+  });
+
+  it("EditorController pages visible segments and refreshes marker spans", () => {
+    const controller = new EditorController();
+    controller.setPageRadius(1);
+    controller.loadProject(
+      [
+        "one",
+        "two",
+        "three",
+        "four\u00a0marked",
+        "five",
+        "six",
+      ].map((translation, index) => ({
+        file: index < 3 ? "a.txt" : "b.txt",
+        source: `source ${index + 1}`,
+        translation,
+      })),
+      4,
+    );
+    const page = controller.getLoadedPage();
+    expect(page.map((entry) => entry.entryNumber)).toEqual([3, 4, 5]);
+    expect(page.map((entry) => entry.active)).toEqual([false, true, false]);
+    expect(page[1]!.marks.some((mark) => mark.painter === "nbsp")).toBe(true);
+    expect(controller.getOmDocument()!.spans.some((span) => span.style === "marker:nbsp")).toBe(true);
+
+    const generation = controller.markerSnapshot!.generation;
+    controller.replaceEditText("four marked");
+    expect(controller.markerSnapshot!.generation).toBeGreaterThan(generation);
+    expect(controller.markerSnapshot!.marks.some((mark) => mark.painter === "nbsp")).toBe(false);
+    expect(controller.getOmDocument()!.spans.some((span) => span.style === "marker:nbsp")).toBe(false);
   });
 });

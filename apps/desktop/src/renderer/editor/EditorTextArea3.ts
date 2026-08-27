@@ -3,6 +3,7 @@ import {
   applyDocumentEdit,
   createDocument3,
   replaceEditText,
+  setTextBeingComposed,
   type Document3State,
 } from "./Document3";
 import {
@@ -18,6 +19,15 @@ export type PopupMenuConstructor = {
   build(position: number, activeEntry: boolean, activeTranslation: boolean): unknown[];
 };
 
+type CompositionSession = {
+  snapshot: Document3State;
+  start: number;
+  originalAnchor: number;
+  originalFocus: number;
+  currentLength: number;
+  currentText: string;
+};
+
 export class EditorTextArea3 {
   doc: Document3State;
   private caretPosition = 0;
@@ -28,6 +38,7 @@ export class EditorTextArea3 {
   private sourceLocale = "und";
   private targetLocale = "und";
   private currentWord: string | null = null;
+  private composition: CompositionSession | null = null;
   private readonly popupConstructors: PopupMenuConstructor[] = [];
   private readonly wordListeners = new Set<(word: string | null, locale: string) => void>();
 
@@ -39,6 +50,7 @@ export class EditorTextArea3 {
   }
 
   setDocument(doc: Document3State): void {
+    this.composition = null;
     this.doc = doc;
     this.setCaretPosition(doc.translationEnd);
   }
@@ -120,6 +132,64 @@ export class EditorTextArea3 {
     if (this.doc === before) return false;
     this.setCaretPosition(start + text.length);
     return true;
+  }
+
+  beginComposition(): boolean {
+    if (this.composition || !this.isInActiveTranslation(this.caretPosition)) return false;
+    const start = this.getSelectionStart();
+    const end = this.getSelectionEnd();
+    this.composition = {
+      snapshot: this.doc,
+      start,
+      originalAnchor: this.selectionAnchor,
+      originalFocus: this.selectionFocus,
+      currentLength: end - start,
+      currentText: this.doc.fullText.slice(start, end),
+    };
+    this.doc = setTextBeingComposed(this.doc, true);
+    return true;
+  }
+
+  updateComposition(text: string): boolean {
+    const session = this.composition;
+    if (!session) return false;
+    if (session.currentText === text) return true;
+    const before = this.doc;
+    this.doc = applyDocumentEdit(this.doc, session.start, session.currentLength, text, {
+      composed: true,
+    });
+    if (this.doc === before) return false;
+    session.currentLength = text.length;
+    session.currentText = text;
+    this.caretPosition = session.start + text.length;
+    this.selectionAnchor = this.caretPosition;
+    this.selectionFocus = this.caretPosition;
+    this.notifyWordAtCaret();
+    return true;
+  }
+
+  commitComposition(text?: string): boolean {
+    if (!this.composition) return false;
+    if (text !== undefined && !this.updateComposition(text)) return false;
+    this.doc = setTextBeingComposed(this.doc, false);
+    this.composition = null;
+    return true;
+  }
+
+  cancelComposition(): boolean {
+    const session = this.composition;
+    if (!session) return false;
+    this.doc = setTextBeingComposed(session.snapshot, false);
+    this.composition = null;
+    this.selectionAnchor = session.originalAnchor;
+    this.selectionFocus = session.originalFocus;
+    this.caretPosition = session.originalFocus;
+    this.notifyWordAtCaret();
+    return true;
+  }
+
+  isComposing(): boolean {
+    return this.composition !== null;
   }
 
   deleteBackward(): boolean {

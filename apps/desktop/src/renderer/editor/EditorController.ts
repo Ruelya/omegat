@@ -6,11 +6,13 @@ import {
 } from "./Document3";
 import { IEditor } from "./IEditor";
 import { makeFilter, type IEditorFilter } from "./IEditorFilter";
-import { MarkerController } from "./MarkerController";
+import { MarkerController, type MarkerSnapshot } from "./MarkerController";
 import { buildActiveDocument } from "./SegmentBuilder";
 import { SegmentHistory } from "./SegmentHistory";
 import { EditorTextArea3 } from "./EditorTextArea3";
 import { TranslationUndoManager } from "./TranslationUndoManager";
+import type { MarkerInput, ProtectedPart } from "./mark/IMarker";
+import type { Mark } from "./mark/Mark";
 
 export type LoadedEntry = {
   file: string;
@@ -19,6 +21,20 @@ export type LoadedEntry = {
   id?: string;
   note?: string;
   unique?: boolean;
+  isAlt?: boolean;
+  fromAuto?: boolean;
+  fromMt?: boolean;
+  protectedParts?: ProtectedPart[];
+};
+
+export type LoadedPageEntry = {
+  index: number;
+  entryNumber: number;
+  file: string;
+  source: string;
+  translation: string;
+  active: boolean;
+  marks: Mark[];
 };
 
 export class EditorController {
@@ -38,8 +54,10 @@ export class EditorController {
   entries: LoadedEntry[] = [];
   sourceLangIsRTL = false;
   targetLangIsRTL = false;
+  markerSnapshot: MarkerSnapshot | null = null;
   private entriesFilter: IEditorFilter = makeFilter("none");
   private visibleEntryIndices: number[] = [];
+  private pageRadius = 25;
 
   getCurrentTranslation(): string {
     return this.document?.translation ?? this.editor.getCurrentTranslation();
@@ -52,8 +70,9 @@ export class EditorController {
       return;
     }
     this.document = replaceDocumentText(this.document, text);
-    this.textArea.setDocument(this.document);
     this.syncActiveEntry();
+    this.refreshCurrentMarkers();
+    this.textArea.setDocument(this.document);
   }
 
   insertText(text: string): void {
@@ -67,6 +86,8 @@ export class EditorController {
     this.textArea.insertText(text);
     this.document = this.textArea.getOmDocument();
     this.syncActiveEntry();
+    this.refreshCurrentMarkers();
+    this.textArea.setDocument(this.document);
   }
 
   async commitAndDeactivate(): Promise<void> {
@@ -101,6 +122,8 @@ export class EditorController {
 
   loadProject(entries: LoadedEntry[], preferredEntryNumber = 1): void {
     this.entries = entries.map((entry) => ({ ...entry }));
+    this.markers.invalidate();
+    this.markerSnapshot = null;
     this.rebuildVisibleEntries();
     this.history.back = [];
     this.history.forward = [];
@@ -128,6 +151,8 @@ export class EditorController {
     this.history.forward = [];
     this.undo.undoStack = [];
     this.undo.redoStack = [];
+    this.markers.invalidate();
+    this.markerSnapshot = null;
   }
 
   /** Java `EditorControllerTest#testEditorControllerLoadSimpleProject` fixture. */
@@ -160,6 +185,7 @@ export class EditorController {
     this.currentFile = e.file;
     this.currentEntryNumber = index + 1;
     this.document = buildActiveDocument(this.currentEntryNumber, e.source, e.translation);
+    this.refreshCurrentMarkers();
     this.textArea.setDocument(this.document);
     this.undo.undoStack = [];
     this.undo.redoStack = [];
@@ -244,6 +270,33 @@ export class EditorController {
     return { first: this.firstLoaded, last: this.lastLoaded };
   }
 
+  getLoadedPage(): LoadedPageEntry[] {
+    if (this.firstLoaded < 0 || this.lastLoaded < this.firstLoaded) return [];
+    return this.visibleEntryIndices
+      .filter((index) => index >= this.firstLoaded && index <= this.lastLoaded)
+      .map((index) => {
+        const entry = this.entries[index]!;
+        const active = index === this.displayedEntryIndex;
+        const snapshot = active && this.markerSnapshot
+          ? this.markerSnapshot
+          : this.markers.processEntry(this.entryKey(index, entry), this.markerInput(entry, active));
+        return {
+          index,
+          entryNumber: index + 1,
+          file: entry.file,
+          source: entry.source,
+          translation: entry.translation,
+          active,
+          marks: snapshot.marks,
+        };
+      });
+  }
+
+  setPageRadius(radius: number): void {
+    this.pageRadius = Math.max(0, Math.floor(radius));
+    if (this.displayedEntryIndex >= 0) this.loadWindowAround(this.displayedEntryIndex);
+  }
+
   loadUp(count: number): void {
     this.firstLoaded = Math.max(0, this.firstLoaded - Math.max(0, count));
   }
@@ -267,7 +320,7 @@ export class EditorController {
     );
   }
 
-  private loadWindowAround(index: number, radius = 25): void {
+  private loadWindowAround(index: number, radius = this.pageRadius): void {
     this.firstLoaded = Math.max(0, index - radius);
     this.lastLoaded = Math.min(this.entries.length - 1, index + radius);
   }
@@ -278,14 +331,50 @@ export class EditorController {
       return;
     }
     this.document = replaceDocumentText(this.document, text);
-    this.textArea.setDocument(this.document);
     this.syncActiveEntry();
+    this.refreshCurrentMarkers();
+    this.textArea.setDocument(this.document);
   }
 
   private syncActiveEntry(): void {
     if (!this.document || this.displayedEntryIndex < 0) return;
     const entry = this.entries[this.displayedEntryIndex];
     if (entry) entry.translation = this.document.translation;
+  }
+
+  private markerInput(entry: LoadedEntry, active: boolean): MarkerInput {
+    return {
+      sourceText: entry.source,
+      translationText: entry.translation,
+      isActive: active,
+      isAlt: entry.isAlt,
+      fromAuto: entry.fromAuto,
+      fromMt: entry.fromMt,
+      protectedParts: entry.protectedParts,
+    };
+  }
+
+  private entryKey(index: number, entry: LoadedEntry): string {
+    return `${index}:${entry.file}:${entry.id ?? ""}`;
+  }
+
+  private refreshCurrentMarkers(): void {
+    if (!this.document || this.displayedEntryIndex < 0) {
+      this.markerSnapshot = null;
+      return;
+    }
+    const entry = this.entries[this.displayedEntryIndex];
+    if (!entry) {
+      this.markerSnapshot = null;
+      return;
+    }
+    const marked = this.markers.applyToDocument(
+      this.entryKey(this.displayedEntryIndex, entry),
+      this.document,
+      this.markerInput(entry, true),
+    );
+    this.document = marked.document;
+    this.markerSnapshot = marked.snapshot;
   }
 
   /** Drop per-project document state (EditorProjectReloadLeakTest). */

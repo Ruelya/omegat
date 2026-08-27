@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CompositionEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { decorateText, deleteBackwardAtomic, deleteForwardAtomic, parseDocument } from "../lib/editor-doc";
 import { t } from "../i18n";
 import { useApp } from "../store/app";
@@ -14,7 +21,6 @@ import { EditorTextArea3 } from "./EditorTextArea3";
 
 const filter3 = new DocumentFilter3();
 const editorController = new EditorController();
-void EditorTextArea3;
 
 function applyThroughDocument3(doc: Document3State, offset: number, length: number, text: string): Document3State {
   const result = filter3.replace(
@@ -85,6 +91,7 @@ export function SegmentEditor() {
   const tabAdvance = useApp((s) => Boolean(s.prefs?.tab_advance));
   const surface = useRef<HTMLDivElement>(null);
   const ime = useRef<HTMLTextAreaElement>(null);
+  const interaction = useRef(new EditorTextArea3());
   const [caret, setCaret] = useState(document3.translation.length);
   const composing = useRef(false);
   editorController.document = document3;
@@ -104,14 +111,14 @@ export function SegmentEditor() {
   }
 
   function insertAt(text: string) {
-    const offset = caret;
+    const offset = document3.translationStart + caret;
     if (!isPossible(
       {
-        text: document3.translation,
+        text: document3.fullText,
         editMode: true,
         trustedChangesInProgress: false,
-        translationStart: 0,
-        translationEnd: document3.translation.length,
+        translationStart: document3.translationStart,
+        translationEnd: document3.translationEnd,
         textBeingComposed: composing.current,
         allowTagEditing: false,
       },
@@ -121,7 +128,33 @@ export function SegmentEditor() {
       return;
     }
     const next = applyThroughDocument3(document3, offset, 0, text);
-    applyDoc(next, offset + text.length);
+    applyDoc(next, caret + text.length);
+  }
+
+  function beginComposition() {
+    composing.current = true;
+    interaction.current.setDocument(document3);
+    interaction.current.setCaretPosition(document3.translationStart + caret);
+    interaction.current.beginComposition();
+  }
+
+  function updateComposition(ev: CompositionEvent<HTMLDivElement>) {
+    const area = interaction.current;
+    if (!area.isComposing() || !area.updateComposition(ev.data)) return;
+    const next = area.getOmDocument();
+    applyDoc(next, area.getCaretPosition() - next.translationStart);
+  }
+
+  function finishComposition(ev: CompositionEvent<HTMLDivElement>) {
+    const area = interaction.current;
+    if (area.isComposing()) {
+      area.commitComposition(ev.data);
+      const next = area.getOmDocument();
+      applyDoc(next, area.getCaretPosition() - next.translationStart);
+    } else if (ev.data) {
+      insertAt(ev.data);
+    }
+    composing.current = false;
   }
 
   function onKey(ev: KeyboardEvent<HTMLDivElement>) {
@@ -146,7 +179,12 @@ export function SegmentEditor() {
       const next = deleteBackwardAtomic(document3.translation, caret);
       const removed = document3.translation.length - next.text.length;
       if (removed > 0) {
-        const doc = applyThroughDocument3(document3, next.pos, removed, "");
+        const doc = applyThroughDocument3(
+          document3,
+          document3.translationStart + next.pos,
+          removed,
+          "",
+        );
         applyDoc(doc, next.pos);
       }
       return;
@@ -157,7 +195,12 @@ export function SegmentEditor() {
       const removed = document3.translation.length - next.text.length;
       if (removed > 0) {
         const start = Math.min(caret, next.pos);
-        const doc = applyThroughDocument3(document3, start, removed, "");
+        const doc = applyThroughDocument3(
+          document3,
+          document3.translationStart + start,
+          removed,
+          "",
+        );
         applyDoc(doc, next.pos);
       }
       return;
@@ -228,13 +271,9 @@ export function SegmentEditor() {
           const text = ev.clipboardData.getData("text/plain");
           if (text) insertAt(text);
         }}
-        onCompositionStart={() => {
-          composing.current = true;
-        }}
-        onCompositionEnd={(ev) => {
-          composing.current = false;
-          if (ev.data) insertAt(ev.data);
-        }}
+        onCompositionStart={beginComposition}
+        onCompositionUpdate={updateComposition}
+        onCompositionEnd={finishComposition}
       >
         <span className="editor-before">
           {parseDocument(before).map((tok, i) =>
