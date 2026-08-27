@@ -271,7 +271,7 @@ await rpcBatch(configDir, [
       index: 1,
       translation: "slow plugin",
       note: "",
-      revision: 0,
+      revision: 1,
       default_translation: true,
     },
   },
