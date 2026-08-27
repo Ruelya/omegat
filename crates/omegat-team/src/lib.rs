@@ -95,6 +95,7 @@ mod tests {
     use omegat_core::tmx::parse_tmx;
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::time::{Duration, Instant};
 
     fn tu(src: &str, tgt: &str) -> String {
         format!(
@@ -649,14 +650,10 @@ mod tests {
         copy_mapped(&props_a, &props_a.repositories[0], CopyDir::ProjectToRepo).unwrap();
         copy_mapped(&props_b, &props_b.repositories[0], CopyDir::ProjectToRepo).unwrap();
 
-        let work_a = crate::project_team_settings::repo_work_dir(
-            &props_a,
-            &props_a.repositories[0],
-        );
-        let work_b = crate::project_team_settings::repo_work_dir(
-            &props_b,
-            &props_b.repositories[0],
-        );
+        let work_a =
+            crate::project_team_settings::repo_work_dir(&props_a, &props_a.repositories[0]);
+        let work_b =
+            crate::project_team_settings::repo_work_dir(&props_b, &props_b.repositories[0]);
         let commit_a = crate::git2_ops::commit_if_changed(
             &work_a,
             Some(std::slice::from_ref(&version_a)),
@@ -673,20 +670,10 @@ mod tests {
         .unwrap();
         assert_ne!(commit_a, commit_b);
         let anonymous = crate::user_pass_dialog::UserPass::new("", "");
-        crate::git2_ops::push(
-            &work_a,
-            "origin",
-            "HEAD:refs/heads/main",
-            &anonymous,
-        )
-        .unwrap();
-        let rejection = crate::git2_ops::push(
-            &work_b,
-            "origin",
-            "HEAD:refs/heads/main",
-            &anonymous,
-        )
-        .unwrap_err();
+        crate::git2_ops::push(&work_a, "origin", "HEAD:refs/heads/main", &anonymous).unwrap();
+        let rejection =
+            crate::git2_ops::push(&work_b, "origin", "HEAD:refs/heads/main", &anonymous)
+                .unwrap_err();
         assert!(matches!(rejection, TeamError::Command(_)));
 
         let remote = git2::Repository::open_bare(&bare).unwrap();
@@ -784,6 +771,74 @@ mod tests {
             }),
             true
         );
+    }
+
+    #[test]
+    fn same_project_processes_are_serialized_by_transaction_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let ready = dir.path().join("lock-ready");
+        let release = dir.path().join("lock-release");
+        let mut holder = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::team_project_lock_worker", "--nocapture"])
+            .env("OMEGAT_TEAM_LOCK_PROJECT", &props.root)
+            .env("OMEGAT_TEAM_LOCK_READY", &ready)
+            .env("OMEGAT_TEAM_LOCK_RELEASE", &release)
+            .spawn()
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready.is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "child process did not acquire the team transaction lock"
+            );
+            assert_eq!(holder.try_wait().unwrap(), None);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let locked = sync(&props).unwrap_err();
+        assert_eq!(
+            locked.to_string(),
+            format!(
+                "conflict: team project is locked by another process: {}",
+                props.root.display()
+            )
+        );
+        assert_eq!(
+            props
+                .root
+                .join(".repositories/transactions/active.json")
+                .exists(),
+            false
+        );
+
+        std::fs::write(&release, "").unwrap();
+        assert_eq!(holder.wait().unwrap().success(), true);
+        let report = sync(&props).unwrap();
+        assert_eq!(report.action, "local");
+        assert_eq!(report.message, "no repositories");
+    }
+
+    #[test]
+    fn team_project_lock_worker() {
+        let (Ok(root), Ok(ready), Ok(release)) = (
+            std::env::var("OMEGAT_TEAM_LOCK_PROJECT"),
+            std::env::var("OMEGAT_TEAM_LOCK_READY"),
+            std::env::var("OMEGAT_TEAM_LOCK_RELEASE"),
+        ) else {
+            return;
+        };
+        let props = ProjectProperties::load(Path::new(&root)).unwrap();
+        let _lock =
+            crate::remote_repository_provider::acquire_project_transaction_lock(&props).unwrap();
+        std::fs::write(ready, "").unwrap();
+        while !Path::new(&release).is_file() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[test]

@@ -8,6 +8,7 @@ use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::{team_enabled, SyncReport};
+use fs2::FileExt;
 use omegat_core::properties::ProjectProperties;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
@@ -23,6 +24,34 @@ static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
 #[cfg(test)]
 static CRASH_AFTER_PUBLISH_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+pub(crate) struct ProjectTransactionLock {
+    _file: std::fs::File,
+}
+
+pub(crate) fn acquire_project_transaction_lock(
+    props: &ProjectProperties,
+) -> Result<ProjectTransactionLock> {
+    let dir = transaction_dir(props);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("operation.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)?;
+    file.try_lock_exclusive().map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            TeamError::Conflict(format!(
+                "team project is locked by another process: {}",
+                props.root.display()
+            ))
+        } else {
+            TeamError::Io(error)
+        }
+    })?;
+    Ok(ProjectTransactionLock { _file: file })
+}
 
 #[cfg(test)]
 pub(crate) fn fail_next_commit_for(repository_index: usize) {
@@ -390,6 +419,11 @@ fn rollback_repositories(
 /// Recover a persisted multi-repository transaction left by a terminated
 /// process before allowing another team operation to mutate the project.
 pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
+    let _lock = acquire_project_transaction_lock(props)?;
+    recover_interrupted_sync_locked(props)
+}
+
+fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
     let Some(mut transaction) = SyncTransaction::load(props)? else {
         return Ok(false);
     };
@@ -454,7 +488,8 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
 }
 
 pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
-    let recovered = recover_interrupted_sync(props)?;
+    let _lock = acquire_project_transaction_lock(props)?;
+    let recovered = recover_interrupted_sync_locked(props)?;
     if !team_enabled() {
         return Ok(SyncReport {
             action: "skipped".into(),
@@ -602,7 +637,8 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
 }
 
 pub fn commit_project_files(props: &ProjectProperties, which: &str) -> Result<SyncReport> {
-    let recovered = recover_interrupted_sync(props)?;
+    let _lock = acquire_project_transaction_lock(props)?;
+    let recovered = recover_interrupted_sync_locked(props)?;
     let label = match which {
         "source" | "target" => which,
         _ => {
@@ -720,6 +756,7 @@ pub fn switch_to_version(
     repository_index: usize,
     version: Option<&str>,
 ) -> Result<()> {
+    let _lock = acquire_project_transaction_lock(props)?;
     let repo = props.repositories.get(repository_index).ok_or_else(|| {
         TeamError::Command(format!(
             "repository index {repository_index} is out of range"
@@ -734,6 +771,7 @@ pub fn commit_after_version(
     versions: &[Option<String>],
     comment: &str,
 ) -> Result<Option<String>> {
+    let _lock = acquire_project_transaction_lock(props)?;
     let repo = props.repositories.get(repository_index).ok_or_else(|| {
         TeamError::Command(format!(
             "repository index {repository_index} is out of range"
