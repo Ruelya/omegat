@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-27 verification:** core selected suites **147 passed**, filters
 **84 passed**, team **30 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **4 passed** plus
-native plugin RPC/fault isolation **1 passed**, and desktop **20 files / 123
+native plugin RPC/fault isolation **1 passed**, and desktop **21 files / 132
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -233,7 +233,7 @@ Product `SegmentEditor.tsx` **imports and calls `Document3`**
 (`extractTranslation`) and routes mutations through `EditorTextArea3`'s
 `Document3` path. Thickness is improved
 but remains below Swing: `Document3` **288** vs **233**, `EditorTextArea3`
-**720** vs **963**, `EditorController` **1069** vs **2365**. The headless
+**720** vs **963**, `EditorController` **1127** vs **2365**. The headless
 product model now shares document mutations across the surface/controller,
 enforces active bounds and atomic tags, tracks selection/caret/overtype/popups,
 and implements filtered navigation/history/undo/loaded windows. Loaded windows
@@ -322,7 +322,7 @@ it opens a dropped `omegat.project`, imports an ordinary file through
 next file plus the file-scoped `Tag MISSING` dialog, and clicks that issue back
 to its original entry. This is Linux packaged/CDP drag evidence, not a
 Windows/macOS or external-file-manager XTEST claim. Desktop verification is now
-**20 files / 123 tests**, including exact success and
+**21 files / 132 tests**, including exact success and
 failure-state assertions for these transitions. Default commits now update the
 source-wide translation atomically in `ProjectSession`, return every affected
 entry over NDJSON, and refresh repeated occurrences in both the Zustand and
@@ -390,7 +390,18 @@ accelerators pass through the same normalizer.
 `ProjectUICommandsTest` **5/5**, `SimpleIssueTest` **5/5**,
 `IssueCheckerTest` **3/3**, `GlossaryTextAreaTest` **3/3**, and
 `NotesTextAreaTest` **2/2** now use toolkit-independent Rust/desktop product
-models and strict Java-exported values. Packaged restart is assembled through
+models and strict Java-exported values. Eight Swing-facing docks now call the
+shared **380-line** desktop controller path instead of embedding all behavior
+in JSX. Exact product tests cover score-sorted fuzzy selection before
+insert/overwrite, glossary insertion at the active `Document3` selection,
+per-entry note undo/redo, priority-ordered comment providers, complete-key
+multiple-translation navigation and default promotion, engine-sorted cyclic MT
+selection, exact/stemmed dictionary focus, and structured segment-property
+notification rows. Source-only editor navigation now rejects alternatives,
+while alternative navigation compares all six Java `EntryKey` fields; target
+paths preserve POSIX or Windows separators. These additions are desktop model
+evidence, not a claim of Swing toolkit or Windows/macOS package parity.
+Packaged restart is assembled through
 the actual main-process IPC registration: Electron's native no-argument
 `app.relaunch()` preserves the original command line, then the handler stops
 the sidecar and calls `app.exit(0)`. **3/3** lifecycle tests assert registration
