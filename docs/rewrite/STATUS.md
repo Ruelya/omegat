@@ -43,7 +43,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **46909** lines; `apps/desktop/src`
+- Rewrite Rust: `crates/**/*.rs` **46907** lines; `apps/desktop/src`
   TS/TSX/CSS **11982** lines (**~37%** of Java main lines, a scale check only)
 - Java GUI: **297** files / **61510** lines vs desktop source **11982**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **4767**
