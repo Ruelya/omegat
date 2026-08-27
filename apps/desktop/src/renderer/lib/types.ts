@@ -30,6 +30,7 @@ export type EntrySetResult = {
 };
 export type EditorConflict = {
   index: number;
+  key: EntryKeyDto;
   source: string;
   previous: string;
   ours: string;

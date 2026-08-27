@@ -3,6 +3,7 @@ import { createDocument3, replaceEditText, type Document3State } from "../editor
 import { issuesForEntryOnLeave } from "../editor/EditorController";
 import {
   findCyclicEntryIndex,
+  findEntryBySourceAndKey,
   rebindEntryAfterReload,
   sameCompleteEntryKey,
 } from "../editor/EditorNavigation";
@@ -1012,13 +1013,19 @@ export const useApp = create<AppState>((set, get) => ({
     const conflict = get().editConflict;
     if (!conflict) return;
     const latest = await rpc<EntryDto[]>("entry.list");
-    const remote = latest[conflict.index];
-    if (!remote || remote.source !== conflict.source) {
+    const remoteIndex = findEntryBySourceAndKey(
+      latest,
+      conflict.source,
+      conflict.key,
+    );
+    const remote = latest[remoteIndex];
+    if (!remote) {
       throw new Error("editor conflict entry is no longer available");
     }
     if (side === "theirs") {
       set({
         entries: latest,
+        index: remoteIndex,
         note: remote.note,
         document3: createDocument3(remote.source, remote.translation),
         history: { undo: [], redo: [] },
@@ -1030,6 +1037,7 @@ export const useApp = create<AppState>((set, get) => ({
     const chosen = side === "manual" ? (translation ?? conflict.ours) : conflict.ours;
     set({
       entries: latest,
+      index: remoteIndex,
       note: conflict.note,
       document3: replaceEditText(createDocument3(remote.source, remote.translation), chosen),
       editConflict: null,
@@ -1347,6 +1355,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({
         editConflict: {
           index,
+          key: { ...e.key },
           source: e.source,
           previous: e.translation,
           ours: translation,

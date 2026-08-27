@@ -1286,6 +1286,7 @@ describe("app store", () => {
     });
     expect(useApp.getState().editConflict).toEqual({
       index: 0,
+      key: sampleEntry.key,
       source: "one",
       previous: "",
       ours: "不要丢失",
@@ -1474,6 +1475,7 @@ describe("app store", () => {
     );
     expect(useApp.getState().editConflict).toEqual({
       index: 0,
+      key: sampleEntry.key,
       source: "same",
       previous: "base",
       ours: "local edit",
@@ -1505,6 +1507,91 @@ describe("app store", () => {
     });
   });
 
+  it("rebinds a duplicated-source editor conflict by complete EntryKey after reorder", async () => {
+    const wantedKey = {
+      ...sampleEntry.key,
+      source_text: "same",
+      prev: "before",
+      next: "after",
+      path: "/wanted",
+    };
+    const decoy = {
+      ...sampleEntry,
+      index: 0,
+      key: { ...wantedKey, path: "/other" },
+      source: "same",
+      translation: "wrong duplicate",
+      revision: 12,
+      translated: true,
+    };
+    const remote = {
+      ...sampleEntry,
+      index: 1,
+      key: wantedKey,
+      source: "same",
+      translation: "remote wanted",
+      revision: 8,
+      translated: true,
+    };
+    const committed = {
+      ...remote,
+      translation: "local wanted",
+      note: "local note",
+      revision: 9,
+    };
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.list") return [decoy, remote];
+      if (method === "entry.set") {
+        expect(params).toEqual({
+          index: 1,
+          key: wantedKey,
+          translation: "local wanted",
+          note: "local note",
+          revision: 8,
+          default_translation: true,
+        });
+        return { entry: committed, updated: [committed] };
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      entries: [{ ...remote, index: 0, translation: "base", revision: 7 }],
+      index: 0,
+      note: "local note",
+      document3: createDocument3("same", "local wanted"),
+      editConflict: {
+        index: 0,
+        key: wantedKey,
+        source: "same",
+        previous: "base",
+        ours: "local wanted",
+        theirs: "remote wanted",
+        note: "local note",
+        default_translation: true,
+        remote_revision: 8,
+      },
+    });
+
+    await useApp.getState().resolveEditConflict("ours");
+
+    expect({
+      methods: rpc.mock.calls.map(([method]) => method),
+      index: useApp.getState().index,
+      keys: useApp.getState().entries.map((entry) => entry.key),
+      document: useApp.getState().document3,
+      conflict: useApp.getState().editConflict,
+    }).toEqual({
+      methods: ["entry.list", "entry.set"],
+      index: 1,
+      keys: [decoy.key, wantedKey],
+      document: {
+        ...createDocument3("same", "local wanted"),
+        dirty: false,
+      },
+      conflict: null,
+    });
+  });
+
   it("adopts the remote editor conflict without issuing a second write", async () => {
     const remote = {
       ...sampleEntry,
@@ -1525,6 +1612,7 @@ describe("app store", () => {
       document3: createDocument3("same", "local edit"),
       editConflict: {
         index: 0,
+        key: sampleEntry.key,
         source: "same",
         previous: "base",
         ours: "local edit",
