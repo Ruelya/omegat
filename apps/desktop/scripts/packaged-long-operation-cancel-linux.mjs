@@ -156,8 +156,11 @@ class DevToolsClient {
     return new Promise((resolveCommand, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`DevTools command timed out: ${method}`));
-      }, 30_000);
+        const context = method === "Runtime.evaluate"
+          ? ` (${String(params.expression ?? "").replaceAll(/\s+/g, " ").slice(0, 240)})`
+          : "";
+        reject(new Error(`DevTools command timed out: ${method}${context}`));
+      }, WAIT_MS);
       timeout.unref();
       this.pending.set(id, {
         resolve: (value) => {
