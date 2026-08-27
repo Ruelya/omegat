@@ -824,7 +824,7 @@ try {
       sourceLength: 1,
       atomic: null,
       tag: null,
-      classes: ["mark-ws"],
+      classes: ["mark-ws", "product-marker--"],
     },
     emoji: {
       text: "😀",
@@ -845,7 +845,7 @@ try {
       sourceLength: 1,
       atomic: "true",
       tag: null,
-      classes: ["mark-bidi", "product-marker-lrm"],
+      classes: ["mark-bidi", "product-marker-lrm", "product-marker-font-fallback"],
     },
     gamma: {
       text: "gamma",
