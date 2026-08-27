@@ -43,9 +43,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **Size (not a completion proof, a scale check):**
 
 - Java `src/main/java`: **779** files / **157825** lines
-- Rewrite Rust: `crates/**/*.rs` **48543** lines; `apps/desktop/src`
-  TS/TSX/CSS **12317** lines (**~39%** of Java main lines, a scale check only)
-- Java GUI: **297** files / **61510** lines vs desktop source **11982**
+- Rewrite Rust: `crates/**/*.rs` **50268** lines; `apps/desktop/src`
+  TS/TSX/CSS **12510** lines (**~40%** of Java main lines, a scale check only)
+- Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **12510**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **4767**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
 - Unique `java_test` goldens that match those methods: **817** (includes
@@ -124,7 +124,11 @@ broken tag cannot hide a later paragraph, including through the public
 `HtmlFilter.parse` / `write` path.
 
 **P3 filters3:** dialect tag snapshot exists.
-`XMLFilterTest#testLoadCJKPath` golden is exported.
+`XMLFilterTest#testLoadCJKPath` golden is exported. OpenDoc/OpenXML now assign
+part-qualified segment IDs (`content.xml#0`, `word/header1.xml#0`) during both
+parse and write. **2/2** deep ZIP write-back tests strictly distinguish
+same-source segments across parts, retain OpenXML protected nested tags, and
+leave OpenDocument intact `office:styles` content unchanged.
 
 **P4 filters4:** `*FilterTest` **20/20**. SdlXliff / SdlProject still have
 no Java `*Test` (fixture goldens only). `.docx` `for_path` still selects
@@ -193,7 +197,11 @@ accelerators pass through the same normalizer.
 `ProjectUICommandsTest` **5/5**, `SimpleIssueTest` **5/5**,
 `IssueCheckerTest` **3/3**, `GlossaryTextAreaTest` **3/3**, and
 `NotesTextAreaTest` **2/2** now use toolkit-independent Rust/desktop product
-models and strict Java-exported values.
+models and strict Java-exported values. Packaged restart is assembled through
+the actual main-process IPC registration: it preserves `process.argv.slice(1)`,
+schedules `app.relaunch`, stops the sidecar, then calls `app.exit(0)`.
+**3/3** lifecycle tests assert registration and exact call order; this is
+reproducible assembly coverage, not a real packaged GUI E2E claim.
 
 **P9 MT / finder / completer:** 7 engines use recorded HTTP fixtures (not
 live protocol parity). `MachineTranslatorsManagerTest` **3/3** and
@@ -216,7 +224,11 @@ sets (**5** unanchored / **9** slash-anchored), through the same observable copy
 path used by sync. Git checkout/update/commit no longer swallow `git2` fetch,
 missing-branch, commit, or push failures. No-change commits avoid pushes;
 tracked deletion and observed-version guards are exercised without a product
-`git` subprocess.
+`git` subprocess. Persistent HEAD checkpoints now make recently deleted paths
+one-shot and mapping-aware; prepare/switch initialize and update submodules at
+the recorded gitlink. Provider APIs expose file version, guarded commit, and
+version switching through `IRemoteRepository2`. The suite is **23 passed /
+1 ignored** (the preserved SVN binary prerequisite).
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
@@ -234,7 +246,12 @@ flow through Electron startup into the NDJSON sidecar, and the renderer opens
 the requested project. Manual align edits select source, target, or both;
 the edited rows are written through `align.write` and parsed back as exact TMX
 pairs. Pending-bead `do_align` now invokes the configured alignment algorithm
-instead of returning its input unchanged.
+instead of returning its input unchanged. The product state now retains
+`MutableBead` score, nullable source/target line lists, enabled flag, and
+accepted/needs-review status across split, pinpoint, bulk keep, and
+realign-pending RPCs; the renderer edits and writes that state rather than
+flattened pairs. The sidecar contract is **3/3**, including strict multiline
+split/review/pinpoint output.
 Wiki / MED have ExportGoldens API fixtures where Java has no `*Test`.
 `ScriptItemTest` **6/6** now exports actual Java inline/file text,
 metadata, missing-file, and I/O results and `omegat-script` imports the
