@@ -8,12 +8,11 @@ import {
   type Document3State,
 } from "./Document3";
 import { EditorTextArea3 } from "./EditorTextArea3";
+import type { EditorFilterState } from "./IEditorFilter";
 import { changeCase as changeEditorCase, getWordBoundary } from "./EditorUtils";
 
-export type EditorFilter = { kind: "untranslated" | "unique" | "noted" | "none"; query?: string };
+export type EditorFilter = EditorFilterState;
 
-let filter: EditorFilter = { kind: "none" };
-let selectedText = "";
 const popupConstructors: Array<(x: number, y: number) => void> = [];
 let remarkMarker: (name: string) => void = (_name) => undefined;
 
@@ -43,17 +42,14 @@ function publishCommandDocument(area: EditorTextArea3, previous: Document3State)
   const next = area.getOmDocument();
   if (next === previous) return;
   const state = useApp.getState();
-  state.setDraft(next.translation);
   const translationStart = next.translationStart;
-  useApp.setState({
-    document3: next,
-    editorSelection: {
+  state.applyEditorDocument(
+    next,
+    {
       anchor: area.getSelectionAnchor() - translationStart,
       focus: area.getSelectionFocus() - translationStart,
     },
-    selectedText: "",
-  });
-  selectedText = "";
+  );
 }
 
 export function bindMarkerRemark(fn: (name: string) => void): () => void {
@@ -73,7 +69,6 @@ export const IEditor = {
       editorSelection: { anchor: 0, focus: 0 },
       selectedText: "",
     });
-    selectedText = "";
   },
   changeCase(mode: "upper" | "lower" | "title" | "sentence" | "cycle") {
     const area = commandTextArea();
@@ -162,17 +157,17 @@ export const IEditor = {
     return `${a.props.target_dir}/${e.file}`;
   },
   getCurrentTranslation() {
-    return useApp.getState().draft;
+    return useApp.getState().document3.translation;
   },
   getFilter() {
-    return filter;
+    return { ...useApp.getState().editorFilter };
   },
   getSelectedText() {
     const a = useApp.getState();
     const start = Math.min(a.editorSelection.anchor, a.editorSelection.focus);
     const end = Math.max(a.editorSelection.anchor, a.editorSelection.focus);
     return start === end
-      ? a.selectedText || selectedText
+      ? a.selectedText
       : a.document3.translation.slice(start, end);
   },
   getSettings() {
@@ -182,8 +177,8 @@ export const IEditor = {
     await useApp.getState().jump("number", n);
   },
   async gotoEntryAfterFix(n: number) {
+    await useApp.getState().refreshEntriesAfterExternalChange();
     await this.gotoEntry(n);
-    this.refreshViewAfterFix();
   },
   async gotoFile(name: string) {
     const a = useApp.getState();
@@ -257,8 +252,8 @@ export const IEditor = {
     const a = useApp.getState();
     a.select(a.index, false);
   },
-  refreshViewAfterFix() {
-    this.refreshView();
+  async refreshViewAfterFix() {
+    await useApp.getState().refreshEntriesAfterExternalChange();
   },
   async registerEmptyTranslation() {
     await useApp.getState().registerEmpty();
@@ -276,7 +271,7 @@ export const IEditor = {
     remarkMarker(name);
   },
   removeFilter() {
-    filter = { kind: "none" };
+    useApp.setState({ editorFilter: { kind: "none" } });
   },
   replaceEditText(text: string) {
     const a = useApp.getState();
@@ -291,13 +286,12 @@ export const IEditor = {
   },
   selectSourceText() {
     useApp.getState().selectSource();
-    selectedText = this.getCurrentEntry()?.source ?? "";
   },
   setAlternateTranslationForCurrentEntry(alt: boolean) {
     void useApp.getState().commit({ default_translation: !alt });
   },
   setFilter(next: EditorFilter) {
-    filter = next;
+    useApp.setState({ editorFilter: { ...next } });
   },
   undo() {
     const a = useApp.getState();
@@ -309,9 +303,5 @@ export const IEditor = {
     useApp.setState({ completer: [] });
   },
 };
-
-export function setSelectedText(s: string) {
-  selectedText = s;
-}
 
 export { switchCase };

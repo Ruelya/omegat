@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createDocument3, replaceEditText, type Document3State } from "../editor/Document3";
 import { issuesForEntryOnLeave, sameCompleteEntryKey } from "../editor/EditorController";
 import { IEditor } from "../editor/IEditor";
+import { makeFilter, type EditorFilterState } from "../editor/IEditorFilter";
 import {
   marksFromPrefs,
   nextMissingTag,
@@ -16,12 +17,14 @@ import {
 import { DEFAULT_DOCK_LAYOUT, layoutFromPrefs, layoutToPrefs, serializeDockLayout, type DockLayout } from "../lib/layout";
 import { DockProjectLifecycle, LatestDockRequest } from "../lib/dock-controllers";
 import { applyColorVars, defaultPreferences } from "../lib/preferences";
+import { projectEvents, type ProjectEvent } from "../lib/project-events";
 import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchForm } from "../lib/search-params";
 import type {
   CompleterItemDto,
   DictHitDto,
   EditorConflict,
   EntryDto,
+  EntryKeyDto,
   EntrySetResult,
   FilterInfoDto,
   GlossaryHitDto,
@@ -76,7 +79,7 @@ type SelectedDockData = {
   mt: MtSuggestionDto[];
   dict: DictHitDto[];
   completer: CompleterItemDto[];
-  draft: string;
+  translation: string;
   note: string;
   source: string;
   file: string;
@@ -95,7 +98,7 @@ const dockLifecycle = new DockProjectLifecycle([
   mtDockRequest,
   dictionaryDockRequest,
   completerDockRequest,
-]);
+], projectEvents);
 
 function entryLifecycleKey(key: EntryDto["key"]): string {
   return JSON.stringify(key);
@@ -157,9 +160,10 @@ export type AppState = {
   issues: IssueDto[];
   theme: "light" | "dark";
   error: string | null;
-  draft: string;
   document3: Document3State;
   editorSelection: { anchor: number; focus: number };
+  editorFilter: EditorFilterState;
+  projectEvent: ProjectEvent;
   note: string;
   firstRun: boolean;
   locale: string;
@@ -201,6 +205,10 @@ export type AppState = {
   reloadProject: () => Promise<void>;
   select: (index: number, recordHistory?: boolean) => Promise<void>;
   setDraft: (v: string) => void;
+  applyEditorDocument: (
+    document: Document3State,
+    selection?: { anchor: number; focus: number },
+  ) => void;
   setEditorSelection: (
     selection:
       | { anchor: number; focus: number }
@@ -257,6 +265,7 @@ export type AppState = {
   ignoreWord: (word: string) => Promise<void>;
   addGlossary: (source: string, target: string, comment?: string) => Promise<void>;
   importWiki: (source: string) => Promise<void>;
+  refreshEntriesAfterExternalChange: (changedKeys?: readonly EntryKeyDto[]) => Promise<void>;
   toggleTheme: () => void;
   setSearchForm: (patch: Partial<SearchForm>) => void;
 };
@@ -275,9 +284,10 @@ const initialState = {
   issues: [] as IssueDto[],
   theme: "light" as const,
   error: null as string | null,
-  draft: "",
   document3: createDocument3("", ""),
   editorSelection: { anchor: 0, focus: 0 },
+  editorFilter: { kind: "none" } as EditorFilterState,
+  projectEvent: projectEvents.current(),
   note: "",
   mt: [] as MtSuggestionDto[],
   dict: [] as DictHitDto[],
@@ -338,6 +348,9 @@ export const useApp = create<AppState>((set, get) => ({
       layout: layoutFromPrefs(prefs.docking_layout, readLocal("omegat.layout")),
       searchForm: { ...restoreSearchForm(prefs.search_window), query: get().searchForm.query, replace: get().searchForm.replace },
       filterUntranslated: prefs.filter_untranslated,
+      editorFilter: prefs.filter_untranslated
+        ? { kind: "untranslated" }
+        : { kind: "none" },
       completerAuto: prefs.completer_auto,
       historyCompletion: prefs.history_completion,
       historyPrediction: prefs.history_prediction,
@@ -364,7 +377,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   open: async (root) => {
-    const lifecycle = dockLifecycle.beginProject(root);
+    const lifecycle = dockLifecycle.beginProject(root, "load");
     set({ ...clearedDockData(), error: null, status: "" });
     const props = await rpc<ProjectPropsDto>("project.open", { root });
     if (!dockLifecycle.isCurrent(lifecycle)) return;
@@ -382,7 +395,6 @@ export const useApp = create<AppState>((set, get) => ({
       index: 0,
       stats,
       error: null,
-      draft: firstTranslation,
       note: firstEntry?.note ?? "",
       document3: createDocument3(firstEntry?.source ?? "", firstTranslation),
       editorSelection: {
@@ -405,11 +417,14 @@ export const useApp = create<AppState>((set, get) => ({
     get().logLine(`opened ${root}`);
   },
   create: async (root, sl, tl, seg) => {
+    const lifecycle = dockLifecycle.beginProject(root, "create");
+    set({ ...clearedDockData(), error: null, status: "" });
     await rpc("project.create", { root, source_lang: sl, target_lang: tl, sentence_seg: seg });
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
     await get().open(root);
   },
   closeProject: async () => {
-    dockLifecycle.beginProject(null);
+    dockLifecycle.beginProject(null, "close");
     const { locale, theme, version } = get();
     set({
       ...initialState,
@@ -428,13 +443,16 @@ export const useApp = create<AppState>((set, get) => ({
   reloadProject: async () => {
     const root = get().props?.root;
     if (!root) return;
-    const lifecycle = dockLifecycle.beginProject(root);
+    const lifecycle = dockLifecycle.beginProject(root, "reload");
     set({ ...clearedDockData(), status: "" });
     const before = get();
     const previous = before.entries[before.index];
     if (
       previous
-      && (before.draft !== previous.translation || before.note !== previous.note)
+      && (
+        before.document3.translation !== previous.translation
+        || before.note !== previous.note
+      )
     ) {
       await get().commitCurrent();
       if (!dockLifecycle.isCurrent(lifecycle)) return;
@@ -457,7 +475,6 @@ export const useApp = create<AppState>((set, get) => ({
         stats,
         props: reloaded.props ?? committed.props,
         index: 0,
-        draft: "",
         note: "",
         document3: createDocument3("", ""),
         matches: [],
@@ -489,7 +506,6 @@ export const useApp = create<AppState>((set, get) => ({
         stats,
         props: reloaded.props ?? committed.props,
         index,
-        draft: entry.translation,
         note: entry.note,
         document3: createDocument3(entry.source, entry.translation),
         history: { undo: [], redo: [] },
@@ -507,7 +523,10 @@ export const useApp = create<AppState>((set, get) => ({
     const previousEntry = before.entries[before.index];
     if (
       previousEntry
-      && (before.draft !== previousEntry.translation || before.note !== previousEntry.note)
+      && (
+        before.document3.translation !== previousEntry.translation
+        || before.note !== previousEntry.note
+      )
     ) {
       // A failed optimistic write rejects the navigation and leaves the live
       // Document3 untouched instead of silently replacing the user's draft.
@@ -551,17 +570,23 @@ export const useApp = create<AppState>((set, get) => ({
           })
         : [];
       stopIfCancelled(signal);
-      let draft = e.translation;
-      if (!draft && insert_best && matches[0]) draft = matches[0].translation;
+      let translation = e.translation;
+      if (!translation && insert_best && matches[0]) {
+        translation = matches[0].translation;
+      }
       const sameEntry = sameCompleteEntryKey(entries[prev]?.key, e.key);
       const selection = sameEntry
         ? {
-            anchor: Math.max(0, Math.min(editorSelection.anchor, draft.length)),
-            focus: Math.max(0, Math.min(editorSelection.focus, draft.length)),
+            anchor: Math.max(0, Math.min(editorSelection.anchor, translation.length)),
+            focus: Math.max(0, Math.min(editorSelection.focus, translation.length)),
           }
-        : { anchor: draft.length, focus: draft.length };
+        : { anchor: translation.length, focus: translation.length };
       const completer = get().completerAuto
-        ? await rpc<CompleterItemDto[]>("completer.query", { index, prefix: "", text: draft })
+        ? await rpc<CompleterItemDto[]>("completer.query", {
+            index,
+            prefix: "",
+            text: translation,
+          })
         : [];
       stopIfCancelled(signal);
       return {
@@ -573,7 +598,7 @@ export const useApp = create<AppState>((set, get) => ({
         mt,
         dict,
         completer,
-        draft,
+        translation,
         note: e.note,
         source: e.source,
         file: e.file,
@@ -594,8 +619,7 @@ export const useApp = create<AppState>((set, get) => ({
         mt: loaded.mt,
         dict: loaded.dict,
         completer: loaded.completer,
-        draft: loaded.draft,
-        document3: createDocument3(loaded.source, loaded.draft),
+        document3: createDocument3(loaded.source, loaded.translation),
         note: loaded.note,
         history: { undo: [], redo: [] },
         selectedMatch: 0,
@@ -660,7 +684,7 @@ export const useApp = create<AppState>((set, get) => ({
     await completerDockRequest.run(() => rpc<CompleterItemDto[]>("completer.query", {
         index,
         prefix,
-        text: state.draft,
+        text: state.document3.translation,
       }), (completer) => {
         if (dockLifecycle.isCurrent(lifecycle)) set({ completer });
       });
@@ -725,9 +749,7 @@ export const useApp = create<AppState>((set, get) => ({
       date_from: form.dateFrom || undefined,
       date_to: form.dateTo || undefined,
     });
-    const entries = await rpc<EntryDto[]>("entry.list");
-    set({ entries });
-    await get().select(get().index, false);
+    await get().refreshEntriesAfterExternalChange();
     get().logLine(`replaced ${r.replaced}`);
     return r.replaced;
   },
@@ -778,7 +800,6 @@ export const useApp = create<AppState>((set, get) => ({
     if (side === "theirs") {
       set({
         entries: latest,
-        draft: remote.translation,
         note: remote.note,
         document3: createDocument3(remote.source, remote.translation),
         history: { undo: [], redo: [] },
@@ -790,7 +811,6 @@ export const useApp = create<AppState>((set, get) => ({
     const chosen = side === "manual" ? (translation ?? conflict.ours) : conflict.ours;
     set({
       entries: latest,
-      draft: chosen,
       note: conflict.note,
       document3: replaceEditText(createDocument3(remote.source, remote.translation), chosen),
       editConflict: null,
@@ -818,17 +838,91 @@ export const useApp = create<AppState>((set, get) => ({
     await rpc("wiki.import", { source });
     await get().reloadProject();
   },
+  refreshEntriesAfterExternalChange: async (changedKeys) => {
+    const before = get();
+    const root = before.props?.root;
+    if (!root) return;
+    const previous = before.entries[before.index];
+    const previousKey = previous?.key;
+    const lifecycle = dockLifecycle.externalRefresh(
+      root,
+      previousKey ? entryLifecycleKey(previousKey) : null,
+      changedKeys?.map(entryLifecycleKey) ?? [],
+    );
+    set({ ...clearedDockData(), status: "" });
+
+    const listed = await rpc<EntryDto[]>("entry.list");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
+    const entries = Array.isArray(listed) ? listed : [];
+    const stats = await rpc<StatsDto>("stats.get");
+    if (!dockLifecycle.isCurrent(lifecycle)) return;
+    const index = reloadedEntryIndex(entries, previous, before.index);
+    if (index < 0) {
+      set({
+        entries,
+        stats,
+        index: 0,
+        note: "",
+        document3: createDocument3("", ""),
+        editorSelection: { anchor: 0, focus: 0 },
+        history: { undo: [], redo: [] },
+        navBack: [],
+        navForward: [],
+        editConflict: null,
+      });
+      return;
+    }
+
+    const entry = entries[index]!;
+    const sameEntry = sameCompleteEntryKey(entry.key, previousKey);
+    const limit = entry.translation.length;
+    set({
+      entries,
+      stats,
+      index,
+      note: entry.note,
+      document3: createDocument3(entry.source, entry.translation),
+      editorSelection: sameEntry
+        ? {
+            anchor: Math.max(0, Math.min(before.editorSelection.anchor, limit)),
+            focus: Math.max(0, Math.min(before.editorSelection.focus, limit)),
+          }
+        : { anchor: limit, focus: limit },
+      history: { undo: [], redo: [] },
+      editConflict: null,
+    });
+    await get().select(index, false);
+  },
   setDraft: (v) => {
-    const prev = get().draft;
+    const prev = get().document3.translation;
     const src = get().entries[get().index]?.source ?? get().document3.source;
     const current = get().document3;
     const document3 = current.source === src
       ? replaceEditText(current, v)
       : replaceEditText(createDocument3(src, v), v);
     set({
-      draft: v,
       document3,
       history: pushUndo(get().history, prev, v),
+    });
+  },
+  applyEditorDocument: (document3, selection) => {
+    const current = get();
+    const limit = document3.translation.length;
+    const editorSelection = selection
+      ? {
+          anchor: Math.max(0, Math.min(selection.anchor, limit)),
+          focus: Math.max(0, Math.min(selection.focus, limit)),
+        }
+      : current.editorSelection;
+    set({
+      document3,
+      editorSelection,
+      selectedText: "",
+      history: pushUndo(
+        current.history,
+        current.document3.translation,
+        document3.translation,
+      ),
     });
   },
   setEditorSelection: (selection) => set({
@@ -839,43 +933,54 @@ export const useApp = create<AppState>((set, get) => ({
   }),
   setNote: (v) => set({ note: v }),
   undo: () => {
-    const { draft, stacks } = undoDraft(get().history, get().draft);
+    const { draft, stacks } = undoDraft(
+      get().history,
+      get().document3.translation,
+    );
     const src = get().entries[get().index]?.source ?? get().document3.source;
-    set({ draft, document3: createDocument3(src, draft), history: stacks });
+    set({ document3: createDocument3(src, draft), history: stacks });
   },
   redo: () => {
-    const { draft, stacks } = redoDraft(get().history, get().draft);
+    const { draft, stacks } = redoDraft(
+      get().history,
+      get().document3.translation,
+    );
     const src = get().entries[get().index]?.source ?? get().document3.source;
-    set({ draft, document3: createDocument3(src, draft), history: stacks });
+    set({ document3: createDocument3(src, draft), history: stacks });
   },
-  applyCase: (mode) => get().setDraft(switchCase(get().draft, mode)),
+  applyCase: (mode) => get().setDraft(
+    switchCase(get().document3.translation, mode),
+  ),
   insertMatch: (n = 1, mode = "overwrite") => {
     const m = get().matches[(n ?? 1) - 1] ?? get().matches[get().selectedMatch];
     if (!m) return;
-    if (mode === "insert") get().setDraft(get().draft + m.translation);
+    if (mode === "insert") get().setDraft(
+      get().document3.translation + m.translation,
+    );
     else get().setDraft(m.translation);
     set({ selectedMatch: Math.max(0, (n ?? 1) - 1) });
   },
   insertMt: (mode = "overwrite") => {
     const m = get().mt[0];
     if (!m) return;
-    if (mode === "insert") get().setDraft(get().draft + m.text);
+    if (mode === "insert") get().setDraft(get().document3.translation + m.text);
     else get().setDraft(m.text);
   },
   insertSource: (mode = "overwrite") => {
     const src = get().entries[get().index]?.source ?? "";
-    if (mode === "insert") get().setDraft(get().draft + src);
+    if (mode === "insert") get().setDraft(get().document3.translation + src);
     else get().setDraft(src);
   },
   insertTag: () => {
     const e = get().entries[get().index];
-    const tag = e ? nextMissingTag(e.source, get().draft) : null;
-    if (tag) get().setDraft(get().draft + tag);
+    const translation = get().document3.translation;
+    const tag = e ? nextMissingTag(e.source, translation) : null;
+    if (tag) get().setDraft(translation + tag);
   },
   insertAllTags: () => {
     const e = get().entries[get().index];
     if (!e) return;
-    let draft = get().draft;
+    let draft = get().document3.translation;
     let tag = nextMissingTag(e.source, draft);
     while (tag) {
       draft += tag;
@@ -883,13 +988,13 @@ export const useApp = create<AppState>((set, get) => ({
     }
     get().setDraft(draft);
   },
-  insertChar: (ch) => get().setDraft(get().draft + ch),
+  insertChar: (ch) => get().setDraft(get().document3.translation + ch),
   selectSource: () => {
     const src = get().entries[get().index]?.source ?? "";
     set({ selectedText: src, focusPanel: "editor" });
   },
   exportSelection: async () => {
-    const text = get().selectedText || get().draft;
+    const text = get().selectedText || get().document3.translation;
     if (window.omegat?.saveText) {
       await window.omegat.saveText("selection.txt", text);
     }
@@ -929,8 +1034,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
     get().logLine(`ran script slot ${slot}`);
     try {
-      const entries = await rpc<EntryDto[]>("entry.list");
-      set({ entries });
+      await get().refreshEntriesAfterExternalChange();
     } catch {
       /* ignore */
     }
@@ -954,15 +1058,21 @@ export const useApp = create<AppState>((set, get) => ({
     await get().commit();
   },
   commitCurrent: async (opts) => {
-    const { index, entries, draft, note } = get();
+    const {
+      index,
+      entries,
+      document3,
+      note,
+    } = get();
     const e = entries[index];
     if (!e) return null;
+    const translation = document3.translation;
     const defaultTranslation = opts?.default_translation ?? e.default_translation;
     try {
       const response = await rpc<EntrySetResult | EntryDto>("entry.set", {
         index,
         key: e.key,
-        translation: draft,
+        translation,
         note,
         revision: e.revision,
         default_translation: defaultTranslation,
@@ -1005,7 +1115,7 @@ export const useApp = create<AppState>((set, get) => ({
           index,
           source: e.source,
           previous: e.translation,
-          ours: draft,
+          ours: translation,
           theirs: remote.translation,
           note,
           default_translation: defaultTranslation,
@@ -1045,7 +1155,14 @@ export const useApp = create<AppState>((set, get) => ({
   jump: async (kind, n, dir = 1) => {
     const { entries, index } = get();
     if (entries.length === 0) return;
-    const allowed = (entry: EntryDto) => !get().filterUntranslated || !entry.translated;
+    const filter = makeFilter(
+      get().editorFilter.kind,
+      get().editorFilter.query,
+    );
+    const allowed = (entry: EntryDto) => filter.allowed({
+      ...entry,
+      translation: entry.translation,
+    });
     const findCyclic = (pred: (entry: EntryDto) => boolean, step: 1 | -1) => {
       for (let distance = 1; distance <= entries.length; distance += 1) {
         const candidate = (index + step * distance + entries.length * 2) % entries.length;
@@ -1140,10 +1257,15 @@ export const useApp = create<AppState>((set, get) => ({
   },
 }));
 
+projectEvents.subscribe((projectEvent) => {
+  useApp.setState({ projectEvent });
+});
+
 export function resetAppState() {
-  dockLifecycle.beginProject(null);
+  projectEvents.reset();
   useApp.setState({
     ...initialState,
+    projectEvent: projectEvents.current(),
     firstRun: true,
     locale: "en",
     windows: {},

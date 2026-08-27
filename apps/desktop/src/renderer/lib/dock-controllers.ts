@@ -6,6 +6,11 @@ import type {
   MatchDto,
   MtSuggestionDto,
 } from "./types";
+import {
+  ProjectEventBus,
+  type ProjectEvent,
+  type ProjectEventKind,
+} from "./project-events";
 
 export type DockEditTarget = {
   getCurrentTranslation(): string;
@@ -85,58 +90,66 @@ type CancellableDockRequest = {
  * generation.
  */
 export class DockProjectLifecycle {
-  private projectGeneration = 0;
-  private entryGeneration = 0;
-  private projectId: string | null = null;
-  private entryKey: string | null = null;
+  private currentEvent: ProjectEvent;
 
-  constructor(private readonly requests: readonly CancellableDockRequest[]) {}
+  constructor(
+    private readonly requests: readonly CancellableDockRequest[],
+    private readonly events = new ProjectEventBus(),
+  ) {
+    this.currentEvent = events.current();
+    events.subscribe((event) => {
+      this.currentEvent = event;
+      this.cancelRequests();
+    });
+  }
 
-  beginProject(projectId: string | null): DockLifecycleToken {
-    this.cancelRequests();
-    this.projectGeneration += 1;
-    this.entryGeneration += 1;
-    this.projectId = projectId;
-    this.entryKey = null;
-    return this.snapshot();
+  beginProject(
+    projectId: string | null,
+    kind: Extract<ProjectEventKind, "load" | "create" | "close" | "reload"> = "load",
+  ): DockLifecycleToken {
+    return this.token(this.events.publishProject(kind, projectId));
   }
 
   activateEntry(projectId: string | null, entryKey: string): DockLifecycleToken {
-    this.cancelRequests();
-    if (projectId !== this.projectId) {
-      this.projectGeneration += 1;
-      this.projectId = projectId;
-    }
-    this.entryGeneration += 1;
-    this.entryKey = entryKey;
-    return this.snapshot();
+    return this.token(this.events.publishEntry(projectId, entryKey));
+  }
+
+  externalRefresh(
+    projectId: string | null,
+    entryKey: string | null,
+    changedEntryKeys: readonly string[] = [],
+  ): DockLifecycleToken {
+    return this.token(
+      this.events.publishExternalRefresh(projectId, entryKey, changedEntryKeys),
+    );
   }
 
   captureEntry(projectId: string | null, entryKey: string): DockLifecycleToken {
     return {
-      ...this.snapshot(),
+      ...this.token(this.currentEvent),
       projectId,
       entryKey,
     };
   }
 
   isCurrent(token: DockLifecycleToken): boolean {
-    return token.projectGeneration === this.projectGeneration
-      && token.entryGeneration === this.entryGeneration
-      && token.projectId === this.projectId
-      && token.entryKey === this.entryKey;
+    const current = this.currentEvent;
+    return token.projectGeneration === current.projectGeneration
+      && token.entryGeneration === current.entryGeneration
+      && token.projectId === current.projectId
+      && token.entryKey === current.entryKey;
   }
 
   private cancelRequests(): void {
     this.requests.forEach((request) => request.cancel());
   }
 
-  private snapshot(): DockLifecycleToken {
+  private token(event: ProjectEvent): DockLifecycleToken {
     return {
-      projectGeneration: this.projectGeneration,
-      entryGeneration: this.entryGeneration,
-      projectId: this.projectId,
-      entryKey: this.entryKey,
+      projectGeneration: event.projectGeneration,
+      entryGeneration: event.entryGeneration,
+      projectId: event.projectId,
+      entryKey: event.entryKey,
     };
   }
 }

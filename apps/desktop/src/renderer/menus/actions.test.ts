@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDocument3 } from "../editor/Document3";
 import { defaultPreferences } from "../lib/preferences";
 import type { EntryDto } from "../lib/types";
 import { resetAppState, useApp } from "../store/app";
@@ -64,7 +65,7 @@ function primedState() {
   resetAppState();
   installBridge();
   useApp.setState({
-    draft: "hello",
+    document3: createDocument3(SAMPLE_ENTRY.source, "hello"),
     selectedText: "sel",
     selectedMatch: 0,
     entries: [
@@ -176,7 +177,7 @@ describe("menu actions", () => {
         }
         return { ok: true, result: "ok" };
       });
-      const beforeDraft = useApp.getState().draft;
+      const beforeDraft = useApp.getState().document3.translation;
       const beforeMarks = { ...useApp.getState().marks };
       const beforeMatch = useApp.getState().selectedMatch;
       const beforeFocus = useApp.getState().focusPanel;
@@ -259,19 +260,19 @@ describe("menu actions", () => {
           break;
         case "edit.undo":
         case "edit.redo":
-          expect(st.draft, action).toBeDefined();
+          expect(st.document3.translation, action).toBeDefined();
           break;
         case "edit.overwrite-translation":
         case "edit.insert-translation":
         case "edit.overwrite-mt":
         case "edit.insert-source":
         case "edit.select-source":
-          expect(st.draft !== beforeDraft || st.selectedText === "Hi there" || st.focusPanel === "editor", action).toBe(
+          expect(st.document3.translation !== beforeDraft || st.selectedText === "Hi there" || st.focusPanel === "editor", action).toBe(
             true,
           );
           break;
         case "edit.overwrite-source":
-          expect(st.draft).toBe("Hi there");
+          expect(st.document3.translation).toBe("Hi there");
           break;
         case "edit.export-selection":
           expect(saveText).toHaveBeenCalled();
@@ -284,7 +285,7 @@ describe("menu actions", () => {
         case "edit.match-3":
         case "edit.match-4":
         case "edit.match-5":
-          expect(st.draft, action).toBeDefined();
+          expect(st.document3.translation, action).toBeDefined();
           break;
         case "edit.match-next":
           expect(st.selectedMatch).toBe(Math.min(beforeMatch + 1, 0));
@@ -293,19 +294,19 @@ describe("menu actions", () => {
           expect(st.selectedMatch).toBe(0);
           break;
         case "edit.lrm":
-          expect(st.draft).toContain("\u200e");
+          expect(st.document3.translation).toContain("\u200e");
           break;
         case "edit.rlm":
-          expect(st.draft).toContain("\u200f");
+          expect(st.document3.translation).toContain("\u200f");
           break;
         case "edit.lre":
-          expect(st.draft).toContain("\u202a");
+          expect(st.document3.translation).toContain("\u202a");
           break;
         case "edit.rle":
-          expect(st.draft).toContain("\u202b");
+          expect(st.document3.translation).toContain("\u202b");
           break;
         case "edit.pdf":
-          expect(st.draft).toContain("\u202c");
+          expect(st.document3.translation).toContain("\u202c");
           break;
         case "edit.multiple-default":
         case "edit.multiple-alt":
@@ -318,10 +319,10 @@ describe("menu actions", () => {
         case "edit.case-sentence":
         case "edit.case-title":
         case "edit.case-upper":
-          expect(st.draft, action).not.toBe("hello");
+          expect(st.document3.translation, action).not.toBe("hello");
           break;
         case "edit.case-lower":
-          expect(st.draft).toBe("hello");
+          expect(st.document3.translation).toBe("hello");
           break;
         case "goto.untranslated":
         case "goto.unique":
@@ -377,7 +378,7 @@ describe("menu actions", () => {
           break;
         case "edit.tag-painter":
         case "edit.tag-next":
-          expect(st.draft, action).toBeDefined();
+          expect(st.document3.translation, action).toBeDefined();
           break;
         case "options.completer-auto":
           expect(st.completerAuto).toBe(!beforeAuto);

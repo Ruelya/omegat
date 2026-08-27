@@ -48,6 +48,19 @@ async function unusedPort() {
   return address.port;
 }
 
+async function createFifo(path) {
+  const child = spawn("mkfifo", [path], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const code = await new Promise((resolveExit, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolveExit);
+  });
+  assert.equal(code, 0, `mkfifo failed: ${stderr}`);
+}
+
 async function rpcOnce(configDir, method, params) {
   const child = spawn(sidecar, [], {
     env: { ...process.env, OMEGAT_CONFIG_DIR: configDir },
@@ -221,11 +234,15 @@ const configDir = join(workDir, "config");
 const initialProject = join(workDir, "initial-project");
 const droppedProject = join(workDir, "dropped-project");
 const importedFile = join(workDir, "b-imported.txt");
+const mtFixtureDir = join(workDir, "mt-fixtures");
+const delayedMtFixture = join(mtFixtureDir, "mymemory", "recorded.json");
 await Promise.all([
   mkdir(configDir, { recursive: true }),
   mkdir(join(initialProject, "source"), { recursive: true }),
   mkdir(join(droppedProject, "source"), { recursive: true }),
+  mkdir(join(mtFixtureDir, "mymemory"), { recursive: true }),
 ]);
+await createFifo(delayedMtFixture);
 await Promise.all([
   writeFile(join(initialProject, "source", "initial.txt"), "Initial project.", "utf8"),
   writeFile(
@@ -263,6 +280,7 @@ try {
         DISPLAY: xvfb.display,
         OMEGAT_CONFIG_DIR: configDir,
         OMEGAT_PROJECT: initialProject,
+        OMEGAT_MT_FIXTURE_DIR: mtFixtureDir,
       },
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -284,6 +302,7 @@ try {
       return {
         preload: typeof window.omegat?.rpc,
         source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
+        projectGeneration: Number(document.querySelector(".app")?.dataset.projectGeneration ?? -1),
       };
     })()`);
     if (state.preload === "function" && state.source === "Initial project.") return state;
@@ -294,7 +313,42 @@ try {
   });
   assert.equal(initial.source, "Initial project.");
 
+  assert.equal(
+    await client.evaluate(
+      `document.querySelector("[data-mt-fetch]")?.click(); "requested"`,
+    ),
+    "requested",
+  );
   await dispatchFileDrop(client, join(droppedProject, "omegat.project"));
+  const switchBoundary = await waitFor(
+    "project event boundary while the old dock request is blocked",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          event: app?.dataset.projectEvent ?? null,
+          projectId: app?.dataset.projectId ?? null,
+          projectGeneration: Number(app?.dataset.projectGeneration ?? -1),
+          entryGeneration: Number(app?.dataset.entryGeneration ?? -1),
+          oldMtVisible: Boolean(document.querySelector('[data-mt-result="mymemory"]')),
+        };
+      })()`);
+      if (
+        state.event === "load"
+        && state.projectId === droppedProject
+        && state.projectGeneration > initial.projectGeneration
+        && !state.oldMtVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  await writeFile(
+    delayedMtFixture,
+    '{"responseData":{"translatedText":"STALE FIRST PROJECT MT"}}',
+    "utf8",
+  );
   const opened = await waitFor("project opened through packaged file drop", async () => {
     const state = await client.evaluate(`(async () => ({
       root: [...document.querySelectorAll("footer.status span")].at(-1)?.textContent ?? null,
@@ -308,6 +362,23 @@ try {
     file: "a-issue.txt",
     source: "Keep <x0/> tag.",
   }]);
+  await sleep(200);
+  const dockRace = await client.evaluate(`(() => {
+    const app = document.querySelector(".app");
+    return {
+      projectId: app?.dataset.projectId ?? null,
+      projectGeneration: Number(app?.dataset.projectGeneration ?? -1),
+      entryGeneration: Number(app?.dataset.entryGeneration ?? -1),
+      staleMtVisible: [...document.querySelectorAll("[data-mt-result]")]
+        .some((node) => node.textContent?.includes("STALE FIRST PROJECT MT")),
+    };
+  })()`);
+  assert.deepEqual(dockRace, {
+    projectId: droppedProject,
+    projectGeneration: switchBoundary.projectGeneration,
+    entryGeneration: switchBoundary.entryGeneration + 1,
+    staleMtVisible: false,
+  });
 
   await dispatchFileDrop(client, importedFile);
   const imported = await waitFor("ordinary file imported through packaged drop", async () => {
@@ -425,6 +496,7 @@ try {
     platform: "linux",
     dragInjection: "Chromium Input.dispatchDragEvent with real file paths",
     projectDropRoot: opened.root,
+    dockRace,
     importedFiles: imported.map(({ file }) => file),
     leaveIssue,
     located,

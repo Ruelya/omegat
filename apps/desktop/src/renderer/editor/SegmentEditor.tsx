@@ -123,7 +123,7 @@ export function SegmentEditor() {
   const entries = useApp((s) => s.entries);
   const activeIndex = useApp((s) => s.index);
   const document3 = useApp((s) => s.document3);
-  const setDraft = useApp((s) => s.setDraft);
+  const applyEditorDocument = useApp((s) => s.applyEditorDocument);
   const selection = useApp((s) => s.editorSelection);
   const setSelection = useApp((s) => s.setEditorSelection);
   const commit = useApp((s) => s.commit);
@@ -136,7 +136,7 @@ export function SegmentEditor() {
   const marks = useApp((s) => s.marks);
   const glossary = useApp((s) => s.glossary);
   const focus = useApp((s) => s.focusPanel);
-  const filterUntranslated = useApp((s) => s.filterUntranslated);
+  const editorFilter = useApp((s) => s.editorFilter);
   const tabAdvance = useApp((s) => Boolean(s.prefs?.tab_advance));
   const editConflict = useApp((s) => s.editConflict);
   const resolveEditConflict = useApp((s) => s.resolveEditConflict);
@@ -162,7 +162,7 @@ export function SegmentEditor() {
     entries,
     activeIndex,
     document3,
-    makeFilter(filterUntranslated ? "untranslated" : "none"),
+    makeFilter(editorFilter.kind, editorFilter.query),
   );
   const activeLoadedEntry = loadedPage.find((entry) => entry.active);
   const loadedPageSignature = loadedPage
@@ -216,14 +216,14 @@ export function SegmentEditor() {
   }, [activeEntryKey, document3.translation]);
 
   useEffect(() => {
-    if (!filterUntranslated || !document3.translation) return;
+    if (editorFilter.kind !== "untranslated" || !document3.translation) return;
     const next = nextUntranslatedEntryIndex(entries, activeIndex);
     if (next >= 0 && next !== activeIndex) void select(next, false);
   }, [
     activeIndex,
     document3.translation,
     entries,
-    filterUntranslated,
+    editorFilter.kind,
     select,
   ]);
 
@@ -314,8 +314,11 @@ export function SegmentEditor() {
 
   function applyDoc(next: Document3State, area: EditorTextArea3) {
     const translation = extractTranslation(next) ?? next.translation;
-    setDraft(translation);
-    readSelection(area);
+    const start = area.getOmDocument().translationStart;
+    applyEditorDocument(next, {
+      anchor: area.getSelectionAnchor() - start,
+      focus: area.getSelectionFocus() - start,
+    });
     const pos = area.getSelectionFocus() - next.translationStart;
     void queryCompleter(translation.slice(0, pos).split(/\s+/).pop() || "");
   }

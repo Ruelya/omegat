@@ -3,6 +3,7 @@ import { createDocument3 } from "../editor/Document3";
 import { bindMarkerRemark, IEditor } from "../editor/IEditor";
 import { marksFromPrefs, prefsFromMarks } from "../lib/editor-doc";
 import { defaultPreferences } from "../lib/preferences";
+import { projectEvents } from "../lib/project-events";
 import { toSearchParams } from "../lib/search-params";
 import { dispatchMenuAction } from "../menus/actions";
 import { resetAppState, useApp } from "./app";
@@ -70,7 +71,7 @@ describe("app store", () => {
 
   it("undoes draft edits and inserts fuzzy 1–5", () => {
     useApp.setState({
-      draft: "a",
+      document3: createDocument3("", "a"),
       matches: [
         { source: "s", translation: "one", score: 90, comes_from: "tm" },
         { source: "s", translation: "two", score: 80, comes_from: "tm" },
@@ -78,13 +79,13 @@ describe("app store", () => {
     });
     useApp.getState().setDraft("ab");
     useApp.getState().undo();
-    expect(useApp.getState().draft).toBe("a");
+    expect(useApp.getState().document3.translation).toBe("a");
     useApp.getState().redo();
-    expect(useApp.getState().draft).toBe("ab");
+    expect(useApp.getState().document3.translation).toBe("ab");
     useApp.getState().insertMatch(2, "overwrite");
-    expect(useApp.getState().draft).toBe("two");
+    expect(useApp.getState().document3.translation).toBe("two");
     useApp.getState().insertMatch(1, "insert");
-    expect(useApp.getState().draft).toBe("twoone");
+    expect(useApp.getState().document3.translation).toBe("twoone");
   });
 
   it("persists view marks and dock layout as typed prefs fields", async () => {
@@ -155,7 +156,7 @@ describe("app store", () => {
     await useApp.getState().open("/p");
     expect(useApp.getState().screen).toBe("workspace");
     expect(useApp.getState().entries).toHaveLength(1);
-    expect(useApp.getState().draft).toBe("Bonjour");
+    expect(useApp.getState().document3.translation).toBe("Bonjour");
     expect(useApp.getState().marks.nbsp).toBe(true);
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")[0]).toBe("/p");
   });
@@ -191,7 +192,6 @@ describe("app store", () => {
       screen: "workspace",
       entries: [entry],
       index: 0,
-      draft: entry.translation,
       document3: createDocument3(entry.source, entry.translation),
       editorSelection: { anchor: 6, focus: 10 },
       completer: [{ kind: "history", text: "beta", detail: "" }],
@@ -200,7 +200,7 @@ describe("app store", () => {
 
     IEditor.insertText("X");
     expect({
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       selected: IEditor.getSelectedText(),
       position: IEditor.getCurrentPositionInEntryTranslationInEditor(),
     }).toEqual({
@@ -216,7 +216,7 @@ describe("app store", () => {
       selectionEnd: 5,
     });
     IEditor.changeCase("upper");
-    expect(useApp.getState().draft).toBe("ALPHA X");
+    expect(useApp.getState().document3.translation).toBe("ALPHA X");
 
     await IEditor.commitAndDeactivate();
     expect({
@@ -284,7 +284,7 @@ describe("app store", () => {
     useApp.setState({
       entries: [{ ...sampleEntry }, secondEntry],
       index: 0,
-      draft: "",
+      document3: createDocument3(sampleEntry.source, ""),
       note: "",
       prefs: defaultPreferences({ insert_best_match: false }),
     });
@@ -297,7 +297,7 @@ describe("app store", () => {
 
     expect({
       index: useApp.getState().index,
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       matches: useApp.getState().matches,
       staleGlossaryRequest: rpc.mock.calls.some(
         ([method, params]) => method === "glossary.query" && params?.index === 0,
@@ -367,7 +367,7 @@ describe("app store", () => {
     await staleMt;
     expect({
       root: useApp.getState().props?.root,
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       mt: useApp.getState().mt,
     }).toEqual({
       root: "/second",
@@ -487,7 +487,6 @@ describe("app store", () => {
       screen: "workspace",
       entries: [first, active],
       index: 1,
-      draft: "edited second",
       note: "edited note",
       document3: createDocument3("same", "edited second"),
       navBack: [0],
@@ -518,7 +517,7 @@ describe("app store", () => {
     expect({
       index: useApp.getState().index,
       key: useApp.getState().entries[0]?.key,
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       note: useApp.getState().note,
       source: useApp.getState().document3.source,
       translation: useApp.getState().document3.translation,
@@ -536,6 +535,131 @@ describe("app store", () => {
       dirty: false,
       navBack: [],
       navForward: [],
+      stats,
+    });
+  });
+
+  it("adopts an external fix by complete EntryKey without committing the stale document", async () => {
+    const props = {
+      root: "/external",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: true,
+      has_repositories: false,
+    };
+    const active = {
+      ...sampleEntry,
+      key: {
+        ...sampleEntry.key,
+        source_text: "same",
+        prev: "before",
+        next: "",
+        path: "/active",
+      },
+      source: "same",
+      translation: "before",
+      note: "before note",
+      translated: true,
+    };
+    const other = {
+      ...active,
+      index: 0,
+      key: {
+        ...active.key,
+        prev: "",
+        next: "after",
+        path: "/other",
+      },
+      translation: "other",
+    };
+    const fixed = {
+      ...active,
+      index: 1,
+      translation: "fixed",
+      note: "fixed note",
+      revision: 2,
+    };
+    const stats = {
+      files: 1,
+      segments: 2,
+      translated: 2,
+      unique_segments: 2,
+      source_words: 2,
+      target_words: 2,
+    };
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.list") return [other, fixed];
+      if (method === "stats.get") return stats;
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+      ) {
+        return [];
+      }
+      throw new Error(`unexpected RPC: ${method} ${JSON.stringify(params)}`);
+    });
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [active],
+      index: 0,
+      note: "stale note",
+      document3: createDocument3(active.source, "stale local edit"),
+      editorSelection: { anchor: 3, focus: 99 },
+      prefs: defaultPreferences({
+        insert_best_match: false,
+        dictionary_auto_search: false,
+      }),
+      completerAuto: false,
+    });
+    const observed: Array<{
+      kind: string;
+      changedEntryKeys: string[];
+    }> = [];
+    const unsubscribe = projectEvents.subscribe((event) => observed.push({
+      kind: event.kind,
+      changedEntryKeys: [...event.changedEntryKeys],
+    }));
+    try {
+      await useApp.getState().refreshEntriesAfterExternalChange([active.key]);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(rpc.mock.calls.map(([method, params]) => [method, params])).toEqual([
+      ["entry.list", undefined],
+      ["stats.get", undefined],
+      ["matches.query", { index: 1 }],
+      ["glossary.query", { index: 1 }],
+      ["issues.list", undefined],
+    ]);
+    expect(rpc.mock.calls.some(([method]) => method === "entry.set")).toBe(false);
+    expect(observed).toEqual([
+      {
+        kind: "external-refresh",
+        changedEntryKeys: [JSON.stringify(active.key)],
+      },
+      {
+        kind: "entry",
+        changedEntryKeys: [],
+      },
+    ]);
+    expect({
+      index: useApp.getState().index,
+      key: useApp.getState().entries[1]?.key,
+      translation: useApp.getState().document3.translation,
+      note: useApp.getState().note,
+      dirty: useApp.getState().document3.dirty,
+      selection: useApp.getState().editorSelection,
+      stats: useApp.getState().stats,
+    }).toEqual({
+      index: 1,
+      key: active.key,
+      translation: "fixed",
+      note: "fixed note",
+      dirty: false,
+      selection: { anchor: 3, focus: 5 },
       stats,
     });
   });
@@ -623,10 +747,10 @@ describe("app store", () => {
         { ...sampleEntry, index: 2, source: "three" },
       ],
       index: 0,
-      draft: "",
       note: "",
       document3: createDocument3("one", ""),
       filterUntranslated: true,
+      editorFilter: { kind: "untranslated" },
     });
     useApp.getState().setDraft("未提交");
 
@@ -647,7 +771,7 @@ describe("app store", () => {
     expect({
       active: useApp.getState().index,
       committed: useApp.getState().entries[0]!.translation,
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       source: useApp.getState().document3.source,
     }).toEqual({
       active: 2,
@@ -693,7 +817,6 @@ describe("app store", () => {
       },
       prefs: defaultPreferences({ tag_validation: "warn" }),
       entries: [{ ...sampleEntry }],
-      draft: "Bonjour",
       document3: createDocument3(sampleEntry.source, "Bonjour"),
     });
 
@@ -728,7 +851,6 @@ describe("app store", () => {
         { ...sampleEntry, index: 1, source: "two" },
       ],
       index: 0,
-      draft: "",
       note: "",
       document3: createDocument3("one", ""),
     });
@@ -737,7 +859,7 @@ describe("app store", () => {
     await expect(useApp.getState().jump("next")).rejects.toThrow("optimistic revision conflict");
     expect({
       active: useApp.getState().index,
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       translation: useApp.getState().document3.translation,
       dirty: useApp.getState().document3.dirty,
     }).toEqual({
@@ -800,7 +922,6 @@ describe("app store", () => {
     useApp.setState({
       entries: repeated,
       index: 0,
-      draft: "shared",
       note: "shared note",
       document3: createDocument3("same", "shared"),
     });
@@ -864,7 +985,6 @@ describe("app store", () => {
     useApp.setState({
       entries: [alternative],
       index: 0,
-      draft: "private edit",
       note: "",
       document3: createDocument3("same", "private edit"),
     });
@@ -929,7 +1049,6 @@ describe("app store", () => {
     useApp.setState({
       entries: [{ ...sampleEntry, source: "same", translation: "base" }],
       index: 0,
-      draft: "local edit",
       note: "local note",
       document3: createDocument3("same", "local edit"),
     });
@@ -953,7 +1072,7 @@ describe("app store", () => {
     expect({
       writes,
       entry: useApp.getState().entries[0],
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       conflict: useApp.getState().editConflict,
       dirty: useApp.getState().document3.dirty,
     }).toEqual({
@@ -986,7 +1105,6 @@ describe("app store", () => {
     useApp.setState({
       entries: [{ ...sampleEntry, source: "same", translation: "base" }],
       index: 0,
-      draft: "local edit",
       note: "local note",
       document3: createDocument3("same", "local edit"),
       editConflict: {
@@ -1006,7 +1124,7 @@ describe("app store", () => {
     expect({
       calls: rpc.mock.calls,
       entry: useApp.getState().entries[0],
-      draft: useApp.getState().draft,
+      draft: useApp.getState().document3.translation,
       note: useApp.getState().note,
       conflict: useApp.getState().editConflict,
       dirty: useApp.getState().document3.dirty,
@@ -1079,7 +1197,10 @@ describe("app store", () => {
     useApp.setState({
       prefs: defaultPreferences(),
       entries: [{ ...sampleEntry }],
-      draft: "Hello <f0>world</f0>",
+      document3: createDocument3(
+        sampleEntry.source,
+        "Hello <f0>world</f0>",
+      ),
       matches: [{ source: "Hello <f0>world</f0>", translation: "x", score: 100, comes_from: "tm" }],
     });
     await dispatchMenuAction("edit.select-source");

@@ -54,7 +54,13 @@ export function App() {
 
   const w = app.windows;
   return (
-    <div className="app">
+    <div
+      className="app"
+      data-project-event={app.projectEvent.kind}
+      data-project-generation={app.projectEvent.projectGeneration}
+      data-entry-generation={app.projectEvent.entryGeneration}
+      data-project-id={app.projectEvent.projectId ?? ""}
+    >
       <header className="topbar">
         <div className="brand">
           Omega<span>T</span>

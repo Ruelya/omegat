@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { t } from "../i18n";
+import { IEditor } from "../editor/IEditor";
 import { sameCompleteEntryKey } from "../editor/EditorController";
 import {
   MultipleTranslationsController,
@@ -12,16 +13,14 @@ export function MultipleTranslationsDock() {
   const entries = useApp((s) => s.entries);
   const index = useApp((s) => s.index);
   const e = entries[index];
-  const draft = useApp((s) => s.draft);
-  const setDraft = useApp((s) => s.setDraft);
   const commitCurrent = useApp((s) => s.commitCurrent);
   const select = useApp((s) => s.select);
   const [selectedRow, setSelectedRow] = useState(0);
   const controller = new MultipleTranslationsController(entries, index);
   const editor: MultipleTranslationTarget = {
-    getCurrentTranslation: () => draft,
-    replaceEditText: setDraft,
-    insertText: (text) => setDraft(draft + text),
+    getCurrentTranslation: () => IEditor.getCurrentTranslation(),
+    replaceEditText: (text) => IEditor.replaceEditText(text),
+    insertText: (text) => IEditor.insertText(text),
     commitTranslationVariant: async (defaultTranslation) => {
       await commitCurrent({ default_translation: defaultTranslation });
     },

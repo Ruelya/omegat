@@ -1,7 +1,12 @@
 /** Java `org.omegat.gui.editor.IEditorFilter`. */
-export type IEditorFilter = {
+export type EditorFilterState = {
   kind: "untranslated" | "unique" | "noted" | "search" | "none";
   query?: string;
+};
+
+export type IEditorFilter = {
+  kind: EditorFilterState["kind"];
+  query?: EditorFilterState["query"];
   allowed(entry: { translation: string; note?: string; unique?: boolean }): boolean;
 };
 

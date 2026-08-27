@@ -24,7 +24,7 @@ export function MachineTranslationDock() {
         {
           id: "fetch",
           label: t("fetchMt"),
-          action: () => void queryMt(),
+          action: () => void queryMt().catch(() => undefined),
         },
         {
           id: "insert",
@@ -53,7 +53,11 @@ export function MachineTranslationDock() {
         },
       ]}
     >
-      <button type="button" onClick={() => void queryMt()}>
+      <button
+        type="button"
+        data-mt-fetch
+        onClick={() => void queryMt().catch(() => undefined)}
+      >
         {t("fetchMt")}
       </button>
       <button
@@ -68,6 +72,7 @@ export function MachineTranslationDock() {
       {controller.results.map((m, i) => (
         <div
           key={`${m.engine}-${i}`}
+          data-mt-result={m.engine}
           className={`hit ${i === controller.selectedIndex ? "active" : ""}`}
           tabIndex={0}
           onClick={() => setSelected(controller.select(i))}

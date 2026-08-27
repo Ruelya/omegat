@@ -16,6 +16,7 @@ import {
   SegmentPropertiesController,
   type MultipleTranslationTarget,
 } from "./dock-controllers";
+import { ProjectEventBus } from "./project-events";
 import type { EntryDto } from "./types";
 
 function makeEntry(
@@ -281,10 +282,15 @@ describe("Swing-depth desktop dock controllers", () => {
 
   it("invalidates every dock at project and entry event boundaries", () => {
     const cancelled = [0, 0];
+    const events = new ProjectEventBus();
+    const observed: string[] = [];
+    events.subscribe((event) => observed.push(
+      `${event.serial}:${event.kind}:${event.projectId ?? "-"}:${event.entryKey ?? "-"}`,
+    ));
     const lifecycle = new DockProjectLifecycle([
       { cancel: () => { cancelled[0] += 1; } },
       { cancel: () => { cancelled[1] += 1; } },
-    ]);
+    ], events);
 
     const opening = lifecycle.beginProject("/first");
     expect(opening).toEqual({
@@ -303,7 +309,30 @@ describe("Swing-depth desktop dock controllers", () => {
     const second = lifecycle.activateEntry("/second", "same-entry-key");
     expect(lifecycle.isCurrent(second)).toBe(true);
     expect(lifecycle.isCurrent(lifecycle.captureEntry("/first", "same-entry-key"))).toBe(false);
-    expect(cancelled).toEqual([4, 4]);
+    const refreshed = lifecycle.externalRefresh(
+      "/second",
+      "same-entry-key",
+      ["changed-key"],
+    );
+    expect(lifecycle.isCurrent(second)).toBe(false);
+    expect(lifecycle.isCurrent(refreshed)).toBe(true);
+    expect(events.current()).toEqual({
+      serial: 5,
+      kind: "external-refresh",
+      projectGeneration: 2,
+      entryGeneration: 5,
+      projectId: "/second",
+      entryKey: "same-entry-key",
+      changedEntryKeys: ["changed-key"],
+    });
+    expect(observed).toEqual([
+      "1:load:/first:-",
+      "2:entry:/first:same-entry-key",
+      "3:load:/second:-",
+      "4:entry:/second:same-entry-key",
+      "5:external-refresh:/second:same-entry-key",
+    ]);
+    expect(cancelled).toEqual([5, 5]);
   });
 
   it("dispatches hit/miss notifications and popup actions through dock controllers", () => {

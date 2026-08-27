@@ -929,12 +929,13 @@ export function FinderWindow() {
             onClick={async () => {
               const st = useApp.getState();
               const e = st.entries[st.index];
-              const sel = st.selectedText || st.draft || e?.source || "";
+              const translation = st.document3.translation;
+              const sel = st.selectedText || translation || e?.source || "";
               const r = (await window.omegat?.rpc("finder.run", {
                 xml,
                 selection: sel,
                 source: e?.source ?? sel,
-                target: st.draft || e?.translation || "",
+                target: translation || e?.translation || "",
               })) as { urls?: string[]; commands?: string[] };
               const next = r?.urls ?? [];
               setUrls(next);
