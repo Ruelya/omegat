@@ -38,6 +38,7 @@ mod xtag;
 mod yaml;
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,8 @@ pub enum FilterError {
     Parse { format: String, message: String },
     #[error("unsupported file: {0}")]
     Unsupported(String),
+    #[error("filter operation cancelled")]
+    Cancelled,
 }
 
 pub type Result<T> = std::result::Result<T, FilterError>;
@@ -145,6 +148,23 @@ pub trait Filter: Send + Sync {
         })
     }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile>;
+    /// Request-scoped parse boundary used by the NDJSON sidecar.
+    fn parse_cancellable(
+        &self,
+        path: &Path,
+        ctx: &FilterContext,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ParsedFile> {
+        if is_cancelled() {
+            return Err(FilterError::Cancelled);
+        }
+        let parsed = self.parse(path, ctx)?;
+        if is_cancelled() {
+            Err(FilterError::Cancelled)
+        } else {
+            Ok(parsed)
+        }
+    }
     fn write(
         &self,
         source_path: &Path,
@@ -152,6 +172,24 @@ pub trait Filter: Send + Sync {
         translations: &HashMap<String, String>,
         ctx: &FilterContext,
     ) -> Result<()>;
+    fn write_cancellable(
+        &self,
+        source_path: &Path,
+        dest_path: &Path,
+        translations: &HashMap<String, String>,
+        ctx: &FilterContext,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<()> {
+        if is_cancelled() {
+            return Err(FilterError::Cancelled);
+        }
+        self.write(source_path, dest_path, translations, ctx)?;
+        if is_cancelled() {
+            Err(FilterError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 pub struct FilterInfo {
@@ -404,7 +442,34 @@ pub fn merge_translations(
 }
 
 pub fn read_to_string(path: &Path) -> Result<String> {
-    let bytes = std::fs::read(path)?;
+    decode_bytes(&std::fs::read(path)?)
+}
+
+/// Chunked decoder for request-scoped filter work.
+pub fn read_to_string_cancellable(
+    path: &Path,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        if is_cancelled() {
+            return Err(FilterError::Cancelled);
+        }
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    if is_cancelled() {
+        return Err(FilterError::Cancelled);
+    }
+    decode_bytes(&bytes)
+}
+
+fn decode_bytes(bytes: &[u8]) -> Result<String> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes[3..]);
         return Ok(cow.into_owned());
@@ -465,6 +530,33 @@ mod tests {
             .unwrap();
         let out = std::fs::read_to_string(&dest).unwrap();
         assert!(out.contains("T0"));
+    }
+
+    #[test]
+    fn filter_product_boundaries_do_not_publish_cancelled_parse_or_write() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("cancel.txt");
+        std::fs::write(&src, "source").unwrap();
+        let dest = dir.path().join("cancelled-target.txt");
+        let reg = FilterRegistry::new();
+        let filter = reg.by_id("text").unwrap();
+        let cancelled = || true;
+
+        assert!(matches!(
+            filter.parse_cancellable(&src, &FilterContext::default(), &cancelled),
+            Err(FilterError::Cancelled)
+        ));
+        assert!(matches!(
+            filter.write_cancellable(
+                &src,
+                &dest,
+                &HashMap::new(),
+                &FilterContext::default(),
+                &cancelled,
+            ),
+            Err(FilterError::Cancelled)
+        ));
+        assert_eq!(dest.exists(), false);
     }
 
     #[test]

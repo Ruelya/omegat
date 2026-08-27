@@ -576,6 +576,17 @@ impl ProjectSession {
     }
 
     pub fn issues(&self) -> Vec<IssueDto> {
+        self.issues_cancellable(&CancellationToken::default())
+            .unwrap_or_default()
+    }
+
+    pub fn issues_cancellable(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Option<Vec<IssueDto>> {
+        if cancellation.is_cancelled() {
+            return None;
+        }
         let mut all = Vec::new();
         let lt = (!self.prefs.languagetool_url.is_empty())
             .then_some(self.prefs.languagetool_url.as_str());
@@ -589,17 +600,24 @@ impl ProjectSession {
             });
         }
         for (i, e) in self.entries.iter().enumerate() {
+            if cancellation.is_cancelled() {
+                return None;
+            }
             all.extend(tags::issues_for(i, &e.file, &e.source, &e.translation));
             if lt.filter(|s| !s.is_empty()).is_some() {
-                all.extend(crate::languagetool::check(
+                all.extend(crate::languagetool::check_cancellable(
                     lt,
                     &e.translation,
                     &self.props.target_lang,
                     i,
                     &e.file,
-                ));
+                    cancellation,
+                )?);
             }
             for w in self.spell.unknown_in(&e.translation) {
+                if cancellation.is_cancelled() {
+                    return None;
+                }
                 all.push(IssueDto {
                     kind: "spell".into(),
                     index: i,
@@ -610,6 +628,9 @@ impl ProjectSession {
             }
             if e.translated() {
                 for g in glossary::lookup(&self.glossary, &e.source) {
+                    if cancellation.is_cancelled() {
+                        return None;
+                    }
                     if !e
                         .translation
                         .to_lowercase()
@@ -629,7 +650,11 @@ impl ProjectSession {
                 }
             }
         }
-        all
+        if cancellation.is_cancelled() {
+            None
+        } else {
+            Some(all)
+        }
     }
 
     pub fn mt(&self, index: usize, engine: &str) -> Result<MtSuggestionDto> {

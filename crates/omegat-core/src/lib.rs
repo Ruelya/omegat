@@ -742,6 +742,9 @@ mod tests {
                 .any(|i| i.kind == "tag" && i.message.contains("MISSING")),
             "{issues:?}"
         );
+        let cancellation = crate::cancellation::CancellationToken::default();
+        cancellation.cancel();
+        assert!(session.issues_cancellable(&cancellation).is_none());
     }
 
     fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {

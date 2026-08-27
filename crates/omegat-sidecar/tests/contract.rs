@@ -1,8 +1,11 @@
 //! Contract tests: every exposed sidecar method has a stable request/response shape.
 
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 const METHODS: &[&str] = &[
     "sys.version",
@@ -72,9 +75,84 @@ fn rpc(
     let req = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
     writeln!(child_in, "{req}").unwrap();
     child_in.flush().unwrap();
-    let mut line = String::new();
-    child_out.read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
+    response_for(child_out, id)
+}
+
+fn response_for(child_out: &mut impl BufRead, id: i64) -> Value {
+    loop {
+        let mut line = String::new();
+        child_out.read_line(&mut line).unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        if value.get("id").and_then(Value::as_i64) == Some(id) {
+            return value;
+        }
+    }
+}
+
+fn notification_for(child_out: &mut impl BufRead, method: &str) -> Value {
+    loop {
+        let mut line = String::new();
+        child_out.read_line(&mut line).unwrap();
+        let value: Value = serde_json::from_str(&line).unwrap();
+        if value.get("method").and_then(Value::as_str) == Some(method) {
+            return value;
+        }
+    }
+}
+
+fn send_cancelled_request(
+    child_in: &mut impl Write,
+    child_out: &mut impl BufRead,
+    id: i64,
+    method: &str,
+    params: Value,
+    started: impl FnOnce(),
+) -> Value {
+    writeln!(
+        child_in,
+        "{}",
+        json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+    )
+    .unwrap();
+    child_in.flush().unwrap();
+    started();
+    writeln!(
+        child_in,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": { "id": id }
+        })
+    )
+    .unwrap();
+    child_in.flush().unwrap();
+    response_for(child_out, id)
+}
+
+fn blocking_http_endpoint() -> (String, mpsc::Receiver<()>, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        accepted_tx.send(()).unwrap();
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    (
+        format!("http://{address}/v2/check"),
+        accepted_rx,
+        worker,
+    )
 }
 
 #[test]
@@ -198,6 +276,129 @@ fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
 }
 
 #[test]
+fn cancellation_reaches_languagetool_issues_and_filter_product_paths() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cancel-products");
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    assert!(created["result"].is_object(), "{created}");
+    std::fs::write(root.join("source/input.txt"), "Source").unwrap();
+    let reloaded = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    assert_eq!(reloaded["result"]["entries"], 1);
+    let listed = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
+    let entry = &listed["result"][0];
+    let updated = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.set",
+        json!({
+            "index": 0,
+            "key": entry["key"],
+            "translation": "teh target",
+            "note": "",
+            "revision": entry["revision"],
+            "default_translation": true
+        }),
+    );
+    assert_eq!(updated["result"]["entry"]["translation"], "teh target");
+
+    let (lt_url, lt_started, lt_worker) = blocking_http_endpoint();
+    let mut prefs = rpc(&mut stdin, &mut stdout, 5, "prefs.get", json!({}))["result"].clone();
+    prefs["languagetool_url"] = json!(lt_url);
+    let configured = rpc(&mut stdin, &mut stdout, 6, "prefs.set", prefs);
+    assert_eq!(configured["result"]["languagetool_url"], json!(lt_url));
+    let cancelled_lt = send_cancelled_request(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "languagetool.check",
+        json!({ "text": "teh target" }),
+        || {
+            lt_started
+                .recv_timeout(Duration::from_secs(5))
+                .expect("LanguageTool curl did not start");
+        },
+    );
+    assert_eq!(
+        cancelled_lt["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    lt_worker.join().unwrap();
+
+    let (issues_url, issues_started, issues_worker) = blocking_http_endpoint();
+    let mut prefs = rpc(&mut stdin, &mut stdout, 8, "prefs.get", json!({}))["result"].clone();
+    prefs["languagetool_url"] = json!(issues_url);
+    let _ = rpc(&mut stdin, &mut stdout, 9, "prefs.set", prefs);
+    let cancelled_issues = send_cancelled_request(
+        &mut stdin,
+        &mut stdout,
+        10,
+        "issues.list",
+        json!({}),
+        || {
+            issues_started
+                .recv_timeout(Duration::from_secs(5))
+                .expect("issues LanguageTool curl did not start");
+        },
+    );
+    assert_eq!(
+        cancelled_issues["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    issues_worker.join().unwrap();
+
+    let large = temp.path().join("large.txt");
+    let file = std::fs::File::create(&large).unwrap();
+    file.set_len(256 * 1024 * 1024).unwrap();
+    let cancelled_filter = send_cancelled_request(
+        &mut stdin,
+        &mut stdout,
+        11,
+        "filters.parse",
+        json!({ "id": "text", "path": large }),
+        || {},
+    );
+    assert_eq!(
+        cancelled_filter["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    let responsive = rpc(
+        &mut stdin,
+        &mut stdout,
+        12,
+        "sys.version",
+        json!({}),
+    );
+    assert_eq!(responsive["result"]["version"], "6.2.0");
+    let _ = child.kill();
+}
+
+#[test]
 fn external_refresh_reloads_source_and_glossary_over_ndjson() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())
@@ -260,6 +461,59 @@ fn external_refresh_reloads_source_and_glossary_over_ndjson() {
         glossary_hits["result"],
         json!([{"source": "term", "target": "terme", "comment": "external"}])
     );
+    let _ = child.kill();
+}
+
+#[test]
+fn sidecar_proactively_reports_files_created_in_runtime_directories() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("active-events");
+    let created = rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
+
+    let nested = root.join("source/runtime/new");
+    std::fs::create_dir_all(&nested).unwrap();
+    let source = nested.join("chapter.txt");
+    std::fs::write(&source, "Proactive source").unwrap();
+    let event = notification_for(&mut stdout, "project.files-changed");
+    assert_eq!(
+        event["params"],
+        json!({
+            "root": root.to_string_lossy(),
+            "paths": [source.to_string_lossy()]
+        })
+    );
+
+    let refreshed = rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "project.external-refresh",
+        json!({}),
+    );
+    assert_eq!(refreshed["result"]["entries"], 1);
+    let entries = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
+    assert_eq!(entries["result"][0]["source"], "Proactive source");
+    assert_eq!(entries["result"][0]["file"], "runtime/new/chapter.txt");
     let _ = child.kill();
 }
 

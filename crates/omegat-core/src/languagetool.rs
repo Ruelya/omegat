@@ -29,20 +29,42 @@ pub const UNCONFIGURED_MESSAGE: &str =
 /// LanguageTool HTTP `v2/check`. When `endpoint` is None the checker reports a
 /// degradation issue instead of pretending the text was clean.
 pub fn check(endpoint: Option<&str>, text: &str, lang: &str, index: usize, file: &str) -> Vec<IssueDto> {
+    check_cancellable(
+        endpoint,
+        text,
+        lang,
+        index,
+        file,
+        &CancellationToken::default(),
+    )
+    .unwrap_or_default()
+}
+
+pub fn check_cancellable(
+    endpoint: Option<&str>,
+    text: &str,
+    lang: &str,
+    index: usize,
+    file: &str,
+    cancellation: &CancellationToken,
+) -> Option<Vec<IssueDto>> {
+    if cancellation.is_cancelled() {
+        return None;
+    }
     let Some(url) = endpoint.filter(|s| !s.is_empty()) else {
-        return vec![IssueDto {
+        return Some(vec![IssueDto {
             kind: "languagetool".into(),
             index,
             file: file.to_string(),
             message: UNCONFIGURED_MESSAGE.into(),
             severity: "info".into(),
-        }];
+        }]);
     };
     if text.trim().is_empty() {
-        return vec![];
+        return Some(vec![]);
     }
-    match check_http(url, text, lang) {
-        Ok(issues) => issues
+    match check_http_cancellable(url, text, lang, cancellation) {
+        Ok(issues) => Some(issues
             .into_iter()
             .map(|m| IssueDto {
                 kind: "languagetool".into(),
@@ -51,20 +73,37 @@ pub fn check(endpoint: Option<&str>, text: &str, lang: &str, index: usize, file:
                 message: m,
                 severity: "warn".into(),
             })
-            .collect(),
-        Err(e) => vec![IssueDto {
+            .collect()),
+        Err(_) if cancellation.is_cancelled() => None,
+        Err(e) => Some(vec![IssueDto {
             kind: "languagetool".into(),
             index,
             file: file.to_string(),
             message: format!("LanguageTool unavailable: {e}"),
             severity: "info".into(),
-        }],
+        }]),
     }
 }
 
 pub fn check_http(endpoint: &str, text: &str, lang: &str) -> Result<Vec<String>, String> {
+    check_http_cancellable(endpoint, text, lang, &CancellationToken::default())
+}
+
+pub fn check_http_cancellable(
+    endpoint: &str,
+    text: &str,
+    lang: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>, String> {
+    if cancellation.is_cancelled() {
+        return Err("request cancelled".into());
+    }
     if let Some(rest) = endpoint.strip_prefix("fixture:") {
-        return parse_lt_json(&std::fs::read_to_string(rest).map_err(|e| e.to_string())?);
+        let raw = std::fs::read_to_string(rest).map_err(|e| e.to_string())?;
+        if cancellation.is_cancelled() {
+            return Err("request cancelled".into());
+        }
+        return parse_lt_json(&raw);
     }
     let body = format!(
         "language={}&text={}",
@@ -76,7 +115,12 @@ pub fn check_http(endpoint: &str, text: &str, lang: &str) -> Result<Vec<String>,
     } else {
         format!("{}/v2/check", endpoint.trim_end_matches('/'))
     };
-    let raw = http_post(&url, "application/x-www-form-urlencoded", &body)?;
+    let raw = http_exchange_cancellable(
+        "POST",
+        &url,
+        Some(("application/x-www-form-urlencoded", &body)),
+        cancellation,
+    )?;
     parse_lt_json(&raw)
 }
 
@@ -99,10 +143,6 @@ pub fn parse_lt_json(raw: &str) -> Result<Vec<String>, String> {
         }
     }
     Ok(out)
-}
-
-fn http_post(url: &str, content_type: &str, body: &str) -> Result<String, String> {
-    http_exchange("POST", url, Some((content_type, body)))
 }
 
 pub fn http_get(url: &str) -> Result<String, String> {
@@ -213,5 +253,20 @@ mod tests {
         assert_eq!(none.len(), 1);
         assert_eq!(none[0].severity, "info");
         assert!(none[0].message.contains("not configured"));
+    }
+
+    #[test]
+    fn cancelled_check_never_becomes_a_degraded_issue() {
+        let cancellation = CancellationToken::default();
+        cancellation.cancel();
+        assert!(check_cancellable(
+            Some("http://127.0.0.1:9/v2/check"),
+            "teh cat",
+            "en",
+            0,
+            "a.txt",
+            &cancellation,
+        )
+        .is_none());
     }
 }

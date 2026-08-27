@@ -10,6 +10,8 @@ type RpcResponse = {
   id?: number;
   result?: unknown;
   error?: { code?: number; message?: string };
+  method?: string;
+  params?: unknown;
 };
 
 export class SidecarRpcClient {
@@ -18,7 +20,10 @@ export class SidecarRpcClient {
   private nextId = 1;
   private buffer = "";
 
-  constructor(private readonly writeLine: (line: string) => void) {}
+  constructor(
+    private readonly writeLine: (line: string) => void,
+    private readonly onNotification: (method: string, params: unknown) => void = () => undefined,
+  ) {}
 
   request(
     method: string,
@@ -67,7 +72,10 @@ export class SidecarRpcClient {
       } catch {
         continue;
       }
-      if (response.id === undefined) continue;
+      if (response.id === undefined) {
+        if (response.method) this.onNotification(response.method, response.params);
+        continue;
+      }
       const request = this.pending.get(response.id);
       if (!request) continue;
       this.pending.delete(response.id);

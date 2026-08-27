@@ -2,7 +2,8 @@
 
 use crate::{
     apply_skeleton_with_originals, ensure_parent, merge_translations, placeholder, read_to_string,
-    ExtractedSegment, Filter, FilterContext, ParsedFile, Result,
+    read_to_string_cancellable, ExtractedSegment, Filter, FilterContext, FilterError, ParsedFile,
+    Result,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,6 +22,20 @@ impl Filter for TextFilter {
     }
     fn parse(&self, path: &Path, ctx: &FilterContext) -> Result<ParsedFile> {
         parse_text(&read_to_string(path)?, ctx.option("segmentOn").unwrap_or("EMPTYLINES"))
+    }
+    fn parse_cancellable(
+        &self,
+        path: &Path,
+        ctx: &FilterContext,
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<ParsedFile> {
+        let raw = read_to_string_cancellable(path, is_cancelled)?;
+        let parsed = parse_text(&raw, ctx.option("segmentOn").unwrap_or("EMPTYLINES"))?;
+        if is_cancelled() {
+            Err(FilterError::Cancelled)
+        } else {
+            Ok(parsed)
+        }
     }
     fn write(
         &self,

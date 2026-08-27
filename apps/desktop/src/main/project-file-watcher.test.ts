@@ -44,4 +44,52 @@ describe("ProjectFileWatcher", () => {
     watcher.close();
     expect(closed.sort()).toEqual([...listeners.keys()].sort());
   });
+
+  it("installs watchers for runtime directories and coalesces sidecar events", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omegat-watch-runtime-"));
+    roots.push(root);
+    const listeners = new Map<string, (event: "change" | "rename", filename: string) => void>();
+    const publish = vi.fn();
+    const watcher = new ProjectFileWatcher(
+      publish,
+      0,
+      (path, listener) => {
+        listeners.set(resolve(path), listener);
+        return { close: () => undefined };
+      },
+    );
+
+    watcher.watch(root);
+    expect([...listeners.keys()]).toEqual([resolve(root)]);
+    mkdirSync(join(root, "source", "runtime", "deeper"), { recursive: true });
+    listeners.get(resolve(root))?.("rename", "source");
+    expect([...listeners.keys()].sort()).toEqual([
+      resolve(root),
+      resolve(root, "source"),
+      resolve(root, "source", "runtime"),
+      resolve(root, "source", "runtime", "deeper"),
+    ].sort());
+
+    listeners
+      .get(resolve(root, "source", "runtime", "deeper"))
+      ?.("change", "created.txt");
+    watcher.acceptExternalChange({
+      root,
+      paths: [
+        "source/runtime/deeper/created.txt",
+        "unrelated.txt",
+      ],
+    });
+    await new Promise((resolveTimer) => setTimeout(resolveTimer, 5));
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith({
+      root: resolve(root),
+      paths: [
+        resolve(root, "source"),
+        resolve(root, "source", "runtime", "deeper", "created.txt"),
+      ],
+    });
+    watcher.close();
+  });
 });

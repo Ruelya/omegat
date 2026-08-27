@@ -72,9 +72,29 @@ function inspectDroppedPaths(paths: unknown) {
 function startSidecar() {
   const bin = sidecarPath();
   sidecar = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
-  rpcClient = new SidecarRpcClient((line) => {
-    sidecar?.stdin.write(`${line}\n`);
-  });
+  rpcClient = new SidecarRpcClient(
+    (line) => {
+      sidecar?.stdin.write(`${line}\n`);
+    },
+    (method, params) => {
+      if (
+        method !== "project.files-changed"
+        || !params
+        || typeof params !== "object"
+      ) {
+        return;
+      }
+      const root = "root" in params ? params.root : null;
+      const paths = "paths" in params ? params.paths : null;
+      if (
+        typeof root === "string"
+        && Array.isArray(paths)
+        && paths.every((path): path is string => typeof path === "string")
+      ) {
+        projectFileWatcher.acceptExternalChange({ root, paths });
+      }
+    },
+  );
   sidecar.stdout.setEncoding("utf8");
   sidecar.stdout.on("data", (chunk: string) => {
     rpcClient?.acceptChunk(chunk);

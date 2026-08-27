@@ -1,5 +1,7 @@
 //! NDJSON JSON-RPC sidecar. One request per stdin line, one response per stdout line.
 
+mod project_watcher;
+
 use omegat_core::prefs::{default_config_dir, Preferences};
 use omegat_core::session::ProjectSession;
 use omegat_core::{capabilities, version};
@@ -358,14 +360,19 @@ impl App {
                     .session()
                     .map(|s| s.props.target_lang.clone())
                     .unwrap_or_else(|_| "en".into());
-                Ok(serde_json::to_value(omegat_core::languagetool::check(
+                let issues = omegat_core::languagetool::check_cancellable(
                     url.as_deref(),
                     text,
                     &lang,
                     0,
                     "",
-                ))
-                .unwrap())
+                    cancellation,
+                )
+                .ok_or((
+                    error_code::REQUEST_CANCELLED,
+                    "request cancelled".into(),
+                ))?;
+                Ok(serde_json::to_value(issues).unwrap())
             }
             "finder.run" => {
                 let xml = params
@@ -497,7 +504,16 @@ impl App {
                 }))
             }
             "stats.get" => Ok(serde_json::to_value(self.session()?.stats()).unwrap()),
-            "issues.list" => Ok(serde_json::to_value(self.session()?.issues()).unwrap()),
+            "issues.list" => {
+                let issues = self
+                    .session()?
+                    .issues_cancellable(cancellation)
+                    .ok_or((
+                        error_code::REQUEST_CANCELLED,
+                        "request cancelled".into(),
+                    ))?;
+                Ok(serde_json::to_value(issues).unwrap())
+            }
             "filters.options" => {
                 let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let reg = self.plugins.filter_registry();
@@ -593,11 +609,18 @@ impl App {
                 }
                 .ok_or((error_code::FILTER, format!("no filter for {path}")))?;
                 let parsed = filter
-                    .parse(
+                    .parse_cancellable(
                         std::path::Path::new(path),
                         &omegat_filters::FilterContext::default(),
+                        &|| cancellation.is_cancelled(),
                     )
-                    .map_err(|e| core_err(e.into()))?;
+                    .map_err(|error| match error {
+                        omegat_filters::FilterError::Cancelled => (
+                            error_code::REQUEST_CANCELLED,
+                            "request cancelled".into(),
+                        ),
+                        other => core_err(other.into()),
+                    })?;
                 let segments: Vec<_> = parsed
                     .segments
                     .iter()
@@ -1226,6 +1249,7 @@ fn main() {
         HashMap::<String, CancellationToken>::new(),
     ));
     let (responses, response_lines) = std::sync::mpsc::channel::<String>();
+    let (watch_commands, watch_worker) = project_watcher::spawn(responses.clone());
     let writer = thread::spawn(move || {
         let mut stdout = io::stdout();
         while let Ok(line) = response_lines.recv() {
@@ -1274,15 +1298,42 @@ fn main() {
         let app = Arc::clone(&app);
         let cancellations = Arc::clone(&cancellations);
         let responses = responses.clone();
+        let watch_commands = watch_commands.clone();
         workers.push(thread::spawn(move || {
+            let project_lifecycle_method = req.method.clone();
             let resp = app.lock().unwrap().handle(req, &cancellation);
             cancellations.lock().unwrap().remove(&key);
+            if resp.error.is_none() {
+                match project_lifecycle_method.as_str() {
+                    "project.create" | "project.open" => {
+                        if let Some(root) = resp
+                            .result
+                            .as_ref()
+                            .and_then(|result| result.get("root"))
+                            .and_then(Value::as_str)
+                        {
+                            let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
+                            let _ = watch_commands.send(project_watcher::WatchCommand::Watch(
+                                std::path::PathBuf::from(root),
+                                ready,
+                            ));
+                            let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(2));
+                        }
+                    }
+                    "project.close" => {
+                        let _ = watch_commands.send(project_watcher::WatchCommand::Close);
+                    }
+                    _ => {}
+                }
+            }
             let _ = responses.send(serde_json::to_string(&resp).unwrap());
         }));
     }
     for worker in workers {
         let _ = worker.join();
     }
+    let _ = watch_commands.send(project_watcher::WatchCommand::Shutdown);
+    let _ = watch_worker.join();
     drop(responses);
     let _ = writer.join();
 }

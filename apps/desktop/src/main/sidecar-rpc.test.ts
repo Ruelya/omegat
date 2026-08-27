@@ -29,14 +29,30 @@ describe("SidecarRpcClient", () => {
 
   it("routes out-of-order NDJSON responses and ignores late cancelled output", async () => {
     const lines: string[] = [];
-    const client = new SidecarRpcClient((line) => lines.push(line));
+    const notifications: Array<{ method: string; params: unknown }> = [];
+    const client = new SidecarRpcClient(
+      (line) => lines.push(line),
+      (method, params) => notifications.push({ method, params }),
+    );
     const first = client.request("search.run", { query: "one" }, "search-1");
     const second = client.request("dict.query", { word: "two" }, "dict-2");
 
     client.acceptChunk(
-      `${JSON.stringify({ jsonrpc: "2.0", id: 2, result: ["definition"] })}\n`,
+      [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "project.files-changed",
+          params: { root: "/project", paths: ["/project/source/new.txt"] },
+        }),
+        JSON.stringify({ jsonrpc: "2.0", id: 2, result: ["definition"] }),
+        "",
+      ].join("\n"),
     );
     expect(await second).toEqual(["definition"]);
+    expect(notifications).toEqual([{
+      method: "project.files-changed",
+      params: { root: "/project", paths: ["/project/source/new.txt"] },
+    }]);
     expect(client.cancel("search-1")).toBe(true);
     await expect(first).rejects.toMatchObject({ name: "AbortError" });
 
