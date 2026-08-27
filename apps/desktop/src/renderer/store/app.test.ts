@@ -562,7 +562,7 @@ describe("app store", () => {
       conflict: useApp.getState().editConflict,
       dirty: useApp.getState().document3.dirty,
     }).toEqual({
-      calls: [["entry.list"]],
+      calls: [["entry.list", undefined]],
       entry: remote,
       draft: "remote edit",
       note: "remote note",
