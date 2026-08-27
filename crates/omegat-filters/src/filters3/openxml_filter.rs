@@ -113,7 +113,7 @@ impl Filter for OpenXmlFilter {
             if entry.read_to_string(&mut raw).is_err() {
                 continue;
             }
-            let mut hooks = DefaultHooks::parse();
+            let mut hooks = DefaultHooks::parse_with_prefix(format!("{name}#"));
             if let Ok(parsed) = parse_raw_cfg(&raw, &dialect, &mut hooks, engine_config(ctx)) {
                 segments.extend(parsed.segments);
             }
@@ -138,9 +138,12 @@ impl Filter for OpenXmlFilter {
             dest_path,
             |n| re.is_match(short_name(n)),
             &dialect,
-            |_name, raw| {
-                let mut hooks = DefaultHooks::write(&translations);
-                Ok(crate::xml_zip::run_part_cfg(raw, &dialect, &mut hooks, engine_config(ctx))?.output)
+            |name, raw| {
+                let mut hooks = DefaultHooks::write_with_prefix(&translations, format!("{name}#"));
+                Ok(
+                    crate::xml_zip::run_part_cfg(raw, &dialect, &mut hooks, engine_config(ctx))?
+                        .output,
+                )
             },
         )
     }

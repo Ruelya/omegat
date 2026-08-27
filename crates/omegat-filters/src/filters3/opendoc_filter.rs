@@ -70,7 +70,7 @@ impl Filter for OpenDocFilter {
             if entry.read_to_string(&mut raw).is_err() {
                 continue;
             }
-            let mut hooks = DefaultHooks::parse();
+            let mut hooks = DefaultHooks::parse_with_prefix(format!("{name}#"));
             let parsed = parse_raw_cfg(&raw, &dialect, &mut hooks, engine_config(ctx))?;
             segments.extend(parsed.segments);
         }
@@ -89,8 +89,8 @@ impl Filter for OpenDocFilter {
         let dialect = OpenDocDialect::new(&ctx.options);
         let translations = translations.clone();
         let cfg = engine_config(ctx);
-        rewrite_zip_xml(source_path, dest_path, want, &dialect, |_name, raw| {
-            let mut hooks = DefaultHooks::write(&translations);
+        rewrite_zip_xml(source_path, dest_path, want, &dialect, |name, raw| {
+            let mut hooks = DefaultHooks::write_with_prefix(&translations, format!("{name}#"));
             Ok(crate::xml_zip::run_part_cfg(raw, &dialect, &mut hooks, cfg)?.output)
         })
     }

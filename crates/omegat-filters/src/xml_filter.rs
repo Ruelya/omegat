@@ -27,12 +27,11 @@ fn run_xml(
         }
     }
     let ProcessResult { output } =
-        crate::xml_engine::process_xml_ex(&owned, dialect, hooks, cfg, base, inline_system).map_err(
-            |e| crate::FilterError::Parse {
+        crate::xml_engine::process_xml_ex(&owned, dialect, hooks, cfg, base, inline_system)
+            .map_err(|e| crate::FilterError::Parse {
                 format: "xml".into(),
                 message: e,
-            },
-        )?;
+            })?;
     Ok(output)
 }
 
@@ -42,6 +41,8 @@ pub struct DefaultHooks {
     pub collect: bool,
     pub current_id: Option<String>,
     pub current_comment: Option<String>,
+    id_prefix: String,
+    next_id: usize,
 }
 
 impl DefaultHooks {
@@ -52,6 +53,15 @@ impl DefaultHooks {
             collect: true,
             current_id: None,
             current_comment: None,
+            id_prefix: String::new(),
+            next_id: 0,
+        }
+    }
+
+    pub fn parse_with_prefix(prefix: impl Into<String>) -> Self {
+        Self {
+            id_prefix: prefix.into(),
+            ..Self::parse()
         }
     }
 
@@ -62,15 +72,34 @@ impl DefaultHooks {
             collect: false,
             current_id: None,
             current_comment: None,
+            id_prefix: String::new(),
+            next_id: 0,
         }
     }
 
-    fn lookup(&self, source: &str) -> String {
-        if let Some(id) = &self.current_id {
-            if let Some(t) = self.translations.get(id) {
-                if !t.is_empty() {
-                    return t.clone();
-                }
+    pub fn write_with_prefix(
+        translations: &HashMap<String, String>,
+        prefix: impl Into<String>,
+    ) -> Self {
+        Self {
+            id_prefix: prefix.into(),
+            ..Self::write(translations)
+        }
+    }
+
+    fn next_segment_id(&mut self) -> String {
+        let id = self
+            .current_id
+            .clone()
+            .unwrap_or_else(|| format!("{}{}", self.id_prefix, self.next_id));
+        self.next_id += 1;
+        id
+    }
+
+    fn lookup(&self, source: &str, id: &str) -> String {
+        if let Some(translation) = self.translations.get(id) {
+            if !translation.is_empty() {
+                return translation.clone();
             }
         }
         self.translations
@@ -92,11 +121,8 @@ impl FilterHooks for DefaultHooks {
         if entry.is_empty() {
             return String::new();
         }
+        let id = self.next_segment_id();
         if self.collect {
-            let id = self
-                .current_id
-                .clone()
-                .unwrap_or_else(|| self.segments.len().to_string());
             self.segments.push(ExtractedSegment {
                 id,
                 source: entry.to_string(),
@@ -108,7 +134,7 @@ impl FilterHooks for DefaultHooks {
             });
             entry.to_string()
         } else {
-            self.lookup(entry)
+            self.lookup(entry, &id)
         }
     }
 }
@@ -121,7 +147,11 @@ pub fn engine_config(ctx: &FilterContext) -> EngineConfig {
     }
 }
 
-pub fn parse_xml(path: &Path, dialect: &dyn XmlDialect, hooks: &mut dyn FilterHooks) -> Result<String> {
+pub fn parse_xml(
+    path: &Path,
+    dialect: &dyn XmlDialect,
+    hooks: &mut dyn FilterHooks,
+) -> Result<String> {
     parse_xml_cfg(path, dialect, hooks, EngineConfig::default())
 }
 
@@ -141,7 +171,13 @@ pub fn write_xml(
     dialect: &dyn XmlDialect,
     hooks: &mut dyn FilterHooks,
 ) -> Result<()> {
-    write_xml_cfg(source_path, dest_path, dialect, hooks, EngineConfig::default())
+    write_xml_cfg(
+        source_path,
+        dest_path,
+        dialect,
+        hooks,
+        EngineConfig::default(),
+    )
 }
 
 pub fn write_xml_cfg(

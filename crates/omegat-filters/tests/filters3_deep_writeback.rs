@@ -1,0 +1,157 @@
+use omegat_filters::{FilterContext, FilterRegistry};
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::Path;
+use zip::write::FileOptions;
+
+fn write_zip(path: &Path, parts: &[(&str, &str)]) {
+    let file = std::fs::File::create(path).unwrap();
+    let mut zip = zip::ZipWriter::new(file);
+    for (name, xml) in parts {
+        zip.start_file(*name, FileOptions::default()).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+fn read_part(path: &Path, name: &str) -> String {
+    let file = std::fs::File::open(path).unwrap();
+    let mut zip = zip::ZipArchive::new(file).unwrap();
+    let mut xml = String::new();
+    zip.by_name(name).unwrap().read_to_string(&mut xml).unwrap();
+    xml
+}
+
+fn element_names_and_text(xml: &str) -> (Vec<String>, Vec<String>) {
+    let doc = roxmltree::Document::parse(xml).unwrap();
+    let names = doc
+        .descendants()
+        .filter(|node| node.is_element())
+        .map(|node| node.tag_name().name().to_string())
+        .collect();
+    let text = doc
+        .descendants()
+        .filter(|node| node.is_text())
+        .filter_map(|node| node.text())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+        .collect();
+    (names, text)
+}
+
+#[test]
+fn openxml_deep_writeback_targets_a_namespaced_part_occurrence() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("deep.docx");
+    let output = temp.path().join("translated.docx");
+    let document = r#"<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Same</w:t></w:r><w:r><w:t> deep</w:t></w:r></w:p></w:body></w:document>"#;
+    let header = r#"<w:hdr xmlns:w="urn:w"><w:p><w:r><w:t>Same</w:t></w:r><w:r><w:t> deep</w:t></w:r></w:p></w:hdr>"#;
+    write_zip(
+        &source,
+        &[
+            ("word/document.xml", document),
+            ("word/header1.xml", header),
+        ],
+    );
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("openxml").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("word/document.xml#0", "Same deep"),
+            ("word/header1.xml#0", "Same deep")
+        ]
+    );
+
+    let mut translations = HashMap::new();
+    translations.insert("word/header1.xml#0".into(), "Header only".into());
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("word/document.xml#0", "Same deep"),
+            ("word/header1.xml#0", "Header only")
+        ]
+    );
+    assert_eq!(
+        element_names_and_text(&read_part(&output, "word/document.xml")),
+        (
+            vec!["document", "body", "p", "r", "t", "r", "t"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            vec!["Same", "deep"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        )
+    );
+    assert_eq!(
+        element_names_and_text(&read_part(&output, "word/header1.xml")).1,
+        vec!["Header only"]
+    );
+}
+
+#[test]
+fn opendoc_deep_writeback_distinguishes_content_and_styles() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("deep.odt");
+    let output = temp.path().join("translated.odt");
+    let content = r#"<office:document-content xmlns:office="urn:office" xmlns:text="urn:text"><office:body><office:text><text:p><text:span>Repeated</text:span></text:p></office:text></office:body></office:document-content>"#;
+    let styles = r#"<office:document-styles xmlns:office="urn:office" xmlns:dc="urn:dc"><office:styles><dc:title>Repeated</dc:title></office:styles></office:document-styles>"#;
+    write_zip(&source, &[("content.xml", content), ("styles.xml", styles)]);
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("opendoc").unwrap();
+    let context = FilterContext::default();
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("content.xml#0", "Repeated"), ("styles.xml#0", "Repeated")]
+    );
+
+    let mut translations = HashMap::new();
+    translations.insert("styles.xml#0".into(), "Style title".into());
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Repeated"),
+            ("styles.xml#0", "Style title")
+        ]
+    );
+    assert_eq!(
+        element_names_and_text(&read_part(&output, "content.xml")).1,
+        vec!["Repeated"]
+    );
+    assert_eq!(
+        element_names_and_text(&read_part(&output, "styles.xml")).1,
+        vec!["Style title"]
+    );
+}
