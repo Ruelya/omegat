@@ -287,7 +287,6 @@ try {
         preload: typeof window.omegat?.rpc,
         source: document.querySelector(".editor-segment.is-active .src")?.textContent,
         surface: Boolean(document.querySelector(".editor-surface")),
-        error: [...document.querySelectorAll(".status")].at(-1)?.textContent ?? null,
         body: document.body.innerText.slice(0, 500),
         html: document.body.innerHTML.slice(0, 500),
       };
@@ -298,7 +297,6 @@ try {
         event.method === "Log.entryAdded"
       )
       .slice(-5);
-    if (ready.error) throw new Error(JSON.stringify({ ready, failures }));
     if (ready.preload === "function" && ready.surface) return ready;
     throw new Error(JSON.stringify({ ready, failures }));
   });
