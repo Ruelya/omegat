@@ -59,11 +59,12 @@ mod tests {
             vec![0xfe, 0xff]
         };
         for unit in text.encode_utf16() {
-            bytes.extend_from_slice(if little_endian {
-                &unit.to_le_bytes()
+            let encoded = if little_endian {
+                unit.to_le_bytes()
             } else {
-                &unit.to_be_bytes()
-            });
+                unit.to_be_bytes()
+            };
+            bytes.extend_from_slice(&encoded);
         }
         bytes
     }
