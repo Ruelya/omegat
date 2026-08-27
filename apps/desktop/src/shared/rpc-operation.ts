@@ -2,6 +2,7 @@
 
 export const LONG_OPERATION_METHODS = {
   reload: "project.reload",
+  externalRefresh: "project.external-refresh",
   compile: "project.compile",
   teamSync: "team.sync",
   teamCommit: "team.commit",

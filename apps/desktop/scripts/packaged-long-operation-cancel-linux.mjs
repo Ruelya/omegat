@@ -232,6 +232,20 @@ async function writeSources(sourceDir) {
         { length: Math.min(100, SOURCE_FILES - start) },
         (_, offset) => {
           const index = start + offset;
+          if (index === 1_000) {
+            return writeFile(
+              join(sourceDir, "1000-wanted.yaml"),
+              'wanted: "Repeated packaged source"\n',
+              "utf8",
+            );
+          }
+          if (index === 1_001) {
+            return writeFile(
+              join(sourceDir, "1001-decoy.yaml"),
+              'decoy: "Repeated packaged source"\n',
+              "utf8",
+            );
+          }
           return writeFile(
             join(sourceDir, `${String(index).padStart(4, "0")}.txt`),
             `Source ${index}: ${payload}`,
@@ -978,6 +992,243 @@ try {
   });
   assert.deepEqual(await editorState(client), dirtyEditor);
 
+  const duplicateSetup = await client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const wanted = entries.find((entry) => entry.key.file === "1000-wanted.yaml");
+    const decoy = entries.find((entry) => entry.key.file === "1001-decoy.yaml");
+    if (!wanted || !decoy) throw new Error("packaged duplicate entries were not loaded");
+    const translation = "wanted duplicate translation 😀 tail";
+    await window.omegat.rpc("entry.set", {
+      index: wanted.index,
+      key: wanted.key,
+      translation,
+      note: "wanted duplicate note",
+      revision: wanted.revision,
+      default_translation: false,
+    });
+    await window.omegat.rpc("project.save", {});
+    return {
+      translation,
+      wanted: { index: wanted.index, key: wanted.key },
+      decoy: { index: decoy.index, key: decoy.key },
+    };
+  })()`, true);
+  assert.equal(
+    duplicateSetup.wanted.key.source_text,
+    duplicateSetup.decoy.key.source_text,
+  );
+  assert.notEqual(duplicateSetup.wanted.key.file, duplicateSetup.decoy.key.file);
+  assert.notEqual(duplicateSetup.wanted.key.id, duplicateSetup.decoy.key.id);
+  assert.notEqual(duplicateSetup.wanted.key.path, duplicateSetup.decoy.key.path);
+  assert.deepEqual(
+    Object.keys(duplicateSetup.wanted.key).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+  );
+
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(duplicateSetup.wanted.index + 1))};
+  })()`);
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  await waitFor("duplicated-source packaged entry", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(duplicateSetup.wanted.key)
+      ? state
+      : undefined;
+  });
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+  );
+  await client.command("Input.insertText", {
+    text: duplicateSetup.translation,
+  });
+  await waitFor("dirty duplicated-source Document3", async () => {
+    const state = await editorState(client);
+    return state.translation === duplicateSetup.translation ? state : undefined;
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+  }
+  const duplicateBeforeRefresh = await editorState(client);
+  assert.equal(
+    duplicateBeforeRefresh.caret,
+    duplicateSetup.translation.length - 7,
+    "UTF-16 caret did not cross the packaged emoji atomically",
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatExternalChangeTrace = [];
+    window.__omegatStopExternalTrace?.();
+    window.__omegatStopExternalTrace = window.omegat.onProjectExternalChange((event) => {
+      window.__omegatExternalChangeTrace.push(event);
+    });
+    window.__omegatExternalRefreshProgress = null;
+    window.__omegatExternalRefreshCancelObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatExternalRefreshCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.external-refresh.sources"
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button || window.__omegatExternalRefreshProgress) return;
+        window.__omegatExternalRefreshProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        };
+        button.click();
+      }
+    });
+    window.__omegatExternalRefreshCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const reorderPath = join(sourceDir, "0999-reorder.yaml");
+  await writeFile(reorderPath, 'reorder: "First external candidate"\n', "utf8");
+
+  const externalRefreshCancelled = await waitFor(
+    "protocol-confirmed external refresh cancellation",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          editorStatus: [...document.querySelectorAll("footer.status span")]
+            .map((node) => node.textContent ?? ""),
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+        };
+      })()`);
+      if (
+        state.operation === "externalRefresh"
+        && state.phase === "cancelled"
+        && state.stage === "project.external-refresh.sources"
+        && state.operationStatus
+          === "externalRefresh: cancelled (project.external-refresh.sources)"
+        && state.editorStatus.includes("external refresh cancelled")
+        && !state.cancelVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const externalCancelPost = await client.evaluate(`(async () => {
+    window.__omegatExternalRefreshCancelObserver?.disconnect();
+    const entries = await window.omegat.rpc("entry.list", {});
+    return {
+      visibleProgress: window.__omegatExternalRefreshProgress,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+      externalTrace: window.__omegatExternalChangeTrace,
+      entryCount: entries.length,
+      wanted: entries.find((entry) => entry.key.file === "1000-wanted.yaml"),
+      decoy: entries.find((entry) => entry.key.file === "1001-decoy.yaml"),
+    };
+  })()`, true);
+  const externalCancelEvents = externalCancelPost.rpcTrace.filter(
+    (event) => event.requestId === externalCancelPost.visibleProgress?.requestId,
+  );
+  const externalCancelTrace = externalCancelEvents
+    .map((event) => `${event.phase}:${event.stage}`)
+    .filter((value, index, values) => index === 0 || values[index - 1] !== value);
+  assert.deepEqual(externalCancelTrace, [
+    "started:",
+    "progress:project.external-refresh.sources",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  assert.equal(
+    externalCancelEvents.find((event) => event.phase === "cancelled")?.errorCode,
+    -32800,
+  );
+  assert(
+    externalCancelPost.domTrace.includes(
+      "externalRefresh|cancelling|project.external-refresh.sources|externalRefresh: cancelling (project.external-refresh.sources)",
+    ),
+  );
+  assert.equal(externalCancelPost.entryCount, SOURCE_FILES);
+  assert.deepEqual(await editorState(client), duplicateBeforeRefresh);
+  assert.deepEqual(externalCancelPost.wanted.key, duplicateSetup.wanted.key);
+  assert.equal(externalCancelPost.wanted.translation, duplicateSetup.translation);
+  assert.equal(externalCancelPost.decoy.translation, "");
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  await writeFile(reorderPath, 'reorder: "Committed external candidate"\n', "utf8");
+  const externalRefreshSucceeded = await waitFor(
+    "successful complete-key external refresh",
+    async () => {
+      const state = await editorState(client);
+      const operation = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          kind: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+        };
+      })()`);
+      if (
+        operation.kind === "externalRefresh"
+        && operation.phase === "succeeded"
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === duplicateBeforeRefresh.entry + 1
+        && state.translation === duplicateSetup.translation
+        && state.caret === duplicateBeforeRefresh.caret
+      ) {
+        return { operation, editor: state };
+      }
+      throw new Error(JSON.stringify({ operation, state }));
+    },
+  );
+  const externalSuccessPost = await client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    return {
+      events: window.__omegatExternalChangeTrace,
+      entryCount: entries.length,
+      wanted: entries.find((entry) => entry.key.file === "1000-wanted.yaml"),
+      decoy: entries.find((entry) => entry.key.file === "1001-decoy.yaml"),
+    };
+  })()`, true);
+  assert.equal(externalSuccessPost.entryCount, SOURCE_FILES + 1);
+  assert.deepEqual(externalSuccessPost.wanted.key, duplicateSetup.wanted.key);
+  assert.equal(externalSuccessPost.wanted.translation, duplicateSetup.translation);
+  assert.equal(externalSuccessPost.decoy.translation, "");
+  assert.deepEqual(
+    new Set(
+      externalSuccessPost.events.flatMap((event) => event.sources),
+    ),
+    new Set(["native", "sidecar"]),
+    "packaged refresh did not traverse both project.files-changed sources",
+  );
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
@@ -1020,6 +1271,21 @@ try {
       })),
       sync: teamSync,
       commitSource: teamCommit,
+    },
+    externalRefresh: {
+      duplicateKeys: {
+        wanted: duplicateSetup.wanted.key,
+        decoy: duplicateSetup.decoy.key,
+      },
+      cancelled: externalRefreshCancelled,
+      cancelTrace: externalCancelTrace,
+      rollbackEntryCount: externalCancelPost.entryCount,
+      succeeded: externalRefreshSucceeded,
+      committedEntryCount: externalSuccessPost.entryCount,
+      sources: [...new Set(
+        externalSuccessPost.events.flatMap((event) => event.sources),
+      )].sort(),
+      decoyTranslation: externalSuccessPost.decoy.translation,
     },
     sidecarResponsive: postCancel.version.version,
   }));

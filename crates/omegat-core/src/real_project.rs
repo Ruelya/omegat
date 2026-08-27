@@ -141,7 +141,7 @@ impl ProjectSession {
     pub fn reload_cancellable(&mut self, cancellation: &CancellationToken) -> Result<()> {
         let previous_entries = self.entries.clone();
         let result = (|| {
-            self.reload_sources_cancellable(cancellation)?;
+            self.reload_sources_cancellable(cancellation, "project.reload.sources")?;
             if cancellation.is_cancelled() {
                 return Err(CoreError::Cancelled);
             }
@@ -165,22 +165,74 @@ impl ProjectSession {
     /// the on-disk project file, project TM, external TMs, and glossary before
     /// rebuilding source entries.
     pub fn refresh_external(&mut self) -> Result<()> {
+        self.refresh_external_cancellable(&CancellationToken::default())
+    }
+
+    /// Build an external-filesystem candidate behind one rollback boundary.
+    ///
+    /// The active session is restored in full if parsing fails or cancellation
+    /// is observed, so readers can never see a mixture of old properties/TM
+    /// state and a partially rebuilt source list.
+    pub fn refresh_external_cancellable(
+        &mut self,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        let previous_props = self.props.clone();
+        let previous_tmx = self.tmx.clone();
+        let previous_external_tm = self.external_tm.clone();
+        let previous_glossary = self.glossary.clone();
+        let previous_entries = self.entries.clone();
         let root = self.props.root.clone();
-        let props = ProjectProperties::load(&root)?;
-        props.ensure_dirs()?;
-        let tmx = ProjectTmx::load(
-            &props.save_tmx_path(),
-            &props.source_lang,
-            &props.target_lang,
-        )?;
-        let external_tm = crate::external_tm::load_external_tm(&props);
-        let glossary = glossary::load_glossary(&props.glossary_file);
-        self.props = props;
-        self.tmx = tmx;
-        self.external_tm = external_tm;
-        self.glossary = glossary;
-        self.reload_sources()?;
-        self.apply_memory();
+        let result = (|| {
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            let props = ProjectProperties::load(&root)?;
+            props.ensure_dirs()?;
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            let tmx = ProjectTmx::load(
+                &props.save_tmx_path(),
+                &props.source_lang,
+                &props.target_lang,
+            )?;
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            let external_tm = crate::external_tm::load_external_tm(&props);
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            let glossary = glossary::load_glossary(&props.glossary_file);
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            self.props = props;
+            self.tmx = tmx;
+            self.external_tm = external_tm;
+            self.glossary = glossary;
+            self.reload_sources_cancellable(
+                cancellation,
+                "project.external-refresh.sources",
+            )?;
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            self.apply_memory();
+            if cancellation.is_cancelled() {
+                return Err(CoreError::Cancelled);
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.props = previous_props;
+            self.tmx = previous_tmx;
+            self.external_tm = previous_external_tm;
+            self.glossary = previous_glossary;
+            self.entries = previous_entries;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -206,10 +258,17 @@ impl ProjectSession {
     }
 
     fn reload_sources(&mut self) -> Result<()> {
-        self.reload_sources_cancellable(&CancellationToken::default())
+        self.reload_sources_cancellable(
+            &CancellationToken::default(),
+            "project.reload.sources",
+        )
     }
 
-    fn reload_sources_cancellable(&mut self, cancellation: &CancellationToken) -> Result<()> {
+    fn reload_sources_cancellable(
+        &mut self,
+        cancellation: &CancellationToken,
+        checkpoint: &str,
+    ) -> Result<()> {
         if cancellation.is_cancelled() {
             return Err(CoreError::Cancelled);
         }
@@ -282,7 +341,7 @@ impl ProjectSession {
                 entry.next = Some(sources.get(index + 1).cloned().unwrap_or_default());
             }
             entries.extend(file_entries);
-            if cancellation.checkpoint("project.reload.sources") {
+            if cancellation.checkpoint(checkpoint) {
                 return Err(CoreError::Cancelled);
             }
         }

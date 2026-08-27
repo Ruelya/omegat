@@ -223,7 +223,9 @@ impl App {
                 )
             }
             "project.external-refresh" => {
-                self.session_mut()?.refresh_external().map_err(core_err)?;
+                self.session_mut()?
+                    .refresh_external_cancellable(cancellation)
+                    .map_err(core_err)?;
                 let list: Vec<EntryDto> = self
                     .session()?
                     .entries
@@ -407,6 +409,23 @@ impl App {
             }
             "team.resolve" => {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let rebind_key = params
+                    .get("rebind_key")
+                    .filter(|value| !value.is_null())
+                    .cloned()
+                    .map(serde_json::from_value::<EntryKeyDto>)
+                    .transpose()
+                    .map_err(invalid)?;
+                if rebind_key.as_ref().is_some_and(|key| {
+                    !self
+                        .session()
+                        .is_ok_and(|session| session.entries.iter().any(|entry| entry.key() == *key))
+                }) {
+                    return Err((
+                        error_code::INVALID_PARAMS,
+                        "team conflict rebind key is no longer available".into(),
+                    ));
+                }
                 let side = params
                     .get("side")
                     .and_then(|v| v.as_str())
@@ -414,7 +433,7 @@ impl App {
                 let translation = params.get("translation").and_then(|v| v.as_str());
                 let left = omegat_team::resolve(&self.session()?.props, source, side, translation)
                     .map_err(|e| (error_code::TEAM_CONFLICT, e.to_string()))?;
-                Ok(json!({"conflicts": left}))
+                Ok(json!({"conflicts": left, "rebind_key": rebind_key}))
             }
             "wiki.import" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");

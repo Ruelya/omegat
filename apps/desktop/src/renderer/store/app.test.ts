@@ -679,9 +679,6 @@ describe("app store", () => {
       methods: [
         "project.save",
         "project.reload",
-        "matches.query",
-        "glossary.query",
-        "issues.list",
       ],
     });
   });
@@ -1075,6 +1072,222 @@ describe("app store", () => {
       dirty: false,
       key: refreshed.key,
     });
+  });
+
+  it("keeps the complete duplicated-source snapshot while external refresh cancellation is pending", async () => {
+    let rejectRefresh!: (error: Error) => void;
+    const pendingRefresh = new Promise((_resolve, reject) => {
+      rejectRefresh = reject;
+    });
+    const props = {
+      root: "/external-cancel",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: false,
+      has_repositories: false,
+    };
+    const decoy = {
+      ...sampleEntry,
+      key: {
+        ...sampleEntry.key,
+        file: "decoy.yaml",
+        source_text: "same",
+        id: "decoy_0",
+        path: "decoy",
+      },
+      file: "decoy.yaml",
+      id: "decoy_0",
+      source: "same",
+      translation: "wrong duplicate",
+      translated: true,
+    };
+    const wanted = {
+      ...decoy,
+      index: 1,
+      key: {
+        ...decoy.key,
+        file: "wanted.yaml",
+        id: "wanted_0",
+        path: "wanted",
+      },
+      file: "wanted.yaml",
+      id: "wanted_0",
+      translation: "wanted translation 😀",
+    };
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "project.external-refresh") return pendingRefresh;
+      if (method === "entry.list" || method === "stats.get") {
+        throw new Error(`${method} must not observe a cancelled candidate`);
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [decoy, wanted],
+      index: 1,
+      note: "wanted note",
+      document3: createDocument3(wanted.source, wanted.translation),
+      editorSelection: { anchor: 7, focus: 7 },
+    });
+
+    const refreshing = useApp
+      .getState()
+      .refreshEntriesAfterExternalChange([wanted.key], true);
+    await vi.waitFor(() => {
+      expect(rpc.mock.calls.some(([method]) => method === "project.external-refresh")).toBe(true);
+    });
+    await expect(useApp.getState().cancelLongOperation()).resolves.toBe(true);
+    expect(useApp.getState().longOperation?.phase).toBe("cancelling");
+    rejectRefresh(new Error("request cancelled"));
+    await expect(refreshing).resolves.toBe(false);
+
+    expect({
+      keys: useApp.getState().entries.map((entry) => entry.key),
+      index: useApp.getState().index,
+      translation: useApp.getState().document3.translation,
+      selection: useApp.getState().editorSelection,
+      status: useApp.getState().status,
+      phase: useApp.getState().longOperation?.phase,
+      methods: rpc.mock.calls.map(([method]) => method),
+    }).toEqual({
+      keys: [decoy.key, wanted.key],
+      index: 1,
+      translation: "wanted translation 😀",
+      selection: { anchor: 7, focus: 7 },
+      status: "external refresh cancelled",
+      phase: "cancelled",
+      methods: ["project.external-refresh"],
+    });
+  });
+
+  it("rebinds team theirs resolution and its conflict list through the shared complete-key transaction", async () => {
+    const props = {
+      root: "/team-rebind",
+      source_lang: "en",
+      target_lang: "fr",
+      sentence_seg: false,
+      has_repositories: true,
+    };
+    const wantedKey = {
+      file: "wanted.yaml",
+      source_text: "same",
+      id: "wanted_0",
+      prev: "",
+      next: "",
+      path: "wanted",
+    };
+    const decoyKey = {
+      ...wantedKey,
+      file: "decoy.yaml",
+      id: "decoy_0",
+      path: "decoy",
+    };
+    const wanted = {
+      ...sampleEntry,
+      key: wantedKey,
+      file: "wanted.yaml",
+      id: "wanted_0",
+      source: "same",
+      translation: "ours wanted",
+      translated: true,
+      revision: 4,
+    };
+    const decoy = {
+      ...wanted,
+      index: 1,
+      key: decoyKey,
+      file: "decoy.yaml",
+      id: "decoy_0",
+      translation: "decoy stays",
+    };
+    const resolvedWanted = {
+      ...wanted,
+      index: 0,
+      translation: "theirs wanted",
+      revision: 5,
+    };
+    const stats = {
+      files: 2,
+      segments: 2,
+      translated: 2,
+      unique_segments: 1,
+      source_words: 2,
+      target_words: 4,
+    };
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "team.resolve") {
+        expect(params).toEqual({
+          source: "same",
+          side: "theirs",
+          translation: undefined,
+          rebind_key: wantedKey,
+        });
+        return { conflicts: [], rebind_key: wantedKey };
+      }
+      if (method === "project.external-refresh") return { props, entries: 2 };
+      if (method === "entry.list") return [resolvedWanted, decoy];
+      if (method === "stats.get") return stats;
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+      ) return [];
+      if (method === "prefs.set") return params;
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      props,
+      screen: "workspace",
+      entries: [{ ...decoy, index: 0 }, { ...wanted, index: 1 }],
+      index: 1,
+      note: "",
+      document3: createDocument3("same", "ours wanted"),
+      editorSelection: { anchor: 2, focus: 8 },
+      teamConflicts: [{
+        kind: "tmx",
+        source: "same",
+        ours: "ours wanted",
+        theirs: "theirs wanted",
+        message: "TMX conflict on same",
+        entry_key: wantedKey,
+      }],
+      prefs: defaultPreferences({
+        insert_best_match: false,
+        dictionary_auto_search: false,
+      }),
+      completerAuto: false,
+    });
+
+    await useApp.getState().resolveConflict("theirs", "same");
+
+    expect({
+      methods: rpc.mock.calls.map(([method]) => method),
+      index: useApp.getState().index,
+      activeKey: useApp.getState().entries[useApp.getState().index]?.key,
+      translations: useApp.getState().entries.map((entry) => entry.translation),
+      document: useApp.getState().document3.translation,
+      selection: useApp.getState().editorSelection,
+      conflicts: useApp.getState().teamConflicts,
+    }).toEqual({
+      methods: [
+        "team.resolve",
+        "project.external-refresh",
+        "entry.list",
+        "stats.get",
+        "matches.query",
+        "glossary.query",
+        "issues.list",
+        "prefs.set",
+      ],
+      index: 0,
+      activeKey: wantedKey,
+      translations: ["theirs wanted", "decoy stays"],
+      document: "theirs wanted",
+      selection: { anchor: 2, focus: 8 },
+      conflicts: [],
+    });
+    expect(rpc.mock.calls.some(([method]) => method === "entry.set")).toBe(false);
   });
 
   it("rejects queued proactive events from an older same-root generation", async () => {

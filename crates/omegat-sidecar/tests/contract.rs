@@ -535,6 +535,22 @@ fn protocol_cancellation_rolls_back_reload_and_compile_state() {
     let after_reload = rpc(&mut stdin, &mut stdout, 5, "entry.list", json!({}));
     assert_eq!(after_reload["result"], before_reload);
 
+    let cancelled_external_refresh = cancel_at_checkpoint(
+        &mut stdin,
+        &mut stdout,
+        50,
+        "project.external-refresh",
+        json!({}),
+        "project.external-refresh.sources",
+    );
+    assert_eq!(
+        cancelled_external_refresh["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    let after_external_refresh =
+        rpc(&mut stdin, &mut stdout, 51, "entry.list", json!({}));
+    assert_eq!(after_external_refresh["result"], before_reload);
+
     let first = &after_reload["result"][0];
     let updated = rpc(
         &mut stdin,

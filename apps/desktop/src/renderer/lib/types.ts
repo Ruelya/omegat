@@ -275,6 +275,7 @@ export type TeamConflict = {
   ours?: string;
   theirs?: string;
   message?: string;
+  entry_key?: EntryKeyDto;
 };
 export type WindowId =
   | "search"

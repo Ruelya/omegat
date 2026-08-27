@@ -240,6 +240,11 @@ function isOptimisticLock(error: unknown): boolean {
 
 type Screen = "welcome" | "workspace";
 
+type ProjectRebindRequest = {
+  kind: "reload" | "external-refresh" | "memory";
+  changedKeys?: readonly EntryKeyDto[];
+};
+
 export type AppState = {
   screen: Screen;
   version: string;
@@ -301,6 +306,7 @@ export type AppState = {
   create: (root: string, sl: string, tl: string, seg: boolean) => Promise<void>;
   closeProject: () => Promise<void>;
   reloadProject: () => Promise<void>;
+  rebindProjectEntries: (request: ProjectRebindRequest) => Promise<boolean>;
   select: (index: number, recordHistory?: boolean) => Promise<void>;
   setDraft: (v: string) => void;
   applyEditorDocument: (
@@ -366,7 +372,7 @@ export type AppState = {
   refreshEntriesAfterExternalChange: (
     changedKeys?: readonly EntryKeyDto[],
     reloadFromDisk?: boolean,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   toggleTheme: () => void;
   setSearchForm: (patch: Partial<SearchForm>) => void;
 };
@@ -419,6 +425,104 @@ const initialState = {
   status: "",
   longOperation: null as RendererLongOperation | null,
 };
+
+function bindTeamConflictEntries(
+  conflicts: readonly TeamConflict[],
+  entries: readonly EntryDto[],
+  activeIndex: number,
+): TeamConflict[] {
+  const active = entries[activeIndex];
+  return conflicts.map((conflict) => {
+    if (
+      conflict.entry_key
+      && entries.some((entry) =>
+        sameCompleteEntryKey(entry.key, conflict.entry_key)
+      )
+    ) {
+      return conflict;
+    }
+    if (!conflict.source) return conflict;
+    const matches = entries.filter((entry) => entry.source === conflict.source);
+    const entry = active?.source === conflict.source
+      ? active
+      : matches.length === 1
+        ? matches[0]
+        : undefined;
+    return entry
+      ? { ...conflict, entry_key: { ...entry.key } }
+      : { ...conflict, entry_key: undefined };
+  });
+}
+
+function reboundProjectState(
+  before: AppState,
+  entries: EntryDto[],
+  stats: StatsDto,
+  props: ProjectPropsDto | null,
+): { patch: Partial<AppState>; index: number } {
+  const previous = before.entries[before.index];
+  const binding = rebindEntryAfterReload(
+    entries,
+    before.index,
+    (entry) => sameCompleteEntryKey(entry.key, previous?.key),
+  );
+  if (binding.index < 0) {
+    return {
+      index: -1,
+      patch: {
+        ...clearedDockData(),
+        entries,
+        stats,
+        props,
+        index: 0,
+        note: "",
+        document3: createDocument3("", ""),
+        editorSelection: { anchor: 0, focus: 0 },
+        history: { undo: [], redo: [] },
+        navBack: [],
+        navForward: [],
+        editConflict: null,
+        teamConflicts: bindTeamConflictEntries(
+          before.teamConflicts,
+          entries,
+          0,
+        ),
+        status: "",
+      },
+    };
+  }
+
+  const entry = entries[binding.index]!;
+  const limit = entry.translation.length;
+  return {
+    index: binding.index,
+    patch: {
+      ...clearedDockData(),
+      entries,
+      stats,
+      props,
+      index: binding.index,
+      note: entry.note,
+      document3: createDocument3(entry.source, entry.translation),
+      editorSelection: binding.exact
+        ? {
+            anchor: Math.max(0, Math.min(before.editorSelection.anchor, limit)),
+            focus: Math.max(0, Math.min(before.editorSelection.focus, limit)),
+          }
+        : { anchor: limit, focus: limit },
+      history: { undo: [], redo: [] },
+      navBack: [],
+      navForward: [],
+      editConflict: null,
+      teamConflicts: bindTeamConflictEntries(
+        before.teamConflicts,
+        entries,
+        binding.index,
+      ),
+      status: "",
+    },
+  };
+}
 
 export const useApp = create<AppState>((set, get) => ({
   ...initialState,
@@ -635,100 +739,80 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   reloadProject: async () => {
+    await get().rebindProjectEntries({ kind: "reload" });
+  },
+  rebindProjectEntries: async ({ kind, changedKeys }) => {
     const root = get().props?.root;
-    if (!root) return;
-    const lifecycle = dockLifecycle.beginProject(root, "reload");
-    set({ ...clearedDockData(), status: "" });
-    const before = get();
-    const previous = before.entries[before.index];
-    if (
-      previous
-      && (
-        before.document3.translation !== previous.translation
-        || before.note !== previous.note
-      )
-    ) {
-      await get().commitCurrent();
-      if (!dockLifecycle.isCurrent(lifecycle)) return;
+    if (!root) return false;
+    const initial = get();
+    const previous = initial.entries[initial.index];
+    const lifecycle = kind === "reload"
+      ? dockLifecycle.beginProject(root, "reload")
+      : dockLifecycle.externalRefresh(
+          root,
+          previous ? entryLifecycleKey(previous.key) : null,
+          changedKeys?.map(entryLifecycleKey) ?? [],
+        );
+
+    if (kind === "reload") {
+      if (
+        previous
+        && (
+          initial.document3.translation !== previous.translation
+          || initial.note !== previous.note
+        )
+      ) {
+        await get().commitCurrent();
+        if (!dockLifecycle.isCurrent(lifecycle)) return false;
+      }
+      await rpc("project.save");
+      if (!dockLifecycle.isCurrent(lifecycle)) return false;
     }
-    const committed = get();
-    const committedEntry = committed.entries[committed.index];
-    await rpc("project.save");
-    if (!dockLifecycle.isCurrent(lifecycle)) return;
-    let reloaded: { props?: ProjectPropsDto };
+
+    const before = get();
+    let refreshedProps: ProjectPropsDto | null = before.props;
     try {
-      reloaded = await get().runLongOperation<{ props?: ProjectPropsDto }>("reload");
+      if (kind === "reload") {
+        const result = await get().runLongOperation<{ props?: ProjectPropsDto }>("reload");
+        refreshedProps = result.props ?? before.props;
+      } else if (kind === "external-refresh") {
+        const result = await get().runLongOperation<{ props?: ProjectPropsDto }>(
+          "externalRefresh",
+        );
+        refreshedProps = result.props ?? before.props;
+      }
     } catch (error) {
       if (!isAbortError(error)) throw error;
       if (get().props?.root === root) {
-        await get().select(
-          Math.max(0, Math.min(committed.index, committed.entries.length - 1)),
-          false,
-        );
-        set({ status: "reload cancelled" });
+        set({
+          status: kind === "reload"
+            ? "reload cancelled"
+            : "external refresh cancelled",
+        });
       }
-      return;
+      return false;
     }
-    if (!dockLifecycle.isCurrent(lifecycle)) return;
+
+    if (!dockLifecycle.isCurrent(lifecycle)) return false;
     const listed = await rpc<EntryDto[]>("entry.list");
-    if (!dockLifecycle.isCurrent(lifecycle)) return;
+    if (!dockLifecycle.isCurrent(lifecycle)) return false;
     const entries = Array.isArray(listed) ? listed : [];
     const stats = await rpc<StatsDto>("stats.get");
-    if (!dockLifecycle.isCurrent(lifecycle)) return;
-    const binding = rebindEntryAfterReload(
+    if (!dockLifecycle.isCurrent(lifecycle)) return false;
+
+    // Publish entries, active Document3, note, caret and navigation reset as
+    // one complete-key transaction. No candidate list is visible before this
+    // point, including when the sidecar acknowledges cancellation.
+    const rebound = reboundProjectState(
+      before,
       entries,
-      committed.index,
-      (entry) => sameCompleteEntryKey(entry.key, committedEntry?.key),
+      stats,
+      refreshedProps,
     );
-    const index = binding.index;
-    if (index < 0) {
-      set({
-        entries,
-        stats,
-        props: reloaded.props ?? committed.props,
-        index: 0,
-        note: "",
-        document3: createDocument3("", ""),
-        matches: [],
-        glossary: [],
-        issues: [],
-        completer: [],
-        history: { undo: [], redo: [] },
-        navBack: [],
-        navForward: [],
-        editConflict: null,
-        status: "",
-        editorSelection: { anchor: 0, focus: 0 },
-      });
-    } else {
-      const entry = entries[index]!;
-      const sameEntry = sameCompleteEntryKey(entry.key, committedEntry?.key);
-      const limit = entry.translation.length;
-      const editorSelection = sameEntry
-        ? {
-            anchor: Math.max(0, Math.min(committed.editorSelection.anchor, limit)),
-            focus: Math.max(0, Math.min(committed.editorSelection.focus, limit)),
-          }
-        : { anchor: limit, focus: limit };
-      // Install a clean target snapshot before querying entry details. This
-      // prevents `select` from mistaking a reordered entry at the old numeric
-      // index for the dirty pre-reload document.
-      set({
-        entries,
-        stats,
-        props: reloaded.props ?? committed.props,
-        index,
-        note: entry.note,
-        document3: createDocument3(entry.source, entry.translation),
-        history: { undo: [], redo: [] },
-        navBack: [],
-        navForward: [],
-        editConflict: null,
-        editorSelection,
-      });
-      await get().select(index, false);
-    }
-    get().logLine("reloaded project");
+    set(rebound.patch);
+    if (rebound.index >= 0) await get().select(rebound.index, false);
+    if (kind === "reload") get().logLine("reloaded project");
+    return true;
   },
   select: async (index, recordHistory = true) => {
     const before = get();
@@ -994,7 +1078,14 @@ export const useApp = create<AppState>((set, get) => ({
         const list = Array.isArray(c.conflicts)
           ? c.conflicts.map((x) => (typeof x === "string" ? { message: x } : x))
           : [];
-        set({ teamConflicts: list });
+        const current = get();
+        set({
+          teamConflicts: bindTeamConflictEntries(
+            list,
+            current.entries,
+            current.index,
+          ),
+        });
       } catch {
         /* ignore */
       }
@@ -1014,17 +1105,32 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
   resolveConflict: async (side, source, translation) => {
-    const src = source ?? get().teamConflicts[0]?.source ?? "";
+    const before = get();
+    const conflict = before.teamConflicts.find((item) =>
+      source ? item.source === source : true
+    );
+    const src = source ?? conflict?.source ?? "";
+    const activeKey = before.entries[before.index]?.key;
+    const rebindKey = conflict?.entry_key ?? activeKey;
     const r = await rpc<{ conflicts: TeamConflict[] }>("team.resolve", {
       source: src,
       side,
       translation,
+      rebind_key: rebindKey,
     });
+    await get().refreshEntriesAfterExternalChange(
+      rebindKey ? [rebindKey] : undefined,
+      true,
+    );
+    const current = get();
     set({
-      teamConflicts: r.conflicts ?? [],
+      teamConflicts: bindTeamConflictEntries(
+        r.conflicts ?? [],
+        current.entries,
+        current.index,
+      ),
       teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
     });
-    await get().refreshEntriesAfterExternalChange(undefined, true);
     await get().patchPrefs({ team_conflict_resolution: side });
   },
   resolveEditConflict: async (side, translation) => {
@@ -1084,74 +1190,10 @@ export const useApp = create<AppState>((set, get) => ({
     await get().reloadProject();
   },
   refreshEntriesAfterExternalChange: async (changedKeys, reloadFromDisk = false) => {
-    const before = get();
-    const root = before.props?.root;
-    if (!root) return;
-    const previous = before.entries[before.index];
-    const previousKey = previous?.key;
-    const lifecycle = dockLifecycle.externalRefresh(
-      root,
-      previousKey ? entryLifecycleKey(previousKey) : null,
-      changedKeys?.map(entryLifecycleKey) ?? [],
-    );
-    set({ ...clearedDockData(), status: "" });
-
-    let refreshedProps: ProjectPropsDto | null = null;
-    if (reloadFromDisk) {
-      const refreshed = await rpc<{ props?: ProjectPropsDto }>(
-        "project.external-refresh",
-      );
-      if (!dockLifecycle.isCurrent(lifecycle)) return;
-      refreshedProps = refreshed.props ?? null;
-    }
-    const listed = await rpc<EntryDto[]>("entry.list");
-    if (!dockLifecycle.isCurrent(lifecycle)) return;
-    const entries = Array.isArray(listed) ? listed : [];
-    const stats = await rpc<StatsDto>("stats.get");
-    if (!dockLifecycle.isCurrent(lifecycle)) return;
-    const binding = rebindEntryAfterReload(
-      entries,
-      before.index,
-      (entry) => sameCompleteEntryKey(entry.key, previous?.key),
-    );
-    const index = binding.index;
-    if (index < 0) {
-      set({
-        entries,
-        stats,
-        props: refreshedProps ?? before.props,
-        index: 0,
-        note: "",
-        document3: createDocument3("", ""),
-        editorSelection: { anchor: 0, focus: 0 },
-        history: { undo: [], redo: [] },
-        navBack: [],
-        navForward: [],
-        editConflict: null,
-      });
-      return;
-    }
-
-    const entry = entries[index]!;
-    const sameEntry = sameCompleteEntryKey(entry.key, previousKey);
-    const limit = entry.translation.length;
-    set({
-      entries,
-      stats,
-      props: refreshedProps ?? before.props,
-      index,
-      note: entry.note,
-      document3: createDocument3(entry.source, entry.translation),
-      editorSelection: sameEntry
-        ? {
-            anchor: Math.max(0, Math.min(before.editorSelection.anchor, limit)),
-            focus: Math.max(0, Math.min(before.editorSelection.focus, limit)),
-          }
-        : { anchor: limit, focus: limit },
-      history: { undo: [], redo: [] },
-      editConflict: null,
+    return get().rebindProjectEntries({
+      kind: reloadFromDisk ? "external-refresh" : "memory",
+      changedKeys,
     });
-    await get().select(index, false);
   },
   setDraft: (v) => {
     const prev = get().document3.translation;
