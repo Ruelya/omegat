@@ -17,7 +17,17 @@ pub fn search(entries: &[Entry], params: &SearchParams) -> Vec<SearchHitDto> {
         if !entry_passes_filters(e, params) {
             continue;
         }
-        push_field(&mut hits, index, e, "source", &e.source, params.source, params, kind, re.as_ref());
+        push_field(
+            &mut hits,
+            index,
+            e,
+            "source",
+            &e.source,
+            params.source,
+            params,
+            kind,
+            re.as_ref(),
+        );
         push_field(
             &mut hits,
             index,
@@ -29,7 +39,17 @@ pub fn search(entries: &[Entry], params: &SearchParams) -> Vec<SearchHitDto> {
             kind,
             re.as_ref(),
         );
-        push_field(&mut hits, index, e, "notes", &e.note, params.notes, params, kind, re.as_ref());
+        push_field(
+            &mut hits,
+            index,
+            e,
+            "notes",
+            &e.note,
+            params.notes,
+            params,
+            kind,
+            re.as_ref(),
+        );
         push_field(
             &mut hits,
             index,
@@ -180,7 +200,9 @@ fn field_matches(text: &str, params: &SearchParams, kind: Kind, re: Option<&Rege
                 return false;
             }
             let hay = normalize_hay(text, params.case_sensitive);
-            words.iter().all(|w| contains_word(&hay, w, params.whole_word))
+            words
+                .iter()
+                .all(|w| contains_word(&hay, w, params.whole_word))
         }
         Kind::Exact => {
             let needle = normalize_needle(&params.query, params.case_sensitive);
@@ -303,17 +325,35 @@ fn replace_whole_word(text: &str, query: &str, repl: &str, case_sensitive: bool)
 }
 
 /// Java `SearchExpression` + `Searcher.searchString` / replace matches.
-#[derive(Debug, Clone)]
+///
+/// The IPC search path above intentionally accepts the compact wire DTO.  This
+/// expression is the richer product model used by project search: it keeps the
+/// source/target/property switches, duplicate policy, origin labels and
+/// replacement mode together exactly as the Java controller does.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchExpression {
     pub query: String,
     pub kind: SearchKind,
+    pub mode: SearchMode,
     pub case_sensitive: bool,
     pub whole_words: bool,
     pub width_insensitive: bool,
+    pub space_match_nbsp: bool,
     pub replacement: Option<String>,
     pub author: Option<String>,
     pub search_author: bool,
+    pub date_before: Option<i64>,
+    pub date_after: Option<i64>,
+    pub search_source: bool,
+    pub search_target: bool,
+    pub search_notes: bool,
     pub search_comments: bool,
+    pub search_translated: bool,
+    pub search_untranslated: bool,
+    pub all_results: bool,
+    pub file_names: bool,
+    pub exclude_orphans: bool,
+    pub number_of_results: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,24 +363,61 @@ pub enum SearchKind {
     Regex,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMode {
+    Search,
+    Replace,
+}
+
 impl SearchExpression {
     pub fn exact(query: &str, case_sensitive: bool) -> Self {
         Self {
             query: query.into(),
             kind: SearchKind::Exact,
+            mode: SearchMode::Search,
             case_sensitive,
             whole_words: false,
             width_insensitive: false,
+            space_match_nbsp: false,
             replacement: None,
             author: None,
             search_author: false,
+            date_before: None,
+            date_after: None,
+            search_source: true,
+            search_target: true,
+            search_notes: true,
             search_comments: true,
+            search_translated: true,
+            search_untranslated: true,
+            all_results: true,
+            file_names: true,
+            exclude_orphans: false,
+            number_of_results: 1000,
+        }
+    }
+
+    pub fn keyword(query: &str, case_sensitive: bool) -> Self {
+        Self {
+            kind: SearchKind::Keyword,
+            ..Self::exact(query, case_sensitive)
+        }
+    }
+
+    pub fn regex(query: &str, case_sensitive: bool) -> Self {
+        Self {
+            kind: SearchKind::Regex,
+            ..Self::exact(query, case_sensitive)
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchMatch {
+    /// Java `Matcher.start()` offset, represented in UTF-16 code units.
+    pub start: usize,
+    /// Java `Matcher.end()` offset, represented in UTF-16 code units.
+    pub end: usize,
     pub replacement: String,
 }
 
@@ -385,12 +462,15 @@ fn compile_search_regex(expr: &SearchExpression, needle: &str) -> Option<Regex> 
     let pat = match expr.kind {
         SearchKind::Regex => {
             let mut p = needle.to_string();
-            if needle.contains(' ') {
+            if expr.space_match_nbsp && needle.contains(' ') {
                 p = p.replace(' ', "( |\u{00A0})");
+            }
+            if expr.space_match_nbsp && needle.contains(r"\s") {
+                p = p.replace(r"\s", r"(?:\s|\u{00A0})");
             }
             p
         }
-        SearchKind::Exact => glob_to_regex(needle, false),
+        SearchKind::Exact => glob_to_regex(needle, expr.space_match_nbsp),
         SearchKind::Keyword => return None,
     };
     let flags = if expr.case_sensitive { "" } else { "(?i)" };
@@ -401,105 +481,558 @@ fn is_java_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn regex_hits(re: &Regex, hay: &str, whole_words: bool) -> bool {
-    for m in re.find_iter(hay) {
-        if !whole_words {
-            return true;
-        }
-        let before_ok = hay[..m.start()]
-            .chars()
-            .next_back()
-            .map(|c| !is_java_word_char(c))
-            .unwrap_or(true);
-        let after_ok = hay[m.end()..]
-            .chars()
-            .next()
-            .map(|c| !is_java_word_char(c))
-            .unwrap_or(true);
-        if before_ok && after_ok {
-            return true;
-        }
-    }
-    false
+fn has_word_boundaries(hay: &str, start: usize, end: usize) -> bool {
+    let before_ok = hay[..start]
+        .chars()
+        .next_back()
+        .map(|c| !is_java_word_char(c))
+        .unwrap_or(true);
+    let after_ok = hay[end..]
+        .chars()
+        .next()
+        .map(|c| !is_java_word_char(c))
+        .unwrap_or(true);
+    before_ok && after_ok
 }
 
-pub fn search_string(text: &str, expr: &SearchExpression) -> bool {
-    if text.is_empty() {
-        return false;
-    }
-    let hay = if expr.width_insensitive {
+fn normalized_search_text(text: &str, expr: &SearchExpression) -> String {
+    if expr.width_insensitive {
         fold_width_spaces(&crate::string_util::normalize_width(text))
     } else {
         text.to_string()
+    }
+}
+
+fn normalized_query(expr: &SearchExpression) -> String {
+    normalized_search_text(&expr.query, expr)
+}
+
+fn utf16_offset(text: &str, byte_offset: usize) -> usize {
+    text[..byte_offset].encode_utf16().count()
+}
+
+fn replacement_for_capture(
+    captures: &regex::Captures<'_>,
+    expr: &SearchExpression,
+    target_locale: &str,
+) -> String {
+    let Some(replacement) = expr.replacement.as_deref() else {
+        return String::new();
     };
-    let needle = if expr.width_insensitive {
-        fold_width_spaces(&crate::string_util::normalize_width(&expr.query))
+    if expr.kind == SearchKind::Regex {
+        let mut expanded = String::new();
+        captures.expand(replacement, &mut expanded);
+        crate::string_util::replace_case(&expanded, target_locale)
     } else {
-        expr.query.clone()
-    };
-    let whole = expr.whole_words && expr.kind != SearchKind::Regex;
+        replacement.to_string()
+    }
+}
+
+fn compiled_matchers(expr: &SearchExpression) -> Option<Vec<Regex>> {
+    let needle = normalized_query(expr);
     match expr.kind {
         SearchKind::Keyword => {
-            let words: Vec<String> = needle.split(' ').filter(|w| !w.is_empty()).map(|w| w.to_string()).collect();
-            words.iter().all(|w| {
-                let glob = glob_to_regex(w, false);
-                let flags = if expr.case_sensitive { "" } else { "(?i)" };
-                Regex::new(&format!("{flags}{glob}"))
-                    .ok()
-                    .is_some_and(|r| regex_hits(&r, &hay, whole))
-            })
+            let words: Vec<&str> = needle.split(' ').filter(|w| !w.is_empty()).collect();
+            if words.is_empty() {
+                return Some(Vec::new());
+            }
+            words
+                .into_iter()
+                .map(|word| {
+                    let glob = glob_to_regex(word, false);
+                    let flags = if expr.case_sensitive { "" } else { "(?i)" };
+                    Regex::new(&format!("{flags}{glob}")).ok()
+                })
+                .collect()
         }
-        _ => compile_search_regex(expr, &needle).is_some_and(|r| regex_hits(&r, &hay, whole)),
+        _ => compile_search_regex(expr, &needle).map(|regex| vec![regex]),
     }
+}
+
+/// Return every concrete match region. Keyword searches require every keyword
+/// to be present and then retain every region from every keyword matcher.
+/// Search/replace always requests `collapse_results = false`, matching Java's
+/// bug-675 behavior.
+pub fn find_matches(
+    text: Option<&str>,
+    expr: &SearchExpression,
+    collapse_results: bool,
+    target_locale: &str,
+) -> Vec<SearchMatch> {
+    let Some(text) = text else {
+        return Vec::new();
+    };
+    let hay = normalized_search_text(text, expr);
+    let Some(matchers) = compiled_matchers(expr) else {
+        return Vec::new();
+    };
+    if matchers.is_empty() {
+        return Vec::new();
+    }
+    let use_word_boundaries = expr.whole_words && expr.kind != SearchKind::Regex;
+    let mut found = Vec::new();
+    for regex in matchers {
+        let mut matcher_found = Vec::new();
+        for captures in regex.captures_iter(&hay) {
+            let Some(region) = captures.get(0) else {
+                continue;
+            };
+            if use_word_boundaries && !has_word_boundaries(&hay, region.start(), region.end()) {
+                continue;
+            }
+            // Java treats a zero-width match at a non-zero position as a hit,
+            // but does not make it a replaceable/highlightable region.
+            if region.start() == region.end() {
+                continue;
+            }
+            matcher_found.push(SearchMatch {
+                start: utf16_offset(&hay, region.start()),
+                end: utf16_offset(&hay, region.end()),
+                replacement: replacement_for_capture(&captures, expr, target_locale),
+            });
+        }
+        if matcher_found.is_empty() {
+            return Vec::new();
+        }
+        found.extend(matcher_found);
+    }
+    found.sort_by_key(|m| (m.start, m.end));
+    if collapse_results {
+        let mut collapsed: Vec<SearchMatch> = Vec::with_capacity(found.len());
+        for current in found {
+            if let Some(previous) = collapsed.last_mut() {
+                if current.start <= previous.end {
+                    previous.end = previous.end.max(current.end);
+                    continue;
+                }
+            }
+            collapsed.push(current);
+        }
+        collapsed
+    } else {
+        found
+    }
+}
+
+pub fn search_string(text: &str, expr: &SearchExpression) -> bool {
+    !find_matches(Some(text), expr, true, "und").is_empty()
 }
 
 pub fn search_replace_matches(text: &str, expr: &SearchExpression) -> Vec<SearchMatch> {
-    let repl = expr.replacement.as_deref().unwrap_or("");
-    let mut matches = Vec::new();
-    match expr.kind {
-        SearchKind::Regex => {
-            let re = Regex::new(&format!(
-                "{}{}",
-                if expr.case_sensitive { "" } else { "(?i)" },
-                expr.query
-            ))
-            .ok();
-            if let Some(re) = re {
-                for cap in re.captures_iter(text) {
-                    let mut dest = String::new();
-                    cap.expand(repl, &mut dest);
-                    matches.push(SearchMatch { replacement: dest });
-                }
-            }
-        }
-        _ => {
-            let hay = if expr.case_sensitive {
-                text.to_string()
-            } else {
-                text.to_lowercase()
-            };
-            let needle = if expr.case_sensitive {
-                expr.query.clone()
-            } else {
-                expr.query.to_lowercase()
-            };
-            let mut start = 0;
-            while let Some(pos) = hay[start..].find(&needle) {
-                let abs = start + pos;
-                matches.push(SearchMatch {
-                    replacement: repl.to_string(),
-                });
-                start = abs + needle.len().max(1);
-                if needle.is_empty() {
-                    break;
-                }
-            }
-        }
-    }
-    matches
+    find_matches(Some(text), expr, false, "und")
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchOrigin {
+    Project { entry_number: usize, file: String },
+    TranslationMemory { preamble: String },
+    Orphan { preamble: String },
+    Alternative { preamble: String },
+    Glossary { preamble: String },
+    Text { preamble: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSearchEntry {
+    pub source: String,
+    pub translation: Option<String>,
+    pub note: Option<String>,
+    pub properties: Vec<(String, String)>,
+    pub id: Option<String>,
+    pub path: Option<String>,
+    pub creator: Option<String>,
+    pub changer: Option<String>,
+    pub change_date: Option<i64>,
+    pub origin: SearchOrigin,
+}
+
+impl ProjectSearchEntry {
+    pub fn project(
+        entry_number: usize,
+        file: &str,
+        source: &str,
+        translation: Option<&str>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            translation: translation.map(str::to_string),
+            note: None,
+            properties: Vec::new(),
+            id: None,
+            path: None,
+            creator: None,
+            changer: None,
+            change_date: None,
+            origin: SearchOrigin::Project {
+                entry_number,
+                file: file.into(),
+            },
+        }
+    }
+
+    pub fn orphan(source: &str, translation: Option<&str>) -> Self {
+        Self {
+            origin: SearchOrigin::Orphan {
+                preamble: "Orphan segment".into(),
+            },
+            ..Self::project(0, "", source, translation)
+        }
+    }
+
+    fn property_values(&self) -> Vec<&str> {
+        let mut values: Vec<&str> = self
+            .properties
+            .iter()
+            .map(|(_, value)| value.as_str())
+            .collect();
+        if let SearchOrigin::Project { file, .. } = &self.origin {
+            if !file.is_empty() {
+                values.push(file);
+            }
+        }
+        if let Some(id) = self.id.as_deref().filter(|s| !s.is_empty()) {
+            values.push(id);
+        }
+        if let Some(path) = self.path.as_deref().filter(|s| !s.is_empty()) {
+            values.push(path);
+        }
+        values
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchResult {
+    pub entry_number: i32,
+    pub preamble: Option<String>,
+    pub source: String,
+    pub translation: Option<String>,
+    pub note: Option<String>,
+    pub property: Option<String>,
+    pub source_matches: Vec<SearchMatch>,
+    pub target_matches: Vec<SearchMatch>,
+    pub note_matches: Vec<SearchMatch>,
+    pub property_matches: Vec<SearchMatch>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchNotCompleted;
+
+impl std::fmt::Display for SearchNotCompleted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("search not completed yet")
+    }
+}
+
+impl std::error::Error for SearchNotCompleted {}
+
+/// Stateful, single-owner project search. It mirrors Java's non-reentrant
+/// `Searcher`: results are unavailable until `run` completes, and every rerun
+/// replaces (rather than appends to) the previous snapshot.
+#[derive(Debug, Clone)]
+pub struct Searcher {
+    expression: SearchExpression,
+    entries: Vec<ProjectSearchEntry>,
+    results: Vec<SearchResult>,
+    found_matches: Vec<SearchMatch>,
+    completed: bool,
+    target_locale: String,
+}
+
+impl Searcher {
+    pub fn new(expression: SearchExpression) -> Self {
+        Self {
+            expression,
+            entries: Vec::new(),
+            results: Vec::new(),
+            found_matches: Vec::new(),
+            completed: false,
+            target_locale: "und".into(),
+        }
+    }
+
+    pub fn with_entries(expression: SearchExpression, entries: Vec<ProjectSearchEntry>) -> Self {
+        let mut searcher = Self::new(expression);
+        searcher.entries = entries;
+        searcher
+    }
+
+    pub fn get_expression(&self) -> &SearchExpression {
+        &self.expression
+    }
+
+    pub fn set_target_locale(&mut self, locale: impl Into<String>) {
+        self.target_locale = locale.into();
+    }
+
+    pub fn set_entries(&mut self, entries: Vec<ProjectSearchEntry>) {
+        self.entries = entries;
+        self.completed = false;
+    }
+
+    pub fn entries_mut(&mut self) -> &mut Vec<ProjectSearchEntry> {
+        self.completed = false;
+        &mut self.entries
+    }
+
+    pub fn is_search_completed(&self) -> bool {
+        self.completed
+    }
+
+    pub fn get_search_results(&self) -> Result<&[SearchResult], SearchNotCompleted> {
+        self.completed
+            .then_some(self.results.as_slice())
+            .ok_or(SearchNotCompleted)
+    }
+
+    pub fn get_found_matches(&self) -> Result<&[SearchMatch], SearchNotCompleted> {
+        self.completed
+            .then_some(self.found_matches.as_slice())
+            .ok_or(SearchNotCompleted)
+    }
+
+    pub fn search_string(&mut self, text: Option<&str>, collapse_results: bool) -> bool {
+        self.found_matches = find_matches(
+            text,
+            &self.expression,
+            collapse_results,
+            &self.target_locale,
+        );
+        !self.found_matches.is_empty()
+    }
+
+    pub fn run(&mut self) {
+        use std::collections::HashMap;
+
+        self.completed = false;
+        self.results.clear();
+        self.found_matches.clear();
+        let mut deduplicated: HashMap<(u8, String, String), usize> = HashMap::new();
+        let entries = self.entries.clone();
+        for entry in &entries {
+            if self.results.len() >= self.expression.number_of_results {
+                break;
+            }
+            if matches!(&entry.origin, SearchOrigin::Orphan { .. })
+                && self.expression.exclude_orphans
+            {
+                continue;
+            }
+            if entry.translation.is_some() && !self.expression.search_translated {
+                continue;
+            }
+            if entry.translation.is_none() && !self.expression.search_untranslated {
+                continue;
+            }
+            let Some(result) = self.match_entry(entry) else {
+                continue;
+            };
+            let duplicate_kind = match &entry.origin {
+                SearchOrigin::Project { .. } => Some(0),
+                SearchOrigin::TranslationMemory { .. } => Some(1),
+                _ => None,
+            };
+            if !self.expression.all_results {
+                if let Some(kind) = duplicate_kind {
+                    let key = (
+                        kind,
+                        result.source.clone(),
+                        result.translation.clone().unwrap_or_default(),
+                    );
+                    if let Some(index) = deduplicated.get(&key).copied() {
+                        let prior = &mut self.results[index];
+                        let original = prior.preamble.clone().unwrap_or_default();
+                        let (base, count) = parse_more_preamble(&original);
+                        prior.preamble = Some(if base.is_empty() {
+                            format!("{}\u{00a0}matches", count + 2)
+                        } else {
+                            format!("{base} +{}\u{00a0}more", count + 1)
+                        });
+                        continue;
+                    }
+                    deduplicated.insert(key, self.results.len());
+                }
+            }
+            self.results.push(result);
+        }
+        self.completed = true;
+    }
+
+    fn match_entry(&self, entry: &ProjectSearchEntry) -> Option<SearchResult> {
+        if self.expression.search_author && !self.matches_author(entry) {
+            return None;
+        }
+        if self.expression.date_before.is_some_and(|limit| {
+            entry
+                .change_date
+                .is_none_or(|date| date == 0 || date >= limit)
+        }) {
+            return None;
+        }
+        if self.expression.date_after.is_some_and(|limit| {
+            entry
+                .change_date
+                .is_none_or(|date| date == 0 || date <= limit)
+        }) {
+            return None;
+        }
+
+        let mut source_matches = Vec::new();
+        let mut target_matches = Vec::new();
+        let mut note_matches = Vec::new();
+        let mut property_matches = Vec::new();
+        let mut property = None;
+
+        match self.expression.mode {
+            SearchMode::Search => {
+                if self.expression.search_source {
+                    source_matches = find_matches(
+                        Some(&entry.source),
+                        &self.expression,
+                        true,
+                        &self.target_locale,
+                    );
+                }
+                if self.expression.search_target {
+                    target_matches = find_matches(
+                        entry.translation.as_deref(),
+                        &self.expression,
+                        true,
+                        &self.target_locale,
+                    );
+                }
+                if self.expression.search_notes {
+                    note_matches = find_matches(
+                        entry.note.as_deref(),
+                        &self.expression,
+                        true,
+                        &self.target_locale,
+                    );
+                }
+                if self.expression.search_comments {
+                    for value in entry.property_values() {
+                        let matches =
+                            find_matches(Some(value), &self.expression, true, &self.target_locale);
+                        if !matches.is_empty() {
+                            property = Some(value.to_string());
+                            property_matches = matches;
+                            break;
+                        }
+                    }
+                }
+                // RFE#1185: a keyword can be split between source and target,
+                // with a private-use separator preventing cross-boundary
+                // substring accidents.
+                if source_matches.is_empty()
+                    && target_matches.is_empty()
+                    && self.expression.search_source
+                    && self.expression.search_target
+                {
+                    if let Some(target) = entry.translation.as_deref() {
+                        let joined = format!("{}\u{e000}{target}", entry.source);
+                        source_matches = find_matches(
+                            Some(&joined),
+                            &self.expression,
+                            true,
+                            &self.target_locale,
+                        );
+                    }
+                }
+            }
+            SearchMode::Replace => {
+                if entry.translation.is_some() && self.expression.search_translated {
+                    target_matches = find_matches(
+                        entry.translation.as_deref(),
+                        &self.expression,
+                        false,
+                        &self.target_locale,
+                    );
+                } else if entry.translation.is_none() && self.expression.search_untranslated {
+                    source_matches = find_matches(
+                        Some(&entry.source),
+                        &self.expression,
+                        false,
+                        &self.target_locale,
+                    );
+                }
+            }
+        }
+        if source_matches.is_empty()
+            && target_matches.is_empty()
+            && note_matches.is_empty()
+            && property_matches.is_empty()
+        {
+            return None;
+        }
+        let (entry_number, preamble) = origin_fields(&entry.origin, self.expression.file_names);
+        Some(SearchResult {
+            entry_number,
+            preamble,
+            source: entry.source.clone(),
+            translation: entry.translation.clone(),
+            note: entry.note.clone(),
+            property,
+            source_matches,
+            target_matches,
+            note_matches,
+            property_matches,
+        })
+    }
+
+    fn matches_author(&self, entry: &ProjectSearchEntry) -> bool {
+        let want = self.expression.author.as_deref().unwrap_or("");
+        if want.is_empty() {
+            return entry.creator.is_none() && entry.changer.is_none();
+        }
+        let mut author_expr = self.expression.clone();
+        author_expr.query = want.into();
+        author_expr.whole_words = false;
+        entry
+            .changer
+            .as_deref()
+            .into_iter()
+            .chain(entry.creator.as_deref())
+            .any(|author| {
+                !find_matches(Some(author), &author_expr, true, &self.target_locale).is_empty()
+            })
+    }
+}
+
+fn parse_more_preamble(preamble: &str) -> (&str, usize) {
+    let Some((base, rest)) = preamble.rsplit_once(" +") else {
+        return (preamble, 0);
+    };
+    let count = rest
+        .strip_suffix("\u{00a0}more")
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    (base, count)
+}
+
+fn origin_fields(origin: &SearchOrigin, include_file: bool) -> (i32, Option<String>) {
+    match origin {
+        SearchOrigin::Project { entry_number, file } => (
+            *entry_number as i32,
+            include_file.then(|| file.clone()).filter(|s| !s.is_empty()),
+        ),
+        SearchOrigin::TranslationMemory { preamble } => {
+            (-1, include_file.then(|| preamble.clone()))
+        }
+        SearchOrigin::Orphan { preamble } => (-2, Some(preamble.clone())),
+        SearchOrigin::Alternative { preamble } => (-3, Some(preamble.clone())),
+        SearchOrigin::Glossary { preamble } => (-4, Some(preamble.clone())),
+        SearchOrigin::Text { preamble } => (-5, include_file.then(|| preamble.clone())),
+    }
+}
+
+/*
+ * Legacy implementation notes kept close to the port:
+ * - Java compiles one matcher per keyword and requires every matcher to hit.
+ * - regular-expression whole-word mode is intentionally ignored.
+ * - source/target/property/note matches are retained separately for UI marks.
+ * - duplicate accounting applies only to project and external-TM origins.
+ */
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SearchHit {
     pub src_text: String,
 }
@@ -512,34 +1045,25 @@ pub fn check_entry(
     creator: Option<&str>,
     expr: &SearchExpression,
 ) -> Vec<SearchHit> {
-    if expr.search_author {
-        if let Some(want) = &expr.author {
-            if creator != Some(want.as_str()) {
-                return vec![];
-            }
-        }
-    }
-    let mut texts = vec![source.to_string()];
-    if let Some(t) = translation {
-        texts.push(t.to_string());
-    }
-    if let Some(n) = note {
-        texts.push(n.to_string());
-    }
-    if expr.search_comments {
-        if let Some(cs) = comments {
-            for c in cs {
-                texts.push((*c).to_string());
-            }
-        }
-    }
-    if texts.iter().any(|t| search_string(t, expr)) {
-        vec![SearchHit {
-            src_text: source.to_string(),
-        }]
-    } else {
-        vec![]
-    }
+    let mut entry = ProjectSearchEntry::project(1, "", source, translation);
+    entry.note = note.map(str::to_string);
+    entry.creator = creator.map(str::to_string);
+    entry.properties = comments
+        .unwrap_or_default()
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (format!("comment{index}"), (*value).to_string()))
+        .collect();
+    let mut searcher = Searcher::with_entries(expr.clone(), vec![entry]);
+    searcher.run();
+    searcher
+        .get_search_results()
+        .unwrap_or_default()
+        .iter()
+        .map(|result| SearchHit {
+            src_text: result.source.clone(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -653,10 +1177,7 @@ mod tests {
 
     #[test]
     fn untranslated_author_date_and_preview() {
-        let entries = vec![
-            entry("Hello", "Bonjour", ""),
-            entry("Goodbye", "", "todo"),
-        ];
+        let entries = vec![entry("Hello", "Bonjour", ""), entry("Goodbye", "", "todo")];
         let un = search(
             &entries,
             &SearchParams {
