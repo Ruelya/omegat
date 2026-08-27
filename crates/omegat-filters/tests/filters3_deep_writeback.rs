@@ -276,3 +276,109 @@ fn opendoc_attributes_and_out_of_turn_notes_write_by_unique_id() {
         .unwrap();
     assert_eq!(note_paragraph.text(), Some("Translated note"));
 }
+
+#[test]
+fn opendoc_nested_out_of_turn_and_attributes_share_one_stable_id_stream() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("nested-note-annotation.odt");
+    let output = temp.path().join("translated-nested-note-annotation.odt");
+    let content = r#"<office:document-content xmlns:office="urn:office" xmlns:text="urn:text" xmlns:xlink="urn:xlink"><office:body><office:text><text:p><text:note xlink:href="Note URL"><text:note-body><text:p>Outer <office:annotation xlink:href="Annotation URL"><text:p>Inner <text:a xlink:href="Inner URL">linked</text:a><text:alphabetical-index-mark text:string-value="Index" text:key1="First" text:key2="Second"/></text:p></office:annotation> tail</text:p></text:note-body></text:note></text:p></office:text></office:body></office:document-content>"#;
+    write_zip(&source, &[("content.xml", content)]);
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("opendoc").unwrap();
+    let mut context = FilterContext::default();
+    context
+        .options
+        .insert("translateLinks".into(), "true".into());
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Note URL"),
+            ("content.xml#1", "Annotation URL"),
+            ("content.xml#2", "Inner URL"),
+            ("content.xml#3", "Index"),
+            ("content.xml#4", "First"),
+            ("content.xml#5", "Second"),
+            ("content.xml#6", "Inner <a0>linked</a0><i1/>"),
+            ("content.xml#7", "Outer <o0/> tail"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("content.xml#7".into(), "Extérieur <o0/> fin".into()),
+        ("content.xml#3".into(), "Index traduit".into()),
+        ("content.xml#0".into(), "Note & \"URL\"".into()),
+        ("content.xml#6".into(), "Interne <a0>lié</a0><i1/>".into()),
+        ("content.xml#5".into(), "Clé deux".into()),
+        ("content.xml#2".into(), "URL interne".into()),
+        ("content.xml#1".into(), "URL annotation".into()),
+        ("content.xml#4".into(), "Clé un".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Note & \"URL\""),
+            ("content.xml#1", "URL annotation"),
+            ("content.xml#2", "URL interne"),
+            ("content.xml#3", "Index traduit"),
+            ("content.xml#4", "Clé un"),
+            ("content.xml#5", "Clé deux"),
+            ("content.xml#6", "Interne <a0>lié</a0><i1/>"),
+            ("content.xml#7", "Extérieur <o0/> fin"),
+        ]
+    );
+
+    let rewritten = read_part(&output, "content.xml");
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let note = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "note")
+        .unwrap();
+    let annotation = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "annotation")
+        .unwrap();
+    let link = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "a")
+        .unwrap();
+    let index = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "alphabetical-index-mark")
+        .unwrap();
+    assert_eq!(
+        note.attribute(("urn:xlink", "href")),
+        Some("Note & \"URL\"")
+    );
+    assert_eq!(
+        annotation.attribute(("urn:xlink", "href")),
+        Some("URL annotation")
+    );
+    assert_eq!(link.attribute(("urn:xlink", "href")), Some("URL interne"));
+    assert_eq!(
+        (
+            index.attribute(("urn:text", "string-value")),
+            index.attribute(("urn:text", "key1")),
+            index.attribute(("urn:text", "key2")),
+        ),
+        (Some("Index traduit"), Some("Clé un"), Some("Clé deux"))
+    );
+    assert_eq!(
+        element_names_and_text(&rewritten).1,
+        vec!["Extérieur", "Interne", "lié", "fin"]
+    );
+}

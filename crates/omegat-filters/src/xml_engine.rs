@@ -3,7 +3,9 @@
 //! not a tree walk or file-wide `find`.
 
 use crate::xml_dialect::XmlDialect;
-use crate::xml_entities::{prepare_xml, reconstruct_doctype_from_source, reject_self_nested_leaf_tags};
+use crate::xml_entities::{
+    prepare_xml, reconstruct_doctype_from_source, reject_self_nested_leaf_tags,
+};
 use crate::ProtectedPart;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
@@ -93,18 +95,30 @@ fn first_shortcut_char(tag: &str) -> String {
 
 #[derive(Clone, Debug)]
 pub enum Element {
-    Text { text: String, in_cdata: bool },
+    Text {
+        text: String,
+        in_cdata: bool,
+    },
     Tag(XmlTag),
     Intact {
         tag: XmlTag,
         inner: Vec<Element>,
         content_based: bool,
     },
-    OutOfTurn { tag: XmlTag, inner: Vec<Element> },
+    OutOfTurn {
+        tag: XmlTag,
+        inner: Vec<Element>,
+    },
     Comment(String),
-    Pi { target: String, data: String },
+    Pi {
+        target: String,
+        data: String,
+    },
     Doctype(String),
-    Entity { name: String, value: String },
+    Entity {
+        name: String,
+        value: String,
+    },
 }
 
 impl Element {
@@ -849,7 +863,9 @@ impl<'a> Handler<'a> {
     }
 
     fn is_space_preserving(&self) -> bool {
-        self.cfg.preserve_spaces || self.space_preserve || self.dialect.base().force_space_preserving
+        self.cfg.preserve_spaces
+            || self.space_preserve
+            || self.dialect.base().force_space_preserving
     }
 
     fn construct_path(&self) -> String {
@@ -938,7 +954,9 @@ impl<'a> Handler<'a> {
             return true;
         }
         if atts.is_none() && self.intact_name.as_deref() == Some(tag) {
-            return self.dialect.validate_content_based_tag(tag, &self.intact_attrs);
+            return self
+                .dialect
+                .validate_content_based_tag(tag, &self.intact_attrs);
         }
         atts.map(|a| self.dialect.validate_content_based_tag(tag, a))
             .unwrap_or(false)
@@ -976,7 +994,10 @@ impl<'a> Handler<'a> {
         if let Some(name) = s
             .strip_prefix('&')
             .and_then(|t| t.strip_suffix(';'))
-            .filter(|n| n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+            .filter(|n| {
+                n.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+            })
         {
             if self.entities.contains_key(name) {
                 self.queue_general_ref(name);
@@ -1018,10 +1039,7 @@ impl<'a> Handler<'a> {
                 return;
             }
         }
-        entry.add(Element::Text {
-            text: s,
-            in_cdata,
-        });
+        entry.add(Element::Text { text: s, in_cdata });
     }
 
     fn queue_comment(&mut self, comment: &str) {
@@ -1046,7 +1064,12 @@ impl<'a> Handler<'a> {
             let content_based = self.is_content_based(tag, Some(attrs));
             if content_based || self.is_intact(tag, Some(attrs)) {
                 let shortcut = self.get_shortcut(tag).map(|s| s.to_string());
-                let t = XmlTag::new(tag, shortcut.as_deref(), TagType::Alone, convert_attrs(attrs));
+                let t = XmlTag::new(
+                    tag,
+                    shortcut.as_deref(),
+                    TagType::Alone,
+                    convert_attrs(attrs),
+                );
                 self.intact_name = Some(tag.to_string());
                 self.intact_attrs = attrs.to_vec();
                 self.curr_entry().add(Element::Intact {
@@ -1061,7 +1084,12 @@ impl<'a> Handler<'a> {
         self.xml_tag_name.push_back(tag.to_string());
         self.xml_tag_attrs.push_back(convert_attrs(attrs));
         let shortcut = self.get_shortcut(tag).map(|s| s.to_string());
-        let mut t = XmlTag::new(tag, shortcut.as_deref(), TagType::Begin, convert_attrs(attrs));
+        let mut t = XmlTag::new(
+            tag,
+            shortcut.as_deref(),
+            TagType::Begin,
+            convert_attrs(attrs),
+        );
         if !self.collecting_intact() {
             self.process_translatable_attributes(&mut t, tag);
         }
@@ -1185,7 +1213,13 @@ impl<'a> Handler<'a> {
         if !self.hooks.is_in_ignored() {
             if self.is_out_of_turn(tag) {
                 let shortcut = self.get_shortcut(tag).map(|s| s.to_string());
-                let t = XmlTag::new(tag, shortcut.as_deref(), TagType::Alone, convert_attrs(attrs));
+                let mut t = XmlTag::new(
+                    tag,
+                    shortcut.as_deref(),
+                    TagType::Alone,
+                    convert_attrs(attrs),
+                );
+                self.process_translatable_attributes(&mut t, tag);
                 self.curr_entry().add(Element::OutOfTurn {
                     tag: t,
                     inner: Vec::new(),
@@ -1208,7 +1242,12 @@ impl<'a> Handler<'a> {
             self.xml_tag_name.push_back(tag.to_string());
             self.xml_tag_attrs.push_back(convert_attrs(attrs));
             let shortcut = self.get_shortcut(tag).map(|s| s.to_string());
-            let t = XmlTag::new(tag, shortcut.as_deref(), TagType::Begin, convert_attrs(attrs));
+            let t = XmlTag::new(
+                tag,
+                shortcut.as_deref(),
+                TagType::Begin,
+                convert_attrs(attrs),
+            );
             self.curr_entry().add(Element::Tag(t));
         }
         self.seen_root = true;
@@ -1224,7 +1263,8 @@ impl<'a> Handler<'a> {
                 let inner = self.intact.take().map(|e| e.elements).unwrap_or_default();
                 self.intact_name = None;
                 self.intact_attrs.clear();
-                if let Some(Element::Intact { inner: dest, .. }) = self.curr_entry().elements.last_mut()
+                if let Some(Element::Intact { inner: dest, .. }) =
+                    self.curr_entry().elements.last_mut()
                 {
                     *dest = inner;
                 }
