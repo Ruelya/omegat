@@ -4,9 +4,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
-  type CompositionEvent,
   type FocusEvent,
-  type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -232,6 +230,28 @@ export function SegmentEditor() {
     if (focus === "editor") surface.current?.focus();
   }, [focus]);
 
+  useEffect(() => {
+    const proxy = ime.current;
+    if (!proxy) return;
+    const onBeforeInput = (event: Event) =>
+      onNativeBeforeInput(event as InputEvent);
+    const onCompositionStart = () => beginComposition();
+    const onCompositionUpdate = (event: Event) =>
+      updateComposition((event as CompositionEvent).data);
+    const onCompositionEnd = (event: Event) =>
+      finishComposition((event as CompositionEvent).data);
+    proxy.addEventListener("beforeinput", onBeforeInput);
+    proxy.addEventListener("compositionstart", onCompositionStart);
+    proxy.addEventListener("compositionupdate", onCompositionUpdate);
+    proxy.addEventListener("compositionend", onCompositionEnd);
+    return () => {
+      proxy.removeEventListener("beforeinput", onBeforeInput);
+      proxy.removeEventListener("compositionstart", onCompositionStart);
+      proxy.removeEventListener("compositionupdate", onCompositionUpdate);
+      proxy.removeEventListener("compositionend", onCompositionEnd);
+    };
+  });
+
   useLayoutEffect(() => {
     const viewport = scrollViewport.current;
     const anchor = pendingScrollAnchor.current;
@@ -282,28 +302,27 @@ export function SegmentEditor() {
     prepareInteraction().beginComposition();
   }
 
-  function updateComposition(ev: CompositionEvent<HTMLDivElement>) {
+  function updateComposition(data: string) {
     const area = interaction.current;
-    if (!area.isComposing() || !area.updateComposition(ev.data)) return;
+    if (!area.isComposing() || !area.updateComposition(data)) return;
     const next = area.getOmDocument();
     applyDoc(next, area);
   }
 
-  function finishComposition(ev: CompositionEvent<HTMLDivElement>) {
+  function finishComposition(data: string) {
     const area = interaction.current;
     const hadNativeComposition = composing.current;
     if (area.isComposing()) {
-      area.commitComposition(ev.data);
+      area.commitComposition(data);
       const next = area.getOmDocument();
       applyDoc(next, area);
-    } else if (!hadNativeComposition && ev.data) {
-      insertAt(ev.data);
+    } else if (!hadNativeComposition && data) {
+      insertAt(data);
     }
     composing.current = false;
   }
 
-  function onNativeBeforeInput(ev: FormEvent<HTMLTextAreaElement>) {
-    const native = ev.nativeEvent as InputEvent;
+  function onNativeBeforeInput(native: InputEvent) {
     const isCompositionInput =
       native.inputType === "insertCompositionText"
       || native.inputType === "deleteCompositionText"
@@ -311,7 +330,7 @@ export function SegmentEditor() {
       || (native.inputType === "insertText" && composing.current);
     const area = isCompositionInput ? interaction.current : prepareInteraction();
     if (!area.handleBeforeInput(native.inputType, native.data)) return;
-    ev.preventDefault();
+    native.preventDefault();
     applyDoc(area.getOmDocument(), area);
   }
 
@@ -510,9 +529,6 @@ export function SegmentEditor() {
                 if (area.pasteText(text)) applyDoc(area.getOmDocument(), area);
               }
             }}
-            onCompositionStart={beginComposition}
-            onCompositionUpdate={updateComposition}
-            onCompositionEnd={finishComposition}
           >
             {renderRichText(beforeSelection, 0, marks, terms, "before")}
             {selected && selection.focus === selectionStart && <span className="caret" aria-hidden />}
@@ -530,7 +546,6 @@ export function SegmentEditor() {
               tabIndex={-1}
               value=""
               onChange={() => undefined}
-              onBeforeInput={onNativeBeforeInput}
               onInput={(ev) => {
                 ev.currentTarget.value = "";
               }}
