@@ -209,15 +209,17 @@ fn openxml_hidden_text_external_link_and_intact_fallback_write_independently() {
     let targets: Vec<_> = relationships
         .descendants()
         .filter(|node| node.tag_name().name() == "Relationship")
-        .map(|node| (node.attribute("Id").unwrap(), node.attribute("Target").unwrap()))
+        .map(|node| {
+            (
+                node.attribute("Id").unwrap(),
+                node.attribute("Target").unwrap(),
+            )
+        })
         .collect();
     assert_eq!(
         targets,
         vec![
-            (
-                "external",
-                "https://example.test/traduit?a=3&b=4",
-            ),
+            ("external", "https://example.test/traduit?a=3&b=4",),
             ("internal", "media/image.png"),
         ]
     );
@@ -513,10 +515,7 @@ fn xliff_nested_sub_writeback_preserves_depth_with_out_of_order_translations() {
 
     let translations = HashMap::from([
         ("unit#1".into(), "Avant <s0/> après".into()),
-        (
-            "unit#0".into(),
-            "Extérieur <b0>gras</b0> fin".into(),
-        ),
+        ("unit#0".into(), "Extérieur <b0>gras</b0> fin".into()),
     ]);
     filter
         .write(&source, &output, &translations, &context)
@@ -659,4 +658,188 @@ fn docbook_nested_indexterm_attributes_and_text_share_stable_ids() {
             "après",
         ]
     );
+}
+
+#[test]
+fn xhtml_option_matrix_skips_regex_meta_and_intact_content_during_writeback() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("options.xhtml");
+    let output = temp.path().join("translated.xhtml");
+    std::fs::write(
+        &source,
+        r#"<html><body><p>SKIP ME</p><meta name="robots" content="NOINDEX"/><input type="text" value="Plain value"/><input type="button" value="Click"/><p class="locked">Locked <span title="Hidden title">nested</span></p><p><a href="https://example.test/original" hreflang="en">Visible link</a><br/>After break</p></body></html>"#,
+    )
+    .unwrap();
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("xhtml").unwrap();
+    let mut context = FilterContext::default();
+    context.options.extend([
+        ("ignoreDoctype".into(), "true".into()),
+        ("skipRegExp".into(), "skip me".into()),
+        ("skipMeta".into(), "name=robots".into()),
+        ("ignoreTags".into(), "class=locked".into()),
+        ("translateValue".into(), "false".into()),
+        ("translateButtonValue".into(), "true".into()),
+        ("paragraphOnBr".into(), "true".into()),
+    ]);
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "Click"),
+            ("1", "https://example.test/original"),
+            ("2", "en"),
+            ("3", "Visible link"),
+            ("4", "After break"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("4".into(), "Après le saut".into()),
+        ("2".into(), "fr".into()),
+        ("0".into(), "Appuyer".into()),
+        ("3".into(), "Lien visible".into()),
+        ("1".into(), "https://example.test/traduit".into()),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0", "Appuyer"),
+            ("1", "https://example.test/traduit"),
+            ("2", "fr"),
+            ("3", "Lien visible"),
+            ("4", "Après le saut"),
+        ]
+    );
+
+    let rewritten = std::fs::read_to_string(&output).unwrap();
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let inputs: Vec<_> = document
+        .descendants()
+        .filter(|node| node.tag_name().name() == "input")
+        .collect();
+    assert_eq!(inputs[0].attribute("value"), Some("Plain value"));
+    assert_eq!(inputs[1].attribute("value"), Some("Appuyer"));
+    let meta = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "meta")
+        .unwrap();
+    assert_eq!(meta.attribute("content"), Some("NOINDEX"));
+    let locked = document
+        .descendants()
+        .find(|node| node.attribute("class") == Some("locked"))
+        .unwrap();
+    assert_eq!(locked.text(), Some("Locked "));
+    let locked_span = locked
+        .descendants()
+        .find(|node| node.tag_name().name() == "span")
+        .unwrap();
+    assert_eq!(locked_span.attribute("title"), Some("Hidden title"));
+    assert_eq!(locked_span.text(), Some("nested"));
+    assert!(rewritten.contains(">SKIP ME<"));
+}
+
+#[test]
+fn opendoc_disabled_regions_and_enabled_attributes_write_independently() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("option-matrix.ods");
+    let output = temp.path().join("translated-option-matrix.ods");
+    let content = r#"<office:document-content xmlns:office="urn:office" xmlns:text="urn:text" xmlns:table="urn:table" xmlns:xlink="urn:xlink" xmlns:presentation="urn:presentation"><office:body><office:text><table:table table:name="Original sheet"><text:p><text:bookmark-start text:name="Original bookmark"/></text:p><text:p><text:bookmark-ref text:ref-name="Original bookmark">Reference text</text:bookmark-ref></text:p><text:p><text:a xlink:href="https://example.test/original">Link text</text:a></text:p><text:p><text:note><text:note-body><text:p>Note text</text:p></text:note-body></text:note></text:p><text:p><office:annotation><text:p>Comment text</text:p></office:annotation></text:p><text:p><presentation:notes><text:p>Slide note</text:p></presentation:notes></text:p></table:table></office:text></office:body></office:document-content>"#;
+    write_zip(&source, &[("content.xml", content)]);
+
+    let registry = FilterRegistry::new();
+    let filter = registry.by_id("opendoc").unwrap();
+    let mut context = FilterContext::default();
+    context.options.extend([
+        ("translateBookmarks".into(), "true".into()),
+        ("translateBookmarkRefs".into(), "false".into()),
+        ("translateNotes".into(), "false".into()),
+        ("translateComments".into(), "false".into()),
+        ("translatePresNotes".into(), "false".into()),
+        ("translateLinks".into(), "true".into()),
+        ("translateSheetNames".into(), "true".into()),
+    ]);
+    let parsed = filter.parse(&source, &context).unwrap();
+    assert_eq!(
+        parsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Original sheet"),
+            ("content.xml#1", "Original bookmark"),
+            ("content.xml#2", "https://example.test/original"),
+            ("content.xml#3", "Link text"),
+        ]
+    );
+
+    let translations = HashMap::from([
+        ("content.xml#3".into(), "Texte du lien".into()),
+        ("content.xml#1".into(), "Signet traduit".into()),
+        ("content.xml#0".into(), "Feuille traduite".into()),
+        (
+            "content.xml#2".into(),
+            "https://example.test/traduit".into(),
+        ),
+    ]);
+    filter
+        .write(&source, &output, &translations, &context)
+        .unwrap();
+    let reparsed = filter.parse(&output, &context).unwrap();
+    assert_eq!(
+        reparsed
+            .segments
+            .iter()
+            .map(|segment| (segment.id.as_str(), segment.source.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("content.xml#0", "Feuille traduite"),
+            ("content.xml#1", "Signet traduit"),
+            ("content.xml#2", "https://example.test/traduit"),
+            ("content.xml#3", "Texte du lien"),
+        ]
+    );
+
+    let rewritten = read_part(&output, "content.xml");
+    let document = roxmltree::Document::parse(&rewritten).unwrap();
+    let table = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "table")
+        .unwrap();
+    assert_eq!(
+        table.attribute(("urn:table", "name")),
+        Some("Feuille traduite")
+    );
+    let bookmark_ref = document
+        .descendants()
+        .find(|node| node.tag_name().name() == "bookmark-ref")
+        .unwrap();
+    assert_eq!(
+        bookmark_ref.attribute(("urn:text", "ref-name")),
+        Some("Original bookmark")
+    );
+    assert_eq!(bookmark_ref.text(), Some("Reference text"));
+    for untouched in ["Note text", "Comment text", "Slide note"] {
+        assert!(
+            document
+                .descendants()
+                .filter_map(|node| node.text())
+                .any(|text| text == untouched),
+            "{untouched} must remain intact"
+        );
+    }
 }
