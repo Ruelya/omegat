@@ -1192,6 +1192,21 @@ try {
       "externalRefresh|cancelling|project.external-refresh.sources|externalRefresh: cancelling (project.external-refresh.sources)",
     ),
   );
+  const externalCancelRequests = [
+    ...new Set(
+      externalCancelPost.rpcTrace
+        .filter((event) => event.method === "project.external-refresh")
+        .map((event) => event.requestId),
+    ),
+  ];
+  assert.equal(
+    externalCancelRequests.length,
+    1,
+    JSON.stringify({
+      externalCancelRequests,
+      externalTrace: externalCancelPost.externalTrace,
+    }),
+  );
   assert.equal(externalCancelPost.entryCount, SOURCE_FILES);
   assert.deepEqual(await editorState(client), duplicateBeforeRefresh);
   assert.deepEqual(externalCancelPost.wanted.key, duplicateSetup.wanted.key);
