@@ -360,23 +360,48 @@ async function editorState(client) {
 
 async function clickEnabledConflictAction(client, key, action, label) {
   const serializedKey = JSON.stringify(key);
-  return waitFor(label, async () => {
-    const clicked = await client.evaluate(`(() => {
-      const row = [...document.querySelectorAll("[data-team-conflict-key]")]
-        .find((candidate) =>
-          candidate.getAttribute("data-team-conflict-key")
-            === ${JSON.stringify(serializedKey)}
+  await client.evaluate(`(() => {
+    window.__omegatStopConflictActionStart?.();
+    window.__omegatConflictActionStart = null;
+    window.__omegatStopConflictActionStart = window.omegat.onRpcOperation((event) => {
+      if (
+        event.method === "team.resolve"
+        && event.phase === "started"
+        && !window.__omegatConflictActionStart
+      ) {
+        window.__omegatConflictActionStart = event;
+      }
+    });
+  })()`);
+  try {
+    return await waitFor(label, async () => {
+      const state = await client.evaluate(`(() => {
+        if (window.__omegatConflictActionStart) {
+          return { started: window.__omegatConflictActionStart, clicked: false };
+        }
+        const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+          .find((candidate) =>
+            candidate.getAttribute("data-team-conflict-key")
+              === ${JSON.stringify(serializedKey)}
+          );
+        const action = ${JSON.stringify(action)};
+        const button = row?.querySelector(
+          '[data-operation-action="' + action + '"]'
         );
-      const action = ${JSON.stringify(action)};
-      const button = row?.querySelector(
-        '[data-operation-action="' + action + '"]'
-      );
-      if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
-      button.click();
-      return true;
+        if (!(button instanceof HTMLButtonElement) || button.disabled) {
+          return { started: null, clicked: false };
+        }
+        button.click();
+        return { started: window.__omegatConflictActionStart, clicked: true };
+      })()`);
+      return state.started ?? undefined;
+    });
+  } finally {
+    await client.evaluate(`(() => {
+      window.__omegatStopConflictActionStart?.();
+      window.__omegatStopConflictActionStart = null;
     })()`);
-    return clicked ? true : undefined;
-  });
+  }
 }
 
 async function terminate(child) {
