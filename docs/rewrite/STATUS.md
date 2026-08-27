@@ -248,9 +248,11 @@ deterministic product-path tests. Active state, phase history, rollback
 versions, publication checkpoints, and project/file-remote snapshots persist
 under `.repositories/transactions`; the next product operation recovers an
 interrupted transaction before writing. A child test process terminates after
-its first real Git publication, then its parent verifies restart recovery and
-compensating history. Two pre-observed clients also race actual libgit2 pushes,
-producing exactly one remote acceptance and one non-fast-forward rejection.
+its first real Git publication but before its publication checkpoint; the
+parent infers the remote tip, then verifies restart recovery and compensating
+history. Two pre-observed clients create competing commits before either
+publication; the actual libgit2 pushes produce one remote acceptance followed
+by one non-fast-forward rejection.
 The suite is **28 passed / 1 ignored** (the preserved SVN binary prerequisite).
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
