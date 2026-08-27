@@ -1577,7 +1577,10 @@ export function connectRpcOperationEvents(): () => void {
 
 export function connectExternalProjectEvents(): () => void {
   let observedProject = "";
-  const observedFingerprints = new Map<string, string | null>();
+  const observedFingerprints = new Map<
+    string,
+    { fingerprint: string | null; sources: Set<"native" | "sidecar"> }
+  >();
   return window.omegat?.onProjectExternalChange?.(({
     root,
     paths,
@@ -1595,13 +1598,27 @@ export function connectExternalProjectEvents(): () => void {
       observedProject = project;
       observedFingerprints.clear();
     }
-    const changed = paths.some((path) => {
+    const sourceEcho = paths.some((path) => {
       const fingerprint = fingerprints[path] ?? null;
-      return !observedFingerprints.has(path)
-        || observedFingerprints.get(path) !== fingerprint;
+      const observed = observedFingerprints.get(path);
+      return observed?.fingerprint === fingerprint
+        && sources.some((source) => !observed.sources.has(source));
+    });
+    const changed = !sourceEcho && paths.some((path) => {
+      const fingerprint = fingerprints[path] ?? null;
+      return observedFingerprints.get(path)?.fingerprint !== fingerprint;
     });
     paths.forEach((path) => {
-      observedFingerprints.set(path, fingerprints[path] ?? null);
+      const fingerprint = fingerprints[path] ?? null;
+      const observed = observedFingerprints.get(path);
+      if (observed?.fingerprint === fingerprint) {
+        sources.forEach((source) => observed.sources.add(source));
+      } else {
+        observedFingerprints.set(path, {
+          fingerprint,
+          sources: new Set(sources),
+        });
+      }
     });
     if (!changed) {
       state.logLine(

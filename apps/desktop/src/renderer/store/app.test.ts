@@ -1340,10 +1340,14 @@ describe("app store", () => {
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     expect(refresh).toHaveBeenCalledWith(undefined, true);
 
+    const sourceDirectory = `${root}/source`;
     notify?.({
       root,
-      paths: [currentPath],
-      fingerprints: { [currentPath]: "revision-1" },
+      paths: [sourceDirectory, currentPath],
+      fingerprints: {
+        [sourceDirectory]: "directory-revision-1",
+        [currentPath]: "revision-1",
+      },
       generation,
       sources: ["sidecar"],
     });
