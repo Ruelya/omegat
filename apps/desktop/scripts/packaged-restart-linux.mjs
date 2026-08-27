@@ -286,7 +286,7 @@ try {
   assert.equal(
     await evaluate(
       firstTarget.webSocketDebuggerUrl,
-      'window.omegat.relaunch(); "relaunch-requested"',
+      'setTimeout(() => window.omegat.relaunch(), 0); "relaunch-requested"',
     ),
     "relaunch-requested",
   );
@@ -335,7 +335,7 @@ try {
   );
   await evaluate(
     secondTarget.webSocketDebuggerUrl,
-    'window.omegat.quit(); "quit-requested"',
+    'setTimeout(() => window.omegat.quit(), 0); "quit-requested"',
   );
   await waitFor("restarted Electron process to quit", () =>
     processExited(restartedPid),
