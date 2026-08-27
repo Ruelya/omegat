@@ -115,6 +115,24 @@ impl App {
             "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
             "sys.capabilities" => Ok(serde_json::to_value(capabilities()).unwrap()),
             "sys.plugins" => Ok(serde_json::to_value(self.plugins.list(None)).unwrap()),
+            "markers.list" => Ok(serde_json::to_value(self.plugins.registered_markers()).unwrap()),
+            "markers.query" => {
+                let id = params
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .ok_or((error_code::INVALID_PARAMS, "marker id".into()))?;
+                let marks =
+                    self.plugins
+                        .marker_marks(id, &params)
+                        .map_err(|error| match error {
+                            omegat_plugin::PluginError::NotFound(_) => {
+                                (error_code::INVALID_PARAMS, error.to_string())
+                            }
+                            _ => (error_code::INTERNAL_ERROR, error.to_string()),
+                        })?;
+                Ok(json!({ "marks": marks }))
+            }
             "prefs.get" => Ok(serde_json::to_value(&self.prefs).unwrap()),
             "prefs.set" => {
                 if let Ok(mut p) = serde_json::from_value::<Preferences>(params) {

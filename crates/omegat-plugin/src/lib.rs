@@ -1,10 +1,11 @@
 //! Plugin registry: `omegat-plugin.toml` + cdylib ABI.
 //!
 //! Host calls `omegat_plugin_register` so a plugin can register Filter / MT /
-//! Tokenizer implementations. `omegat_plugin_abi` remains for discovery.
+//! Tokenizer / Marker implementations. `omegat_plugin_abi` remains for discovery.
 
 use omegat_filters::{
-    ExtractedSegment, Filter, FilterContext, FilterError, FilterRegistry, ParsedFile, Result as FilterResult,
+    ExtractedSegment, Filter, FilterContext, FilterError, FilterRegistry, ParsedFile,
+    Result as FilterResult,
 };
 use omegat_ipc::PluginManifest;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,10 @@ pub enum PluginError {
     NotFound(String),
     #[error("invalid manifest: {0}")]
     Manifest(String),
+    #[error("duplicate plugin marker: {0}")]
+    DuplicateMarker(String),
+    #[error("plugin marker {plugin} failed: {message}")]
+    MarkerExecution { plugin: String, message: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,6 +71,7 @@ pub struct PluginToml {
 
 type ParseFn = extern "C" fn(*const c_char, *mut c_char, c_int) -> c_int;
 type WriteFn = extern "C" fn(*const c_char, *const c_char, *const c_char) -> c_int;
+type MarkFn = extern "C" fn(*const c_char, *mut c_char, c_int) -> c_int;
 
 #[repr(C)]
 struct OmegatPluginHost {
@@ -81,13 +87,19 @@ struct OmegatPluginHost {
         ),
     >,
     register_mt: Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
-    register_tokenizer: Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+    register_tokenizer:
+        Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+    // ABI fields are append-only. Older plugins see the unchanged prefix.
+    register_marker: Option<
+        extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char, mark: MarkFn),
+    >,
 }
 
 struct Registration {
     filters: Vec<DynamicFilter>,
     mt: Vec<(String, String)>,
     tokenizers: Vec<(String, String)>,
+    markers: Vec<DynamicMarker>,
 }
 
 fn cstr<'a>(p: *const c_char) -> &'a str {
@@ -149,6 +161,124 @@ extern "C" fn host_register_tokenizer(ctx: *mut c_void, id: *const c_char, name:
         .push((cstr(id).to_string(), cstr(name).to_string()));
 }
 
+extern "C" fn host_register_marker(
+    ctx: *mut c_void,
+    id: *const c_char,
+    name: *const c_char,
+    mark: MarkFn,
+) {
+    if ctx.is_null() {
+        return;
+    }
+    let reg = unsafe { &mut *(ctx as *mut Registration) };
+    reg.markers.push(DynamicMarker {
+        plugin_id: String::new(),
+        id: cstr(id).to_string(),
+        name: cstr(name).to_string(),
+        mark_fn: mark,
+    });
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginMarkerInfo {
+    pub plugin_id: String,
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PluginEntryPart {
+    Source,
+    Translation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PluginMark {
+    pub start_offset: usize,
+    pub end_offset: usize,
+    pub painter: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub painter_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tooltip_text: Option<String>,
+    pub entry_part: PluginEntryPart,
+}
+
+#[derive(Debug, Deserialize)]
+struct PluginMarks {
+    marks: Vec<PluginMark>,
+}
+
+struct DynamicMarker {
+    plugin_id: String,
+    id: String,
+    name: String,
+    mark_fn: MarkFn,
+}
+
+impl DynamicMarker {
+    fn info(&self) -> PluginMarkerInfo {
+        PluginMarkerInfo {
+            plugin_id: self.plugin_id.clone(),
+            id: self.id.clone(),
+            name: self.name.clone(),
+        }
+    }
+
+    fn marks(&self, input: &serde_json::Value) -> Result<Vec<PluginMark>, PluginError> {
+        let source_len = input_text_utf16_len(input, "source_text");
+        let translation_len = input_text_utf16_len(input, "translation_text");
+        let json = serde_json::to_string(input).map_err(|e| self.error(e.to_string()))?;
+        let input = CString::new(json).map_err(|e| self.error(e.to_string()))?;
+        let mut buf = vec![0u8; 1 << 20];
+        let n = (self.mark_fn)(
+            input.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len() as c_int,
+        );
+        if n < 0 || n as usize > buf.len() {
+            return Err(self.error(format!("callback returned invalid length {n}")));
+        }
+        let raw = std::str::from_utf8(&buf[..n as usize])
+            .map_err(|e| self.error(format!("output is not UTF-8: {e}")))?;
+        let output: PluginMarks = serde_json::from_str(raw)
+            .map_err(|e| self.error(format!("invalid marks JSON: {e}")))?;
+        for mark in &output.marks {
+            let limit = match mark.entry_part {
+                PluginEntryPart::Source => source_len,
+                PluginEntryPart::Translation => translation_len,
+            };
+            if mark.painter.trim().is_empty() {
+                return Err(self.error("mark painter is empty"));
+            }
+            if mark.start_offset >= mark.end_offset || mark.end_offset > limit {
+                return Err(self.error(format!(
+                    "invalid {:?} UTF-16 span {}..{} for length {limit}",
+                    mark.entry_part, mark.start_offset, mark.end_offset
+                )));
+            }
+        }
+        Ok(output.marks)
+    }
+
+    fn error(&self, message: impl Into<String>) -> PluginError {
+        PluginError::MarkerExecution {
+            plugin: self.id.clone(),
+            message: message.into(),
+        }
+    }
+}
+
+fn input_text_utf16_len(input: &serde_json::Value, key: &str) -> usize {
+    input
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .encode_utf16()
+        .count()
+}
+
 /// Filter whose parse/write live in a loaded cdylib.
 #[derive(Clone)]
 pub struct DynamicFilter {
@@ -170,12 +300,17 @@ impl Filter for DynamicFilter {
         self.masks
     }
     fn parse(&self, path: &Path, _ctx: &FilterContext) -> FilterResult<ParsedFile> {
-        let c_path = CString::new(path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
-            format: self.id.to_string(),
-            message: e.to_string(),
-        })?;
+        let c_path =
+            CString::new(path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
+                format: self.id.to_string(),
+                message: e.to_string(),
+            })?;
         let mut buf = vec![0u8; 1 << 20];
-        let n = (self.parse_fn)(c_path.as_ptr(), buf.as_mut_ptr() as *mut c_char, buf.len() as c_int);
+        let n = (self.parse_fn)(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len() as c_int,
+        );
         if n < 0 {
             return Err(FilterError::Parse {
                 format: self.id.to_string(),
@@ -205,7 +340,10 @@ impl Filter for DynamicFilter {
                         .unwrap_or("")
                         .to_string(),
                     existing_translation: None,
-                    note: item.get("note").and_then(|x| x.as_str()).map(|s| s.to_string()),
+                    note: item
+                        .get("note")
+                        .and_then(|x| x.as_str())
+                        .map(|s| s.to_string()),
                     comment: None,
                     path: None,
                     protected_parts: vec![],
@@ -224,13 +362,17 @@ impl Filter for DynamicFilter {
         translations: &HashMap<String, String>,
         _ctx: &FilterContext,
     ) -> FilterResult<()> {
-        let src = CString::new(source_path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
-            format: self.id.to_string(),
-            message: e.to_string(),
+        let src = CString::new(source_path.to_string_lossy().as_bytes()).map_err(|e| {
+            FilterError::Parse {
+                format: self.id.to_string(),
+                message: e.to_string(),
+            }
         })?;
-        let dest = CString::new(dest_path.to_string_lossy().as_bytes()).map_err(|e| FilterError::Parse {
-            format: self.id.to_string(),
-            message: e.to_string(),
+        let dest = CString::new(dest_path.to_string_lossy().as_bytes()).map_err(|e| {
+            FilterError::Parse {
+                format: self.id.to_string(),
+                message: e.to_string(),
+            }
         })?;
         let json = serde_json::to_string(translations).unwrap_or_else(|_| "{}".into());
         let c_json = CString::new(json).map_err(|e| FilterError::Parse {
@@ -253,6 +395,7 @@ pub struct PluginRegistry {
     dyn_filters: Vec<DynamicFilter>,
     mt: Vec<(String, String)>,
     tokenizers: Vec<(String, String)>,
+    markers: Vec<DynamicMarker>,
     _libs: Vec<libloading::Library>,
 }
 
@@ -269,6 +412,7 @@ impl PluginRegistry {
             dyn_filters: Vec::new(),
             mt: Vec::new(),
             tokenizers: Vec::new(),
+            markers: Vec::new(),
             _libs: Vec::new(),
         };
         reg.register_builtin();
@@ -301,6 +445,22 @@ impl PluginRegistry {
 
     pub fn registered_tokenizers(&self) -> &[(String, String)] {
         &self.tokenizers
+    }
+
+    pub fn registered_markers(&self) -> Vec<PluginMarkerInfo> {
+        self.markers.iter().map(DynamicMarker::info).collect()
+    }
+
+    pub fn marker_marks(
+        &self,
+        id: &str,
+        input: &serde_json::Value,
+    ) -> Result<Vec<PluginMark>, PluginError> {
+        self.markers
+            .iter()
+            .find(|marker| marker.id == id)
+            .ok_or_else(|| PluginError::NotFound(id.to_string()))?
+            .marks(input)
     }
 
     pub fn filter_registry(&self) -> FilterRegistry {
@@ -336,7 +496,8 @@ impl PluginRegistry {
             if !manifest_path.exists() {
                 continue;
             }
-            let raw = std::fs::read_to_string(&manifest_path).map_err(|e| PluginError::Manifest(e.to_string()))?;
+            let raw = std::fs::read_to_string(&manifest_path)
+                .map_err(|e| PluginError::Manifest(e.to_string()))?;
             let m = Self::parse_toml(&raw)?;
             if m.entry != "builtin" && !m.entry.is_empty() {
                 let lib = manifest_path.parent().unwrap_or(dir).join(&m.entry);
@@ -356,19 +517,44 @@ impl PluginRegistry {
                         filters: Vec::new(),
                         mt: Vec::new(),
                         tokenizers: Vec::new(),
+                        markers: Vec::new(),
                     };
-                    if let Ok(sym) = unsafe { dynlib.get::<RegisterFn>(b"omegat_plugin_register\0") } {
+                    if let Ok(sym) =
+                        unsafe { dynlib.get::<RegisterFn>(b"omegat_plugin_register\0") }
+                    {
                         let host = OmegatPluginHost {
                             ctx: &mut pending as *mut Registration as *mut c_void,
                             register_filter: Some(host_register_filter),
                             register_mt: Some(host_register_mt),
                             register_tokenizer: Some(host_register_tokenizer),
+                            register_marker: Some(host_register_marker),
                         };
                         unsafe { sym(&host) };
+                    }
+                    for marker in &pending.markers {
+                        if marker.id.trim().is_empty() || marker.name.trim().is_empty() {
+                            return Err(PluginError::Manifest(
+                                "plugin marker id and name are required".into(),
+                            ));
+                        }
+                        if self.markers.iter().any(|loaded| loaded.id == marker.id)
+                            || pending
+                                .markers
+                                .iter()
+                                .filter(|candidate| candidate.id == marker.id)
+                                .count()
+                                > 1
+                        {
+                            return Err(PluginError::DuplicateMarker(marker.id.clone()));
+                        }
+                    }
+                    for marker in &mut pending.markers {
+                        marker.plugin_id.clone_from(&m.id);
                     }
                     self.dyn_filters.extend(pending.filters);
                     self.mt.extend(pending.mt);
                     self.tokenizers.extend(pending.tokenizers);
+                    self.markers.extend(pending.markers);
                     self._libs.push(dynlib);
                     loaded.push(m.id.clone());
                 }
@@ -426,7 +612,11 @@ impl PluginRegistry {
     fn register_builtin(&mut self) {
         let builtins = [
             ("core-filters", "Built-in file filters", "filter"),
-            ("core-tokenizer", "Unicode / language tokenizers", "tokenizer"),
+            (
+                "core-tokenizer",
+                "Unicode / language tokenizers",
+                "tokenizer",
+            ),
             ("core-mt", "Machine translation connectors", "mt"),
             ("core-spell", "Spell checker backends", "spell"),
             ("core-dictionary", "StarDict / Lingvo DSL", "dictionary"),
@@ -545,13 +735,17 @@ entry = "builtin"
         let mut reg = PluginRegistry::new();
         let loaded = reg.load_dir(dir.path()).unwrap();
         assert!(loaded.contains(&"example".to_string()));
-        assert!(reg.list(Some(PluginType::Filter)).iter().any(|p| p.id == "example"));
+        assert!(reg
+            .list(Some(PluginType::Filter))
+            .iter()
+            .any(|p| p.id == "example"));
         let filters = reg.extra_filters();
         let filter = filters
             .iter()
             .find(|f| f.id() == "example")
             .expect("registered example filter");
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plugin/sample.example");
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plugin/sample.example");
         let parsed = filter.parse(&fixture, &FilterContext::default()).unwrap();
         assert_eq!(parsed.segments.len(), 2);
         assert_eq!(parsed.segments[0].source, "Hello from plugin");
@@ -560,12 +754,61 @@ entry = "builtin"
         let mut tr = HashMap::new();
         tr.insert("0".into(), "Bonjour depuis le greffon".into());
         tr.insert("1".into(), "Deuxieme ligne".into());
-        filter.write(&fixture, &out, &tr, &FilterContext::default()).unwrap();
+        filter
+            .write(&fixture, &out, &tr, &FilterContext::default())
+            .unwrap();
         let written = std::fs::read_to_string(&out).unwrap();
         assert!(written.contains("Bonjour depuis le greffon"));
         assert!(written.contains("Deuxieme ligne"));
         let list = reg.filter_registry();
         assert!(list.by_id("example").is_some());
         assert!(list.for_path(&fixture).map(|f| f.id()) == Some("example"));
+        assert_eq!(
+            reg.registered_markers(),
+            vec![PluginMarkerInfo {
+                plugin_id: "example".into(),
+                id: "example.native-marker".into(),
+                name: "org.omegat.example.NativePluginMarker".into(),
+            }]
+        );
+        let marks = reg
+            .marker_marks(
+                "example.native-marker",
+                &serde_json::json!({
+                    "entry_key": {
+                        "file": "source/sample.example",
+                        "source_text": "Hello from plugin",
+                        "id": "0",
+                        "prev": "",
+                        "next": "Second line",
+                        "path": null
+                    },
+                    "source_text": "Hello from plugin",
+                    "translation_text": "😀 plugin and plugin",
+                    "is_active": true
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            marks,
+            vec![
+                PluginMark {
+                    start_offset: 3,
+                    end_offset: 9,
+                    painter: "native-plugin".into(),
+                    painter_color: Some("#7c3aed".into()),
+                    tooltip_text: Some("Example marker in source/sample.example".into()),
+                    entry_part: PluginEntryPart::Translation,
+                },
+                PluginMark {
+                    start_offset: 14,
+                    end_offset: 20,
+                    painter: "native-plugin".into(),
+                    painter_color: Some("#7c3aed".into()),
+                    tooltip_text: Some("Example marker in source/sample.example".into()),
+                    entry_part: PluginEntryPart::Translation,
+                },
+            ]
+        );
     }
 }

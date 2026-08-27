@@ -1,4 +1,4 @@
-//! Example cdylib must appear in `filters.list` and parse a committed fixture.
+//! Example cdylib must execute through both Filter and Marker sidecar paths.
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
@@ -25,7 +25,13 @@ fn example_lib() -> PathBuf {
     p
 }
 
-fn rpc(child_in: &mut impl Write, child_out: &mut impl BufRead, id: i64, method: &str, params: Value) -> Value {
+fn rpc(
+    child_in: &mut impl Write,
+    child_out: &mut impl BufRead,
+    id: i64,
+    method: &str,
+    params: Value,
+) -> Value {
     let req = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
     writeln!(child_in, "{req}").unwrap();
     child_in.flush().unwrap();
@@ -67,9 +73,13 @@ fn filters_list_includes_example_and_parses_fixture() {
         .iter()
         .filter_map(|v| v.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
         .collect();
-    assert!(ids.contains(&"example".to_string()), "filters.list missing example: {ids:?}");
+    assert!(
+        ids.contains(&"example".to_string()),
+        "filters.list missing example: {ids:?}"
+    );
 
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plugin/sample.example");
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/plugin/sample.example");
     let parsed = rpc(
         &mut stdin,
         &mut stdout,
@@ -78,8 +88,64 @@ fn filters_list_includes_example_and_parses_fixture() {
         json!({"path": fixture.to_string_lossy(), "id": "example"}),
     );
     assert_eq!(parsed["result"]["id"], "example");
-    assert_eq!(parsed["result"]["segments"][0]["source"], "Hello from plugin");
+    assert_eq!(
+        parsed["result"]["segments"][0]["source"],
+        "Hello from plugin"
+    );
     assert_eq!(parsed["result"]["segments"][1]["source"], "Second line");
+
+    let markers = rpc(&mut stdin, &mut stdout, 3, "markers.list", json!({}));
+    assert_eq!(
+        markers["result"],
+        json!([{
+            "plugin_id": "example",
+            "id": "example.native-marker",
+            "name": "org.omegat.example.NativePluginMarker"
+        }])
+    );
+    let marked = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "markers.query",
+        json!({
+            "id": "example.native-marker",
+            "entry_key": {
+                "file": "source/sample.example",
+                "source_text": "Hello from plugin",
+                "id": "0",
+                "prev": "",
+                "next": "Second line",
+                "path": null
+            },
+            "source_text": "Hello from plugin",
+            "translation_text": "😀 plugin and plugin",
+            "is_active": true
+        }),
+    );
+    assert_eq!(
+        marked["result"],
+        json!({
+            "marks": [
+                {
+                    "start_offset": 3,
+                    "end_offset": 9,
+                    "painter": "native-plugin",
+                    "painter_color": "#7c3aed",
+                    "tooltip_text": "Example marker in source/sample.example",
+                    "entry_part": "TRANSLATION"
+                },
+                {
+                    "start_offset": 14,
+                    "end_offset": 20,
+                    "painter": "native-plugin",
+                    "painter_color": "#7c3aed",
+                    "tooltip_text": "Example marker in source/sample.example",
+                    "entry_part": "TRANSLATION"
+                }
+            ]
+        })
+    );
 
     let _ = child.kill();
 }

@@ -326,6 +326,38 @@ describe("Document3 / IEditor / completer classes", () => {
     expect(controller.getCurrentTranslation()).toBe("alpha X😀 beta");
   });
 
+  it("EditorController replaces a UTF-16 translation range through EditorTextArea3", () => {
+    const controller = new EditorController();
+    controller.loadProject([{
+      file: "editor.txt",
+      source: "source",
+      translation: "A😀B<x0/>C",
+    }]);
+
+    expect(controller.replacePartOfText("界", 1, 3)).toBe(true);
+    expect({
+      translation: controller.getCurrentTranslation(),
+      entryTranslation: controller.entries[0]?.translation,
+      caret: controller.getCurrentPositionInEntryTranslationInEditor(),
+      dirty: controller.getOmDocument()?.dirty,
+    }).toEqual({
+      translation: "A界B<x0/>C",
+      entryTranslation: "A界B<x0/>C",
+      caret: { position: 2 },
+      dirty: true,
+    });
+    expect(() => controller.replacePartOfText("bad", -1, 2)).toThrow(
+      "translation range -1..2 outside 0..9",
+    );
+    expect(controller.getCurrentTranslation()).toBe("A界B<x0/>C");
+
+    expect(controller.undoEdit()).toBe("A😀B<x0/>C");
+    expect(controller.getCurrentPositionInEntryTranslationInEditor()).toEqual({
+      selectionStart: 1,
+      selectionEnd: 3,
+    });
+  });
+
   it("EditorController synchronizes document, navigation, filter, history and undo", () => {
     const controller = new EditorController();
     controller.loadProject([

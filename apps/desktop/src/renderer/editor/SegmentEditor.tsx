@@ -28,8 +28,10 @@ import { bindMarkerRemark } from "./IEditor";
 import { editorPopups } from "./EditorPopups";
 import { EditorTextArea3 } from "./EditorTextArea3";
 import type { EntryPart, Mark } from "./mark/Mark";
+import { NativePluginMarkerBridge } from "./mark/NativePluginMarker";
 
 const editorController = new EditorController();
+const nativePluginMarkers = new NativePluginMarkerBridge(editorController);
 
 type NativeCaretHit = {
   node: Node;
@@ -243,6 +245,23 @@ export function SegmentEditor() {
     return () => {
       current = false;
       unbind();
+    };
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    const connection = nativePluginMarkers.connect();
+    void connection.ready
+      .then((installed) => {
+        if (!current || !installed) return;
+        return editorController.refreshCurrentMarkersAsync().then((applied) => {
+          if (current && applied) setMarkerRevision((revision) => revision + 1);
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+      connection.release();
     };
   }, []);
 

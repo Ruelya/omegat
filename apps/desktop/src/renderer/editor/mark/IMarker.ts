@@ -1,4 +1,5 @@
 /** Java `org.omegat.gui.editor.mark.IMarker`. */
+import type { EntryKeyDto } from "../../lib/types";
 import type { Mark } from "./Mark";
 
 export type ProtectedPart = { text: string; tooltip?: string };
@@ -14,6 +15,7 @@ export type MarkerInput = {
   linked?: "xICE" | "x100PC" | "xAUTO" | "xENFORCED";
   enabled?: boolean;
   protectedParts?: ProtectedPart[];
+  entryKey?: EntryKeyDto;
 };
 
 export interface IMarker {

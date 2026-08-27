@@ -8,6 +8,8 @@ const METHODS: &[&str] = &[
     "sys.version",
     "sys.capabilities",
     "sys.plugins",
+    "markers.list",
+    "markers.query",
     "prefs.get",
     "prefs.set",
     "project.create",
@@ -136,13 +138,7 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
     assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
     std::fs::write(root.join("source/a.txt"), "Repeated").unwrap();
     std::fs::write(root.join("source/b.txt"), "Repeated").unwrap();
-    let reloaded = rpc(
-        &mut stdin,
-        &mut stdout,
-        2,
-        "project.reload",
-        json!({}),
-    );
+    let reloaded = rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
     assert_eq!(reloaded["result"]["entries"], 2);
     let listed = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
     assert_eq!(

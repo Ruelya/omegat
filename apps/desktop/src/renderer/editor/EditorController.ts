@@ -125,6 +125,35 @@ export class EditorController {
     this.textArea.setDocument(this.document);
   }
 
+  /** Java `replacePartOfText`: offsets are UTF-16 positions in the translation. */
+  replacePartOfText(text: string, start: number, end: number): boolean {
+    if (!this.document) return false;
+    this.adoptLiveDocument();
+    const length = this.document.translation.length;
+    if (
+      !Number.isInteger(start)
+      || !Number.isInteger(end)
+      || start < 0
+      || end < start
+      || end > length
+    ) {
+      throw new RangeError(`translation range ${start}..${end} outside 0..${length}`);
+    }
+    this.textArea.setDocument(this.document, true);
+    this.textArea.setSelection(
+      this.document.translationStart + start,
+      this.document.translationStart + end,
+    );
+    const before = this.currentUndoState();
+    if (!this.textArea.replaceSelection(text)) return false;
+    this.undo.remember(before);
+    this.document = this.textArea.getOmDocument();
+    this.syncActiveEntry();
+    this.refreshCurrentMarkers();
+    this.textArea.setDocument(this.document, true);
+    return true;
+  }
+
   insertText(text: string): void {
     if (!this.document) {
       this.editor.insertText(text);
@@ -730,6 +759,7 @@ export class EditorController {
       fromMt: entry.fromMt,
       linked: entry.linked,
       protectedParts: entry.protectedParts,
+      entryKey: entry.key,
     };
   }
 

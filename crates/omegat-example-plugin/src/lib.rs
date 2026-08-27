@@ -1,5 +1,6 @@
-//! Example cdylib: registers a `*.example` filter through `omegat_plugin_register`.
+//! Example cdylib: registers a `*.example` filter and executable Marker.
 
+use serde_json::{json, Value};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
@@ -17,8 +18,18 @@ pub struct OmegatPluginHost {
             write: extern "C" fn(*const c_char, *const c_char, *const c_char) -> c_int,
         ),
     >,
-    pub register_mt: Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
-    pub register_tokenizer: Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+    pub register_mt:
+        Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+    pub register_tokenizer:
+        Option<extern "C" fn(ctx: *mut c_void, id: *const c_char, name: *const c_char)>,
+    pub register_marker: Option<
+        extern "C" fn(
+            ctx: *mut c_void,
+            id: *const c_char,
+            name: *const c_char,
+            mark: extern "C" fn(*const c_char, *mut c_char, c_int) -> c_int,
+        ),
+    >,
 }
 
 pub fn parse_example_text(text: &str) -> Vec<(String, String)> {
@@ -78,6 +89,33 @@ fn segments_json(pairs: &[(String, String)]) -> String {
     }
     out.push_str("]}");
     out
+}
+
+pub fn example_marker_output(input: &Value) -> Value {
+    let text = input
+        .get("translation_text")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let file = input
+        .get("entry_key")
+        .and_then(|key| key.get("file"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let marks = text
+        .match_indices("plugin")
+        .map(|(byte_start, needle)| {
+            let start_offset = text[..byte_start].encode_utf16().count();
+            json!({
+                "start_offset": start_offset,
+                "end_offset": start_offset + needle.encode_utf16().count(),
+                "painter": "native-plugin",
+                "painter_color": "#7c3aed",
+                "tooltip_text": format!("Example marker in {file}"),
+                "entry_part": "TRANSLATION"
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({ "marks": marks })
 }
 
 /// Minimal `{"0":"a","1":"b"}` object reader (no nested objects).
@@ -152,8 +190,8 @@ fn write_cstr(out: *mut c_char, cap: c_int, s: &str) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn omegat_plugin_abi() -> *const c_char {
-    b"{\"id\":\"example\",\"name\":\"Example Filter\",\"version\":\"1.0.0\",\"kind\":\"filter\"}\0".as_ptr()
-        as *const c_char
+    b"{\"id\":\"example\",\"name\":\"Example Filter\",\"version\":\"1.0.0\",\"kind\":\"filter\"}\0"
+        .as_ptr() as *const c_char
 }
 
 #[no_mangle]
@@ -172,6 +210,31 @@ pub extern "C" fn omegat_plugin_register(host: *const OmegatPluginHost) {
             omegat_plugin_filter_write,
         );
     }
+    if let Some(reg) = host.register_marker {
+        reg(
+            host.ctx,
+            b"example.native-marker\0".as_ptr() as *const c_char,
+            b"org.omegat.example.NativePluginMarker\0".as_ptr() as *const c_char,
+            omegat_plugin_marker_marks,
+        );
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn omegat_plugin_marker_marks(
+    input_json: *const c_char,
+    out: *mut c_char,
+    cap: c_int,
+) -> c_int {
+    if input_json.is_null() {
+        return -1;
+    }
+    let input = unsafe { CStr::from_ptr(input_json) };
+    let Ok(input) = serde_json::from_slice::<Value>(input.to_bytes()) else {
+        return -1;
+    };
+    let output = example_marker_output(&input).to_string();
+    write_cstr(out, cap, &output)
 }
 
 #[no_mangle]
@@ -233,7 +296,10 @@ mod tests {
         let segs = parse_example_text(src);
         assert_eq!(segs.len(), 2);
         assert_eq!(segs[0].1, "Hello from plugin");
-        let written = write_example_text(src, &[("0".into(), "Bonjour".into()), ("1".into(), "Deux".into())]);
+        let written = write_example_text(
+            src,
+            &[("0".into(), "Bonjour".into()), ("1".into(), "Deux".into())],
+        );
         assert!(written.contains("Bonjour"));
         assert!(written.contains("Deux"));
     }
@@ -242,5 +308,45 @@ mod tests {
     fn translation_object_reader() {
         let v = parse_translation_object(r#"{"0":"A","1":"B"}"#);
         assert_eq!(v, vec![("0".into(), "A".into()), ("1".into(), "B".into())]);
+    }
+
+    #[test]
+    fn marker_uses_utf16_offsets_and_complete_entry_key() {
+        let output = example_marker_output(&json!({
+            "entry_key": {
+                "file": "source/example.txt",
+                "source_text": "plugin",
+                "id": "same",
+                "prev": "",
+                "next": null,
+                "path": "body"
+            },
+            "source_text": "plugin",
+            "translation_text": "😀 plugin and plugin",
+            "is_active": true
+        }));
+        assert_eq!(
+            output,
+            json!({
+                "marks": [
+                    {
+                        "start_offset": 3,
+                        "end_offset": 9,
+                        "painter": "native-plugin",
+                        "painter_color": "#7c3aed",
+                        "tooltip_text": "Example marker in source/example.txt",
+                        "entry_part": "TRANSLATION"
+                    },
+                    {
+                        "start_offset": 14,
+                        "end_offset": 20,
+                        "painter": "native-plugin",
+                        "painter_color": "#7c3aed",
+                        "tooltip_text": "Example marker in source/example.txt",
+                        "entry_part": "TRANSLATION"
+                    }
+                ]
+            })
+        );
     }
 }

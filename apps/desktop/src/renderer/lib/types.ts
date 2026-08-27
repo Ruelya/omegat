@@ -150,6 +150,7 @@ export type CompleterItemDto = { kind: string; text: string; detail: string };
 export type MtSuggestionDto = { engine: string; text: string };
 export type DictHitDto = { word: string; definition: string; source: string };
 export type FilterInfoDto = { id: string; name: string; masks: string[]; phase: number };
+export type PluginMarkerInfoDto = { plugin_id: string; id: string; name: string };
 export type FilterOptionsDto = {
   id: string;
   name: string;
