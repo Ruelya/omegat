@@ -306,4 +306,38 @@ mod tests {
             r#"<html><head><meta charset="UTF-8"></head><body><p>café</p></body></html>"#
         );
     }
+
+    #[test]
+    fn html_filter_recovers_after_incomplete_markup() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("broken.html");
+        let target = dir.path().join("translated.html");
+        let raw = "<broken attribute <p>Hello</p><?unfinished";
+        std::fs::write(&source, raw).unwrap();
+
+        let parsed = HtmlFilter
+            .parse(&source, &FilterContext::default())
+            .unwrap();
+        assert_eq!(
+            parsed
+                .segments
+                .iter()
+                .map(|segment| segment.source.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Hello"]
+        );
+
+        HtmlFilter
+            .write(
+                &source,
+                &target,
+                &HashMap::from([("Hello".into(), "Bonjour".into())]),
+                &FilterContext::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            "<broken attribute <p>Bonjour</p><?unfinished"
+        );
+    }
 }

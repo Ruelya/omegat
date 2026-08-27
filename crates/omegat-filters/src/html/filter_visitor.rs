@@ -329,6 +329,14 @@ impl<'a> Visitor<'a> {
         if self.options.remove_comments {
             return;
         }
+        self.visit_non_text(remark);
+    }
+
+    fn visit_raw(&mut self, raw: Node) {
+        self.visit_non_text(raw);
+    }
+
+    fn visit_non_text(&mut self, node: Node) {
         self.recurse_children = true;
         if self.pre {
             self.collecting = true;
@@ -336,12 +344,12 @@ impl<'a> Visitor<'a> {
         if self.collecting {
             if self.pre {
                 self.translatable.append(&mut self.following);
-                self.translatable.push(remark);
+                self.translatable.push(node);
             } else {
-                self.following.push(remark);
+                self.following.push(node);
             }
         } else {
-            self.preceding.push(remark);
+            self.preceding.push(node);
         }
     }
 
@@ -386,7 +394,7 @@ impl<'a> Visitor<'a> {
     fn write_node_raw(&mut self, node: &Node) {
         match node {
             Node::Tag { .. } => self.writeout(&format!("<{}>", node.get_text())),
-            Node::Remark { .. } => self.writeout(&node.to_html()),
+            Node::Remark { .. } | Node::Raw { .. } => self.writeout(&node.to_html()),
             Node::Text { raw } => self.writeout(&compress_whitespace_layout(
                 raw,
                 self.options.compress_whitespace,
@@ -513,8 +521,8 @@ impl<'a> Visitor<'a> {
             for i in first..=last_keep {
                 match &all[i as usize] {
                     Node::Tag { .. } => self.assign_tag_shortcut(&all[i as usize], &mut paragraph),
-                    Node::Remark { .. } => {
-                        self.assign_remark_shortcut(&all[i as usize], &mut paragraph)
+                    Node::Remark { .. } | Node::Raw { .. } => {
+                        self.assign_non_text_shortcut(&all[i as usize], &mut paragraph)
                     }
                     Node::Text { .. } => {
                         paragraph.push_str(&entities_to_chars(&all[i as usize].to_html()));
@@ -600,11 +608,11 @@ impl<'a> Visitor<'a> {
         paragraph.push_str(&result);
     }
 
-    fn assign_remark_shortcut(&mut self, remark: &Node, paragraph: &mut String) {
+    fn assign_non_text_shortcut(&mut self, node: &Node, paragraph: &mut String) {
         let n = self.s_n;
         self.s_n += 1;
         let shortcut = format!("<c{n}/>");
-        self.s_tags.push(remark.clone());
+        self.s_tags.push(node.clone());
         self.s_nums.push(n);
         self.s_shortcuts.push(shortcut.clone());
         paragraph.push_str(&shortcut);
@@ -618,7 +626,7 @@ impl<'a> Visitor<'a> {
                 let at = pos + found;
                 let repl = match &self.s_tags[i] {
                     Node::Tag { .. } => format!("<{}>", self.s_tags[i].get_text()),
-                    Node::Remark { .. } => self.s_tags[i].to_html(),
+                    Node::Remark { .. } | Node::Raw { .. } => self.s_tags[i].to_html(),
                     Node::Text { raw } => raw.clone(),
                 };
                 s.replace_range(at..at + shortcut.len(), &repl);
@@ -703,6 +711,7 @@ pub(super) fn process_html_with_encoding(
             Node::Tag { .. } => v.visit_tag(node),
             Node::Text { .. } => v.visit_string(node),
             Node::Remark { .. } => v.visit_remark(node),
+            Node::Raw { .. } => v.visit_raw(node),
         }
     }
     v.finish();
@@ -863,5 +872,30 @@ mod tests {
         );
         assert_eq!(sources(&outcome), vec!["2 > 1", "Hello"]);
         assert_eq!(outcome.written, r#"<p title="2 est supérieur à 1">Bonjour"#);
+    }
+
+    #[test]
+    fn incomplete_tag_does_not_hide_following_paragraph() {
+        let raw = "<broken attribute <p>Shown</p>";
+        let translations = HashMap::from([("Shown".to_string(), "Visible".to_string())]);
+        let outcome = process_html(
+            raw,
+            &FilterContext::default(),
+            VisitorKind::Html,
+            Some(&translations),
+        );
+        assert_eq!(sources(&outcome), vec!["Shown"]);
+        assert_eq!(outcome.written, "<broken attribute <p>Visible</p>");
+    }
+
+    #[test]
+    fn incomplete_markup_survives_write_and_comment_removal() {
+        let raw = "<p>Hello</p><?unfinished";
+        let mut ctx = FilterContext::default();
+        ctx.options.insert("removeComments".into(), "true".into());
+        let translations = HashMap::from([("Hello".to_string(), "Bonjour".to_string())]);
+        let outcome = process_html(raw, &ctx, VisitorKind::Html, Some(&translations));
+        assert_eq!(sources(&outcome), vec!["Hello"]);
+        assert_eq!(outcome.written, "<p>Bonjour</p><?unfinished");
     }
 }

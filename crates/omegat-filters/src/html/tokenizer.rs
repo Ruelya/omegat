@@ -17,6 +17,12 @@ pub enum Node {
     Remark {
         raw: String,
     },
+    /// Incomplete markup recovered at the next markup boundary (or EOF).
+    ///
+    /// Unlike a comment this is never removed by the remove-comments option.
+    Raw {
+        raw: String,
+    },
     Tag {
         name: String,
         raw_inner: String,
@@ -52,7 +58,7 @@ impl Node {
 
     pub fn get_text(&self) -> &str {
         match self {
-            Node::Text { raw } | Node::Remark { raw } => raw,
+            Node::Text { raw } | Node::Remark { raw } | Node::Raw { raw } => raw,
             Node::Tag { raw_inner, .. } => raw_inner,
         }
     }
@@ -60,7 +66,7 @@ impl Node {
     pub fn to_html(&self) -> String {
         match self {
             Node::Text { raw } => raw.clone(),
-            Node::Remark { raw } => raw.clone(),
+            Node::Remark { raw } | Node::Raw { raw } => raw.clone(),
             Node::Tag {
                 protected_html: Some(full),
                 ..
@@ -257,6 +263,13 @@ pub fn tokenize_with_protected(
                 i = end;
                 continue;
             }
+            if let Some(end) = incomplete_markup_end(input, i) {
+                out.push(Node::Raw {
+                    raw: input[i..end].to_string(),
+                });
+                i = end;
+                continue;
+            }
         }
         let start = i;
         i += 1;
@@ -268,6 +281,25 @@ pub fn tokenize_with_protected(
         });
     }
     out
+}
+
+/// HTML tokenizers discard an unfinished tag at EOF instead of exposing its
+/// attribute text as a translatable text node. If another `<` starts before
+/// EOF, resume there so one broken tag cannot hide the rest of the document.
+fn incomplete_markup_end(input: &str, start: usize) -> Option<usize> {
+    let mut cursor = start + 1;
+    let bytes = input.as_bytes();
+    if bytes.get(cursor) == Some(&b'/') {
+        cursor += 1;
+    }
+    let first = *bytes.get(cursor)?;
+    if !(first.is_ascii_alphabetic() || matches!(first, b'!' | b'?')) {
+        return None;
+    }
+    input[cursor + 1..]
+        .find('<')
+        .map(|relative| cursor + 1 + relative)
+        .or(Some(input.len()))
 }
 
 fn parse_tag(input: &str, start: usize) -> Option<(Node, usize)> {
@@ -385,6 +417,9 @@ fn parse_tag_tail(
         if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'>' {
             let raw_inner = input[start + 1..i + 1].to_string();
             return Some((raw_inner, i + 1, attrs, true));
+        }
+        if bytes[i] == b'<' {
+            return None;
         }
         let an_start = i;
         while i < bytes.len()
@@ -659,5 +694,26 @@ mod tests {
             r#"<!DOCTYPE html [<!ENTITY sample "a > b">]>"#
         );
         assert_eq!(nodes[2].to_html(), "shown");
+    }
+
+    #[test]
+    fn incomplete_markup_recovers_at_next_tag_boundary() {
+        let raw = "<broken attribute <p>shown</p>";
+        let nodes = tokenize(raw, true);
+        assert_eq!(
+            nodes.iter().map(Node::to_html).collect::<Vec<_>>(),
+            vec!["<broken attribute ", "<p>", "shown", "</p>"]
+        );
+        assert_eq!(matches!(nodes[0], Node::Raw { .. }), true);
+    }
+
+    #[test]
+    fn incomplete_markup_at_eof_is_raw_not_text() {
+        for raw in ["<section class=broken", "<?processing", "<!DECLARATION"] {
+            let nodes = tokenize(raw, true);
+            assert_eq!(nodes.len(), 1, "{raw}");
+            assert_eq!(matches!(nodes[0], Node::Raw { .. }), true, "{raw}");
+            assert_eq!(nodes[0].to_html(), raw);
+        }
     }
 }
