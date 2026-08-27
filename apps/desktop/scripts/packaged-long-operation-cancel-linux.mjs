@@ -1553,7 +1553,7 @@ try {
         : undefined;
     },
   );
-  assert.equal(decoyAfterAlternativeCommit.translation, "");
+  assert.equal(decoyAfterAlternativeCommit.translation, teamConflictOurs);
   const entriesAfterAlternativeCommit = await client.evaluate(
     `window.omegat.rpc("entry.list", {})`,
     true,
