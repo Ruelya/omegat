@@ -3840,23 +3840,9 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         })
         .collect::<Vec<_>>();
     for (index, replacement) in replacements.iter_mut().enumerate() {
-        let opened = rpc(
-            &mut replacement.input,
-            &mut replacement.output,
-            1,
-            "project.open",
-            json!({ "root": root }),
-        );
-        assert_eq!(
-            opened["error"],
-            Value::Null,
-            "replacement {index} failed to open"
-        );
-    }
-    for (index, replacement) in replacements.iter_mut().enumerate() {
         send_pending(
             replacement,
-            2,
+            1,
             &root,
             &format!("resolve-replacement-{index}"),
             80 + index as u64,
@@ -3937,7 +3923,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         replacements[second_winner_index].child.id()
     );
     assert_ne!(second_owner["claim_id"], first_owner["claim_id"]);
-    let rejected_retry = response_for(&mut replacements[second_loser_index].output, 2);
+    let rejected_retry = response_for(&mut replacements[second_loser_index].output, 1);
     assert_eq!(rejected_retry["error"]["code"], -32005);
     assert!(rejected_retry["error"]["message"]
         .as_str()
@@ -3947,7 +3933,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         )));
 
     std::fs::write(&owner_releases[second_winner_index], b"release\n").unwrap();
-    let recovered = response_for(&mut replacements[second_winner_index].output, 2);
+    let recovered = response_for(&mut replacements[second_winner_index].output, 1);
     assert_eq!(recovered["result"]["envelopes"][0]["batch_id"], batch_id);
     assert_eq!(
         recovered["result"]["owner_retry"]["previous_owner_process_id"],
@@ -3959,7 +3945,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
     let ack = rpc(
         &mut second_winner.input,
         &mut second_winner.output,
-        3,
+        2,
         "transaction.receipt.ack",
         json!({
             "root": root,
@@ -3971,6 +3957,14 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         }),
     );
     assert_eq!(ack["result"]["ack"]["acknowledged"], true);
+    let opened = rpc(
+        &mut second_winner.input,
+        &mut second_winner.output,
+        3,
+        "project.open",
+        json!({ "root": root }),
+    );
+    assert_eq!(opened["error"], Value::Null);
     let drained = rpc(
         &mut second_winner.input,
         &mut second_winner.output,
