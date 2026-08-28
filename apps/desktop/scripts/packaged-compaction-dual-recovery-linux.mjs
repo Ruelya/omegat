@@ -4113,16 +4113,24 @@ try {
     "after_terminal_queue_rename",
     "after_archive_fsync",
     "after_queue_rename",
+    "prewaiting_after_archive_fsync",
+    "prewaiting_after_queue_rename",
   ]) {
+    const prewaitingCompactionBoundary =
+      killBoundary.startsWith("prewaiting_")
+        ? killBoundary.slice("prewaiting_".length)
+        : null;
     const compactionBoundary = [
       "after_archive_fsync",
       "after_queue_rename",
     ].includes(killBoundary)
       ? killBoundary
       : null;
-    const cancellationPoint = compactionBoundary
-      ? "after_terminal_queue_rename"
-      : killBoundary;
+    const cancellationPoint = prewaitingCompactionBoundary
+      ? "after_intent_queue_rename"
+      : compactionBoundary
+        ? "after_terminal_queue_rename"
+        : killBoundary;
     const label =
       `atomic-team-resolve-fifo-${killBoundary.replaceAll("_", "-")}`;
     const config = join(workDir, `${label}-config`);
@@ -4132,6 +4140,7 @@ try {
     const dispatchRelease = join(workDir, `${label}-dispatch.release`);
     const cancellationMarker = join(workDir, `${label}-cancel.marker`);
     const compactionMarker = join(workDir, `${label}-compaction.marker`);
+    const compactionRelease = join(workDir, `${label}-compaction.release`);
     const resolveBatchId = `${label}-resolve-tail`;
     const prepared = await prepareResolveElectionProject(
       config,
@@ -4228,7 +4237,7 @@ try {
     );
     const parkedTmx = await readFile(tmxPath);
     const parkedConflicts = await readFile(conflictsPath);
-    if (killBoundary === "after_intent_queue_rename") {
+    if (cancellationPoint === "after_intent_queue_rename") {
       assert.notDeepEqual(
         parkedTmx,
         tmxBefore,
@@ -4239,7 +4248,7 @@ try {
         conflictsBefore,
         "intent boundary restored conflicts before owner death",
       );
-    } else if (killBoundary === "after_rollback_fsync") {
+    } else if (cancellationPoint === "after_rollback_fsync") {
       assert.deepEqual(parkedTmx, tmxBefore);
       assert.deepEqual(parkedConflicts, conflictsBefore);
     }
@@ -4249,9 +4258,9 @@ try {
     if ([
       "after_intent_queue_rename",
       "after_rollback_fsync",
-    ].includes(killBoundary)) {
+    ].includes(killBoundary) || prewaitingCompactionBoundary) {
       const waiterCount =
-        killBoundary === "after_intent_queue_rename" ? 3 : 2;
+        cancellationPoint === "after_intent_queue_rename" ? 3 : 2;
       const waiterTraces = Array.from(
         { length: waiterCount },
         (_, index) => join(workDir, `${label}-waiting-cancel-${index}.ndjson`),
@@ -4277,7 +4286,7 @@ try {
             OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER:
               takeoverMarkers[index],
             OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: trace,
-            ...(killBoundary === "after_intent_queue_rename"
+            ...(cancellationPoint === "after_intent_queue_rename"
               ? {
                 OMEGAT_TEST_RESOLVE_CANCELLATION_POINT:
                   "after_rollback_fsync",
@@ -4287,6 +4296,14 @@ try {
                   "after_terminal_queue_rename",
                 OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_MARKER:
                   consecutiveTerminalMarker,
+              }
+              : {}),
+            ...(prewaitingCompactionBoundary
+              ? {
+                OMEGAT_TEST_PRODUCT_COMPACTION_POINT:
+                  prewaitingCompactionBoundary,
+                OMEGAT_TEST_PRODUCT_COMPACTION_MARKER: compactionMarker,
+                OMEGAT_TEST_PRODUCT_COMPACTION_RELEASE: compactionRelease,
               }
               : {}),
           })
@@ -4359,7 +4376,7 @@ try {
       let terminalOwnerKill = null;
       let terminalOwnerIndex = null;
       let terminalReadOnlyIndex = null;
-      if (killBoundary === "after_intent_queue_rename") {
+      if (cancellationPoint === "after_intent_queue_rename") {
         const rollbackOwner = await waitFor(
           "first waiting loser durable rollback before second owner death",
           async () =>
@@ -4488,6 +4505,49 @@ try {
           terminalOwnerKill.sidecarPid,
           terminalOwner.sidecar_process_id,
         );
+        if (prewaitingCompactionBoundary) {
+          await waitFor(
+            `${killBoundary} same pre-existing waiter compaction boundary`,
+            () => pathExists(compactionMarker),
+          );
+          assert.equal(
+            await pathExists(takeoverMarkers[terminalReadOnlyIndex]),
+            false,
+            "terminal reader became a cancellation takeover owner during compaction",
+          );
+          const compactingQueue = JSON.parse(
+            await readFile(prepared.activePath, "utf8"),
+          );
+          assert.deepEqual(
+            productJournalBatches(compactingQueue).map((row) => [
+              row.batch_id,
+              row.status,
+            ]),
+            [
+              ...prepared.fifoHeads.map(({ batchId }) => [
+                batchId,
+                "sidecar_committed",
+              ]),
+              ...(prewaitingCompactionBoundary === "after_archive_fsync"
+                ? [[resolveBatchId, "request_cancelled"]]
+                : []),
+            ],
+            "pre-existing terminal reader changed the recoverable FIFO prefix",
+          );
+          const compactingHistory = parseNdjson(
+            await readFile(prepared.historyPath, "utf8"),
+          );
+          assert.equal(
+            compactingHistory.filter((row) =>
+              row.batch_id === resolveBatchId
+              && row.status === "request_cancelled"
+              && row.error_code === -32800
+            ).length,
+            1,
+            "pre-existing terminal reader duplicated the cancellation terminal",
+          );
+          await writeFile(compactionRelease, "release\n", "utf8");
+        }
         resultIndices = [terminalReadOnlyIndex];
         quorumReplacements = resultIndices.map(
           (index) => waitingCallers[index],
@@ -4519,14 +4579,14 @@ try {
       }
       assert.equal(
         takeoverIndices.length,
-        killBoundary === "after_intent_queue_rename" ? 2 : 1,
+        cancellationPoint === "after_intent_queue_rename" ? 2 : 1,
         "OS lock release selected more than one waiting FIFO cancellation owner",
       );
       const terminalTakeoverIndex =
-        killBoundary === "after_intent_queue_rename"
+        cancellationPoint === "after_intent_queue_rename"
           ? terminalOwnerIndex
           : takeoverIndices[0];
-      if (killBoundary === "after_intent_queue_rename") {
+      if (cancellationPoint === "after_intent_queue_rename") {
         assert.deepEqual(
           takeoverIndices.toSorted((a, b) => a - b),
           [rollbackOwnerIndex, terminalOwnerIndex].toSorted((a, b) => a - b),
@@ -4546,7 +4606,7 @@ try {
         waiterSidecarPids[terminalTakeoverIndex],
       );
       const retryErrorCodes = [];
-      if (killBoundary === "after_intent_queue_rename") {
+      if (cancellationPoint === "after_intent_queue_rename") {
         const terminalReader = waitingCallers[terminalReadOnlyIndex];
         for (const retry of [
           {
@@ -4665,13 +4725,17 @@ try {
             ? null
             : await pathExists(takeoverMarkers[terminalReadOnlyIndex]),
         terminalTakeoverWasAlreadyWaiting:
-          killBoundary === "after_intent_queue_rename",
+          cancellationPoint === "after_intent_queue_rename",
         takeoverPerformedProductRollback:
-          killBoundary === "after_intent_queue_rename",
+          cancellationPoint === "after_intent_queue_rename",
         takeoverSkippedDurableRollback:
           killBoundary === "after_rollback_fsync",
         terminalTakeoverSkippedDurableRollback:
-          killBoundary === "after_intent_queue_rename",
+          cancellationPoint === "after_intent_queue_rename",
+        terminalReadOnlyWaiterCompactionBoundary:
+          prewaitingCompactionBoundary,
+        terminalReadOnlyWaiterCompactionReleased:
+          prewaitingCompactionBoundary !== null,
         protocolErrorCodes: [
           ...waiterResults.map((state) => state.errorCode),
           ...retryErrorCodes,
@@ -4854,6 +4918,7 @@ try {
       killBoundary,
       cancellationBoundary: cancellationPoint,
       compactionBoundary,
+      prewaitingCompactionBoundary,
       firstPackagedCallerKilledPid: killed.browserPid,
       compactionBoundaryKilledPid: compactionKilled?.browserPid ?? null,
       replacementProcessCount: replacements.length,

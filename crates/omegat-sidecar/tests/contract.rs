@@ -3805,6 +3805,11 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         followup_checkpoint: Option<(&str, &std::path::Path)>,
         wait_marker: Option<&std::path::Path>,
         takeover_marker: Option<&std::path::Path>,
+        compaction_checkpoint: Option<(
+            &str,
+            &std::path::Path,
+            &std::path::Path,
+        )>,
     ) -> (
         std::process::Child,
         std::process::ChildStdin,
@@ -3833,6 +3838,12 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
                 "OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER",
                 takeover_marker,
             );
+        }
+        if let Some((point, marker, release)) = compaction_checkpoint {
+            command
+                .env("OMEGAT_TEST_PRODUCT_COMPACTION_POINT", point)
+                .env("OMEGAT_TEST_PRODUCT_COMPACTION_MARKER", marker)
+                .env("OMEGAT_TEST_PRODUCT_COMPACTION_RELEASE", release);
         }
         let mut child = command
             .stdin(Stdio::piped())
@@ -3913,7 +3924,12 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         })
     }
 
-    for point in ["after_intent_queue_rename", "after_rollback_fsync"] {
+    for (point, compaction_point) in [
+        ("after_intent_queue_rename", None),
+        ("after_intent_queue_rename", Some("after_archive_fsync")),
+        ("after_intent_queue_rename", Some("after_queue_rename")),
+        ("after_rollback_fsync", None),
+    ] {
         let temp = tempfile::tempdir().unwrap();
         let config = temp.path().join("config");
         let root = temp.path().join("raw-cancel-owner-takeover");
@@ -3921,6 +3937,8 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         let owner_marker = temp.path().join("cancel-owner.json");
         let rollback_owner_marker = temp.path().join("cancel-rollback-owner.json");
         let terminal_owner_marker = temp.path().join("cancel-terminal-owner.json");
+        let compaction_marker = temp.path().join("cancel-compaction.marker");
+        let compaction_release = temp.path().join("cancel-compaction.release");
         let save_tmx = root.join("omegat/project_save.tmx");
         let prep = root.join(".repositories/prep");
         let conflicts_path = prep.join("conflicts.json");
@@ -3935,7 +3953,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         ];
 
         let (mut owner, mut owner_in, mut owner_out) =
-            spawn_sidecar(&config, Some((point, &owner_marker)), None, None, None);
+            spawn_sidecar(&config, Some((point, &owner_marker)), None, None, None, None);
         rpc(
             &mut owner_in,
             &mut owner_out,
@@ -4111,6 +4129,13 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
                 followup_checkpoint,
                 Some(&wait_marker),
                 Some(&takeover_marker),
+                compaction_point.map(|compaction_point| {
+                    (
+                        compaction_point,
+                        compaction_marker.as_path(),
+                        compaction_release.as_path(),
+                    )
+                }),
             );
             let pid = child.id();
             let call = start_cancel_call(
@@ -4253,6 +4278,35 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
                 killed_response.is_none(),
                 "terminal publisher returned before its third SIGKILL"
             );
+            if let Some(compaction_point) = compaction_point {
+                wait_for_file(&compaction_marker, &mut waiters[read_only_index].0);
+                assert!(
+                    !waiters[read_only_index].4.exists(),
+                    "read-only waiter claimed cancellation ownership while compacting"
+                );
+                let compacting_queue: Value =
+                    serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
+                let compacting_rows = compacting_queue["batches"].as_array().unwrap();
+                assert_eq!(
+                    compacting_rows
+                        .iter()
+                        .map(|row| (
+                            row["batch_id"].as_str().unwrap(),
+                            row["status"].as_str().unwrap(),
+                        ))
+                        .collect::<Vec<_>>(),
+                    fifo_heads
+                        .iter()
+                        .map(|(batch_id, _)| (*batch_id, "sidecar_committed"))
+                        .chain(
+                            (compaction_point == "after_archive_fsync")
+                                .then_some((batch_id, "request_cancelled")),
+                        )
+                        .collect::<Vec<_>>(),
+                    "pre-existing waiter changed the FIFO prefix at {compaction_point}"
+                );
+                std::fs::write(&compaction_release, b"release\n").unwrap();
+            }
             read_only_index
         } else {
             0
@@ -4271,11 +4325,16 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             waiter_response["error"],
             json!({"code": -32800, "message": "request cancelled"})
         );
+        let mut protocol_error_codes =
+            vec![waiter_response["error"]["code"].as_i64().unwrap()];
         if point == "after_intent_queue_rename" {
             assert!(
                 !takeover_marker.exists(),
                 "third waiter rewrote the already-published terminal"
             );
+            if compaction_point.is_some() {
+                assert!(compaction_marker.exists());
+            }
         } else {
             let takeover: Value =
                 serde_json::from_slice(&std::fs::read(&takeover_marker).unwrap()).unwrap();
@@ -4317,7 +4376,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         // surviving read-only waiter all settle at the protocol boundary as
         // -32800.
         let (mut owner_retry, mut retry_in, mut retry_out) =
-            spawn_sidecar(&config, None, None, None, None);
+            spawn_sidecar(&config, None, None, None, None, None);
         let owner_retry_response = rpc(
             &mut retry_in,
             &mut retry_out,
@@ -4337,6 +4396,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             owner_retry_response["error"],
             json!({"code": -32800, "message": "request cancelled"})
         );
+        protocol_error_codes.push(owner_retry_response["error"]["code"].as_i64().unwrap());
         if let Some(rollback_owner_pid) = rollback_owner_pid {
             let rollback_owner_retry = rpc(
                 &mut retry_in,
@@ -4356,6 +4416,9 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             assert_eq!(
                 rollback_owner_retry["error"],
                 json!({"code": -32800, "message": "request cancelled"})
+            );
+            protocol_error_codes.push(
+                rollback_owner_retry["error"]["code"].as_i64().unwrap(),
             );
         }
         if let Some(terminal_owner_pid) = terminal_owner_pid {
@@ -4377,6 +4440,17 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             assert_eq!(
                 terminal_owner_retry["error"],
                 json!({"code": -32800, "message": "request cancelled"})
+            );
+            protocol_error_codes.push(
+                terminal_owner_retry["error"]["code"].as_i64().unwrap(),
+            );
+        }
+        if point == "after_intent_queue_rename" {
+            protocol_error_codes.sort_unstable();
+            assert_eq!(
+                protocol_error_codes,
+                vec![-32800, -32800, -32800, -32800],
+                "all four raw cancellation calls must converge on the protocol terminal"
             );
         }
 

@@ -962,6 +962,13 @@ fn product_compaction_checkpoint(point: &str) -> Result<()> {
     writeln!(file, "{point}")?;
     file.sync_all()?;
     sync_parent(&marker)?;
+    if let Some(release) = std::env::var_os("OMEGAT_TEST_PRODUCT_COMPACTION_RELEASE") {
+        let release = PathBuf::from(release);
+        while !release.is_file() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        return Ok(());
+    }
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
@@ -1535,7 +1542,7 @@ fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool
     validate_pending_resolve_cancellation(props, &transaction)?;
     rollback_pending_resolve_cancellation(props, &mut transaction)?;
     persist_terminal_resolve_cancellation(props, &mut transaction, "renderer-cancelled-recovered")?;
-    transaction.cleanup(props)?;
+    compact_terminal_product_transactions(props)?;
     Ok(true)
 }
 
@@ -2418,12 +2425,16 @@ pub fn cancel_transaction_receipt(
             "renderer-cancelled-takeover",
         )?;
         resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
-        return transaction.cleanup(props);
+        return compact_terminal_product_transactions(props);
     }
     if transaction.0.status == TransactionStatus::RequestCancelled
         && transaction.0.error_code == Some(REQUEST_CANCELLED_CODE)
     {
-        return transaction.cleanup(props);
+        // Idempotent cancellation callers converge through the same durable
+        // archive/queue-rename compactor as dispatcher recovery. A waiter that
+        // acquired operation.lock only after the terminal publisher died must
+        // never rewrite the rollback or terminal decision.
+        return compact_terminal_product_transactions(props);
     }
     if transaction.0.status != TransactionStatus::SidecarCommitted {
         return Err(TeamError::Conflict(format!(
@@ -2463,7 +2474,7 @@ pub fn cancel_transaction_receipt(
 
     persist_terminal_resolve_cancellation(props, &mut transaction, "renderer-cancelled")?;
     resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
-    transaction.cleanup(props)
+    compact_terminal_product_transactions(props)
 }
 
 pub fn get_version(
