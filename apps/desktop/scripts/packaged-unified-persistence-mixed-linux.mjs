@@ -19,6 +19,7 @@ import { join } from "node:path";
 import {
   executable,
   killPackaged,
+  launchPackaged,
   launchPackagedRenderer,
   pathExists,
   sidecar,
@@ -651,7 +652,7 @@ async function runMixedQueueTakeovers(display, workDir, config) {
     await terminatePackaged(third);
     third = undefined;
     await rename(rootA, movedA);
-    moved = await launchPackagedRenderer(display, config, movedA, limits);
+    moved = await launchPackaged(display, config, movedA, limits);
     assert.equal((await rpc(moved.client, "project.props")).root, movedA);
     const movedManifest = JSON.parse(
       await readFile(projectPaths(movedA).manifest, "utf8"),
@@ -890,7 +891,7 @@ async function runPreparedMixedQueueTakeovers(display, workDir, config) {
     await terminatePackaged(projectB);
     projectB = undefined;
     await rename(rootA, movedA);
-    moved = await launchPackagedRenderer(display, config, movedA, limits);
+    moved = await launchPackaged(display, config, movedA, limits);
     assert.equal((await rpc(moved.client, "project.props")).root, movedA);
     const movedManifest = JSON.parse(
       await readFile(projectPaths(movedA).manifest, "utf8"),
