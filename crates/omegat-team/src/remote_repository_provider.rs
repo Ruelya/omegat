@@ -1441,11 +1441,7 @@ fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool
     let mut transaction = transaction;
     validate_pending_resolve_cancellation(props, &transaction)?;
     rollback_pending_resolve_cancellation(props, &mut transaction)?;
-    persist_terminal_resolve_cancellation(
-        props,
-        &mut transaction,
-        "renderer-cancelled-recovered",
-    )?;
+    persist_terminal_resolve_cancellation(props, &mut transaction, "renderer-cancelled-recovered")?;
     transaction.cleanup(props)?;
     Ok(true)
 }
