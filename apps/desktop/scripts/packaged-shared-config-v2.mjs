@@ -118,7 +118,10 @@ async function seedV2(configPath, count) {
     config_dir: config,
     revision: 1,
     next_segment_id: 1,
+    generation: 0,
     segments: [],
+    batch_index: {},
+    batch_index_complete: true,
     updated_unix_ms: Date.now(),
   };
   await Promise.all([
