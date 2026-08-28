@@ -432,7 +432,7 @@ async function setControl(client, selector, value) {
   })()`);
   assert.equal(changed, true, `control not found: ${selector}`);
   await client.evaluate(
-    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+    "new Promise((resolve) => queueMicrotask(resolve))",
     true,
   );
 }
