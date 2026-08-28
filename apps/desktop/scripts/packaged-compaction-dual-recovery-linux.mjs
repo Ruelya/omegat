@@ -290,7 +290,7 @@ async function invokeRpcResult(client, method, params) {
   ))()`, true);
 }
 
-async function launchPackaged(display, configDir, project, extraEnv = {}) {
+async function launchPackagedRenderer(display, configDir, project, extraEnv = {}) {
   const port = await unusedPort();
   let stderr = "";
   const environment = {
@@ -320,10 +320,23 @@ async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const client = new DevToolsClient(target.webSocketDebuggerUrl);
   await client.connect();
   await client.command("Runtime.enable");
+  await waitFor("packaged renderer RPC bridge", () =>
+    client.evaluate('typeof window.omegat?.rpc === "function"')
+  );
+  return { application, client, stderr: () => stderr };
+}
+
+async function launchPackaged(display, configDir, project, extraEnv = {}) {
+  const launched = await launchPackagedRenderer(
+    display,
+    configDir,
+    project,
+    extraEnv,
+  );
   const workspace = await waitFor(
     project ? `workspace for ${project}` : "closed renderer workspace",
     async () => {
-      const state = await workspaceState(client);
+      const state = await workspaceState(launched.client);
       return project
         ? state.project === project && state.key ? state : undefined
         : state.project === null && state.welcome && state.activeSurfaces === 0
@@ -331,7 +344,7 @@ async function launchPackaged(display, configDir, project, extraEnv = {}) {
           : undefined;
     },
   );
-  return { application, client, workspace, stderr: () => stderr };
+  return { ...launched, workspace };
 }
 
 async function descendants(rootPid) {
@@ -2598,7 +2611,7 @@ try {
 
     [launchedA, launchedB] = await Promise.all(
       replacementTracePaths.map((tracePath) =>
-        launchPackaged(xvfb.display, config, startupProject, {
+        launchPackagedRenderer(xvfb.display, config, startupProject, {
           OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: prepared.operation,
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: electionMarkerPath,
@@ -2756,16 +2769,27 @@ try {
       );
     }
 
-    const winnerWorkspace = await workspaceState(winner.client);
-    if (headKind === "close") {
-      assert.equal(winnerWorkspace.project, null);
-      assert.equal(winnerWorkspace.welcome, true);
-      assert.equal(winnerWorkspace.activeSurfaces, 0);
-    } else {
-      assert.equal(winnerWorkspace.project, project);
-      assert.equal(winnerWorkspace.source, prepared.source);
-      assert.equal(winnerWorkspace.translation, prepared.translation);
-      assert.equal(winnerWorkspace.activeSurfaces, 1);
+    const winnerWorkspace = await waitFor(
+      `${headKind} winning replacement renderer publication`,
+      async () => {
+        const state = await workspaceState(winner.client);
+        if (headKind === "close") {
+          return state.project === null
+              && state.welcome
+              && state.activeSurfaces === 0
+            ? state
+            : undefined;
+        }
+        return state.project === project
+            && state.source === prepared.source
+            && state.translation === prepared.translation
+            && state.activeSurfaces === 1
+            && state.key
+          ? state
+          : undefined;
+      },
+    );
+    if (headKind !== "close") {
       assert.deepEqual(JSON.parse(winnerWorkspace.key), prepared.key);
       const entries = await winner.client.evaluate(
         'window.omegat.rpc("entry.list", {})',
