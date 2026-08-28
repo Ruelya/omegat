@@ -10,7 +10,11 @@
 //! retain their exact result.
 
 use omegat_core::durable_fifo::{
-    self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
+    DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
+};
+use omegat_core::durable_transaction::{
+    DurableTransactionLayout, DurableTransactionPhase, DurableTransactionRecord,
+    DurableTransactionWorkflow,
 };
 use omegat_core::prefs::Preferences;
 use omegat_core::segmented_history::{
@@ -370,11 +374,11 @@ impl DurableFifoEntry for ConfigTransactionEnvelope {
     }
 
     fn validate_for_scope(&self, scope: &Path) -> Result<(), String> {
-        if valid_envelope(self, scope, true) {
+        if valid_envelope(self, scope, true) || valid_envelope(self, scope, false) {
             Ok(())
         } else {
             Err(format!(
-                "invalid pending config transaction {}",
+                "invalid config transaction {}",
                 self.batch_id
             ))
         }
@@ -382,6 +386,28 @@ impl DurableFifoEntry for ConfigTransactionEnvelope {
 
     fn relocate(&mut self, _old_scope: &Path, new_scope: &Path) {
         *self = rebase_envelope(self.clone(), new_scope);
+    }
+}
+
+impl DurableTransactionRecord for ConfigTransactionEnvelope {
+    fn transaction_phase(&self) -> DurableTransactionPhase {
+        match self.status {
+            ConfigTransactionStatus::Pending => DurableTransactionPhase::Pending,
+            ConfigTransactionStatus::Completed | ConfigTransactionStatus::Failed => {
+                DurableTransactionPhase::Acknowledged
+            }
+        }
+    }
+
+    fn validate_history_for_scope(&self, scope: &Path) -> Result<(), String> {
+        if valid_envelope(self, scope, false) {
+            Ok(())
+        } else {
+            Err(format!(
+                "invalid terminal config transaction {}",
+                self.batch_id
+            ))
+        }
     }
 }
 
@@ -428,29 +454,22 @@ fn decode_legacy_active(
 }
 
 fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
-    cleanup_interrupted_candidates(config_dir)?;
-    durable_fifo::load_with_legacy(
-        &transaction_dir(config_dir),
-        config_dir,
-        &fifo_layout(),
-        decode_legacy_active,
-    )
+    Ok(open_workflow_with_options(config_dir, history_options())?.into_queue())
 }
 
 fn persist_journal(
     config_dir: &Path,
     journal: &mut ConfigTransactionJournal,
 ) -> Result<(), String> {
-    if journal.batches.is_empty() {
-        durable_fifo::clear(&transaction_dir(config_dir), &fifo_layout())
+    let mut workflow = open_workflow_with_options(config_dir, history_options())?;
+    *workflow.queue_mut() = journal.clone();
+    if workflow.queue().batches.is_empty() {
+        workflow.clear_queue()
     } else {
-        durable_fifo::persist(
-            &transaction_dir(config_dir),
-            config_dir,
-            &fifo_layout(),
-            journal,
-        )
-    }
+        workflow.persist_queue()
+    }?;
+    *journal = workflow.into_queue();
+    Ok(())
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -809,49 +828,6 @@ fn legacy_terminal_records(config_dir: &Path) -> Result<Vec<ConfigTransactionEnv
     Ok(rows)
 }
 
-fn write_migration_seed(
-    config_dir: &Path,
-    records: &[ConfigTransactionEnvelope],
-) -> Result<(), String> {
-    let mut bytes = Vec::new();
-    for record in records {
-        serde_json::to_writer(&mut bytes, record)
-            .map_err(|error| format!("serialize config history migration seed: {error}"))?;
-        bytes.push(b'\n');
-    }
-    omegat_core::durable_file::replace(&migration_seed_path(config_dir), &bytes)
-        .map_err(|error| format!("publish config history migration seed: {error}"))
-}
-
-fn read_migration_seed(config_dir: &Path) -> Result<Vec<ConfigTransactionEnvelope>, String> {
-    let path = migration_seed_path(config_dir);
-    let bytes = std::fs::read(&path).map_err(|error| {
-        format!(
-            "read config history migration seed {}: {error}",
-            path.display()
-        )
-    })?;
-    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-        return Err(format!(
-            "config history migration seed {} has a truncated final row",
-            path.display()
-        ));
-    }
-    bytes
-        .split(|byte| *byte == b'\n')
-        .filter(|line| line.iter().any(|byte| !byte.is_ascii_whitespace()))
-        .map(|line| {
-            let row: ConfigTransactionEnvelope = serde_json::from_slice(line)
-                .map_err(|error| format!("parse config history migration seed: {error}"))?;
-            if !valid_envelope(&row, config_dir, false) || row.version != CONFIG_TRANSACTION_VERSION
-            {
-                return Err("invalid config history migration seed row".into());
-            }
-            Ok(row)
-        })
-        .collect()
-}
-
 fn legacy_history_exists(config_dir: &Path) -> bool {
     [
         legacy_dedupe_path(config_dir),
@@ -886,53 +862,50 @@ fn remove_legacy_history(config_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn open_history_with_options(
-    config_dir: &Path,
-    owner: Option<&ConfigTransactionEnvelope>,
-    options: SegmentedHistoryOptions,
-) -> Result<SegmentedHistory<ConfigTransactionEnvelope>, String> {
-    let directory = transaction_dir(config_dir);
-    let layout = history_layout();
-    let seed = migration_seed_path(config_dir);
-    let unified_exists =
-        SegmentedHistory::<ConfigTransactionEnvelope>::has_durable_state(&directory, &layout);
-    if !seed.is_file()
-        && !unified_exists
-        && (legacy_history_exists(config_dir) || history_path(config_dir).is_file())
-    {
-        let records = legacy_terminal_records(config_dir)?;
-        write_migration_seed(config_dir, &records)?;
+fn config_workflow_layout() -> DurableTransactionLayout {
+    DurableTransactionLayout {
+        fifo: fifo_layout(),
+        history: history_layout(),
+        migration_seed_file: MIGRATION_SEED.into(),
     }
-    let operation = owner.map(|owner| owner.operation.clone());
-    let checkpoint_owner = owner.cloned();
-    let mut history =
-        SegmentedHistory::open_with(&directory, config_dir, layout, options, &mut |point| {
-            if let (Some(operation), Some(owner)) = (&operation, &checkpoint_owner) {
-                checkpoint(operation, point, owner)?;
+}
+
+fn open_workflow_with_options(
+    config_dir: &Path,
+    options: SegmentedHistoryOptions,
+) -> Result<DurableTransactionWorkflow<ConfigTransactionEnvelope>, String> {
+    let directory = transaction_dir(config_dir);
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("create config transaction directory: {error}"))?;
+    cleanup_interrupted_candidates(config_dir)?;
+    let had_legacy = legacy_history_exists(config_dir);
+    let workflow = DurableTransactionWorkflow::open_with_legacy(
+        &directory,
+        config_dir,
+        config_workflow_layout(),
+        options,
+        decode_legacy_active,
+        || legacy_terminal_records(config_dir),
+        &mut |owner, point| {
+            if let Some(owner) = owner {
+                checkpoint(&owner.operation, point, owner)?;
             }
             Ok(())
-        })
-        .map_err(|error| format!("config transaction history: {error}"))?;
-    if seed.is_file() {
-        let records = read_migration_seed(config_dir)?;
-        for record in records {
-            history
-                .append_with(record, &mut |point| {
-                    if let (Some(operation), Some(owner)) = (&operation, &checkpoint_owner) {
-                        checkpoint(operation, point, owner)?;
-                    }
-                    Ok(())
-                })
-                .map_err(|error| format!("import config transaction history: {error}"))?;
-        }
-        remove_legacy_history(config_dir)?;
-        remove_durable(&seed)?;
-    } else if unified_exists && legacy_history_exists(config_dir) {
-        // The seed is removed last. Reaching this state means every old row was
-        // imported; only cleanup interrupted after that commit can remain.
+        },
+    )
+    .map_err(|error| format!("config transaction workflow: {error}"))?;
+    if had_legacy {
         remove_legacy_history(config_dir)?;
     }
-    Ok(history)
+    Ok(workflow)
+}
+
+fn open_history_with_options(
+    config_dir: &Path,
+    _owner: Option<&ConfigTransactionEnvelope>,
+    options: SegmentedHistoryOptions,
+) -> Result<SegmentedHistory<ConfigTransactionEnvelope>, String> {
+    Ok(open_workflow_with_options(config_dir, options)?.into_history())
 }
 
 fn open_history(
@@ -1158,50 +1131,37 @@ fn terminal_disagreement(batch_id: &str) -> String {
 }
 
 fn find_terminal(
-    history: &SegmentedHistory<ConfigTransactionEnvelope>,
+    workflow: &DurableTransactionWorkflow<ConfigTransactionEnvelope>,
     batch_id: &str,
 ) -> Result<Option<ConfigTransactionEnvelope>, String> {
-    let records = history
-        .records_for(batch_id)
-        .map_err(|error| format!("read config transaction terminal: {error}"))?;
-    let mut found = None;
-    for record in records {
-        match &found {
-            Some(existing) if existing == &record => {}
-            Some(_) => return Err(terminal_disagreement(batch_id)),
-            None => found = Some(record),
+    workflow.terminal_record(batch_id).map_err(|error| {
+        if error.contains("terminal result disagrees") {
+            terminal_disagreement(batch_id)
+        } else {
+            format!("read config transaction terminal: {error}")
         }
-    }
-    Ok(found)
-}
-
-fn append_terminal(
-    history: &mut SegmentedHistory<ConfigTransactionEnvelope>,
-    terminal: ConfigTransactionEnvelope,
-    pending: &ConfigTransactionEnvelope,
-) -> Result<(), String> {
-    if let Some(existing) = find_terminal(history, &terminal.batch_id)? {
-        if existing != terminal {
-            return Err(terminal_disagreement(&terminal.batch_id));
-        }
-        return Ok(());
-    }
-    history
-        .append_with(terminal, &mut |point| {
-            checkpoint(&pending.operation, point, pending)
-        })
-        .map_err(|error| format!("append config transaction terminal: {error}"))?;
-    checkpoint(&pending.operation, "after_history_append", pending)
+    })
 }
 
 fn drain_locked(
     config_dir: &Path,
-    journal: &mut ConfigTransactionJournal,
-    history: &mut SegmentedHistory<ConfigTransactionEnvelope>,
+    workflow: &mut DurableTransactionWorkflow<ConfigTransactionEnvelope>,
 ) -> Result<(), String> {
-    while let Some(pending) = journal.batches.first().cloned() {
-        if let Some(terminal) = find_terminal(history, &pending.batch_id)? {
+    while let Some(pending) = workflow.queue().batches.first().cloned() {
+        if pending.transaction_phase().is_terminal() {
+            workflow
+                .compact_terminals(
+                    |candidate| candidate.transaction_phase().is_terminal(),
+                    &mut |_| Ok(()),
+                    &mut |point| checkpoint(&pending.operation, point, &pending),
+                )
+                .map_err(|error| format!("recover terminal config transaction: {error}"))?;
+            continue;
+        }
+        if let Some(terminal) = find_terminal(workflow, &pending.batch_id)? {
             validate_identity(&terminal, &pending.operation, &pending.payload)?;
+            workflow.remove(&pending.batch_id);
+            workflow.persist_or_clear_queue()?;
         } else {
             let mut terminal = pending.clone();
             match apply_operation(config_dir, &pending.operation, &pending.payload) {
@@ -1217,10 +1177,22 @@ fn drain_locked(
                 }
             }
             terminal.updated_unix_ms = unix_ms();
-            append_terminal(history, terminal, &pending)?;
+            workflow
+                .acknowledge_head(
+                    &pending.batch_id,
+                    terminal,
+                    |candidate| candidate.status == ConfigTransactionStatus::Pending,
+                    &mut |_| Ok(()),
+                    &mut |point| {
+                        checkpoint(&pending.operation, point, &pending)?;
+                        if point == "after_terminal_history_publish" {
+                            checkpoint(&pending.operation, "after_history_append", &pending)?;
+                        }
+                        Ok(())
+                    },
+                )
+                .map_err(|error| format!("complete config transaction: {error}"))?;
         }
-        journal.batches.remove(0);
-        persist_journal(config_dir, journal)?;
     }
     Ok(())
 }
@@ -1275,13 +1247,17 @@ pub fn execute(
     std::fs::create_dir_all(config_dir)
         .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
     let _lock = acquire_lock(config_dir)?;
-    let mut journal = read_journal(config_dir)?;
-    let mut history = open_history(config_dir, journal.batches.first())?;
-    if let Some(existing) = find_terminal(&history, batch_id)? {
+    let mut workflow = open_workflow_with_options(config_dir, history_options())?;
+    if let Some(existing) = find_terminal(&workflow, batch_id)? {
         validate_identity(&existing, operation, &payload)?;
         return result_from_terminal(&existing);
     }
-    if let Some(existing) = journal.batches.iter().find(|row| row.batch_id == batch_id) {
+    if let Some(existing) = workflow
+        .queue()
+        .batches
+        .iter()
+        .find(|row| row.batch_id == batch_id)
+    {
         validate_identity(existing, operation, &payload)?;
     } else {
         let envelope = ConfigTransactionEnvelope {
@@ -1297,12 +1273,12 @@ pub fn execute(
             error: None,
             updated_unix_ms: unix_ms(),
         };
-        journal.batches.push(envelope.clone());
-        persist_journal(config_dir, &mut journal)?;
+        workflow.upsert(envelope.clone())?;
+        workflow.persist_queue()?;
         checkpoint(operation, "after_enqueue", &envelope)?;
     }
-    drain_locked(config_dir, &mut journal, &mut history)?;
-    let terminal = find_terminal(&history, batch_id)?
+    drain_locked(config_dir, &mut workflow)?;
+    let terminal = find_terminal(&workflow, batch_id)?
         .ok_or_else(|| format!("config transaction {batch_id} did not reach history"))?;
     result_from_terminal(&terminal)
 }
@@ -1312,9 +1288,8 @@ pub fn recover(config_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(config_dir)
         .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
     let _lock = acquire_lock(config_dir)?;
-    let mut journal = read_journal(config_dir)?;
-    let mut history = open_history(config_dir, journal.batches.first())?;
-    drain_locked(config_dir, &mut journal, &mut history)
+    let mut workflow = open_workflow_with_options(config_dir, history_options())?;
+    drain_locked(config_dir, &mut workflow)
 }
 
 /// Recover pending writes and read the latest process-shared preferences.
@@ -1496,6 +1471,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("reused for a different operation or payload"));
+    }
+
+    #[test]
+    fn terminal_queue_publish_recovers_without_replaying_config_product() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let payload = json!({"locale": "fr"});
+        let terminal = completed(
+            &config,
+            "published-before-history",
+            payload.clone(),
+            json!({"exact": "retained"}),
+        );
+        let mut workflow =
+            open_workflow_with_options(&config, history_options()).unwrap();
+        workflow.upsert(terminal.clone()).unwrap();
+        workflow.persist_queue().unwrap();
+        drop(workflow);
+
+        recover(&config).unwrap();
+        assert!(!active_path(&config).exists());
+        assert!(!config.join("omegat.prefs.json").exists());
+        assert_eq!(
+            open_history(&config, None)
+                .unwrap()
+                .records_for("published-before-history")
+                .unwrap(),
+            vec![terminal]
+        );
+        assert_eq!(
+            execute(
+                &config,
+                "replacement",
+                "published-before-history",
+                404,
+                "prefs.patch",
+                payload,
+            )
+            .unwrap(),
+            json!({"exact": "retained"})
+        );
+        assert!(!config.join("omegat.prefs.json").exists());
     }
 
     #[test]

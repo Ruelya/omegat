@@ -8,9 +8,11 @@
 //! the config-scoped Electron pointer and imports version-2
 //! `external-refresh.json` installations idempotently.
 
+use omegat_core::durable_transaction::{
+    write_json_atomic, TransactionEnvelope, TRANSACTION_ENVELOPE_VERSION,
+};
 use omegat_team::{
-    write_json_atomic, TransactionEnvelope, TransactionRendererAck, TransactionRendererPayload,
-    TransactionRendererReceipt, TRANSACTION_ENVELOPE_VERSION,
+    TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -374,7 +376,7 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
             ))
         }
     };
-    let mut roots = BTreeMap::<PathBuf, u128>::new();
+    let mut roots = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
             format!(
@@ -405,18 +407,9 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
             return Err(format!("invalid active refresh owner {}", path.display()));
         }
         let root = normalized(&active.project_root);
-        roots
-            .entry(root)
-            .and_modify(|updated| *updated = (*updated).max(active.updated_unix_ms))
-            .or_insert(active.updated_unix_ms);
+        roots.push((root, active.updated_unix_ms));
     }
-    let mut roots = roots.into_iter().collect::<Vec<_>>();
-    roots.sort_by(|(left_root, left_updated), (right_root, right_updated)| {
-        left_updated
-            .cmp(right_updated)
-            .then_with(|| left_root.cmp(right_root))
-    });
-    let roots = roots.into_iter().map(|(root, _)| root).collect::<Vec<_>>();
+    let roots = omegat_core::durable_transaction::fair_scope_order(roots);
     for root in &roots {
         migrate_legacy_journal(root)?;
     }

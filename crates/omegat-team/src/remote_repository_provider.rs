@@ -7,15 +7,17 @@ use crate::rebase_and_commit::rebase_all;
 use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
-use crate::transaction_envelope::{
-    normalized, write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
-    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
-};
 use crate::{team_enabled, SyncReport};
 use omegat_core::cancellation::CancellationToken;
 use omegat_core::durable_fifo::{
     self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
     LegacyOwnerClaim, OwnerClaimError,
+};
+use omegat_core::durable_transaction::{
+    normalized, write_json_atomic, DurableTransactionLayout, DurableTransactionPhase,
+    DurableTransactionRecord, DurableTransactionWorkflow, TransactionCommit,
+    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
+    TRANSACTION_ENVELOPE_VERSION,
 };
 use omegat_core::properties::ProjectProperties;
 use omegat_core::segmented_history::{
@@ -647,6 +649,24 @@ impl DurableFifoEntry for SyncTransaction {
     }
 }
 
+impl DurableTransactionRecord for SyncTransaction {
+    fn transaction_phase(&self) -> DurableTransactionPhase {
+        match self.0.status {
+            TransactionStatus::Pending => DurableTransactionPhase::Pending,
+            TransactionStatus::CancellationPending => {
+                DurableTransactionPhase::CancellationPending
+            }
+            TransactionStatus::SidecarCommitted => DurableTransactionPhase::Committed,
+            TransactionStatus::Completed if self.phase == "renderer-acknowledged" => {
+                DurableTransactionPhase::Acknowledged
+            }
+            TransactionStatus::Completed
+            | TransactionStatus::Cancelled
+            | TransactionStatus::RequestCancelled => DurableTransactionPhase::Terminal,
+        }
+    }
+}
+
 impl SyncTransaction {
     fn is_refresh(&self) -> bool {
         self.refresh.is_some()
@@ -775,18 +795,16 @@ impl SyncTransaction {
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         let dir = transaction_dir(props);
         std::fs::create_dir_all(&dir)?;
-        let mut journal = load_product_journal(props)?;
-        if let Some(existing) = journal
-            .batches
-            .iter_mut()
-            .find(|transaction| transaction.0.batch_id == self.0.batch_id)
-        {
-            *existing = self.clone();
-        } else {
-            journal.batches.push(self.clone());
-        }
-        write_product_journal(props, &mut journal)?;
-        append_product_history(props, self.clone())?;
+        let mut workflow = open_product_workflow(props)?;
+        workflow
+            .upsert(self.clone())
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+        workflow
+            .persist_queue()
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+        workflow
+            .append_history(self.clone(), &mut product_history_checkpoint)
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
         Ok(())
     }
 
@@ -1005,10 +1023,7 @@ impl SyncTransaction {
     }
 
     fn load_dispatch_head(props: &ProjectProperties) -> Result<Option<Self>> {
-        Ok(load_product_journal(props)?
-            .batches
-            .into_iter()
-            .find(|transaction| {
+        Ok(open_product_workflow(props)?.dispatch_head(|transaction| {
                 transaction.0.status == TransactionStatus::SidecarCommitted
                     || (transaction.is_refresh()
                         && transaction.0.status == TransactionStatus::Pending)
@@ -1016,13 +1031,9 @@ impl SyncTransaction {
     }
 
     fn load_receipt(props: &ProjectProperties, batch_id: &str) -> Result<Option<Self>> {
-        Ok(load_product_journal(props)?
-            .batches
-            .into_iter()
-            .find(|transaction| {
-                transaction.0.batch_id == batch_id
-                    && transaction.0.status == TransactionStatus::SidecarCommitted
-            }))
+        Ok(open_product_workflow(props)?.receipt(batch_id, |transaction| {
+            transaction.0.status == TransactionStatus::SidecarCommitted
+        }))
     }
 
     fn remove_from_journal(self, props: &ProjectProperties) -> Result<()> {
@@ -1050,14 +1061,7 @@ impl SyncTransaction {
 }
 
 fn load_product_journal(props: &ProjectProperties) -> Result<ProductTransactionJournal> {
-    let dir = transaction_dir(props);
-    let journal = durable_fifo::load_with_legacy(
-        &dir,
-        &props.root,
-        &product_fifo_layout(),
-        decode_legacy_product_journal,
-    )
-    .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?;
+    let journal = open_product_workflow(props)?.into_queue();
     for transaction in &journal.batches {
         transaction.validate_loaded(props)?;
     }
@@ -1173,18 +1177,19 @@ fn write_product_journal(
     props: &ProjectProperties,
     journal: &mut ProductTransactionJournal,
 ) -> Result<()> {
-    durable_fifo::persist(
-        &transaction_dir(props),
-        &props.root,
-        &product_fifo_layout(),
-        journal,
-    )
-    .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
+    let mut workflow = open_product_workflow(props)?;
+    *workflow.queue_mut() = journal.clone();
+    workflow
+        .persist_queue()
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    *journal = workflow.into_queue();
+    Ok(())
 }
 
 fn clear_product_journal(props: &ProjectProperties) -> Result<()> {
-    durable_fifo::clear(&transaction_dir(props), &product_fifo_layout())
-        .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
+    open_product_workflow(props)?
+        .clear_queue()
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
 }
 
 fn sync_parent(path: &Path) -> Result<()> {
@@ -1241,6 +1246,30 @@ fn product_history_options() -> SegmentedHistoryOptions {
         partition_prefix_hex: configured_history_limit("OMEGAT_TEST_PRODUCT_HISTORY_PREFIX_HEX", 4)
             .min(64),
     }
+}
+
+fn product_workflow_layout() -> DurableTransactionLayout {
+    DurableTransactionLayout {
+        fifo: product_fifo_layout(),
+        history: product_history_layout(),
+        migration_seed_file: ".history-legacy-migration.ndjson".into(),
+    }
+}
+
+fn open_product_workflow(
+    props: &ProjectProperties,
+) -> Result<DurableTransactionWorkflow<SyncTransaction>> {
+    let directory = transaction_dir(props);
+    DurableTransactionWorkflow::open_with_legacy(
+        &directory,
+        &props.root,
+        product_workflow_layout(),
+        product_history_options(),
+        decode_legacy_product_journal,
+        || legacy_product_history(props).map_err(|error| error.to_string()),
+        &mut |_, point| product_history_checkpoint(point),
+    )
+    .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
 }
 
 fn product_history_checkpoint(point: &str) -> std::result::Result<(), String> {
@@ -1335,34 +1364,15 @@ fn legacy_product_history(props: &ProjectProperties) -> Result<Vec<SyncTransacti
 }
 
 fn open_product_history(props: &ProjectProperties) -> Result<SegmentedHistory<SyncTransaction>> {
-    let legacy = legacy_product_history(props)?;
-    let directory = transaction_dir(props);
-    let mut checkpoint = product_history_checkpoint;
-    let mut history = SegmentedHistory::open_with(
-        &directory,
-        &props.root,
-        product_history_layout(),
-        product_history_options(),
-        &mut checkpoint,
-    )
-    .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
-    history
-        .import_legacy(legacy, &mut checkpoint)
-        .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
-    let migration = directory.join(".history-legacy-migration.ndjson");
-    if migration.exists() {
-        std::fs::remove_file(&migration)?;
-        sync_parent(&migration)?;
-    }
-    Ok(history)
+    Ok(open_product_workflow(props)?.into_history())
 }
 
 fn append_product_history(props: &ProjectProperties, transaction: SyncTransaction) -> Result<()> {
-    let mut history = open_product_history(props)?;
+    let mut workflow = open_product_workflow(props)?;
     let mut checkpoint = product_history_checkpoint;
-    history
-        .append_with(transaction, &mut checkpoint)
-        .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+    workflow
+        .append_history(transaction, &mut checkpoint)
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     Ok(())
 }
 
@@ -1370,21 +1380,21 @@ fn product_history_for_batch(
     props: &ProjectProperties,
     batch_id: &str,
 ) -> Result<Vec<SyncTransaction>> {
-    open_product_history(props)?
-        .records_for(batch_id)
-        .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))
+    open_product_workflow(props)?
+        .history_records(batch_id)
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
 }
 
 fn archive_terminal_product_transactions(
     props: &ProjectProperties,
     terminal: &[SyncTransaction],
 ) -> Result<()> {
-    let mut history = open_product_history(props)?;
+    let mut workflow = open_product_workflow(props)?;
     let mut checkpoint = product_history_checkpoint;
     for transaction in terminal {
-        history
-            .append_with(transaction.clone(), &mut checkpoint)
-            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+        workflow
+            .append_terminal(transaction.clone(), &mut checkpoint)
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     }
     Ok(())
 }
@@ -1565,45 +1575,35 @@ fn product_owner_claim_checkpoint(
 }
 
 fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
-    let mut journal = load_product_journal(props)?;
-    let terminal = journal
-        .batches
-        .iter()
-        .filter(|transaction| !transaction.0.status.is_recoverable())
-        .cloned()
-        .collect::<Vec<_>>();
-    if terminal.is_empty() {
-        if journal.batches.is_empty() {
-            clear_product_journal(props)?;
-        }
-        return Ok(());
-    }
-    archive_terminal_product_transactions(props, &terminal)?;
-    product_compaction_checkpoint("after_archive_fsync")?;
-    if std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_ARCHIVE").as_deref() == Ok("1") {
-        std::process::abort();
-    }
-    journal
-        .batches
-        .retain(|transaction| transaction.0.status.is_recoverable());
-    for transaction in &terminal {
-        if !transaction.snapshot.as_os_str().is_empty() {
-            remove_path(&transaction.snapshot)?;
-        }
-    }
-    // Always publish the compacted v2 queue first, including an empty queue.
-    // The atomic writer fsyncs the replacement and parent directory, so a
-    // process death at the checkpoint cannot revive an archived terminal row.
-    write_product_journal(props, &mut journal)?;
-    product_compaction_checkpoint("after_queue_rename")?;
-    if std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME").as_deref()
-        == Ok("1")
-    {
-        std::process::abort();
-    }
-    if journal.batches.is_empty() {
-        clear_product_journal(props)?;
-    }
+    let mut workflow = open_product_workflow(props)?;
+    workflow
+        .compact_terminals(
+            |transaction| !transaction.0.status.is_recoverable(),
+            &mut |transaction| {
+                if !transaction.snapshot.as_os_str().is_empty() {
+                    remove_path(&transaction.snapshot).map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            },
+            &mut |point| {
+                product_compaction_checkpoint(point).map_err(|error| error.to_string())?;
+                if (point == "after_archive_fsync"
+                    && std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_ARCHIVE")
+                        .as_deref()
+                        == Ok("1"))
+                    || (point == "after_queue_rename"
+                        && std::env::var(
+                            "OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME",
+                        )
+                        .as_deref()
+                            == Ok("1"))
+                {
+                    std::process::abort();
+                }
+                Ok(())
+            },
+        )
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     Ok(())
 }
 
@@ -3111,7 +3111,11 @@ pub fn acknowledge_transaction_receipt_outcome(
         )));
     }
     let _lock = acquire_project_transaction_lock(props)?;
-    if let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? {
+    let mut workflow = open_product_workflow(props)?;
+    if let Some(mut transaction) = workflow.dispatch_head(|transaction| {
+        transaction.0.status == TransactionStatus::SidecarCommitted
+            || (transaction.is_refresh() && transaction.0.status == TransactionStatus::Pending)
+    }) {
         transaction.validate_repository_shape(props)?;
         if transaction.0.batch_id != batch_id {
             return Err(TeamError::Conflict(format!(
@@ -3160,8 +3164,30 @@ pub fn acknowledge_transaction_receipt_outcome(
         } else {
             transaction.0.transition(TransactionStatus::Completed, None);
         }
-        transaction.persist(props)?;
-        transaction.cleanup(props)?;
+        workflow
+            .acknowledge_head(
+                batch_id,
+                transaction,
+                |candidate| {
+                    candidate.0.status == TransactionStatus::SidecarCommitted
+                        || (candidate.is_refresh()
+                            && candidate.0.status == TransactionStatus::Pending)
+                },
+                &mut |terminal| {
+                    if !terminal.snapshot.as_os_str().is_empty() {
+                        remove_path(&terminal.snapshot).map_err(|error| error.to_string())?;
+                    }
+                    Ok(())
+                },
+                &mut product_history_checkpoint,
+            )
+            .map_err(|error| {
+                if error.contains("FIFO head") {
+                    TeamError::Conflict(error)
+                } else {
+                    TeamError::Command(format!("team transaction workflow: {error}"))
+                }
+            })?;
         return Ok(TransactionRendererAck {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(&props.root),
@@ -3208,10 +3234,13 @@ pub fn cancel_transaction_receipt(
     // for the current cancellation owner (or its OS-released lock after
     // process death), then observe the sole terminal decision as -32800.
     let lock = wait_for_project_transaction_lock(props)?;
-    let Some(mut transaction) = load_product_journal(props)?
+    let mut cancellation_workflow = open_product_workflow(props)?;
+    let Some(mut transaction) = cancellation_workflow
+        .queue()
         .batches
-        .into_iter()
+        .iter()
         .find(|transaction| transaction.0.batch_id == batch_id)
+        .cloned()
     else {
         for archived in product_history_for_batch(props, batch_id)?
             .into_iter()
@@ -3299,7 +3328,10 @@ pub fn cancel_transaction_receipt(
     // Cancelling a FIFO tail must not change the durable order of any older
     // receipt. The row becomes undispatchable in the same atomic queue rename.
     transaction.0.updated_unix_ms = dispatch_order;
-    transaction.persist_preserving_dispatch_order(props)?;
+    cancellation_workflow
+        .persist_cancellation_intent(batch_id, transaction.clone())
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    append_product_history(props, transaction.clone())?;
     resolve_cancellation_checkpoint("after_intent_queue_rename")?;
 
     rollback_pending_resolve_cancellation(props, &mut transaction)?;
