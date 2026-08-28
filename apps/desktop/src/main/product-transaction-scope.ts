@@ -4,6 +4,13 @@ const PRODUCT_TRANSACTION_METHODS = new Set([
   "entry.set",
   "project.save",
   "project.close",
+  "project.reload",
+  "project.compile",
+  "project.import",
+  "project.update",
+  "team.mapping",
+  "align.run",
+  "align.write",
 ]);
 
 export function scopeProductTransaction(

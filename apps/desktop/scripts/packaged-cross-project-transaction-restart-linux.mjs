@@ -343,20 +343,18 @@ const checkpointJournal = join(
   checkpointProject,
   ".repositories",
   "transactions",
-  "external-refresh.json",
+  "active.json",
 );
 const checkpointHistory = join(
   checkpointProject,
   ".repositories",
   "transactions",
-  "external-refresh-history.ndjson",
+  "history.ndjson",
 );
 const transactionDir = join(projectA, ".repositories", "transactions");
 const prepDir = join(projectA, ".repositories", "prep");
-const refreshJournal = join(transactionDir, "external-refresh.json");
-const refreshHistory = join(transactionDir, "external-refresh-history.ndjson");
-const teamJournal = join(transactionDir, "active.json");
-const teamHistory = join(transactionDir, "history.ndjson");
+const transactionJournal = join(transactionDir, "active.json");
+const transactionHistory = join(transactionDir, "history.ndjson");
 const snapshot = join(transactionDir, "packaged-conflict-a.snapshot");
 const xvfb = await startXvfb();
 let launched;
@@ -532,10 +530,20 @@ try {
       published: [],
     },
   };
-  await writeFile(teamJournal, JSON.stringify(teamEnvelope, null, 2), "utf8");
+  const unifiedJournal = JSON.parse(
+    await readFile(transactionJournal, "utf8"),
+  );
+  unifiedJournal.batches.push(teamEnvelope);
+  await writeFile(
+    transactionJournal,
+    JSON.stringify(unifiedJournal, null, 2),
+    "utf8",
+  );
   await writeFile(join(prepDir, "conflicts.json"), "[]", "utf8");
-  assert.equal(await pathExists(refreshJournal), true);
-  assert.equal(await pathExists(teamJournal), true);
+  assert.deepEqual(
+    unifiedJournal.batches.map((row) => row.batch_id),
+    [refreshBatchId, teamEnvelope.batch_id],
+  );
 
   const killedA = await killPackaged(launched);
   launched = undefined;
@@ -553,15 +561,15 @@ try {
   assert.equal(stateB.entries[0].key.file, "b.txt");
   assert.notDeepEqual(stateB.entries[0].key, keyA);
   assert.deepEqual(stateB.conflicts, []);
-  await waitFor("project A refresh cancellation after opening B", async () =>
-    await pathExists(refreshJournal) ? undefined : true
-  );
-  assert.equal(
-    await pathExists(teamJournal),
-    true,
-    "opening project B consumed project A's conflict transaction",
-  );
-  const refreshRows = parseNdjson(await readFile(refreshHistory, "utf8"));
+  await waitFor("project A refresh cancellation after opening B", async () => {
+    if (!await pathExists(transactionJournal)) return undefined;
+    const journal = JSON.parse(await readFile(transactionJournal, "utf8"));
+    return journal.batches.length === 1
+        && journal.batches[0]?.batch_id === teamEnvelope.batch_id
+      ? journal
+      : undefined;
+  });
+  const refreshRows = parseNdjson(await readFile(transactionHistory, "utf8"));
   const cancelledRefresh = refreshRows.find((row) =>
     row.batch_id === refreshBatchId
   );
@@ -581,10 +589,9 @@ try {
   assert.equal(recoveredA.entries.length, 1);
   assert.deepEqual(recoveredA.entries[0].key, keyA);
   assert.deepEqual(recoveredA.conflicts, [conflictA]);
-  assert.equal(await pathExists(refreshJournal), false);
-  assert.equal(await pathExists(teamJournal), false);
+  assert.equal(await pathExists(transactionJournal), false);
   assert.equal(await pathExists(snapshot), false);
-  const teamRows = parseNdjson(await readFile(teamHistory, "utf8"));
+  const teamRows = parseNdjson(await readFile(transactionHistory, "utf8"));
   const recoveredConflict = teamRows
     .filter((row) => row.batch_id === teamEnvelope.batch_id)
     .at(-1);

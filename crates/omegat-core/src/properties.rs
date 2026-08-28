@@ -349,6 +349,8 @@ impl ProjectProperties {
             root: self.root.to_string_lossy().into(),
             source_lang: self.source_lang.clone(),
             target_lang: self.target_lang.clone(),
+            source_tok: self.source_tok.clone(),
+            target_tok: self.target_tok.clone(),
             sentence_seg: self.sentence_seg,
             source_dir: self.source_dir.to_string_lossy().into(),
             target_dir: self.target_dir.to_string_lossy().into(),
@@ -356,9 +358,12 @@ impl ProjectProperties {
             glossary_dir: self.glossary_dir.to_string_lossy().into(),
             glossary_file: self.glossary_file.to_string_lossy().into(),
             dictionary_dir: self.dictionary_dir.to_string_lossy().into(),
+            export_tm_dir: self.export_tm_dir.to_string_lossy().into(),
             export_tm_levels: self.export_tm_levels.clone(),
             support_default_translations: self.support_default_translations,
             remove_tags: self.remove_tags,
+            external_command: self.external_command.clone(),
+            source_dir_excludes: self.source_dir_excludes.clone(),
             has_repositories: !self.repositories.is_empty(),
             repositories: self
                 .repositories

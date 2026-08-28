@@ -1,54 +1,36 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Durable FIFO for filesystem fingerprints awaiting an external refresh.
+//! Config-scoped refresh ownership and migration into the shared transaction FIFO.
 //!
-//! Refresh batches and team conflict transactions use the same versioned
-//! [`omegat_team::TransactionEnvelope`]. A config-scoped pointer identifies the
-//! one project that was active in Electron without making `omegat-core` depend
-//! on `omegat-team`.
+//! Refresh work no longer has an independent project journal. The only
+//! project queue is `.repositories/transactions/active.json`, owned by
+//! `omegat-team` together with product and team receipts. This module retains
+//! the config-scoped Electron pointer and imports version-2
+//! `external-refresh.json` installations idempotently.
 
 use omegat_team::{
-    write_json_atomic, TransactionEnvelope, TransactionRendererAck, TransactionStatus,
-    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
+    write_json_atomic, TransactionEnvelope, TransactionRendererAck, TransactionRendererPayload,
+    TransactionRendererReceipt, TRANSACTION_ENVELOPE_VERSION,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const QUEUE_VERSION: u8 = 2;
-const JOURNAL_FILE: &str = "external-refresh.json";
-const HISTORY_FILE: &str = "external-refresh-history.ndjson";
+const LEGACY_QUEUE_VERSION: u8 = 2;
+const LEGACY_JOURNAL_FILE: &str = "external-refresh.json";
+const LEGACY_HISTORY_FILE: &str = "external-refresh-history.ndjson";
 const ACTIVE_DIRECTORY: &str = "external-refresh-active";
 const LEGACY_ACTIVE_FILE: &str = "external-refresh-active.json";
 static BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RefreshBatch {
-    #[serde(default = "external_refresh_operation")]
-    pub operation: String,
-    pub paths: Vec<String>,
-    pub fingerprints: BTreeMap<String, Option<String>>,
-    pub sources: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub committed_result: Option<Value>,
-}
-
-pub type RefreshEnvelope = TransactionEnvelope<RefreshBatch>;
-
-fn external_refresh_operation() -> String {
-    "project.external-refresh".into()
-}
+pub type RefreshEnvelope = TransactionEnvelope<TransactionRendererPayload>;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RefreshJournal {
+struct LegacyRefreshJournal {
     version: u8,
     project_root: PathBuf,
     app_instance: String,
@@ -63,6 +45,8 @@ struct ActiveProject {
     version: u8,
     project_root: PathBuf,
     app_instance: String,
+    #[serde(default)]
+    generation: u64,
     updated_unix_ms: u128,
 }
 
@@ -77,16 +61,16 @@ fn normalized(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn journal_path(root: &Path) -> PathBuf {
-    root.join(".repositories")
-        .join("transactions")
-        .join(JOURNAL_FILE)
+fn transaction_dir(root: &Path) -> PathBuf {
+    root.join(".repositories").join("transactions")
 }
 
-fn history_path(root: &Path) -> PathBuf {
-    root.join(".repositories")
-        .join("transactions")
-        .join(HISTORY_FILE)
+fn legacy_journal_path(root: &Path) -> PathBuf {
+    transaction_dir(root).join(LEGACY_JOURNAL_FILE)
+}
+
+fn legacy_history_path(root: &Path) -> PathBuf {
+    transaction_dir(root).join(LEGACY_HISTORY_FILE)
 }
 
 fn active_path(config_dir: &Path, app_instance: &str) -> PathBuf {
@@ -106,198 +90,106 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, Str
         return Ok(None);
     }
     let bytes = std::fs::read(path)
-        .map_err(|error| format!("read refresh journal {}: {error}", path.display()))?;
+        .map_err(|error| format!("read refresh state {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes)
         .map(Some)
-        .map_err(|error| format!("parse refresh journal {}: {error}", path.display()))
-}
-
-fn sync_parent(path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        File::open(parent)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| format!("sync refresh journal {}: {error}", parent.display()))?;
-    }
-    Ok(())
+        .map_err(|error| format!("parse refresh state {}: {error}", path.display()))
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     write_json_atomic(path, value)
-        .map_err(|error| format!("publish refresh journal {}: {error}", path.display()))
+        .map_err(|error| format!("publish refresh owner {}: {error}", path.display()))
+}
+
+fn sync_parent(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("sync refresh state {}: {error}", parent.display()))?;
+    }
+    Ok(())
 }
 
 fn remove_file(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
         Ok(()) => sync_parent(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "remove refresh journal {}: {error}",
-            path.display()
-        )),
+        Err(error) => Err(format!("remove refresh state {}: {error}", path.display())),
     }
 }
 
-fn append_history(root: &Path, envelope: &RefreshEnvelope) -> Result<(), String> {
-    let path = history_path(root);
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("refresh history has no parent: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("create refresh history {}: {error}", parent.display()))?;
-    if path.is_file() {
-        let contents = std::fs::read_to_string(&path)
-            .map_err(|error| format!("read refresh history {}: {error}", path.display()))?;
-        for (index, line) in contents
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .enumerate()
-        {
-            let archived: RefreshEnvelope = serde_json::from_str(line).map_err(|error| {
+fn read_legacy_history(root: &Path) -> Result<Vec<RefreshEnvelope>, String> {
+    let path = legacy_history_path(root);
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("read refresh history {}: {error}", path.display())),
+    };
+    contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+        .map(|(index, line)| {
+            serde_json::from_str(line).map_err(|error| {
                 format!(
                     "parse refresh history {} line {}: {error}",
                     path.display(),
                     index + 1
                 )
-            })?;
-            if archived.batch_id != envelope.batch_id {
-                continue;
-            }
-            if archived == *envelope {
-                return Ok(());
-            }
-            return Err(format!(
-                "refresh history {} already contains a different terminal record for {}",
-                path.display(),
-                envelope.batch_id
-            ));
-        }
-    }
-    let mut history = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|error| format!("open refresh history {}: {error}", path.display()))?;
-    serde_json::to_writer(&mut history, envelope)
-        .map_err(|error| format!("serialize refresh history: {error}"))?;
-    history
-        .write_all(b"\n")
-        .and_then(|_| history.sync_all())
-        .map_err(|error| format!("write refresh history {}: {error}", path.display()))?;
-    sync_parent(&path)
+            })
+        })
+        .collect()
 }
 
-fn compaction_checkpoint(point: &str) -> Result<(), String> {
-    if std::env::var("OMEGAT_TEST_REFRESH_COMPACTION_POINT").as_deref() != Ok(point) {
+fn migrate_legacy_journal(root: &Path) -> Result<(), String> {
+    let journal_path = legacy_journal_path(root);
+    let history_path = legacy_history_path(root);
+    let journal = read_json::<LegacyRefreshJournal>(&journal_path)?;
+    if journal.is_none() && !history_path.is_file() {
         return Ok(());
     }
-    let Some(marker) = std::env::var_os("OMEGAT_TEST_REFRESH_COMPACTION_MARKER") else {
-        return Ok(());
-    };
-    let marker = PathBuf::from(marker);
-    if let Some(parent) = marker.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("create compaction marker parent: {error}"))?;
-    }
-    let mut file = match OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&marker)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
-        Err(error) => return Err(format!("create compaction marker: {error}")),
-    };
-    writeln!(file, "{point}").map_err(|error| format!("write compaction marker: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("sync compaction marker: {error}"))?;
-    sync_parent(&marker)?;
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
-}
-
-fn compact_acknowledged_batches(root: &Path, journal: &mut RefreshJournal) -> Result<bool, String> {
-    let terminal = journal
-        .batches
-        .iter()
-        .filter(|envelope| !envelope.status.is_recoverable())
-        .cloned()
-        .collect::<Vec<_>>();
-    for envelope in &terminal {
-        append_history(root, envelope)?;
-    }
-    if terminal.is_empty() {
-        return Ok(false);
-    }
-    // The marker is durable before the process parks. A packaged E2E can
-    // SIGKILL Electron's whole process group at this exact boundary and prove
-    // that the still-authoritative source queue retains every recoverable row.
-    compaction_checkpoint("after_archive_fsync")?;
-    journal
-        .batches
-        .retain(|envelope| envelope.status.is_recoverable());
-    Ok(true)
-}
-
-fn load_journal(root: &Path) -> Result<Option<RefreshJournal>, String> {
-    let Some(journal) = read_json::<RefreshJournal>(&journal_path(root))? else {
-        return Ok(None);
-    };
-    if journal.version != QUEUE_VERSION {
-        return Err(format!(
-            "unsupported refresh journal version {}",
-            journal.version
-        ));
-    }
-    if normalized(&journal.project_root) != normalized(root) {
-        remove_file(&journal_path(root))?;
-        return Ok(None);
-    }
-    for envelope in &journal.batches {
-        envelope
-            .validate_for_root(root)
-            .map_err(|error| format!("refresh transaction envelope: {error}"))?;
-        if envelope.payload.operation != external_refresh_operation() {
+    let active = if let Some(journal) = journal {
+        if journal.version != LEGACY_QUEUE_VERSION {
             return Err(format!(
-                "refresh transaction {} has operation {}",
-                envelope.batch_id, envelope.payload.operation
+                "unsupported refresh journal version {}",
+                journal.version
             ));
         }
-        match envelope.status {
-            TransactionStatus::Pending if envelope.payload.committed_result.is_some() => {
-                return Err(format!(
-                    "pending refresh {} carries a committed result",
-                    envelope.batch_id
-                ));
-            }
-            TransactionStatus::SidecarCommitted => {
-                let result = envelope.payload.committed_result.as_ref().ok_or_else(|| {
-                    format!(
-                        "sidecar-committed refresh {} has no durable result",
-                        envelope.batch_id
-                    )
-                })?;
-                let items = committed_result_items(result);
-                if !envelope.verify_product(result, items) {
-                    return Err(format!(
-                        "sidecar-committed refresh {} product receipt mismatch",
-                        envelope.batch_id
-                    ));
-                }
-            }
-            _ => {}
+        if normalized(&journal.project_root) != normalized(root) {
+            return Err(format!(
+                "refresh journal root {} does not match {}",
+                journal.project_root.display(),
+                root.display()
+            ));
         }
-    }
-    Ok(Some(journal))
+        journal.batches
+    } else {
+        Vec::new()
+    };
+    let history = read_legacy_history(root)?;
+    let props = omegat_core::properties::ProjectProperties::load(root)
+        .map_err(|error| format!("load project for refresh migration: {error}"))?;
+    omegat_team::migrate_refresh_transactions(&props, active, history)
+        .map_err(|error| format!("migrate refresh journal: {error}"))?;
+    // The shared queue and history are durable before either legacy source is
+    // removed. A crash between removals merely repeats exact-id migration.
+    remove_file(&journal_path)?;
+    remove_file(&history_path)
 }
 
-fn write_active(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
+fn write_active(
+    config_dir: &Path,
+    root: &Path,
+    app_instance: &str,
+    generation: u64,
+) -> Result<(), String> {
     write_json(
         &active_path(config_dir, app_instance),
         &ActiveProject {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(root),
             app_instance: app_instance.to_string(),
+            generation,
             updated_unix_ms: unix_ms(),
         },
     )
@@ -310,7 +202,7 @@ fn migrate_legacy_active(config_dir: &Path) -> Result<(), String> {
     };
     if active.version != TRANSACTION_ENVELOPE_VERSION {
         return Err(format!(
-            "unsupported active refresh journal version {}",
+            "unsupported active refresh owner version {}",
             active.version
         ));
     }
@@ -318,62 +210,59 @@ fn migrate_legacy_active(config_dir: &Path) -> Result<(), String> {
     remove_file(&legacy_path)
 }
 
-fn cancel_queue(root: &Path) -> Result<(), String> {
-    let Some(mut journal) = load_journal(root)? else {
-        return Ok(());
-    };
-    for envelope in &mut journal.batches {
-        match envelope.status {
-            TransactionStatus::Pending => {
-                envelope.transition(TransactionStatus::Cancelled, None);
-                append_history(root, envelope)?;
-            }
-            TransactionStatus::SidecarCommitted => {
-                // The product result and receipt already crossed their atomic
-                // boundary. A project-generation switch may drop the renderer
-                // rebind, but it must not relabel committed product work as
-                // cancelled or make it replayable.
-                envelope.transition(TransactionStatus::Completed, None);
-                append_history(root, envelope)?;
-            }
-            _ => append_history(root, envelope)?,
-        }
-    }
-    remove_file(&journal_path(root))
+fn discard_root_refreshes(root: &Path) -> Result<(), String> {
+    migrate_legacy_journal(root)?;
+    let props = omegat_core::properties::ProjectProperties::load(root)
+        .map_err(|error| format!("load project for refresh discard: {error}"))?;
+    omegat_team::discard_refresh_transactions(&props)
+        .map_err(|error| format!("discard refresh transactions: {error}"))
 }
 
-fn select_active_project(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
+fn select_active_project(
+    config_dir: &Path,
+    root: &Path,
+    app_instance: &str,
+    generation: u64,
+) -> Result<(), String> {
     migrate_legacy_active(config_dir)?;
+    migrate_legacy_journal(root)?;
     let owner_path = active_path(config_dir, app_instance);
     if let Some(active) = read_json::<ActiveProject>(&owner_path)? {
         if active.version != TRANSACTION_ENVELOPE_VERSION {
             return Err(format!(
-                "unsupported active refresh journal version {}",
+                "unsupported active refresh owner version {}",
                 active.version
             ));
         }
         if active.app_instance != app_instance {
             return Err(format!("active refresh owner collision for {app_instance}"));
         }
-        if normalized(&active.project_root) != normalized(root) {
-            // Opening a different root is a project-generation boundary.  A
-            // batch from this same Electron instance's formerly active root
-            // must never be replayed when that project is opened again later.
-            // Other instance owners under the shared config directory remain
-            // independent and must not be cancelled.
-            cancel_queue(&active.project_root)?;
+        let root_changed = normalized(&active.project_root) != normalized(root);
+        let same_process_generation_changed =
+            !root_changed && active.generation != 0 && active.generation != generation;
+        if root_changed || same_process_generation_changed {
+            // Product/team receipts remain untouched. Only stale filesystem
+            // work owned by this same Electron lifecycle is made terminal.
+            discard_root_refreshes(&active.project_root)?;
         }
     }
-    write_active(config_dir, root, app_instance)
+    write_active(config_dir, root, app_instance, generation)
 }
 
-/// Return roots recorded by config-scoped Electron owners without adopting,
-/// cancelling, or re-stamping any project queue.
-///
-/// The caller must inspect each root's product receipt before treating it as a
-/// detached recovery candidate. Active pointers intentionally outlive a
-/// crashed renderer, so a close receipt can be found while no project is
-/// watched or open in the replacement process.
+/// Prepare config ownership and migrate any former refresh-only journal.
+pub fn prepare(
+    config_dir: &Path,
+    root: &Path,
+    app_instance: &str,
+    generation: u64,
+) -> Result<(), String> {
+    if app_instance.is_empty() || generation == 0 {
+        return Err("refresh prepare requires app instance and generation".into());
+    }
+    select_active_project(config_dir, root, app_instance, generation)
+}
+
+/// Return roots recorded by config-scoped Electron owners without adopting a queue.
 pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
     migrate_legacy_active(config_dir)?;
     let directory = config_dir.join("transactions").join(ACTIVE_DIRECTORY);
@@ -397,12 +286,7 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
         })?;
         if !entry
             .file_type()
-            .map_err(|error| {
-                format!(
-                    "inspect active refresh owner {}: {error}",
-                    entry.path().display()
-                )
-            })?
+            .map_err(|error| format!("inspect active refresh owner: {error}"))?
             .is_file()
         {
             continue;
@@ -414,24 +298,13 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
                 .and_then(|value| value.to_str())
                 .is_some_and(|name| name.starts_with('.'))
         {
-            // An interrupted atomic publisher can leave a dot-prefixed .tmp
-            // file. Only completed owner pointer names are discovery inputs.
             continue;
         }
         let Some(active) = read_json::<ActiveProject>(&path)? else {
             continue;
         };
-        if active.version != TRANSACTION_ENVELOPE_VERSION {
-            return Err(format!(
-                "unsupported active refresh journal version {}",
-                active.version
-            ));
-        }
-        if active.app_instance.is_empty() {
-            return Err(format!(
-                "active refresh owner {} has an empty app instance",
-                path.display()
-            ));
+        if active.version != TRANSACTION_ENVELOPE_VERSION || active.app_instance.is_empty() {
+            return Err(format!("invalid active refresh owner {}", path.display()));
         }
         let root = normalized(&active.project_root);
         roots
@@ -445,71 +318,11 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
             .cmp(right_updated)
             .then_with(|| left_root.cmp(right_root))
     });
-    Ok(roots.into_iter().map(|(root, _)| root).collect())
-}
-
-pub fn pending(
-    config_dir: &Path,
-    root: &Path,
-    app_instance: &str,
-    generation: u64,
-) -> Result<Vec<RefreshEnvelope>, String> {
-    select_active_project(config_dir, root, app_instance)?;
-    let Some(mut journal) = load_journal(root)? else {
-        return Ok(Vec::new());
-    };
-    // Compact only terminal renderer-acknowledged records. Persist that
-    // compaction before adopting a replacement process so an unacknowledged
-    // sidecar receipt or a pending FIFO tail can never be dropped or have an
-    // old terminal generation rewritten as current.
-    if compact_acknowledged_batches(root, &mut journal)? {
-        if std::env::var("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_ARCHIVE").as_deref() == Ok("1")
-        {
-            // Fault injection after durable history append but before the
-            // compacted queue's atomic replacement. The original journal must
-            // remain the recovery source, including its unacknowledged receipt
-            // and pending tail.
-            std::process::abort();
-        }
-        if journal.batches.is_empty() {
-            remove_file(&journal_path(root))?;
-            return Ok(Vec::new());
-        }
-        journal.updated_unix_ms = unix_ms();
-        write_json(&journal_path(root), &journal)?;
-        // write_json_atomic has already fsynced the replacement and its parent
-        // directory. A process-group SIGKILL from this checkpoint must leave
-        // this compacted queue authoritative.
-        compaction_checkpoint("after_queue_rename")?;
-        if std::env::var("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_QUEUE_RENAME").as_deref()
-            == Ok("1")
-        {
-            // The compacted queue is already durable. A replacement process
-            // must adopt its unacknowledged receipt and pending tail rather
-            // than treating process death as an acknowledgement.
-            std::process::abort();
-        }
+    let roots = roots.into_iter().map(|(root, _)| root).collect::<Vec<_>>();
+    for root in &roots {
+        migrate_legacy_journal(root)?;
     }
-    if journal.app_instance == app_instance && journal.generation != generation {
-        // The same Electron process advanced its project generation.  This is
-        // a reload/open boundary, not crash recovery.
-        cancel_queue(root)?;
-        return Ok(Vec::new());
-    }
-    if journal.app_instance != app_instance {
-        // A new Electron process may adopt only the queue for the same active
-        // project root.  Re-stamp its renderer generation before replay.
-        journal.app_instance = app_instance.to_string();
-        journal.generation = generation;
-        for envelope in &mut journal.batches {
-            // Keep updated_unix_ms as the durable cross-backend dispatch key.
-            // Renderer adoption changes ownership, not FIFO creation order.
-            envelope.generation = generation;
-        }
-        journal.updated_unix_ms = unix_ms();
-        write_json(&journal_path(root), &journal)?;
-    }
-    Ok(journal.batches)
+    Ok(roots)
 }
 
 pub fn enqueue(
@@ -520,85 +333,21 @@ pub fn enqueue(
     paths: Vec<String>,
     fingerprints: BTreeMap<String, Option<String>>,
     sources: Vec<String>,
-) -> Result<RefreshEnvelope, String> {
-    let _ = pending(config_dir, root, app_instance, generation)?;
-    let mut journal = load_journal(root)?.unwrap_or_else(|| RefreshJournal {
-        version: QUEUE_VERSION,
-        project_root: normalized(root),
-        app_instance: app_instance.to_string(),
-        generation,
-        batches: Vec::new(),
-        updated_unix_ms: unix_ms(),
-    });
-    if let Some(existing) = journal.batches.iter_mut().find(|batch| {
-        batch.status == TransactionStatus::Pending && batch.payload.fingerprints == fingerprints
-    }) {
-        for source in sources {
-            if !existing.payload.sources.contains(&source) {
-                existing.payload.sources.push(source);
-            }
-        }
-        existing.payload.sources.sort();
-        // Coalescing adds provenance to the same durable work item. It must
-        // not move that item behind newer product receipts in the unified
-        // dispatcher.
-        let result = existing.clone();
-        journal.updated_unix_ms = unix_ms();
-        write_json(&journal_path(root), &journal)?;
-        return Ok(result);
-    }
+) -> Result<TransactionRendererReceipt, String> {
+    prepare(config_dir, root, app_instance, generation)?;
+    let props = omegat_core::properties::ProjectProperties::load(root)
+        .map_err(|error| format!("load project for refresh enqueue: {error}"))?;
     let sequence = BATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let batch = TransactionEnvelope::pending(
-        root,
+    let batch_id = format!("refresh-{}-{}-{sequence}", unix_ms(), std::process::id());
+    omegat_team::enqueue_refresh_transaction(
+        &props,
         generation,
-        format!("refresh-{}-{}-{sequence}", unix_ms(), std::process::id()),
-        RefreshBatch {
-            operation: external_refresh_operation(),
-            paths,
-            fingerprints,
-            sources,
-            committed_result: None,
-        },
-    );
-    journal.batches.push(batch.clone());
-    journal.updated_unix_ms = unix_ms();
-    write_json(&journal_path(root), &journal)?;
-    Ok(batch)
-}
-
-pub fn complete(
-    config_dir: &Path,
-    root: &Path,
-    app_instance: &str,
-    generation: u64,
-    batch_id: &str,
-    status: TransactionStatus,
-    error_code: Option<i32>,
-) -> Result<Vec<RefreshEnvelope>, String> {
-    let pending = pending(config_dir, root, app_instance, generation)?;
-    let Some(first) = pending.first() else {
-        return Ok(Vec::new());
-    };
-    if first.batch_id != batch_id {
-        return Err(format!(
-            "refresh FIFO head is {}, not {batch_id}",
-            first.batch_id
-        ));
-    }
-    let mut journal = load_journal(root)?
-        .ok_or_else(|| "refresh journal disappeared before completion".to_string())?;
-    journal.batches[0].transition(status, error_code);
-    write_json(&journal_path(root), &journal)?;
-    append_history(root, &journal.batches[0])?;
-    journal.batches.remove(0);
-    if journal.batches.is_empty() {
-        remove_file(&journal_path(root))?;
-        return Ok(Vec::new());
-    }
-    journal.updated_unix_ms = unix_ms();
-    let remaining = journal.batches.clone();
-    write_json(&journal_path(root), &journal)?;
-    Ok(remaining)
+        &batch_id,
+        paths,
+        fingerprints,
+        sources,
+    )
+    .map_err(|error| error.to_string())
 }
 
 pub fn checkpoint_sidecar_commit(
@@ -607,44 +356,13 @@ pub fn checkpoint_sidecar_commit(
     app_instance: &str,
     generation: u64,
     batch_id: &str,
-    committed_result: &Value,
-) -> Result<RefreshEnvelope, String> {
-    let pending = pending(config_dir, root, app_instance, generation)?;
-    let Some(first) = pending.first() else {
-        return Err(format!("refresh batch {batch_id} is no longer pending"));
-    };
-    if first.batch_id != batch_id {
-        return Err(format!(
-            "refresh FIFO head is {}, not {batch_id}",
-            first.batch_id
-        ));
-    }
-    if first.status == TransactionStatus::SidecarCommitted {
-        return Ok(first.clone());
-    }
-    let mut journal = load_journal(root)?
-        .ok_or_else(|| "refresh journal disappeared before checkpoint".to_string())?;
-    let dispatch_unix_ms = journal.batches[0].updated_unix_ms;
-    journal.batches[0].payload.committed_result = Some(committed_result.clone());
-    journal.batches[0].commit_product(
-        TransactionStatus::SidecarCommitted,
-        committed_result,
-        committed_result_items(committed_result),
-    )?;
-    // updated_unix_ms is also the cross-backend FIFO key. Product commit is a
-    // state transition for the existing head, not a newly enqueued receipt.
-    journal.batches[0].updated_unix_ms = dispatch_unix_ms;
-    let checkpoint = journal.batches[0].clone();
-    journal.updated_unix_ms = unix_ms();
-    write_json(&journal_path(root), &journal)?;
-    Ok(checkpoint)
-}
-
-fn committed_result_items(result: &Value) -> u64 {
-    result
-        .get("entry_list")
-        .and_then(Value::as_array)
-        .map_or(0, |entries| entries.len() as u64)
+    committed_result: &serde_json::Value,
+) -> Result<TransactionRendererReceipt, String> {
+    prepare(config_dir, root, app_instance, generation)?;
+    let props = omegat_core::properties::ProjectProperties::load(root)
+        .map_err(|error| format!("load project for refresh checkpoint: {error}"))?;
+    omegat_team::checkpoint_refresh_transaction(&props, generation, batch_id, committed_result)
+        .map_err(|error| error.to_string())
 }
 
 pub fn request_cancelled(
@@ -653,32 +371,12 @@ pub fn request_cancelled(
     app_instance: &str,
     generation: u64,
     batch_id: &str,
-) -> Result<Vec<RefreshEnvelope>, String> {
-    complete(
-        config_dir,
-        root,
-        app_instance,
-        generation,
-        batch_id,
-        TransactionStatus::RequestCancelled,
-        Some(REQUEST_CANCELLED_CODE),
-    )
-}
-
-fn acknowledged_in_history(root: &Path, generation: u64, batch_id: &str) -> Result<bool, String> {
-    let Ok(history) = std::fs::read_to_string(history_path(root)) else {
-        return Ok(false);
-    };
-    for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
-        let envelope: RefreshEnvelope = serde_json::from_str(line)
-            .map_err(|error| format!("parse refresh history: {error}"))?;
-        if envelope.batch_id == batch_id {
-            return Ok(envelope.generation == generation
-                && !envelope.status.is_recoverable()
-                && envelope.payload.operation == external_refresh_operation());
-        }
-    }
-    Ok(false)
+) -> Result<(), String> {
+    prepare(config_dir, root, app_instance, generation)?;
+    let props = omegat_core::properties::ProjectProperties::load(root)
+        .map_err(|error| format!("load project for refresh cancellation: {error}"))?;
+    omegat_team::cancel_refresh_transaction(&props, generation, batch_id)
+        .map_err(|error| error.to_string())
 }
 
 pub fn acknowledge(
@@ -689,55 +387,22 @@ pub fn acknowledge(
     batch_id: &str,
     outcome: &str,
 ) -> Result<TransactionRendererAck, String> {
-    let pending = pending(config_dir, root, app_instance, generation)?;
-    if let Some(first) = pending.first() {
-        if first.batch_id != batch_id {
-            return Err(format!(
-                "refresh renderer receipt is {}, not {batch_id}",
-                first.batch_id
-            ));
-        }
-        let (status, error_code) = if outcome == "cancelled" {
-            (
-                TransactionStatus::RequestCancelled,
-                Some(REQUEST_CANCELLED_CODE),
-            )
-        } else {
-            (TransactionStatus::Completed, None)
-        };
-        complete(
-            config_dir,
-            root,
-            app_instance,
-            generation,
-            batch_id,
-            status,
-            error_code,
-        )?;
-        return Ok(TransactionRendererAck {
-            version: TRANSACTION_ENVELOPE_VERSION,
-            project_root: normalized(root),
-            generation,
-            batch_id: batch_id.to_string(),
-            acknowledged: true,
-            already_acknowledged: false,
-        });
-    }
-    if acknowledged_in_history(root, generation, batch_id)? {
-        return Ok(TransactionRendererAck {
-            version: TRANSACTION_ENVELOPE_VERSION,
-            project_root: normalized(root),
-            generation,
-            batch_id: batch_id.to_string(),
-            acknowledged: true,
-            already_acknowledged: true,
-        });
-    }
-    Err(format!("unknown refresh renderer receipt {batch_id}"))
+    prepare(config_dir, root, app_instance, generation)?;
+    let props = omegat_core::properties::ProjectProperties::load(root)
+        .map_err(|error| format!("load project for refresh acknowledgement: {error}"))?;
+    omegat_team::acknowledge_transaction_receipt_outcome(
+        &props,
+        generation,
+        batch_id,
+        "project.external-refresh",
+        outcome,
+    )
+    .map_err(|error| error.to_string())
 }
 
 pub fn discard(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
-    cancel_queue(root)?;
+    migrate_legacy_journal(root)?;
+    discard_root_refreshes(root)?;
     migrate_legacy_active(config_dir)?;
     let owner_path = active_path(config_dir, app_instance);
     if let Some(active) = read_json::<ActiveProject>(&owner_path)? {
@@ -753,259 +418,62 @@ pub fn discard(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omegat_core::properties::ProjectProperties;
+    use omegat_team::{TransactionStatus, REQUEST_CANCELLED_CODE};
+
+    fn project(root: &Path) -> ProjectProperties {
+        let props = ProjectProperties::create(root.to_path_buf(), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        props
+    }
 
     fn fingerprints(value: &str) -> BTreeMap<String, Option<String>> {
-        BTreeMap::from([("/project/source/a.txt".to_string(), Some(value.to_string()))])
+        BTreeMap::from([("source/a.txt".into(), Some(value.into()))])
     }
 
     #[test]
-    fn active_root_discovery_is_read_only_and_deduplicated() {
+    fn owner_roots_are_independent_and_deduplicated() {
         let temp = tempfile::tempdir().unwrap();
         let config = temp.path().join("config");
         let first = temp.path().join("first");
         let second = temp.path().join("second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-
-        write_active(&config, &first, "electron-a").unwrap();
-        write_active(&config, &first, "electron-b").unwrap();
-        write_active(&config, &second, "electron-c").unwrap();
-        let owner_directory = config.join("transactions").join(ACTIVE_DIRECTORY);
-        std::fs::write(
-            owner_directory.join(".interrupted-owner.json.1.tmp"),
-            b"incomplete",
-        )
-        .unwrap();
-        let before = std::fs::read(active_path(&config, "electron-a")).unwrap();
+        project(&first);
+        project(&second);
+        write_active(&config, &first, "electron-a", 1).unwrap();
+        write_active(&config, &first, "electron-b", 2).unwrap();
+        write_active(&config, &second, "electron-c", 3).unwrap();
 
         let roots = active_project_roots(&config).unwrap();
         assert_eq!(roots.len(), 2);
         assert!(roots.contains(&normalized(&first)));
         assert!(roots.contains(&normalized(&second)));
-        assert_eq!(
-            std::fs::read(active_path(&config, "electron-a")).unwrap(),
-            before,
-            "root discovery rewrote its durable owner pointer"
-        );
     }
 
     #[test]
-    fn shared_config_keeps_different_electron_owners_independent() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = temp.path().join("shared-config");
-        let first = temp.path().join("first");
-        let second = temp.path().join("second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-
-        let first_batch = enqueue(
-            &config,
-            &first,
-            "electron-a",
-            11,
-            vec!["/first/source/a.txt".into()],
-            fingerprints("first"),
-            vec!["native".into()],
-        )
-        .unwrap();
-        let second_batch = enqueue(
-            &config,
-            &second,
-            "electron-b",
-            22,
-            vec!["/second/source/b.txt".into()],
-            fingerprints("second"),
-            vec!["sidecar".into()],
-        )
-        .unwrap();
-
-        assert_eq!(
-            pending(&config, &first, "electron-a", 11).unwrap()[0]
-                .batch_id
-                .as_str(),
-            first_batch.batch_id.as_str()
-        );
-        assert_eq!(
-            pending(&config, &second, "electron-b", 22).unwrap()[0]
-                .batch_id
-                .as_str(),
-            second_batch.batch_id.as_str()
-        );
-        assert!(journal_path(&first).is_file());
-        assert!(journal_path(&second).is_file());
-        assert_ne!(
-            active_path(&config, "electron-a"),
-            active_path(&config, "electron-b")
-        );
-
-        discard(&config, &second, "electron-b").unwrap();
-        assert_eq!(
-            pending(&config, &first, "electron-a", 11).unwrap()[0]
-                .batch_id
-                .as_str(),
-            first_batch.batch_id.as_str()
-        );
-    }
-
-    #[test]
-    fn terminal_history_append_is_strictly_idempotent() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("project");
-        std::fs::create_dir_all(&root).unwrap();
-        let mut terminal = TransactionEnvelope::pending(
-            &root,
-            3,
-            "terminal-once",
-            RefreshBatch {
-                operation: external_refresh_operation(),
-                paths: vec!["source/a.txt".into()],
-                fingerprints: fingerprints("archived"),
-                sources: vec!["native".into()],
-                committed_result: None,
-            },
-        );
-        terminal.transition(TransactionStatus::Completed, None);
-
-        append_history(&root, &terminal).unwrap();
-        append_history(&root, &terminal).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(history_path(&root))
-                .unwrap()
-                .lines()
-                .count(),
-            1
-        );
-
-        let mut conflicting = terminal.clone();
-        conflicting.error_code = Some(1);
-        assert!(append_history(&root, &conflicting)
-            .unwrap_err()
-            .contains("different terminal record"));
-    }
-
-    #[test]
-    fn adopts_only_same_root_after_process_restart_and_keeps_fifo() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = temp.path().join("config");
-        let first = temp.path().join("first");
-        let second = temp.path().join("second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-
-        let one = enqueue(
-            &config,
-            &first,
-            "electron-one",
-            9,
-            vec!["/project/source/a.txt".into()],
-            fingerprints("one"),
-            vec!["native".into()],
-        )
-        .unwrap();
-        let two = enqueue(
-            &config,
-            &first,
-            "electron-one",
-            9,
-            vec!["/project/source/a.txt".into()],
-            fingerprints("two"),
-            vec!["sidecar".into()],
-        )
-        .unwrap();
-        let adopted = pending(&config, &first, "electron-two", 1).unwrap();
-        assert_eq!(
-            adopted
-                .iter()
-                .map(|batch| batch.batch_id.as_str())
-                .collect::<Vec<_>>(),
-            vec![one.batch_id.as_str(), two.batch_id.as_str()]
-        );
-        assert!(adopted.iter().all(|batch| batch.generation == 1));
-        assert_eq!(
-            complete(
-                &config,
-                &first,
-                "electron-two",
-                1,
-                &one.batch_id,
-                TransactionStatus::RequestCancelled,
-                Some(REQUEST_CANCELLED_CODE),
-            )
-            .unwrap()[0]
-                .batch_id,
-            two.batch_id
-        );
-
-        assert!(pending(&config, &second, "electron-two", 2)
-            .unwrap()
-            .is_empty());
-        assert!(pending(&config, &first, "electron-two", 3)
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn same_process_generation_change_and_completion_never_revive_batches() {
+    fn refresh_uses_shared_active_queue_and_protocol_cancellation() {
         let temp = tempfile::tempdir().unwrap();
         let config = temp.path().join("config");
         let root = temp.path().join("project");
-        std::fs::create_dir_all(&root).unwrap();
+        project(&root);
         let batch = enqueue(
             &config,
             &root,
             "electron",
-            4,
-            vec!["/project/source/a.txt".into()],
+            7,
+            vec!["source/a.txt".into()],
             fingerprints("one"),
             vec!["native".into()],
         )
         .unwrap();
-        checkpoint_sidecar_commit(
-            &config,
-            &root,
-            "electron",
-            4,
-            &batch.batch_id,
-            &serde_json::json!({"entry_list": [{"source": "committed"}]}),
-        )
-        .unwrap();
-        assert_eq!(
-            pending(&config, &root, "electron", 4).unwrap()[0].status,
-            TransactionStatus::SidecarCommitted
-        );
-        assert!(complete(
-            &config,
-            &root,
-            "electron",
-            4,
-            &batch.batch_id,
-            TransactionStatus::Completed,
-            None,
-        )
-        .unwrap()
-        .is_empty());
-        assert!(pending(&config, &root, "electron", 4).unwrap().is_empty());
-        let terminal: RefreshEnvelope = serde_json::from_str(
-            std::fs::read_to_string(history_path(&root))
-                .unwrap()
-                .lines()
-                .last()
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(terminal.batch_id, batch.batch_id);
-        assert_eq!(terminal.status, TransactionStatus::Completed);
+        assert!(!legacy_journal_path(&root).exists());
+        assert!(transaction_dir(&root).join("active.json").exists());
+        assert_eq!(batch.status, TransactionStatus::Pending);
 
-        enqueue(
-            &config,
-            &root,
-            "electron",
-            4,
-            vec!["/project/source/a.txt".into()],
-            fingerprints("two"),
-            vec!["sidecar".into()],
-        )
-        .unwrap();
-        assert!(pending(&config, &root, "electron", 5).unwrap().is_empty());
+        request_cancelled(&config, &root, "electron", 7, &batch.batch_id).unwrap();
+        let history =
+            std::fs::read_to_string(transaction_dir(&root).join("history.ndjson")).unwrap();
+        assert!(history.contains(&batch.batch_id));
+        assert!(history.contains(&REQUEST_CANCELLED_CODE.to_string()));
     }
 }

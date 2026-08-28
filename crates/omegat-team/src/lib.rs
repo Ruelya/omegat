@@ -45,14 +45,17 @@ pub use rebase_and_commit::{
 };
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    acknowledge_transaction_receipt, cancel_transaction_receipt, claim_transaction_dispatch,
-    commit_after_version, commit_product_transaction_cancellable, commit_project_files,
-    commit_project_files_cancellable, commit_project_files_cancellable_scoped, get_version,
-    peek_transaction_receipt, pending_transaction_receipt, pending_transaction_receipt_for_owner,
-    recover_interrupted_sync, switch_to_version, sync, sync_cancellable, sync_cancellable_scoped,
-    transaction_receipt, wait_for_transaction_dispatch_owner_exit,
-    wait_for_transaction_dispatch_owner_exit_cancellable, TransactionRendererAck,
-    TransactionRendererPayload, TransactionRendererReceipt,
+    acknowledge_transaction_receipt, acknowledge_transaction_receipt_outcome,
+    cancel_refresh_transaction, cancel_transaction_receipt, checkpoint_refresh_transaction,
+    claim_transaction_dispatch, commit_after_version, commit_product_transaction_cancellable,
+    commit_product_transaction_with_paths_cancellable, commit_project_files,
+    commit_project_files_cancellable, commit_project_files_cancellable_scoped,
+    discard_refresh_transactions, enqueue_refresh_transaction, get_version,
+    migrate_refresh_transactions, peek_transaction_receipt, pending_transaction_receipt,
+    pending_transaction_receipt_for_owner, recover_interrupted_sync, switch_to_version, sync,
+    sync_cancellable, sync_cancellable_scoped, transaction_receipt,
+    wait_for_transaction_dispatch_owner_exit, wait_for_transaction_dispatch_owner_exit_cancellable,
+    TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -659,11 +662,13 @@ mod tests {
         assert_eq!(committed["version"], 2);
         assert_eq!(committed["batches"][0]["status"], "completed");
         assert_eq!(committed["batches"][0]["payload"]["phase"], "committed");
-        assert!(committed["batches"][0]["payload"]["product_manifest"]["files"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|receipt| receipt["path"] == "project/omegat/project_save.tmx"));
+        assert!(
+            committed["batches"][0]["payload"]["product_manifest"]["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|receipt| receipt["path"] == "project/omegat/project_save.tmx")
+        );
         assert_eq!(
             committed["batches"][0]["commit"]["manifest_sha256"]
                 .as_str()
@@ -1104,8 +1109,7 @@ mod tests {
         std::fs::write(props.source_dir.join("first.txt"), "local first").unwrap();
         std::fs::write(props.source_dir.join("second.txt"), "local second").unwrap();
 
-        let _fault_lock =
-            crate::remote_repository_provider::lock_commit_fault_injection();
+        let _fault_lock = crate::remote_repository_provider::lock_commit_fault_injection();
         crate::remote_repository_provider::fail_next_commit_for(1);
         let error = sync(&props).unwrap_err();
         assert!(matches!(error, TeamError::Command(_)), "{error:?}");
@@ -1340,8 +1344,7 @@ mod tests {
         std::fs::write(props.source_dir.join("file.txt"), "file-candidate").unwrap();
         std::fs::write(props.source_dir.join("block.txt"), "block-candidate").unwrap();
 
-        let _fault_lock =
-            crate::remote_repository_provider::lock_commit_fault_injection();
+        let _fault_lock = crate::remote_repository_provider::lock_commit_fault_injection();
         crate::remote_repository_provider::fail_next_commit_for(2);
         let failed = commit_project_files_cancellable_scoped(
             &props,
@@ -1421,10 +1424,7 @@ mod tests {
         let unacknowledged: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
         assert_eq!(unacknowledged["version"], 2);
-        assert_eq!(
-            unacknowledged["batches"][0]["status"],
-            "sidecar_committed"
-        );
+        assert_eq!(unacknowledged["batches"][0]["status"], "sidecar_committed");
         assert_eq!(unacknowledged["batches"][0]["generation"], 16);
         assert_eq!(unacknowledged["batches"][0]["batch_id"], "mixed-receipt");
 
@@ -1446,16 +1446,14 @@ mod tests {
         assert!(active.exists(), "unacknowledged receipt was compacted");
 
         let first_ack =
-            acknowledge_transaction_receipt(&props, 17, "mixed-receipt", "commit-source")
-                .unwrap();
+            acknowledge_transaction_receipt(&props, 17, "mixed-receipt", "commit-source").unwrap();
         assert!(first_ack.acknowledged);
         assert!(!first_ack.already_acknowledged);
         assert!(!active.exists());
         let history_after_first =
             std::fs::read(props.root.join(".repositories/transactions/history.ndjson")).unwrap();
         let duplicate =
-            acknowledge_transaction_receipt(&props, 17, "mixed-receipt", "commit-source")
-                .unwrap();
+            acknowledge_transaction_receipt(&props, 17, "mixed-receipt", "commit-source").unwrap();
         assert!(duplicate.acknowledged);
         assert!(duplicate.already_acknowledged);
         assert_eq!(
@@ -1485,6 +1483,201 @@ mod tests {
             std::str::from_utf8(committed_blob.content()).unwrap(),
             "git-candidate"
         );
+    }
+
+    #[test]
+    fn product_and_refresh_share_one_fifo_ack_and_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+
+        commit_product_transaction_cancellable(
+            &props,
+            "project.reload",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.shared-fifo",
+            31,
+            Some("product-before-refresh"),
+            |_| {
+                std::fs::write(props.source_dir.join("shared.txt"), "committed")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        let refresh = enqueue_refresh_transaction(
+            &props,
+            31,
+            "refresh-after-product",
+            vec!["source/shared.txt".into()],
+            std::collections::BTreeMap::from([(
+                "source/shared.txt".into(),
+                Some("fingerprint".into()),
+            )]),
+            vec!["native".into()],
+        )
+        .unwrap();
+        assert_eq!(refresh.status, TransactionStatus::Pending);
+
+        let product = pending_transaction_receipt_for_owner(
+            &props,
+            32,
+            "shared-fifo-owner",
+            std::process::id(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(product.batch_id, "product-before-refresh");
+        assert_eq!(product.payload.operation, "project.reload");
+        acknowledge_transaction_receipt_outcome(
+            &props,
+            32,
+            "product-before-refresh",
+            "project.reload",
+            "succeeded",
+        )
+        .unwrap();
+
+        let pending = pending_transaction_receipt_for_owner(
+            &props,
+            32,
+            "shared-fifo-owner",
+            std::process::id(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(pending.batch_id, "refresh-after-product");
+        assert_eq!(pending.status, TransactionStatus::Pending);
+        let result = serde_json::json!({
+            "entry_list": [{"source": "committed"}],
+            "stats": {"segments": 1},
+        });
+        let committed =
+            checkpoint_refresh_transaction(&props, 32, "refresh-after-product", &result).unwrap();
+        assert_eq!(committed.status, TransactionStatus::SidecarCommitted);
+        assert_eq!(committed.payload.committed_result, Some(result));
+        acknowledge_transaction_receipt_outcome(
+            &props,
+            32,
+            "refresh-after-product",
+            "project.external-refresh",
+            "succeeded",
+        )
+        .unwrap();
+        let duplicate = acknowledge_transaction_receipt_outcome(
+            &props,
+            32,
+            "refresh-after-product",
+            "project.external-refresh",
+            "succeeded",
+        )
+        .unwrap();
+        assert!(duplicate.already_acknowledged);
+        assert!(!props
+            .root
+            .join(".repositories/transactions/active.json")
+            .exists());
+
+        let history =
+            std::fs::read_to_string(props.root.join(".repositories/transactions/history.ndjson"))
+                .unwrap();
+        let terminal = history
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|row| row["status"] == "completed")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            terminal
+                .iter()
+                .map(|row| row["batch_id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["product-before-refresh", "refresh-after-product"]
+        );
+    }
+
+    #[test]
+    fn cancelled_local_product_restores_external_files_and_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let external_file = dir.path().join("outside.tmx");
+        let external_dir = dir.path().join("outside-target");
+        std::fs::write(&external_file, "before-file").unwrap();
+        std::fs::create_dir_all(&external_dir).unwrap();
+        std::fs::write(external_dir.join("before.txt"), "before-directory").unwrap();
+        std::fs::write(props.source_dir.join("inside.txt"), "before-project").unwrap();
+
+        let result: Result<()> = commit_product_transaction_with_paths_cancellable(
+            &props,
+            "align.write",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.external-products",
+            0,
+            None,
+            &[external_file.clone(), external_dir.clone()],
+            |_| {
+                std::fs::write(&external_file, "after-file")?;
+                std::fs::remove_file(external_dir.join("before.txt"))?;
+                std::fs::write(external_dir.join("after.txt"), "after-directory")?;
+                std::fs::write(props.source_dir.join("inside.txt"), "after-project")?;
+                Err(TeamError::Cancelled)
+            },
+        );
+        assert!(matches!(result, Err(TeamError::Cancelled)));
+        assert_eq!(
+            std::fs::read_to_string(&external_file).unwrap(),
+            "before-file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(external_dir.join("before.txt")).unwrap(),
+            "before-directory"
+        );
+        assert!(!external_dir.join("after.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("inside.txt")).unwrap(),
+            "before-project"
+        );
+        assert!(!props
+            .root
+            .join(".repositories/transactions/active.json")
+            .exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelled_local_product_preserves_external_symlink_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let original = dir.path().join("original.tmx");
+        let replacement = dir.path().join("replacement.tmx");
+        let link = dir.path().join("aligned.tmx");
+        std::fs::write(&original, "original").unwrap();
+        std::fs::write(&replacement, "replacement").unwrap();
+        std::os::unix::fs::symlink(&original, &link).unwrap();
+
+        let result: Result<()> = commit_product_transaction_with_paths_cancellable(
+            &props,
+            "align.write",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.external-symlink",
+            0,
+            None,
+            std::slice::from_ref(&link),
+            |_| {
+                std::fs::remove_file(&link)?;
+                std::os::unix::fs::symlink(&replacement, &link)?;
+                Err(TeamError::Cancelled)
+            },
+        );
+        assert!(matches!(result, Err(TeamError::Cancelled)));
+        assert_eq!(std::fs::read_link(&link).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "original");
     }
 
     #[test]

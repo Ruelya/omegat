@@ -19,9 +19,26 @@ import {
   repositoryEditorRows,
   type RepositoryEditorRow,
 } from "../lib/project-ui";
-import type { FilterOptionsDto } from "../lib/types";
+import type {
+  FilterOptionsDto,
+  ProjectPropsDto,
+  TransactionEnvelope,
+} from "../lib/types";
 import { useApp } from "../store/app";
 import { Modal } from "./Modal";
+
+async function acknowledgeProductReceipt(
+  receipt: TransactionEnvelope | null | undefined,
+) {
+  if (!receipt) return;
+  const result = await window.omegat?.acknowledgeTransactionReceipt?.(
+    receipt,
+    "succeeded",
+  );
+  if (result && !result.ack.acknowledged) {
+    throw new Error(`transaction receipt ${receipt.batch_id} was not acknowledged`);
+  }
+}
 
 export function AlignWindow() {
   const runLongOperation = useApp((state) => state.runLongOperation);
@@ -29,7 +46,7 @@ export function AlignWindow() {
   const cancelOperation = useApp((state) => state.cancelLongOperation);
   const alignOperationActive = Boolean(
     operation
-    && operation.kind === "align"
+    && (operation.kind === "align" || operation.kind === "alignWrite")
     && (
       operation.phase === "started"
       || operation.phase === "progress"
@@ -123,7 +140,11 @@ export function AlignWindow() {
     [],
   );
   async function run() {
-    let r: { pairs?: { source: string; target: string }[]; beads?: AlignBead[] };
+    let r: {
+      pairs?: { source: string; target: string }[];
+      beads?: AlignBead[];
+      receipt?: TransactionEnvelope | null;
+    };
     try {
       r = await runLongOperation("align", {
         source: src,
@@ -157,6 +178,7 @@ export function AlignWindow() {
     setAnchor(0);
     setPinpoint(null);
     setMessage("");
+    await acknowledgeProductReceipt(r.receipt);
   }
   async function edit(action: string, extra: Record<string, unknown> = {}) {
     const activeRow = rows[sel];
@@ -204,13 +226,17 @@ export function AlignWindow() {
   }
   async function write() {
     const props = useApp.getState().props;
-    const r = (await window.omegat?.rpc("align.write", {
+    const r = await runLongOperation<{
+      count?: number;
+      receipt?: TransactionEnvelope | null;
+    }>("alignWrite", {
       dest,
       beads,
       source_lang: props?.source_lang ?? "en",
       target_lang: props?.target_lang ?? "fr",
-    })) as { count?: number };
+    });
     setMessage(`${r?.count ?? beads.filter((bead) => bead.enabled).length} → ${dest}`);
+    await acknowledgeProductReceipt(r.receipt);
   }
   function tableKeyDown(event: React.KeyboardEvent<HTMLTableElement>) {
     const visible = visibleTableRows();
@@ -782,6 +808,9 @@ export function MappingWindow() {
   const [rows, setRows] = useState<RepositoryEditorRow[]>(() =>
     repositoryEditorRows(props?.repositories ?? [], props?.root ?? ""),
   );
+  useEffect(() => {
+    setRows(repositoryEditorRows(props?.repositories ?? [], props?.root ?? ""));
+  }, [props]);
   function update(i: number, patch: Partial<RepositoryEditorRow>) {
     setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
@@ -846,9 +875,18 @@ export function MappingWindow() {
           <button
             type="button"
             className="primary"
-            onClick={() => {
+            onClick={async () => {
               const repositories = repositoriesFromEditorRows(rows);
-              void window.omegat?.rpc("team.mapping", { repositories });
+              const result = (await window.omegat?.rpc("team.mapping", {
+                repositories,
+              })) as {
+                props?: ProjectPropsDto;
+                receipt?: TransactionEnvelope | null;
+              };
+              if (result.props) {
+                useApp.setState({ props: result.props });
+              }
+              await acknowledgeProductReceipt(result.receipt);
               useApp.getState().openWindow("mapping", false);
             }}
           >
@@ -874,7 +912,13 @@ export function FiltersWindow() {
             type="button"
             onClick={async () => {
               const o = (await window.omegat?.rpc("filters.options", { id: f.id })) as FilterOptionsDto;
-              setOpts(o);
+              setOpts({
+                ...o,
+                options: {
+                  ...o.options,
+                  ...(useApp.getState().prefs?.filter_options[o.id] ?? {}),
+                },
+              });
             }}
           >
             {f.name}
@@ -889,20 +933,36 @@ export function FiltersWindow() {
             <label key={k}>
               {k}
               <input
-                defaultValue={app.prefs?.filter_options[opts.id]?.[k] ?? v}
-                onBlur={(e) => {
-                  const prefs = useApp.getState().prefs;
-                  if (!prefs) return;
-                  void app.patchPrefs({
-                    filter_options: {
-                      ...prefs.filter_options,
-                      [opts.id]: { ...prefs.filter_options[opts.id], [k]: e.target.value },
-                    },
+                value={v}
+                onChange={(e) => {
+                  setOpts({
+                    ...opts,
+                    options: { ...opts.options, [k]: e.target.value },
                   });
                 }}
               />
             </label>
           ))}
+          <button
+            type="button"
+            className="primary"
+            onClick={async () => {
+              const prefs = useApp.getState().prefs;
+              if (!prefs) return;
+              await app.patchPrefs({
+                filter_options: {
+                  ...prefs.filter_options,
+                  [opts.id]: opts.options,
+                },
+              });
+              if (useApp.getState().props?.root) {
+                await useApp.getState().reloadProject();
+              }
+              app.openWindow("filters", false);
+            }}
+          >
+            {t("save")}
+          </button>
         </div>
       )}
       <button type="button" onClick={() => app.openWindow("filters", false)}>{t("cancel")}</button>
@@ -911,6 +971,14 @@ export function FiltersWindow() {
 }
 
 type SrxRule = { lang: string; brk: boolean; before: string; after: string };
+
+function xmlEscape(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;");
+}
 
 function parseSrxRules(xml: string): SrxRule[] {
   const rules: SrxRule[] = [];
@@ -935,20 +1003,26 @@ function rulesToSrx(rules: SrxRule[]): string {
     list.push(r);
     byLang.set(r.lang, list);
   }
-  const body = [...byLang.entries()]
+  const languageRules = [...byLang.entries()]
     .map(
       ([lang, rs]) =>
-        `<languagerule languagerulename="${lang}">` +
+        `<languagerule languagerulename="${xmlEscape(lang)}">` +
         rs
           .map(
             (r) =>
-              `<rule break="${r.brk ? "yes" : "no"}"><beforebreak>${r.before}</beforebreak><afterbreak>${r.after}</afterbreak></rule>`,
+              `<rule break="${r.brk ? "yes" : "no"}"><beforebreak>${xmlEscape(r.before)}</beforebreak><afterbreak>${xmlEscape(r.after)}</afterbreak></rule>`,
           )
           .join("") +
         `</languagerule>`,
     )
     .join("");
-  return `<?xml version="1.0"?><srx><body>${body}</body></srx>`;
+  const mapRules = [...byLang.keys()]
+    .map(
+      (lang) =>
+        `<maprule><languagemap languagepattern="${xmlEscape(lang)}" languagerulename="${xmlEscape(lang)}"/></maprule>`,
+    )
+    .join("");
+  return `<?xml version="1.0"?><srx><body><languagerules>${languageRules}</languagerules><maprules>${mapRules}</maprules></body></srx>`;
 }
 
 export function SegmentationWindow() {
@@ -956,6 +1030,10 @@ export function SegmentationWindow() {
   const patch = useApp((s) => s.patchPrefs);
   const [path, setPath] = useState(prefs?.srx_path || "fixtures/srx/defaultRules.srx");
   const [rules, setRules] = useState<SrxRule[]>(() => parseSrxRules(prefs?.srx_xml || ""));
+  useEffect(() => {
+    setPath(prefs?.srx_path || "fixtures/srx/defaultRules.srx");
+    setRules(parseSrxRules(prefs?.srx_xml || ""));
+  }, [prefs]);
   return (
     <Modal id="segmentation" title={t("segmentation")} wide>
       <div className="form">
@@ -978,11 +1056,17 @@ export function SegmentationWindow() {
             ))}
           </tbody>
         </table>
-        <button type="button" onClick={() => setRules([...rules, { lang: "English", brk: true, before: "\\.", after: "\\s" }])}>+</button>
+        <button type="button" onClick={() => setRules([...rules, { lang: "en.*", brk: true, before: "\\.", after: "\\s" }])}>+</button>
         <button
           type="button"
           className="primary"
-          onClick={() => void patch({ srx_path: path, srx_xml: rulesToSrx(rules) })}
+          onClick={async () => {
+            await patch({ srx_path: path, srx_xml: rulesToSrx(rules) });
+            if (useApp.getState().props?.root) {
+              await useApp.getState().reloadProject();
+            }
+            useApp.getState().openWindow("segmentation", false);
+          }}
         >
           {t("save")}
         </button>
@@ -991,32 +1075,81 @@ export function SegmentationWindow() {
   );
 }
 
+function projectDraft(props: ProjectPropsDto | null) {
+  return {
+    source_lang: props?.source_lang || "en",
+    target_lang: props?.target_lang || "fr",
+    source_tok: props?.source_tok || "org.omegat.tokenizer.DefaultTokenizer",
+    target_tok: props?.target_tok || "org.omegat.tokenizer.DefaultTokenizer",
+    sentence_seg: props?.sentence_seg ?? true,
+    source_dir: props?.source_dir || "",
+    target_dir: props?.target_dir || "",
+    tm_dir: props?.tm_dir || "",
+    glossary_dir: props?.glossary_dir || "",
+    glossary_file: props?.glossary_file || "",
+    dictionary_dir: props?.dictionary_dir || "",
+    export_tm_dir: props?.export_tm_dir || "",
+    export_tm_levels: props?.export_tm_levels || "",
+    support_default_translations: props?.support_default_translations ?? true,
+    remove_tags: props?.remove_tags ?? false,
+    external_command: props?.external_command || "",
+    source_dir_excludes: (props?.source_dir_excludes ?? []).join("\n"),
+  };
+}
+
 export function ProjectEditWindow() {
   const props = useApp((s) => s.props);
-  const [sl, setSl] = useState(props?.source_lang || "en");
-  const [tl, setTl] = useState(props?.target_lang || "fr");
-  const [seg, setSeg] = useState(true);
-  const [repo, setRepo] = useState(props?.root || "");
+  const [draft, setDraft] = useState(() => projectDraft(props));
+  useEffect(() => {
+    setDraft(projectDraft(props));
+  }, [props]);
+  const setText = <K extends keyof typeof draft,>(
+    key: K,
+    value: (typeof draft)[K],
+  ) =>
+    setDraft({ ...draft, [key]: value });
   return (
-    <Modal id="project-edit" title={t("properties")}>
+    <Modal id="project-edit" title={t("properties")} wide>
       <div className="form">
-        <label>{t("sourceLang")}<input value={sl} onChange={(e) => setSl(e.target.value)} /></label>
-        <label>{t("targetLang")}<input value={tl} onChange={(e) => setTl(e.target.value)} /></label>
-        <label><input type="checkbox" checked={seg} onChange={(e) => setSeg(e.target.checked)} /> {t("sentenceSeg")}</label>
-        <label>{t("team")}<input value={repo} onChange={(e) => setRepo(e.target.value)} /></label>
+        <label>{t("sourceLang")}<input value={draft.source_lang} onChange={(e) => setText("source_lang", e.target.value)} /></label>
+        <label>{t("targetLang")}<input value={draft.target_lang} onChange={(e) => setText("target_lang", e.target.value)} /></label>
+        <label>Source tokenizer<input value={draft.source_tok} onChange={(e) => setText("source_tok", e.target.value)} /></label>
+        <label>Target tokenizer<input value={draft.target_tok} onChange={(e) => setText("target_tok", e.target.value)} /></label>
+        <label>Source folder<input value={draft.source_dir} onChange={(e) => setText("source_dir", e.target.value)} /></label>
+        <label>Target folder<input value={draft.target_dir} onChange={(e) => setText("target_dir", e.target.value)} /></label>
+        <label>TM folder<input value={draft.tm_dir} onChange={(e) => setText("tm_dir", e.target.value)} /></label>
+        <label>Glossary folder<input value={draft.glossary_dir} onChange={(e) => setText("glossary_dir", e.target.value)} /></label>
+        <label>Writable glossary<input value={draft.glossary_file} onChange={(e) => setText("glossary_file", e.target.value)} /></label>
+        <label>Dictionary folder<input value={draft.dictionary_dir} onChange={(e) => setText("dictionary_dir", e.target.value)} /></label>
+        <label>Export TM folder<input value={draft.export_tm_dir} onChange={(e) => setText("export_tm_dir", e.target.value)} /></label>
+        <label>Export TM levels<input value={draft.export_tm_levels} onChange={(e) => setText("export_tm_levels", e.target.value)} /></label>
+        <label>External command<input value={draft.external_command} onChange={(e) => setText("external_command", e.target.value)} /></label>
+        <label>Source excludes<textarea rows={3} value={draft.source_dir_excludes} onChange={(e) => setText("source_dir_excludes", e.target.value)} /></label>
+        <label><input type="checkbox" checked={draft.sentence_seg} onChange={(e) => setDraft({ ...draft, sentence_seg: e.target.checked })} /> {t("sentenceSeg")}</label>
+        <label><input type="checkbox" checked={draft.support_default_translations} onChange={(e) => setDraft({ ...draft, support_default_translations: e.target.checked })} /> Default translations</label>
+        <label><input type="checkbox" checked={draft.remove_tags} onChange={(e) => setDraft({ ...draft, remove_tags: e.target.checked })} /> Remove tags</label>
         <div className="btn-row">
           <button
             type="button"
             className="primary"
             onClick={async () => {
               if (props?.root) {
-                await window.omegat?.rpc("project.update", {
+                const result = (await window.omegat?.rpc("project.update", {
                   root: props.root,
-                  source_lang: sl,
-                  target_lang: tl,
-                  sentence_segment: seg,
-                  repository: repo,
-                });
+                  ...draft,
+                  source_dir_excludes: draft.source_dir_excludes
+                    .split(/\r?\n/)
+                    .map((value) => value.trim())
+                    .filter(Boolean),
+                })) as {
+                  props?: ProjectPropsDto;
+                  receipt?: TransactionEnvelope | null;
+                };
+                if (result.props) {
+                  useApp.setState({ props: result.props });
+                  await useApp.getState().refreshEntriesAfterExternalChange();
+                }
+                await acknowledgeProductReceipt(result.receipt);
               }
               useApp.getState().openWindow("project-edit", false);
             }}

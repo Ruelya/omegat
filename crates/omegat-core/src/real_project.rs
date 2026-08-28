@@ -305,6 +305,18 @@ impl ProjectSession {
         }
         let ctx = self.filter_ctx();
         let excludes = build_excludes(&self.props.source_dir_excludes);
+        let custom_srx = if !self.prefs.srx_xml.trim().is_empty() {
+            Some(crate::segment::parse_srx(
+                &self.prefs.srx_xml,
+                &self.props.source_lang,
+            ))
+        } else if !self.prefs.srx_path.is_empty() {
+            std::fs::read_to_string(&self.prefs.srx_path)
+                .ok()
+                .map(|raw| crate::segment::parse_srx(&raw, &self.props.source_lang))
+        } else {
+            None
+        };
         let mut entries = Vec::new();
         for file in walk_sources(&self.props.source_dir, &excludes) {
             if cancellation.is_cancelled() {
@@ -324,15 +336,11 @@ impl ProjectSession {
                 if cancellation.is_cancelled() {
                     return Err(CoreError::Cancelled);
                 }
-                let custom = (!self.prefs.srx_path.is_empty())
-                    .then(|| std::fs::read_to_string(&self.prefs.srx_path).ok())
-                    .flatten()
-                    .map(|raw| crate::segment::parse_srx(&raw, &self.props.source_lang));
                 for sentence in crate::segment::split_sentences_lang(
                     &seg.source,
                     self.props.sentence_seg,
                     &self.props.source_lang,
-                    custom.as_ref(),
+                    custom_srx.as_ref(),
                 ) {
                     if cancellation.is_cancelled() {
                         return Err(CoreError::Cancelled);

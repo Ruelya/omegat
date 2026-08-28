@@ -1275,6 +1275,17 @@ pub fn write_aligned_pairs(
     write_aligned_tmx(&tmx, dest, src_lang, tgt_lang)
 }
 
+pub fn write_aligned_pairs_cancellable(
+    pairs: &[(String, String)],
+    dest: &Path,
+    src_lang: &str,
+    tgt_lang: &str,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    let tmx = pairs_to_tmx(pairs, src_lang, tgt_lang);
+    write_aligned_tmx_cancellable(&tmx, dest, src_lang, tgt_lang, cancellation)
+}
+
 pub fn write_aligned_tmx(
     tmx: &ProjectTmx,
     dest: &Path,

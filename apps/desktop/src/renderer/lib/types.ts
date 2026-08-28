@@ -111,6 +111,8 @@ export type ProjectPropsDto = {
   root: string;
   source_lang: string;
   target_lang: string;
+  source_tok?: string;
+  target_tok?: string;
   sentence_seg: boolean;
   source_dir?: string;
   target_dir?: string;
@@ -118,9 +120,12 @@ export type ProjectPropsDto = {
   glossary_dir?: string;
   glossary_file?: string;
   dictionary_dir?: string;
+  export_tm_dir?: string;
   export_tm_levels?: string;
   support_default_translations?: boolean;
   remove_tags?: boolean;
+  external_command?: string;
+  source_dir_excludes?: string[];
   has_repositories: boolean;
   repositories?: RepositoryRow[];
 };

@@ -17,6 +17,7 @@ use omegat_core::cancellation::CancellationToken;
 use omegat_core::properties::ProjectProperties;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -165,23 +166,38 @@ struct FileRemoteSnapshot {
     existed: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalProductSnapshot {
+    target: PathBuf,
+    backup: PathBuf,
+    is_file: bool,
+    existed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    symlink_target: Option<PathBuf>,
+    #[serde(default)]
+    symlink_is_dir: bool,
+}
+
 struct SyncSnapshot {
     base: PathBuf,
     project: PathBuf,
     prep: PathBuf,
     prep_existed: bool,
     file_remotes: Vec<FileRemoteSnapshot>,
+    external_products: Vec<ExternalProductSnapshot>,
 }
 
 impl SyncSnapshot {
     fn capture(props: &ProjectProperties, base: PathBuf) -> Result<Self> {
-        Self::capture_cancellable(props, base, true, &CancellationToken::default(), None)
+        Self::capture_cancellable(props, base, true, &[], &CancellationToken::default(), None)
     }
 
     fn capture_cancellable(
         props: &ProjectProperties,
         base: PathBuf,
         include_file_remotes: bool,
+        external_products: &[PathBuf],
         cancellation: &CancellationToken,
         checkpoint: Option<&'static str>,
     ) -> Result<Self> {
@@ -247,6 +263,44 @@ impl SyncSnapshot {
             });
         }
 
+        let mut external_snapshots = Vec::new();
+        let mut captured_targets = BTreeSet::new();
+        for (index, target) in external_products.iter().enumerate() {
+            check_cancelled(cancellation)?;
+            let target = if target.is_absolute() {
+                target.clone()
+            } else {
+                props.root.join(target)
+            };
+            if target.starts_with(&props.root) || !captured_targets.insert(target.clone()) {
+                continue;
+            }
+            let backup = base.join("external-products").join(index.to_string());
+            let existed = target.exists() || target.is_symlink();
+            let symlink_target = target
+                .is_symlink()
+                .then(|| std::fs::read_link(&target))
+                .transpose()?;
+            let symlink_is_dir = symlink_target.is_some() && target.is_dir();
+            let is_file = target.is_file() && symlink_target.is_none();
+            if existed && is_file {
+                if let Some(parent) = backup.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&target, &backup)?;
+            } else if existed && symlink_target.is_none() {
+                crate::team_utils::copy_tree(&target, &backup, false)?;
+            }
+            external_snapshots.push(ExternalProductSnapshot {
+                target,
+                backup,
+                is_file,
+                existed,
+                symlink_target,
+                symlink_is_dir,
+            });
+        }
+
         sync_snapshot_tree(&base)?;
         Ok(Self {
             base,
@@ -254,6 +308,7 @@ impl SyncSnapshot {
             prep,
             prep_existed,
             file_remotes,
+            external_products: external_snapshots,
         })
     }
 
@@ -262,6 +317,7 @@ impl SyncSnapshot {
         base: PathBuf,
         prep_existed: bool,
         file_remotes: Vec<FileRemoteSnapshot>,
+        external_products: Vec<ExternalProductSnapshot>,
     ) -> Result<Self> {
         let project = base.join("project");
         if !project.is_dir() {
@@ -294,6 +350,7 @@ impl SyncSnapshot {
             prep,
             prep_existed,
             file_remotes,
+            external_products,
         })
     }
 
@@ -313,12 +370,28 @@ impl SyncSnapshot {
         if self.prep_existed {
             crate::team_utils::copy_tree(&self.prep, &prep_target, false)?;
         }
+        for snapshot in &self.external_products {
+            remove_path(&snapshot.target)?;
+            if !snapshot.existed {
+                continue;
+            }
+            if let Some(link_target) = &snapshot.symlink_target {
+                restore_symlink(link_target, &snapshot.target, snapshot.symlink_is_dir)?;
+            } else if snapshot.is_file {
+                if let Some(parent) = snapshot.target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::copy(&snapshot.backup, &snapshot.target)?;
+            } else {
+                crate::team_utils::copy_tree(&snapshot.backup, &snapshot.target, false)?;
+            }
+        }
         Ok(())
     }
 
     fn restore_project_and_prep_durable(&self, props: &ProjectProperties) -> Result<()> {
         self.restore_project_and_prep(props)?;
-        sync_restored_project_and_prep(props)
+        sync_restored_project_and_prep(props, &self.external_products)
     }
 
     fn restore_file_remote(&self, repository_index: usize) -> Result<()> {
@@ -345,6 +418,26 @@ impl SyncSnapshot {
     }
 }
 
+fn restore_symlink(link_target: &Path, path: &Path, target_is_dir: bool) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    #[cfg(unix)]
+    {
+        let _ = target_is_dir;
+        std::os::unix::fs::symlink(link_target, path)?;
+    }
+    #[cfg(windows)]
+    {
+        if target_is_dir {
+            std::os::windows::fs::symlink_dir(link_target, path)?;
+        } else {
+            std::os::windows::fs::symlink_file(link_target, path)?;
+        }
+    }
+    Ok(())
+}
+
 fn sync_snapshot_tree(root: &Path) -> Result<()> {
     let mut directories = Vec::new();
     for entry in walkdir::WalkDir::new(root).follow_links(false) {
@@ -367,7 +460,10 @@ fn sync_snapshot_tree(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn sync_restored_project_and_prep(props: &ProjectProperties) -> Result<()> {
+fn sync_restored_project_and_prep(
+    props: &ProjectProperties,
+    external_products: &[ExternalProductSnapshot],
+) -> Result<()> {
     for entry in std::fs::read_dir(&props.root)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -389,6 +485,16 @@ fn sync_restored_project_and_prep(props: &ProjectProperties) -> Result<()> {
     }
     if let Some(repositories) = prep.parent() {
         File::open(repositories)?.sync_all()?;
+    }
+    for snapshot in external_products {
+        if snapshot.target.is_dir() && !snapshot.target.is_symlink() {
+            sync_snapshot_tree(&snapshot.target)?;
+        } else if snapshot.target.is_file() {
+            File::open(&snapshot.target)?.sync_all()?;
+        }
+        if let Some(parent) = snapshot.target.parent() {
+            File::open(parent)?.sync_all()?;
+        }
     }
     Ok(())
 }
@@ -426,6 +532,10 @@ struct SyncTransactionPayload {
     product_manifest: Option<TeamProductManifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     root_git_rollback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refresh: Option<TransactionRendererPayload>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    external_products: Vec<ExternalProductSnapshot>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -468,13 +578,27 @@ pub struct TransactionRendererReceipt {
     pub error_code: Option<i32>,
     pub updated_unix_ms: u128,
     pub payload: TransactionRendererPayload,
-    pub commit: TransactionCommit,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<TransactionCommit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransactionRendererPayload {
+    #[serde(default = "external_refresh_operation")]
     pub operation: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fingerprints: BTreeMap<String, Option<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub committed_result: Option<serde_json::Value>,
+}
+
+fn external_refresh_operation() -> String {
+    "project.external-refresh".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -503,6 +627,10 @@ impl std::ops::DerefMut for SyncTransaction {
 }
 
 impl SyncTransaction {
+    fn is_refresh(&self) -> bool {
+        self.refresh.is_some()
+    }
+
     fn ensure_slot_available(props: &ProjectProperties) -> Result<()> {
         if let Some(transaction) = Self::load_active_operation(props)? {
             return Err(TeamError::Conflict(format!(
@@ -544,6 +672,8 @@ impl SyncTransaction {
                 published: Vec::new(),
                 product_manifest: None,
                 root_git_rollback: None,
+                refresh: None,
+                external_products: Vec::new(),
             },
         ));
         transaction.persist(props)?;
@@ -557,6 +687,7 @@ impl SyncTransaction {
         checkpoint: &'static str,
         generation: u64,
         batch_id: Option<&str>,
+        external_products: &[PathBuf],
     ) -> Result<(Self, SyncSnapshot)> {
         Self::ensure_slot_available(props)?;
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -582,6 +713,8 @@ impl SyncTransaction {
                 published: Vec::new(),
                 product_manifest: None,
                 root_git_rollback: None,
+                refresh: None,
+                external_products: Vec::new(),
             },
         ));
         transaction.persist(props)?;
@@ -589,6 +722,7 @@ impl SyncTransaction {
             props,
             snapshot_path,
             false,
+            external_products,
             cancellation,
             Some(checkpoint),
         ) {
@@ -599,6 +733,7 @@ impl SyncTransaction {
             }
         };
         transaction.prep_existed = snapshot.prep_existed;
+        transaction.external_products = snapshot.external_products.clone();
         transaction.phase = "captured".into();
         transaction.persist(props)?;
         Ok((transaction, snapshot))
@@ -660,7 +795,7 @@ impl SyncTransaction {
         phase: &str,
         await_renderer_ack: bool,
     ) -> Result<()> {
-        let manifest = capture_product_manifest(props)?;
+        let manifest = capture_product_manifest(props, &self.external_products)?;
         let manifest_items = manifest.files.len() as u64
             + manifest.repository_versions.len() as u64
             + u64::from(manifest.root_git_version.is_some());
@@ -686,18 +821,21 @@ impl SyncTransaction {
     }
 
     fn renderer_receipt(&self) -> Result<TransactionRendererReceipt> {
-        if self.0.status != TransactionStatus::SidecarCommitted {
+        if self.0.status != TransactionStatus::SidecarCommitted
+            && !(self.is_refresh() && self.0.status == TransactionStatus::Pending)
+        {
             return Err(TeamError::Command(format!(
-                "transaction {} is not awaiting renderer acknowledgement",
+                "transaction {} is not awaiting renderer dispatch",
                 self.0.batch_id
             )));
         }
-        let commit = self.0.commit.clone().ok_or_else(|| {
-            TeamError::Command(format!(
+        let commit = self.0.commit.clone();
+        if self.0.status == TransactionStatus::SidecarCommitted && commit.is_none() {
+            return Err(TeamError::Command(format!(
                 "transaction {} has no product receipt",
                 self.0.batch_id
-            ))
-        })?;
+            )));
+        }
         Ok(TransactionRendererReceipt {
             version: self.0.version,
             project_root: self.0.project_root.clone(),
@@ -706,14 +844,29 @@ impl SyncTransaction {
             status: self.0.status,
             error_code: self.0.error_code,
             updated_unix_ms: self.0.updated_unix_ms,
-            payload: TransactionRendererPayload {
-                operation: self.operation.clone(),
-            },
+            payload: self
+                .refresh
+                .clone()
+                .unwrap_or_else(|| TransactionRendererPayload {
+                    operation: self.operation.clone(),
+                    paths: Vec::new(),
+                    fingerprints: BTreeMap::new(),
+                    sources: Vec::new(),
+                    committed_result: None,
+                }),
             commit,
         })
     }
 
     fn validate_repository_shape(&self, props: &ProjectProperties) -> Result<()> {
+        if self.is_refresh()
+            || !matches!(
+                self.operation.as_str(),
+                "sync" | "commit-source" | "commit-target" | "resolve-conflict"
+            )
+        {
+            return Ok(());
+        }
         if self.repository_count != props.repositories.len()
             || self.rollback_versions.len() != props.repositories.len()
         {
@@ -755,6 +908,47 @@ impl SyncTransaction {
             .0
             .validate_for_root(&props.root)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        if let Some(refresh) = &transaction.refresh {
+            if transaction.operation != "project.external-refresh"
+                || refresh.operation != transaction.operation
+                || refresh.paths.is_empty()
+                || refresh.sources.is_empty()
+                || !refresh
+                    .sources
+                    .iter()
+                    .all(|source| matches!(source.as_str(), "native" | "sidecar"))
+            {
+                return Err(TeamError::Command(format!(
+                    "invalid refresh transaction {}",
+                    transaction.0.batch_id
+                )));
+            }
+            match transaction.0.status {
+                TransactionStatus::Pending if refresh.committed_result.is_some() => {
+                    return Err(TeamError::Command(format!(
+                        "pending refresh {} carries a committed result",
+                        transaction.0.batch_id
+                    )));
+                }
+                TransactionStatus::SidecarCommitted => {
+                    let result = refresh.committed_result.as_ref().ok_or_else(|| {
+                        TeamError::Command(format!(
+                            "sidecar-committed refresh {} has no durable result",
+                            transaction.0.batch_id
+                        ))
+                    })?;
+                    let items = refresh_result_items(result);
+                    if !transaction.0.verify_product(result, items) {
+                        return Err(TeamError::Command(format!(
+                            "refresh transaction {} product receipt mismatch",
+                            transaction.0.batch_id
+                        )));
+                    }
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
         if matches!(
             transaction.0.status,
             TransactionStatus::SidecarCommitted | TransactionStatus::Completed
@@ -781,10 +975,11 @@ impl SyncTransaction {
     fn load_active_operation(props: &ProjectProperties) -> Result<Option<Self>> {
         let journal = load_product_journal(props)?;
         let mut pending = journal.batches.into_iter().filter(|transaction| {
-            matches!(
-                transaction.0.status,
-                TransactionStatus::Pending | TransactionStatus::CancellationPending
-            )
+            !transaction.is_refresh()
+                && matches!(
+                    transaction.0.status,
+                    TransactionStatus::Pending | TransactionStatus::CancellationPending
+                )
         });
         let transaction = pending.next();
         if pending.next().is_some() {
@@ -795,11 +990,25 @@ impl SyncTransaction {
         Ok(transaction)
     }
 
-    fn load_receipt_head(props: &ProjectProperties) -> Result<Option<Self>> {
+    fn load_dispatch_head(props: &ProjectProperties) -> Result<Option<Self>> {
         Ok(load_product_journal(props)?
             .batches
             .into_iter()
-            .find(|transaction| transaction.0.status == TransactionStatus::SidecarCommitted))
+            .find(|transaction| {
+                transaction.0.status == TransactionStatus::SidecarCommitted
+                    || (transaction.is_refresh()
+                        && transaction.0.status == TransactionStatus::Pending)
+            }))
+    }
+
+    fn load_product_receipt_head(props: &ProjectProperties) -> Result<Option<Self>> {
+        Ok(load_product_journal(props)?
+            .batches
+            .into_iter()
+            .find(|transaction| {
+                !transaction.is_refresh()
+                    && transaction.0.status == TransactionStatus::SidecarCommitted
+            }))
     }
 
     fn load_receipt(props: &ProjectProperties, batch_id: &str) -> Result<Option<Self>> {
@@ -824,7 +1033,9 @@ impl SyncTransaction {
                 self.0.batch_id
             )));
         }
-        remove_path(&self.snapshot)?;
+        if !self.snapshot.as_os_str().is_empty() {
+            remove_path(&self.snapshot)?;
+        }
         if journal.batches.is_empty() {
             remove_path(&transaction_dir(props).join("active.json"))?;
             remove_path(&transaction_dir(props).join(".active.previous.json"))?;
@@ -1140,7 +1351,9 @@ fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()
         .batches
         .retain(|transaction| transaction.0.status.is_recoverable());
     for transaction in &terminal {
-        remove_path(&transaction.snapshot)?;
+        if !transaction.snapshot.as_os_str().is_empty() {
+            remove_path(&transaction.snapshot)?;
+        }
     }
     // Always publish the compacted v2 queue first, including an empty queue.
     // The atomic writer fsyncs the replacement and parent directory, so a
@@ -1342,7 +1555,10 @@ pub fn claim_transaction_dispatch(
         .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))
 }
 
-fn capture_product_manifest(props: &ProjectProperties) -> Result<TeamProductManifest> {
+fn capture_product_manifest(
+    props: &ProjectProperties,
+    external_products: &[ExternalProductSnapshot],
+) -> Result<TeamProductManifest> {
     let mut files = Vec::new();
     collect_product_tree(&props.root, "project", true, &mut files)?;
     for (index, repo) in props.repositories.iter().enumerate() {
@@ -1352,7 +1568,20 @@ fn capture_product_manifest(props: &ProjectProperties) -> Result<TeamProductMani
         let remote = PathBuf::from(&repo.url);
         let prefix = format!("file-remote/{index}");
         if remote.exists() || remote.is_symlink() {
-            collect_product_tree(&remote, &prefix, false, &mut files)?;
+            collect_product_path(&remote, &prefix, &mut files)?;
+        } else {
+            files.push(ProductFileReceipt {
+                path: prefix,
+                kind: "missing".into(),
+                bytes: 0,
+                sha256: format!("{:x}", Sha256::digest([])),
+            });
+        }
+    }
+    for (index, snapshot) in external_products.iter().enumerate() {
+        let prefix = format!("external-product/{index}");
+        if snapshot.target.exists() || snapshot.target.is_symlink() {
+            collect_product_path(&snapshot.target, &prefix, &mut files)?;
         } else {
             files.push(ProductFileReceipt {
                 path: prefix,
@@ -1381,6 +1610,34 @@ fn capture_product_manifest(props: &ProjectProperties) -> Result<TeamProductMani
         repository_versions,
         root_git_version,
     })
+}
+
+fn collect_product_path(
+    path: &Path,
+    prefix: &str,
+    receipts: &mut Vec<ProductFileReceipt>,
+) -> Result<()> {
+    if path.is_dir() && !path.is_symlink() {
+        return collect_product_tree(path, prefix, false, receipts);
+    }
+    let (kind, bytes) = if path.is_symlink() {
+        (
+            "symlink",
+            std::fs::read_link(path)?
+                .to_string_lossy()
+                .into_owned()
+                .into_bytes(),
+        )
+    } else {
+        ("file", std::fs::read(path)?)
+    };
+    receipts.push(ProductFileReceipt {
+        path: prefix.to_string(),
+        kind: kind.into(),
+        bytes: bytes.len() as u64,
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+    });
+    Ok(())
 }
 
 fn collect_product_tree(
@@ -1573,6 +1830,7 @@ fn rollback_pending_resolve_cancellation(
                 transaction.snapshot.clone(),
                 transaction.prep_existed,
                 transaction.file_remotes.clone(),
+                transaction.external_products.clone(),
             )?;
             snapshot.restore_project_and_prep_durable(props)?;
             // Persist the completed rollback before any terminal transition.
@@ -1633,6 +1891,7 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         transaction.snapshot.clone(),
         transaction.prep_existed,
         transaction.file_remotes.clone(),
+        transaction.external_products.clone(),
     )?;
     transaction.phase = "recovering".into();
     for index in transaction.commit_started.clone() {
@@ -1668,7 +1927,7 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
             failures.push(format!("root git: {error}"));
         }
     }
-    if let Err(error) = snapshot.restore_project_and_prep(props) {
+    if let Err(error) = snapshot.restore_project_and_prep_durable(props) {
         failures.push(format!("project: {error}"));
     }
     if failures.is_empty() {
@@ -1694,6 +1953,31 @@ pub fn commit_product_transaction_cancellable<T>(
     batch_id: Option<&str>,
     mutation: impl FnOnce(&CancellationToken) -> Result<T>,
 ) -> Result<T> {
+    commit_product_transaction_with_paths_cancellable(
+        props,
+        operation,
+        cancellation,
+        checkpoint,
+        generation,
+        batch_id,
+        &[],
+        mutation,
+    )
+}
+
+/// Commit a local mutation whose durable product includes paths outside the
+/// project root. External destinations are snapshotted before mutation and
+/// restored after cancellation, publish failure, or pre-receipt process death.
+pub fn commit_product_transaction_with_paths_cancellable<T>(
+    props: &ProjectProperties,
+    operation: &str,
+    cancellation: &CancellationToken,
+    checkpoint: &'static str,
+    generation: u64,
+    batch_id: Option<&str>,
+    external_products: &[PathBuf],
+    mutation: impl FnOnce(&CancellationToken) -> Result<T>,
+) -> Result<T> {
     check_cancelled(cancellation)?;
     let _lock = acquire_project_transaction_lock(props)?;
     check_cancelled(cancellation)?;
@@ -1706,6 +1990,7 @@ pub fn commit_product_transaction_cancellable<T>(
         checkpoint,
         generation,
         batch_id,
+        external_products,
     )?;
     journal.phase = "mutating".into();
     journal.persist(props)?;
@@ -1713,7 +1998,7 @@ pub fn commit_product_transaction_cancellable<T>(
     match result {
         Ok(value) => {
             if let Err(error) = check_cancelled(cancellation) {
-                snapshot.restore_project_and_prep(props)?;
+                snapshot.restore_project_and_prep_durable(props)?;
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
@@ -1722,7 +2007,7 @@ pub fn commit_product_transaction_cancellable<T>(
             if let Err(error) =
                 journal.publish_product_commit(props, "committed", await_renderer_ack)
             {
-                snapshot.restore_project_and_prep(props)?;
+                snapshot.restore_project_and_prep_durable(props)?;
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
@@ -1733,7 +2018,7 @@ pub fn commit_product_transaction_cancellable<T>(
             Ok(value)
         }
         Err(error) => {
-            if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+            if let Err(rollback_error) = snapshot.restore_project_and_prep_durable(props) {
                 journal.phase = "rollback-failed".into();
                 let _ = journal.persist(props);
                 return Err(TeamError::Command(format!(
@@ -1928,7 +2213,7 @@ pub fn sync_cancellable_scoped(
             &published,
             &commit_started,
         );
-        if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+        if let Err(rollback_error) = snapshot.restore_project_and_prep_durable(props) {
             rollback_failures.push(format!("project: {rollback_error}"));
         }
         if let Some(conflicts) = pending_conflicts {
@@ -1958,7 +2243,7 @@ pub fn sync_cancellable_scoped(
             &published,
             &commit_started,
         );
-        if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+        if let Err(rollback_error) = snapshot.restore_project_and_prep_durable(props) {
             rollback_failures.push(format!("project: {rollback_error}"));
         }
         if rollback_failures.is_empty() {
@@ -2104,7 +2389,7 @@ pub fn commit_project_files_cancellable_scoped(
                     rollback_failures.push(format!("root git: {rollback_error}"));
                 }
             }
-            if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+            if let Err(rollback_error) = snapshot.restore_project_and_prep_durable(props) {
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
             if rollback_failures.is_empty() {
@@ -2133,7 +2418,7 @@ pub fn commit_project_files_cancellable_scoped(
                     rollback_failures.push(format!("root git: {rollback_error}"));
                 }
             }
-            if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+            if let Err(rollback_error) = snapshot.restore_project_and_prep_durable(props) {
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
             if rollback_failures.is_empty() {
@@ -2167,6 +2452,277 @@ pub fn commit_project_files_cancellable_scoped(
     })
 }
 
+fn refresh_result_items(result: &serde_json::Value) -> u64 {
+    result
+        .get("entry_list")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, |entries| entries.len() as u64)
+}
+
+fn refresh_transaction(
+    props: &ProjectProperties,
+    envelope: TransactionEnvelope<TransactionRendererPayload>,
+) -> Result<SyncTransaction> {
+    envelope
+        .validate_for_root(&props.root)
+        .map_err(|error| TeamError::Command(format!("refresh transaction: {error}")))?;
+    let operation = envelope.payload.operation.clone();
+    if operation != "project.external-refresh" {
+        return Err(TeamError::Command(format!(
+            "unsupported refresh operation {operation}"
+        )));
+    }
+    let transaction = SyncTransaction(TransactionEnvelope {
+        version: envelope.version,
+        project_root: envelope.project_root,
+        generation: envelope.generation,
+        batch_id: envelope.batch_id,
+        status: envelope.status,
+        error_code: envelope.error_code,
+        updated_unix_ms: envelope.updated_unix_ms,
+        payload: SyncTransactionPayload {
+            operation,
+            phase: match envelope.status {
+                TransactionStatus::Pending => "refresh-pending",
+                TransactionStatus::SidecarCommitted => "refresh-committed",
+                TransactionStatus::Completed => "renderer-acknowledged",
+                TransactionStatus::RequestCancelled => "refresh-request-cancelled",
+                TransactionStatus::Cancelled => "refresh-cancelled",
+                TransactionStatus::CancellationPending => "refresh-cancelling",
+            }
+            .into(),
+            snapshot: PathBuf::new(),
+            prep_existed: false,
+            file_remotes: Vec::new(),
+            repository_count: 0,
+            rollback_versions: Vec::new(),
+            commit_started: Vec::new(),
+            published: Vec::new(),
+            product_manifest: None,
+            root_git_rollback: None,
+            refresh: Some(envelope.payload),
+            external_products: Vec::new(),
+        },
+        commit: envelope.commit,
+    });
+    transaction.validate_loaded(props)?;
+    Ok(transaction)
+}
+
+fn refresh_envelope(transaction: &SyncTransaction) -> Result<TransactionRendererReceipt> {
+    if !transaction.is_refresh() {
+        return Err(TeamError::Command(format!(
+            "transaction {} is not an external refresh",
+            transaction.0.batch_id
+        )));
+    }
+    transaction.renderer_receipt()
+}
+
+/// Atomically merge the former external-refresh journal into the shared FIFO.
+///
+/// The caller removes legacy files only after this function succeeds. Repeating
+/// migration after a process death is idempotent by batch id and exact payload.
+pub fn migrate_refresh_transactions(
+    props: &ProjectProperties,
+    active: Vec<TransactionEnvelope<TransactionRendererPayload>>,
+    history: Vec<TransactionEnvelope<TransactionRendererPayload>>,
+) -> Result<()> {
+    if active.is_empty() && history.is_empty() {
+        return Ok(());
+    }
+    let _lock = acquire_project_transaction_lock(props)?;
+    recover_interrupted_sync_locked(props)?;
+    let mut journal = load_product_journal(props)?;
+    for envelope in active {
+        let transaction = refresh_transaction(props, envelope)?;
+        if let Some(existing) = journal
+            .batches
+            .iter()
+            .find(|existing| existing.0.batch_id == transaction.0.batch_id)
+        {
+            if serde_json::to_value(existing).ok() != serde_json::to_value(&transaction).ok() {
+                return Err(TeamError::Command(format!(
+                    "refresh migration batch {} conflicts with the shared journal",
+                    transaction.0.batch_id
+                )));
+            }
+            continue;
+        }
+        journal.batches.push(transaction);
+    }
+    journal.batches.sort_by(|left, right| {
+        left.0
+            .updated_unix_ms
+            .cmp(&right.0.updated_unix_ms)
+            .then_with(|| left.0.batch_id.cmp(&right.0.batch_id))
+            .then_with(|| left.operation.cmp(&right.operation))
+    });
+    write_product_journal(props, &journal)?;
+
+    let terminal = history
+        .into_iter()
+        .map(|envelope| refresh_transaction(props, envelope))
+        .collect::<Result<Vec<_>>>()?;
+    if !terminal.is_empty() {
+        archive_terminal_product_transactions(props, &terminal)?;
+    }
+    Ok(())
+}
+
+/// Append or coalesce one pending refresh in the shared durable FIFO.
+pub fn enqueue_refresh_transaction(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+    paths: Vec<String>,
+    fingerprints: BTreeMap<String, Option<String>>,
+    sources: Vec<String>,
+) -> Result<TransactionRendererReceipt> {
+    if generation == 0
+        || batch_id.is_empty()
+        || paths.is_empty()
+        || sources.is_empty()
+        || !sources
+            .iter()
+            .all(|source| matches!(source.as_str(), "native" | "sidecar"))
+    {
+        return Err(TeamError::Command(
+            "refresh enqueue requires generation, batch id, paths, and native/sidecar sources"
+                .into(),
+        ));
+    }
+    let _lock = acquire_project_transaction_lock(props)?;
+    recover_interrupted_sync_locked(props)?;
+    let journal = load_product_journal(props)?;
+    if let Some(existing) = journal.batches.into_iter().find(|transaction| {
+        transaction.is_refresh()
+            && transaction.0.status == TransactionStatus::Pending
+            && transaction
+                .refresh
+                .as_ref()
+                .is_some_and(|refresh| refresh.fingerprints == fingerprints)
+    }) {
+        let mut existing = existing;
+        let refresh = existing
+            .refresh
+            .as_mut()
+            .expect("refresh transaction has refresh payload");
+        for source in sources {
+            if !refresh.sources.contains(&source) {
+                refresh.sources.push(source);
+            }
+        }
+        refresh.sources.sort();
+        existing.persist_preserving_dispatch_order(props)?;
+        return refresh_envelope(&existing);
+    }
+
+    let envelope = TransactionEnvelope::pending(
+        &props.root,
+        generation,
+        batch_id,
+        TransactionRendererPayload {
+            operation: "project.external-refresh".into(),
+            paths,
+            fingerprints,
+            sources,
+            committed_result: None,
+        },
+    );
+    let mut transaction = refresh_transaction(props, envelope)?;
+    transaction.persist_preserving_dispatch_order(props)?;
+    refresh_envelope(&transaction)
+}
+
+/// Publish the exact refresh result and receipt in the shared queue rename.
+pub fn checkpoint_refresh_transaction(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+    committed_result: &serde_json::Value,
+) -> Result<TransactionRendererReceipt> {
+    let _lock = acquire_project_transaction_lock(props)?;
+    let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
+        return Err(TeamError::Conflict(format!(
+            "refresh batch {batch_id} is no longer pending"
+        )));
+    };
+    if transaction.0.batch_id != batch_id
+        || transaction.0.generation != generation
+        || !transaction.is_refresh()
+    {
+        return Err(TeamError::Conflict(format!(
+            "shared FIFO head is {}, not refresh {batch_id}",
+            transaction.0.batch_id
+        )));
+    }
+    if transaction.0.status == TransactionStatus::SidecarCommitted {
+        return refresh_envelope(&transaction);
+    }
+    let dispatch_unix_ms = transaction.0.updated_unix_ms;
+    transaction
+        .refresh
+        .as_mut()
+        .expect("refresh transaction has refresh payload")
+        .committed_result = Some(committed_result.clone());
+    transaction
+        .0
+        .commit_product(
+            TransactionStatus::SidecarCommitted,
+            committed_result,
+            refresh_result_items(committed_result),
+        )
+        .map_err(|error| TeamError::Command(format!("refresh transaction: {error}")))?;
+    transaction.0.updated_unix_ms = dispatch_unix_ms;
+    transaction.phase = "refresh-committed".into();
+    transaction.persist_preserving_dispatch_order(props)?;
+    refresh_envelope(&transaction)
+}
+
+/// Complete a protocol-cancelled refresh without exposing it for replay.
+pub fn cancel_refresh_transaction(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+) -> Result<()> {
+    acknowledge_transaction_receipt_outcome(
+        props,
+        generation,
+        batch_id,
+        "project.external-refresh",
+        "cancelled",
+    )
+    .map(|_| ())
+}
+
+/// Drop only refresh rows at a same-process project-generation boundary.
+pub fn discard_refresh_transactions(props: &ProjectProperties) -> Result<()> {
+    let _lock = acquire_project_transaction_lock(props)?;
+    let mut journal = load_product_journal(props)?;
+    let mut changed = false;
+    for transaction in &mut journal.batches {
+        if !transaction.is_refresh() || !transaction.0.status.is_recoverable() {
+            continue;
+        }
+        transaction.phase = "refresh-discarded".into();
+        match transaction.0.status {
+            TransactionStatus::Pending => {
+                transaction.0.transition(TransactionStatus::Cancelled, None)
+            }
+            TransactionStatus::SidecarCommitted => {
+                transaction.0.transition(TransactionStatus::Completed, None)
+            }
+            _ => continue,
+        }
+        changed = true;
+    }
+    if changed {
+        write_product_journal(props, &journal)?;
+    }
+    compact_terminal_product_transactions(props)
+}
+
 fn acknowledged_receipt_in_history(
     props: &ProjectProperties,
     generation: u64,
@@ -2182,7 +2738,7 @@ fn acknowledged_receipt_in_history(
             .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
         if transaction.0.batch_id == batch_id {
             return Ok(transaction.0.generation == generation
-                && transaction.0.status == TransactionStatus::Completed
+                && !transaction.0.status.is_recoverable()
                 && transaction.phase == "renderer-acknowledged"
                 && transaction.operation == operation);
         }
@@ -2226,13 +2782,12 @@ pub fn pending_transaction_receipt_for_owner(
     product_owner_claim_checkpoint(props, app_instance, process_id, generation)?;
     let _lock = acquire_project_transaction_lock(props)?;
     compact_terminal_product_transactions(props)?;
-    let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? else {
+    let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
     if transaction.0.generation != generation {
-        // Renderer adoption must not move this receipt behind or ahead of the
-        // refresh backend. updated_unix_ms is the durable dispatcher key.
+        // Renderer adoption changes ownership, not durable FIFO order.
         transaction.0.generation = generation;
         transaction.persist_preserving_dispatch_order(props)?;
     }
@@ -2250,7 +2805,7 @@ pub fn peek_transaction_receipt(
     props: &ProjectProperties,
 ) -> Result<Option<TransactionRendererReceipt>> {
     let _lock = acquire_project_transaction_lock(props)?;
-    let Some(transaction) = SyncTransaction::load_receipt_head(props)? else {
+    let Some(transaction) = SyncTransaction::load_product_receipt_head(props)? else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
@@ -2291,13 +2846,33 @@ pub fn acknowledge_transaction_receipt(
     batch_id: &str,
     operation: &str,
 ) -> Result<TransactionRendererAck> {
+    acknowledge_transaction_receipt_outcome(props, generation, batch_id, operation, "succeeded")
+}
+
+/// Idempotently acknowledge the global product/refresh FIFO head.
+///
+/// Pending refresh rows may be acknowledged as coalesced without executing
+/// their product read. Every committed row is completed only after renderer
+/// publication. Product writes accept only the succeeded outcome.
+pub fn acknowledge_transaction_receipt_outcome(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+    operation: &str,
+    outcome: &str,
+) -> Result<TransactionRendererAck> {
     if generation == 0 || batch_id.is_empty() || operation.is_empty() {
         return Err(TeamError::Command(
             "renderer acknowledgement requires generation, batch id, and operation".into(),
         ));
     }
+    if !matches!(outcome, "succeeded" | "cancelled" | "coalesced") {
+        return Err(TeamError::Command(format!(
+            "unsupported renderer acknowledgement outcome {outcome}"
+        )));
+    }
     let _lock = acquire_project_transaction_lock(props)?;
-    if let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? {
+    if let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? {
         transaction.validate_repository_shape(props)?;
         if transaction.0.batch_id != batch_id {
             return Err(TeamError::Conflict(format!(
@@ -2317,13 +2892,35 @@ pub fn acknowledge_transaction_receipt(
                 transaction.operation
             )));
         }
-        if transaction.0.status != TransactionStatus::SidecarCommitted {
+        if !transaction.is_refresh() && outcome != "succeeded" {
+            return Err(TeamError::Conflict(format!(
+                "product receipt {batch_id} cannot be acknowledged as {outcome}"
+            )));
+        }
+        if transaction.0.status == TransactionStatus::Pending
+            && !(transaction.is_refresh() && matches!(outcome, "cancelled" | "coalesced"))
+        {
+            return Err(TeamError::Conflict(format!(
+                "pending refresh {batch_id} requires cancelled or coalesced outcome"
+            )));
+        }
+        if !matches!(
+            transaction.0.status,
+            TransactionStatus::Pending | TransactionStatus::SidecarCommitted
+        ) {
             return Err(TeamError::Conflict(format!(
                 "transaction {batch_id} is not awaiting renderer acknowledgement"
             )));
         }
         transaction.phase = "renderer-acknowledged".into();
-        transaction.0.transition(TransactionStatus::Completed, None);
+        if outcome == "cancelled" {
+            transaction.0.transition(
+                TransactionStatus::RequestCancelled,
+                Some(REQUEST_CANCELLED_CODE),
+            );
+        } else {
+            transaction.0.transition(TransactionStatus::Completed, None);
+        }
         transaction.persist(props)?;
         transaction.cleanup(props)?;
         return Ok(TransactionRendererAck {
@@ -2452,7 +3049,7 @@ pub fn cancel_transaction_receipt(
             "resolve receipt {batch_id} has no committed product manifest"
         ))
     })?;
-    if &capture_product_manifest(props)? != committed_manifest {
+    if &capture_product_manifest(props, &transaction.external_products)? != committed_manifest {
         return Err(TeamError::Conflict(format!(
             "resolve receipt {batch_id} product changed before cancellation"
         )));

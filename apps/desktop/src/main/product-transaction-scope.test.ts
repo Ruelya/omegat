@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { scopeProductTransaction } from "./product-transaction-scope";
 
 describe("scopeProductTransaction", () => {
-  it("binds editor, save, and close writes to the watched project generation", () => {
+  it("binds every persistent project operation to the watched generation", () => {
     const project = { root: "/project", generation: 17 };
     let sequence = 0;
     const createId = () => `id-${++sequence}`;
@@ -13,6 +13,13 @@ describe("scopeProductTransaction", () => {
       scopeProductTransaction("entry.set", { index: 4 }, project, createId),
       scopeProductTransaction("project.save", undefined, project, createId),
       scopeProductTransaction("project.close", {}, project, createId),
+      scopeProductTransaction("project.reload", {}, project, createId),
+      scopeProductTransaction("project.compile", { file: "a.txt" }, project, createId),
+      scopeProductTransaction("project.import", { files: ["/tmp/a.txt"] }, project, createId),
+      scopeProductTransaction("project.update", { target_lang: "de" }, project, createId),
+      scopeProductTransaction("team.mapping", { repositories: [] }, project, createId),
+      scopeProductTransaction("align.run", { dest: "/tmp/run.tmx" }, project, createId),
+      scopeProductTransaction("align.write", { dest: "/tmp/write.tmx" }, project, createId),
     ]).toEqual([
       {
         index: 4,
@@ -29,6 +36,47 @@ describe("scopeProductTransaction", () => {
         transaction_project_root: "/project",
         transaction_generation: 17,
         transaction_batch_id: "product-project.close-id-3",
+      },
+      {
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-project.reload-id-4",
+      },
+      {
+        file: "a.txt",
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-project.compile-id-5",
+      },
+      {
+        files: ["/tmp/a.txt"],
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-project.import-id-6",
+      },
+      {
+        target_lang: "de",
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-project.update-id-7",
+      },
+      {
+        repositories: [],
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-team.mapping-id-8",
+      },
+      {
+        dest: "/tmp/run.tmx",
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-align.run-id-9",
+      },
+      {
+        dest: "/tmp/write.tmx",
+        transaction_project_root: "/project",
+        transaction_generation: 17,
+        transaction_batch_id: "product-align.write-id-10",
       },
     ]);
   });

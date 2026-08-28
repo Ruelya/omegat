@@ -499,6 +499,10 @@ function productJournalBatches(journal) {
   return Array.isArray(journal.batches) ? journal.batches : [journal];
 }
 
+function refreshJournalBatches(journal) {
+  return productJournalBatches(journal).filter((row) => row.payload?.refresh);
+}
+
 async function waitForDroppedAck(path, batchId, operation) {
   return waitFor(`dropped ${operation} acknowledgement`, async () => {
     if (!await pathExists(path)) return undefined;
@@ -575,7 +579,7 @@ async function prepareCompactionProject(configDir, project, label) {
     project,
     ".repositories",
     "transactions",
-    "external-refresh.json",
+    "active.json",
   );
   const journal = JSON.parse(await readFile(journalPath, "utf8"));
   assert.equal(journal.batches[0].batch_id, receiptBatchId);
@@ -594,13 +598,13 @@ async function prepareCompactionProject(configDir, project, label) {
       project,
       ".repositories",
       "transactions",
-      "external-refresh-history.ndjson",
+      "history.ndjson",
     ),
     receiptBatchId,
     tailBatchId: tail.batch.batch_id,
     terminalBatchId: terminal.batch_id,
     source: `${label} committed source`,
-    key: journal.batches[1].payload.committed_result.entry_list[0].key,
+    key: journal.batches[1].payload.refresh.committed_result.entry_list[0].key,
   };
 }
 
@@ -661,8 +665,7 @@ async function prepareProductCompactionProject(
     target_lang: "fr",
     sentence_seg: false,
   });
-  await session.request("team.mapping", {
-    repositories: [{
+  const repositories = [{
       repo_type: "file",
       url: remote,
       branch: null,
@@ -672,8 +675,8 @@ async function prepareProductCompactionProject(
         includes: [],
         excludes: [],
       }],
-    }],
-  });
+    }];
+  await session.request("team.mapping", { repositories });
   await session.request("team.sync", {});
   const source = `${label} duplicate source`;
   await writeFile(join(project, "source", "a-wanted.txt"), source, "utf8");
@@ -703,6 +706,73 @@ async function prepareProductCompactionProject(
   });
   assert.equal(committed.receipt.status, "sidecar_committed");
   assert.equal(committed.receipt.payload.operation, "entry.set");
+
+  const workflowBatchIds = [];
+  const scopedWorkflow = async (method, batchId, params = {}) => {
+    const result = await session.request(method, {
+      ...params,
+      transaction_project_root: project,
+      transaction_generation: 121,
+      transaction_batch_id: batchId,
+    });
+    assert.equal(result.receipt.status, "sidecar_committed");
+    assert.equal(result.receipt.payload.operation, method);
+    workflowBatchIds.push(batchId);
+    return result;
+  };
+  await scopedWorkflow(
+    "project.reload",
+    `${label}-reload-tail`,
+  );
+  const updated = await scopedWorkflow(
+    "project.update",
+    `${label}-properties-tail`,
+    {
+      source_lang: "en",
+      target_lang: "fr",
+      source_tok: "org.omegat.tokenizer.DefaultTokenizer",
+      target_tok: "org.omegat.tokenizer.DefaultTokenizer",
+      export_tm_levels: "1,2",
+      support_default_translations: true,
+      remove_tags: false,
+      external_command: `printf ${label}`,
+      source_dir_excludes: ["**/.ignored/**"],
+    },
+  );
+  assert.equal(updated.props.external_command, `printf ${label}`);
+  assert.deepEqual(updated.props.source_dir_excludes, ["**/.ignored/**"]);
+  await scopedWorkflow(
+    "team.mapping",
+    `${label}-mapping-tail`,
+    { repositories },
+  );
+  const importSource = join(configDir, `${label}-imported.txt`);
+  await mkdir(dirname(importSource), { recursive: true });
+  await writeFile(importSource, `${label} imported source`, "utf8");
+  const imported = await scopedWorkflow(
+    "project.import",
+    `${label}-import-tail`,
+    { files: [importSource] },
+  );
+  assert.equal(imported.copied, 1);
+  const compiled = await scopedWorkflow(
+    "project.compile",
+    `${label}-compile-tail`,
+  );
+  assert(compiled.files >= 1);
+  const alignPath = join(dirname(project), `${label}-aligned.tmx`);
+  const aligned = await scopedWorkflow(
+    "align.write",
+    `${label}-align-write-tail`,
+    {
+      dest: alignPath,
+      source_lang: "en",
+      target_lang: "fr",
+      pairs: [{ source, target: translation }],
+    },
+  );
+  assert.equal(aligned.count, 1);
+  const alignContent = await readFile(alignPath);
 
   const remoteContent = `${label} remote committed exactly once`;
   await writeFile(join(project, "target", "compaction.txt"), remoteContent, "utf8");
@@ -750,8 +820,10 @@ async function prepareProductCompactionProject(
     journal.batches.map((row) => [row.batch_id, row.status]),
     [
       [receiptBatchId, "sidecar_committed"],
+      ...workflowBatchIds.map((batchId) => [batchId, "sidecar_committed"]),
       [teamBatchId, "sidecar_committed"],
       [saveBatchId, "sidecar_committed"],
+      [refresh.batch.batch_id, "pending"],
     ],
   );
   const terminalBatchId = `${label}-acknowledged-terminal`;
@@ -770,11 +842,10 @@ async function prepareProductCompactionProject(
   return {
     activePath,
     historyPath,
-    refreshJournalPath: join(transactions, "external-refresh.json"),
-    refreshHistoryPath: join(transactions, "external-refresh-history.ndjson"),
     ownerPath,
     remotePath,
     receiptBatchId,
+    workflowBatchIds,
     teamBatchId,
     saveBatchId,
     refreshBatchId: refresh.batch.batch_id,
@@ -784,6 +855,8 @@ async function prepareProductCompactionProject(
     key: wanted.key,
     decoyKey: decoy.key,
     remoteContent,
+    alignPath,
+    alignContent,
   };
 }
 
@@ -880,23 +953,11 @@ async function prepareMixedReceiptProject(
     refreshTwoBatchId: refreshTwo.batch.batch_id,
     saveBatchId: null,
     activePath: join(project, ".repositories", "transactions", "active.json"),
-    teamHistoryPath: join(
+    historyPath: join(
       project,
       ".repositories",
       "transactions",
       "history.ndjson",
-    ),
-    refreshJournalPath: join(
-      project,
-      ".repositories",
-      "transactions",
-      "external-refresh.json",
-    ),
-    refreshHistoryPath: join(
-      project,
-      ".repositories",
-      "transactions",
-      "external-refresh-history.ndjson",
     ),
   };
 }
@@ -977,23 +1038,11 @@ async function prepareCloseReceiptProject(configDir, project, remote, label) {
       "transactions",
       "renderer-owner.json",
     ),
-    teamHistoryPath: join(
+    historyPath: join(
       project,
       ".repositories",
       "transactions",
       "history.ndjson",
-    ),
-    refreshJournalPath: join(
-      project,
-      ".repositories",
-      "transactions",
-      "external-refresh.json",
-    ),
-    refreshHistoryPath: join(
-      project,
-      ".repositories",
-      "transactions",
-      "external-refresh-history.ndjson",
     ),
   };
 }
@@ -1422,8 +1471,6 @@ async function prepareAtomicElectionProject(
     activePath: join(transactions, "active.json"),
     historyPath: join(transactions, "history.ndjson"),
     ownerPath: join(transactions, "renderer-owner.json"),
-    refreshJournalPath: join(transactions, "external-refresh.json"),
-    refreshHistoryPath: join(transactions, "external-refresh-history.ndjson"),
     remotePath,
     remoteContent,
     gitRemote,
@@ -1531,20 +1578,21 @@ try {
     assert(durableOwner.claim_id.length > 0);
 
     const queueAtBoundary = JSON.parse(await readFile(prepared.activePath, "utf8"));
-    const refreshAtBoundary = JSON.parse(
-      await readFile(prepared.refreshJournalPath, "utf8"),
-    );
     const expectedQueue = point === "after_archive_fsync"
       ? [
           prepared.terminalBatchId,
           prepared.receiptBatchId,
+          ...prepared.workflowBatchIds,
           prepared.teamBatchId,
           prepared.saveBatchId,
+          prepared.refreshBatchId,
         ]
       : [
           prepared.receiptBatchId,
+          ...prepared.workflowBatchIds,
           prepared.teamBatchId,
           prepared.saveBatchId,
+          prepared.refreshBatchId,
         ];
     assert.deepEqual(
       queueAtBoundary.batches.map((row) => row.batch_id),
@@ -1556,19 +1604,22 @@ try {
     for (const row of queueAtBoundary.batches) {
       if (row.batch_id === prepared.terminalBatchId) {
         assert.equal(row.status, "completed");
+      } else if (row.batch_id === prepared.refreshBatchId) {
+        assert.equal(row.status, "pending");
+        assert.equal(row.commit, undefined);
       } else {
         assert.equal(row.status, "sidecar_committed");
         assert.equal(row.commit.manifest_sha256.length, 64);
       }
     }
     assert.deepEqual(
-      refreshAtBoundary.batches.map((row) => [
+      refreshJournalBatches(queueAtBoundary).map((row) => [
         row.batch_id,
         row.status,
-        row.payload.operation,
+        row.payload.refresh.operation,
       ]),
       [[prepared.refreshBatchId, "pending", "project.external-refresh"]],
-      "refresh tail did not remain behind the parked product head",
+      "unified refresh tail did not remain behind the parked product head",
     );
     const archivedAtBoundary = parseNdjson(
       await readFile(prepared.historyPath, "utf8"),
@@ -1625,11 +1676,6 @@ try {
       queueAtBoundary,
       "pre-kill contender changed the product queue",
     );
-    assert.deepEqual(
-      JSON.parse(await readFile(prepared.refreshJournalPath, "utf8")),
-      refreshAtBoundary,
-      "pre-kill contender changed the refresh tail",
-    );
     assert.equal(
       await launchedB.client.evaluate(
         'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
@@ -1646,6 +1692,9 @@ try {
     const tmxPath = join(project, "omegat", "project_save.tmx");
     const tmxBeforeRecovery = await readFile(tmxPath);
     const tmxMtimeBeforeRecovery = (await stat(tmxPath, { bigint: true })).mtimeNs;
+    const alignMtimeBeforeRecovery = (
+      await stat(prepared.alignPath, { bigint: true })
+    ).mtimeNs;
     const killed = await killPackaged(launchedA);
     launchedA = undefined;
     assert.equal(
@@ -1821,10 +1870,7 @@ try {
     }
     await writeFile(secondElectionRelease, "release\n", "utf8");
     await waitFor(`${point} product FIFO drain`, async () =>
-      !await pathExists(prepared.activePath)
-        && !await pathExists(prepared.refreshJournalPath)
-        ? true
-        : undefined
+      !await pathExists(prepared.activePath) ? true : undefined
     );
     const recovered = await workspaceState(winner.client);
     assert.equal(recovered.project, project);
@@ -1850,6 +1896,7 @@ try {
       restartTrace,
       [
         prepared.receiptBatchId,
+        ...prepared.workflowBatchIds,
         prepared.teamBatchId,
         prepared.saveBatchId,
         prepared.refreshBatchId,
@@ -1865,6 +1912,7 @@ try {
     for (const batchId of [
       prepared.terminalBatchId,
       prepared.receiptBatchId,
+      ...prepared.workflowBatchIds,
       prepared.teamBatchId,
       prepared.saveBatchId,
     ]) {
@@ -1876,11 +1924,8 @@ try {
         `product ${point} duplicated terminal history for ${batchId}`,
       );
     }
-    const refreshHistory = parseNdjson(
-      await readFile(prepared.refreshHistoryPath, "utf8"),
-    );
     assert.equal(
-      refreshHistory.filter((row) =>
+      history.filter((row) =>
         row.batch_id === prepared.refreshBatchId && row.status === "completed"
       ).length,
       1,
@@ -1896,6 +1941,12 @@ try {
       (await stat(tmxPath, { bigint: true })).mtimeNs,
       tmxMtimeBeforeRecovery,
       `product ${point} recovery replayed the TMX write`,
+    );
+    assert.deepEqual(await readFile(prepared.alignPath), prepared.alignContent);
+    assert.equal(
+      (await stat(prepared.alignPath, { bigint: true })).mtimeNs,
+      alignMtimeBeforeRecovery,
+      `product ${point} recovery replayed the align write`,
     );
     assert.equal(await readFile(prepared.remotePath, "utf8"), prepared.remoteContent);
     assert.equal(
@@ -1915,6 +1966,7 @@ try {
       queueAtBoundary: expectedQueue,
       recoveredDispatchOrder: [
         prepared.receiptBatchId,
+        ...prepared.workflowBatchIds,
         prepared.teamBatchId,
         prepared.saveBatchId,
         prepared.refreshBatchId,
@@ -1974,8 +2026,8 @@ try {
 
     [launchedA, launchedB] = await Promise.all([
       launchPackaged(xvfb.display, sharedConfig, projectA, {
-        OMEGAT_TEST_REFRESH_COMPACTION_POINT: point,
-        OMEGAT_TEST_REFRESH_COMPACTION_MARKER: marker,
+        OMEGAT_TEST_PRODUCT_COMPACTION_POINT: point,
+        OMEGAT_TEST_PRODUCT_COMPACTION_MARKER: marker,
       }),
       launchPackaged(xvfb.display, sharedConfig, projectB),
     ]);
@@ -2138,9 +2190,11 @@ try {
     OMEGAT_TEST_TRANSACTION_ACK_TRACE: firstAckTracePath,
   });
   await waitFor("lost refresh acknowledgement checkpoint", async () => {
-    if (await pathExists(mixed.activePath)) return undefined;
-    const journal = JSON.parse(await readFile(mixed.refreshJournalPath, "utf8"));
-    const head = journal.batches[0];
+    if (!await pathExists(mixed.activePath)) return undefined;
+    const journal = JSON.parse(await readFile(mixed.activePath, "utf8"));
+    const head = refreshJournalBatches(journal).find((row) =>
+      row.batch_id === mixed.refreshOneBatchId
+    );
     if (
       head?.batch_id !== mixed.refreshOneBatchId
       || head.status !== "sidecar_committed"
@@ -2184,7 +2238,7 @@ try {
   launchedA = undefined;
 
   const historyBeforeRestart = parseNdjson(
-    await readFile(mixed.teamHistoryPath, "utf8"),
+    await readFile(mixed.historyPath, "utf8"),
   );
   assert.equal(
     historyBeforeRestart.filter((row) =>
@@ -2200,10 +2254,7 @@ try {
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: restartTracePath,
   });
   await waitFor("mixed receipt FIFO drained after restart", async () =>
-    !await pathExists(mixed.activePath)
-      && !await pathExists(mixed.refreshJournalPath)
-      ? true
-      : undefined
+    !await pathExists(mixed.activePath) ? true : undefined
   );
   const recoveredMixed = await workspaceState(launchedA.client);
   assert.equal(recoveredMixed.project, mixedProject);
@@ -2236,9 +2287,7 @@ try {
     `restart violated refresh/refresh/save FIFO: ${JSON.stringify(restartTrace)}`,
   );
 
-  const refreshHistory = parseNdjson(
-    await readFile(mixed.refreshHistoryPath, "utf8"),
-  );
+  const refreshHistory = parseNdjson(await readFile(mixed.historyPath, "utf8"));
   for (const batchId of [
     mixed.refreshOneBatchId,
     mixed.refreshTwoBatchId,
@@ -2251,9 +2300,7 @@ try {
       `refresh terminal history is not idempotent for ${batchId}`,
     );
   }
-  const teamHistory = parseNdjson(
-    await readFile(mixed.teamHistoryPath, "utf8"),
-  );
+  const teamHistory = refreshHistory;
   assert.equal(
     teamHistory.filter((row) =>
       row.batch_id === mixed.teamBatchId
@@ -2328,11 +2375,12 @@ try {
   assert.equal(lostTeamReceipt.batch_id, lostTeam.teamBatchId);
   assert.equal(lostTeamReceipt.status, "sidecar_committed");
   const teamQueueBeforeKill = JSON.parse(
-    await readFile(lostTeam.refreshJournalPath, "utf8"),
+    await readFile(lostTeam.activePath, "utf8"),
   );
   assert.deepEqual(
     teamQueueBeforeKill.batches.map((batch) => [batch.batch_id, batch.status]),
     [
+      [lostTeam.teamBatchId, "sidecar_committed"],
       [lostTeam.refreshOneBatchId, "pending"],
       [lostTeam.refreshTwoBatchId, "pending"],
     ],
@@ -2344,10 +2392,7 @@ try {
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: teamRestartTracePath,
   });
   await waitFor("team lost-ack FIFO drained after restart", async () =>
-    !await pathExists(lostTeam.activePath)
-      && !await pathExists(lostTeam.refreshJournalPath)
-      ? true
-      : undefined
+    !await pathExists(lostTeam.activePath) ? true : undefined
   );
   const recoveredTeam = await workspaceState(launchedA.client);
   assert.equal(recoveredTeam.project, teamProject);
@@ -2374,7 +2419,7 @@ try {
     "lost team acknowledgement restart",
   );
   const lostTeamHistory = parseNdjson(
-    await readFile(lostTeam.teamHistoryPath, "utf8"),
+    await readFile(lostTeam.historyPath, "utf8"),
   );
   assert.equal(
     lostTeamHistory.filter((row) =>
@@ -2385,9 +2430,7 @@ try {
     1,
     "lost team acknowledgement produced more than one terminal ack",
   );
-  const lostTeamRefreshHistory = parseNdjson(
-    await readFile(lostTeam.refreshHistoryPath, "utf8"),
-  );
+  const lostTeamRefreshHistory = lostTeamHistory;
   for (const batchId of [
     lostTeam.acknowledgedBeforeBatchId,
     lostTeam.refreshOneBatchId,
@@ -2439,10 +2482,7 @@ try {
     OMEGAT_TEST_TRANSACTION_ACK_TRACE: saveFirstAckTracePath,
   });
   await waitFor("pre-save receipts drained", async () =>
-    !await pathExists(lostSave.activePath)
-      && !await pathExists(lostSave.refreshJournalPath)
-      ? true
-      : undefined
+    !await pathExists(lostSave.activePath) ? true : undefined
   );
   const savedWithLostAck = await launchedA.client.evaluate(
     'window.omegat.rpc("project.save", {})',
@@ -2467,20 +2507,20 @@ try {
     "utf8",
   );
   await waitFor("refresh tail behind lost save ack", async () => {
-    if (!await pathExists(lostSave.refreshJournalPath)) return undefined;
-    const journal = JSON.parse(await readFile(lostSave.refreshJournalPath, "utf8"));
-    return journal.batches.some((batch) =>
+    if (!await pathExists(lostSave.activePath)) return undefined;
+    const journal = JSON.parse(await readFile(lostSave.activePath, "utf8"));
+    return refreshJournalBatches(journal).some((batch) =>
         batch.status === "pending"
-        && batch.payload.paths.some((path) => path.includes("glossary"))
+        && batch.payload.refresh.paths.some((path) => path.includes("glossary"))
       )
       ? journal
       : undefined;
   });
   await sleep(300);
   const saveQueueBeforeKill = JSON.parse(
-    await readFile(lostSave.refreshJournalPath, "utf8"),
+    await readFile(lostSave.activePath, "utf8"),
   );
-  const saveTailBatchIds = saveQueueBeforeKill.batches
+  const saveTailBatchIds = refreshJournalBatches(saveQueueBeforeKill)
     .filter((batch) => ["pending", "sidecar_committed"].includes(batch.status))
     .map((batch) => batch.batch_id);
   assert(saveTailBatchIds.length > 0);
@@ -2491,10 +2531,7 @@ try {
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: saveRestartTracePath,
   });
   await waitFor("save lost-ack FIFO drained after restart", async () =>
-    !await pathExists(lostSave.activePath)
-      && !await pathExists(lostSave.refreshJournalPath)
-      ? true
-      : undefined
+    !await pathExists(lostSave.activePath) ? true : undefined
   );
   const recoveredSave = await workspaceState(launchedA.client);
   assert.equal(recoveredSave.project, saveProject);
@@ -2521,7 +2558,7 @@ try {
     "lost save acknowledgement restart",
   );
   const lostSaveTeamHistory = parseNdjson(
-    await readFile(lostSave.teamHistoryPath, "utf8"),
+    await readFile(lostSave.historyPath, "utf8"),
   );
   assert.equal(
     lostSaveTeamHistory.filter((row) =>
@@ -2532,9 +2569,7 @@ try {
     1,
     "lost save acknowledgement produced more than one terminal ack",
   );
-  const lostSaveRefreshHistory = parseNdjson(
-    await readFile(lostSave.refreshHistoryPath, "utf8"),
-  );
+  const lostSaveRefreshHistory = lostSaveTeamHistory;
   for (const batchId of saveTailBatchIds) {
     assert.equal(
       lostSaveRefreshHistory.filter((row) =>
@@ -2702,11 +2737,16 @@ try {
   const closeTailBatchId = closeTail.batch.batch_id;
   await closeTailSession.close();
   const closeQueueBeforeKill = JSON.parse(
-    await readFile(lostClose.refreshJournalPath, "utf8"),
+    await readFile(lostClose.activePath, "utf8"),
   );
   assert.deepEqual(
     closeQueueBeforeKill.batches.map((batch) => [batch.batch_id, batch.status]),
-    [[closeTailBatchId, "pending"]],
+    [
+      [closeBatchId, "sidecar_committed"],
+      [closeTeamBatchId, "sidecar_committed"],
+      [closeSaveBatchId, "sidecar_committed"],
+      [closeTailBatchId, "pending"],
+    ],
   );
   const closeFirstTrace = parseNdjson(
     await readFile(closeFirstTracePath, "utf8"),
@@ -2830,10 +2870,7 @@ try {
   );
   await writeFile(closeTakeoverReleasePath, "release\n", "utf8");
   await waitFor("detached close, team, save, and refresh FIFO drained", async () =>
-    !await pathExists(lostClose.activePath)
-      && !await pathExists(lostClose.refreshJournalPath)
-      ? true
-      : undefined
+    !await pathExists(lostClose.activePath) ? true : undefined
   );
   const detachedClosed = await workspaceState(launchedA.client);
   assert.equal(detachedClosed.project, null);
@@ -2873,7 +2910,7 @@ try {
     "close receipt recovery replayed TMX or another stable project-tree write",
   );
   const closeHistory = parseNdjson(
-    await readFile(lostClose.teamHistoryPath, "utf8"),
+    await readFile(lostClose.historyPath, "utf8"),
   );
   assert.equal(
     closeHistory.filter((row) =>
@@ -2902,9 +2939,7 @@ try {
     1,
     "close save tail produced more than one terminal history row",
   );
-  const closeRefreshHistory = parseNdjson(
-    await readFile(lostClose.refreshHistoryPath, "utf8"),
-  );
+  const closeRefreshHistory = closeHistory;
   assert.equal(
     closeRefreshHistory.filter((row) =>
       row.batch_id === closeTailBatchId && row.status === "completed"
@@ -3030,10 +3065,7 @@ try {
   assert.equal(selectedMarker.operation, "commit-source");
   assert.equal(selectedMarker.signal, "SIGKILL");
   await waitFor("selected-head recovery FIFO drained", async () =>
-    !await pathExists(selectedHead.activePath)
-      && !await pathExists(selectedHead.refreshJournalPath)
-      ? true
-      : undefined
+    !await pathExists(selectedHead.activePath) ? true : undefined
   );
   const replacementSidecar = await waitFor(
     "replacement sidecar after selected-head kill",
@@ -3072,7 +3104,7 @@ try {
     "sidecar head recovery replayed the selected team write",
   );
   const selectedHeadHistory = parseNdjson(
-    await readFile(selectedHead.teamHistoryPath, "utf8"),
+    await readFile(selectedHead.historyPath, "utf8"),
   );
   assert.equal(
     selectedHeadHistory.filter((row) =>
@@ -3309,10 +3341,7 @@ try {
 
     await writeFile(electionReleasePath, "release\n", "utf8");
     await waitFor(`${headKind} product head and refresh tail drain`, async () =>
-      !await pathExists(prepared.activePath)
-        && !await pathExists(prepared.refreshJournalPath)
-        ? true
-        : undefined
+      !await pathExists(prepared.activePath) ? true : undefined
     );
     const winnerTrace = parseNdjson(
       await readFile(replacementTracePaths[winnerIndex], "utf8"),
@@ -3348,11 +3377,8 @@ try {
       1,
       `${headKind} product head has duplicate terminal history`,
     );
-    const refreshHistory = parseNdjson(
-      await readFile(prepared.refreshHistoryPath, "utf8"),
-    );
     assert.equal(
-      refreshHistory.filter((row) =>
+      productHistory.filter((row) =>
         row.batch_id === prepared.refreshBatchId
         && row.status === "completed"
       ).length,

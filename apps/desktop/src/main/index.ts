@@ -47,6 +47,7 @@ let detachedTransactionScope: DetachedTransactionScope | null = null;
 const watchedProjectWriteMethods = new Set([
   "entry.set",
   "project.save",
+  "project.reload",
   "project.compile",
   "project.close",
   "project.update",
@@ -59,6 +60,8 @@ const watchedProjectWriteMethods = new Set([
   "spell.ignore",
   "spell.learn",
   "wiki.import",
+  "align.run",
+  "align.write",
 ]);
 const projectFileWatcher = new ProjectFileWatcher((event) => {
   void persistExternalProjectChange(event);

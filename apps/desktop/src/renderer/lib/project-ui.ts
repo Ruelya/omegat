@@ -54,6 +54,8 @@ export function projectPropertiesIdentical(a: ProjectPropsDto, b: ProjectPropsDt
     "root",
     "source_lang",
     "target_lang",
+    "source_tok",
+    "target_tok",
     "sentence_seg",
     "source_dir",
     "target_dir",
@@ -61,12 +63,18 @@ export function projectPropertiesIdentical(a: ProjectPropsDto, b: ProjectPropsDt
     "glossary_dir",
     "glossary_file",
     "dictionary_dir",
+    "export_tm_dir",
     "export_tm_levels",
     "support_default_translations",
     "remove_tags",
+    "external_command",
     "has_repositories",
   ];
   if (scalarKeys.some((key) => a[key] !== b[key])) return false;
+  if (
+    JSON.stringify(a.source_dir_excludes ?? [])
+    !== JSON.stringify(b.source_dir_excludes ?? [])
+  ) return false;
   const left = a.repositories ?? [];
   const right = b.repositories ?? [];
   return (

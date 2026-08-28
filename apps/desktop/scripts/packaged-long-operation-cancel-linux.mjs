@@ -1859,7 +1859,7 @@ try {
     project,
     ".repositories",
     "transactions",
-    "external-refresh.json",
+    "active.json",
   );
   assert.equal(
     await pathExists(refreshJournal),

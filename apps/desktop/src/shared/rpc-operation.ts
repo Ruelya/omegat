@@ -4,10 +4,12 @@ export const LONG_OPERATION_METHODS = {
   reload: "project.reload",
   externalRefresh: "project.external-refresh",
   compile: "project.compile",
+  import: "project.import",
   teamSync: "team.sync",
   teamCommit: "team.commit",
   teamResolve: "team.resolve",
   align: "align.run",
+  alignWrite: "align.write",
 } as const;
 
 export type LongOperationKind = keyof typeof LONG_OPERATION_METHODS;

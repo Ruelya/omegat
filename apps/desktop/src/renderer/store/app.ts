@@ -835,11 +835,16 @@ export const useApp = create<AppState>((set, get) => ({
 
     const before = get();
     let refreshedProps: ProjectPropsDto | null = before.props;
+    let productReceipt: TransactionEnvelope | null = null;
     committedResult = kind === "external-refresh" ? committedResult : undefined;
     try {
       if (kind === "reload") {
-        const result = await get().runLongOperation<{ props?: ProjectPropsDto }>("reload");
+        const result = await get().runLongOperation<{
+          props?: ProjectPropsDto;
+          receipt?: TransactionEnvelope | null;
+        }>("reload");
         refreshedProps = result.props ?? before.props;
+        productReceipt = result.receipt ?? null;
       } else if (kind === "external-refresh") {
         if (committedResult) {
           refreshedProps = committedResult.props;
@@ -887,6 +892,9 @@ export const useApp = create<AppState>((set, get) => ({
     );
     set(rebound.patch);
     if (rebound.index >= 0) await get().select(rebound.index, false);
+    if (productReceipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(productReceipt);
+    }
     if (kind === "reload") get().logLine("reloaded project");
     return true;
   },
@@ -1420,8 +1428,14 @@ export const useApp = create<AppState>((set, get) => ({
   importPaths: async (files) => {
     const paths = files.filter((path) => path.trim().length > 0);
     if (!paths.length || !get().props) return;
-    await rpc("project.import", { files: paths });
-    await get().reloadProject();
+    const result = await get().runLongOperation<{
+      copied: number;
+      receipt?: TransactionEnvelope | null;
+    }>("import", { files: paths });
+    await get().refreshEntriesAfterExternalChange();
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
     get().logLine(`imported ${paths.length} file(s)`);
   },
   clearRecent: () => {
@@ -1579,8 +1593,9 @@ export const useApp = create<AppState>((set, get) => ({
     get().logLine(`Document3 range ${d.translationStart}-${d.translationEnd}`);
   },
   compile: async (file) => {
+    let result: { receipt?: TransactionEnvelope | null };
     try {
-      await get().runLongOperation(
+      result = await get().runLongOperation<{ receipt?: TransactionEnvelope | null }>(
         "compile",
         file ? { file } : {},
       );
@@ -1590,6 +1605,9 @@ export const useApp = create<AppState>((set, get) => ({
       return;
     }
     set({ stats: await rpc<StatsDto>("stats.get") });
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
     const target = file ?? get().props?.target_dir ?? "";
     get().logLine(`compiled target ${target}`);
     const d = get().document3;

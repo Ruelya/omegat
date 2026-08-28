@@ -343,17 +343,59 @@ impl App {
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
             "project.compile" => {
-                let file = params.get("file").and_then(|v| v.as_str());
-                let n = self
-                    .session_mut()?
-                    .compile_cancellable(file, cancellation)
-                    .map_err(core_err)?;
-                Ok(json!({"files": n}))
+                let file = params
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let external_products = vec![props.target_dir.clone(), props.export_tm_dir.clone()];
+                let result = omegat_team::commit_product_transaction_with_paths_cancellable(
+                    &props,
+                    "project.compile",
+                    cancellation,
+                    "project.compile.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    &external_products,
+                    |token| {
+                        session
+                            .compile_cancellable(file.as_deref(), token)
+                            .map_err(core_product_err)
+                    },
+                );
+                let n = match result {
+                    Ok(n) => n,
+                    Err(error) => {
+                        session.restore_checkpoint(checkpoint);
+                        return Err(product_transaction_err(error));
+                    }
+                };
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"files": n, "receipt": receipt}))
             }
             "project.reload" => {
-                self.session_mut()?
-                    .reload_cancellable(cancellation)
-                    .map_err(core_err)?;
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let result = omegat_team::commit_product_transaction_cancellable(
+                    &props,
+                    "project.reload",
+                    cancellation,
+                    "project.reload.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    |token| session.reload_cancellable(token).map_err(core_product_err),
+                );
+                if let Err(error) = result {
+                    session.restore_checkpoint(checkpoint);
+                    return Err(product_transaction_err(error));
+                }
                 let list: Vec<EntryDto> = self
                     .session()?
                     .entries
@@ -361,9 +403,13 @@ impl App {
                     .enumerate()
                     .map(|(i, e)| e.to_dto(i))
                     .collect();
-                Ok(
-                    json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}),
-                )
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({
+                    "ok": true,
+                    "entries": list.len(),
+                    "props": self.session()?.props.to_dto(),
+                    "receipt": receipt,
+                }))
             }
             "project.external-refresh" => {
                 self.session_mut()?
@@ -373,30 +419,73 @@ impl App {
             }
             "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
             "project.update" => {
-                let s = self.session_mut()?;
-                if let Some(sl) = params.get("source_lang").and_then(|v| v.as_str()) {
-                    s.props.source_lang = sl.to_string();
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let external_products = project_update_product_paths(&props, &params);
+                let result = omegat_team::commit_product_transaction_with_paths_cancellable(
+                    &props,
+                    "project.update",
+                    cancellation,
+                    "project.update.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    &external_products,
+                    |token| {
+                        apply_project_update(&mut session.props, &params)?;
+                        session.props.write().map_err(core_product_err)?;
+                        session.reload_cancellable(token).map_err(core_product_err)
+                    },
+                );
+                if let Err(error) = result {
+                    session.props = props;
+                    session.restore_checkpoint(checkpoint);
+                    return Err(product_transaction_err(error));
                 }
-                if let Some(tl) = params.get("target_lang").and_then(|v| v.as_str()) {
-                    s.props.target_lang = tl.to_string();
-                }
-                if let Some(seg) = params.get("sentence_segment").and_then(|v| v.as_bool()) {
-                    s.props.sentence_seg = seg;
-                }
-                s.props.write().map_err(core_err)?;
-                Ok(serde_json::to_value(s.props.to_dto()).unwrap())
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"props": session.props.to_dto(), "receipt": receipt}))
             }
             "team.mapping" => {
-                let s = self.session_mut()?;
                 let repos = params
                     .get("repositories")
                     .cloned()
                     .unwrap_or(Value::Array(vec![]));
                 let parsed: Vec<omegat_core::properties::RepositoryDef> =
                     serde_json::from_value(repos).map_err(invalid)?;
-                s.props.repositories = parsed;
-                s.props.write().map_err(core_err)?;
-                Ok(json!({"ok": true, "repositories": s.props.to_dto().repositories}))
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let result = omegat_team::commit_product_transaction_cancellable(
+                    &props,
+                    "team.mapping",
+                    cancellation,
+                    "team.mapping.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    |token| {
+                        if token.is_cancelled() {
+                            return Err(omegat_team::TeamError::Cancelled);
+                        }
+                        session.props.repositories = parsed;
+                        session.props.write().map_err(core_product_err)
+                    },
+                );
+                if let Err(error) = result {
+                    session.props = props;
+                    session.restore_checkpoint(checkpoint);
+                    return Err(product_transaction_err(error));
+                }
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({
+                    "ok": true,
+                    "props": session.props.to_dto(),
+                    "repositories": session.props.to_dto().repositories,
+                    "receipt": receipt,
+                }))
             }
             "entry.list" => {
                 let s = self.session()?;
@@ -735,23 +824,55 @@ impl App {
                 let files = params
                     .get("files")
                     .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let dest = self.session()?.props.source_dir.clone();
-                std::fs::create_dir_all(&dest).map_err(|e| (error_code::IO, e.to_string()))?;
-                let mut copied = 0usize;
-                for f in files {
-                    let Some(src) = f.as_str() else { continue };
-                    let name = std::path::Path::new(src).file_name().unwrap_or_default();
-                    if name.is_empty() {
-                        continue;
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(std::path::PathBuf::from)
+                    .collect::<Vec<_>>();
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let dest = props.source_dir.clone();
+                let result = omegat_team::commit_product_transaction_with_paths_cancellable(
+                    &props,
+                    "project.import",
+                    cancellation,
+                    "project.import.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    std::slice::from_ref(&dest),
+                    |token| {
+                        std::fs::create_dir_all(&dest).map_err(omegat_team::TeamError::Io)?;
+                        let mut copied = 0usize;
+                        for src in &files {
+                            if token.checkpoint("project.import.copy") {
+                                return Err(omegat_team::TeamError::Cancelled);
+                            }
+                            let name = src.file_name().unwrap_or_default();
+                            if name.is_empty() {
+                                continue;
+                            }
+                            std::fs::copy(src, dest.join(name))
+                                .map_err(omegat_team::TeamError::Io)?;
+                            copied += 1;
+                        }
+                        session
+                            .reload_cancellable(token)
+                            .map_err(core_product_err)?;
+                        Ok(copied)
+                    },
+                );
+                let copied = match result {
+                    Ok(copied) => copied,
+                    Err(error) => {
+                        session.restore_checkpoint(checkpoint);
+                        return Err(product_transaction_err(error));
                     }
-                    std::fs::copy(src, dest.join(name))
-                        .map_err(|e| (error_code::IO, e.to_string()))?;
-                    copied += 1;
-                }
-                self.session_mut()?.reload().map_err(core_err)?;
-                Ok(json!({ "copied": copied }))
+                };
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({ "copied": copied, "receipt": receipt }))
             }
             "filters.list" => {
                 let list: Vec<FilterInfoDto> = self
@@ -1043,7 +1164,33 @@ impl App {
                 if cancellation.is_cancelled() {
                     return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
                 }
-                if !dest.is_empty() {
+                let receipt = if dest.is_empty() {
+                    None
+                } else if params.get("transaction_batch_id").is_some() {
+                    let props = self.session()?.props.clone();
+                    let (generation, batch_id) = transaction_scope(&params, &props.root)?;
+                    omegat_team::commit_product_transaction_with_paths_cancellable(
+                        &props,
+                        "align.run",
+                        cancellation,
+                        "align.run.snapshot",
+                        generation,
+                        batch_id.as_deref(),
+                        &[std::path::PathBuf::from(dest)],
+                        |token| {
+                            omegat_core::align::write_aligned_tmx_cancellable(
+                                &tmx,
+                                std::path::Path::new(dest),
+                                &sl,
+                                &tl,
+                                token,
+                            )
+                            .map_err(core_product_err)
+                        },
+                    )
+                    .map_err(product_transaction_err)?;
+                    scoped_product_receipt(&props, generation, batch_id.as_deref())?
+                } else {
                     omegat_core::align::write_aligned_tmx_cancellable(
                         &tmx,
                         std::path::Path::new(dest),
@@ -1052,7 +1199,8 @@ impl App {
                         cancellation,
                     )
                     .map_err(core_err)?;
-                }
+                    None
+                };
                 let pairs: Vec<_> = tmx
                     .entries
                     .iter()
@@ -1072,7 +1220,13 @@ impl App {
                         )
                     })
                     .collect();
-                Ok(json!({"ok": true, "pairs": pairs, "beads": beads, "count": pairs.len()}))
+                Ok(json!({
+                    "ok": true,
+                    "pairs": pairs,
+                    "beads": beads,
+                    "count": pairs.len(),
+                    "receipt": receipt,
+                }))
             }
             "align.edit" => {
                 let action = params
@@ -1385,14 +1539,47 @@ impl App {
                             })
                             .collect()
                     };
-                omegat_core::align::write_aligned_pairs(
-                    &pairs,
-                    std::path::Path::new(dest),
-                    &source_lang,
-                    &target_lang,
-                )
-                .map_err(core_err)?;
-                Ok(json!({"ok": true, "count": pairs.len(), "dest": dest}))
+                let receipt = if params.get("transaction_batch_id").is_some() {
+                    let props = self.session()?.props.clone();
+                    let (generation, batch_id) = transaction_scope(&params, &props.root)?;
+                    omegat_team::commit_product_transaction_with_paths_cancellable(
+                        &props,
+                        "align.write",
+                        cancellation,
+                        "align.write.snapshot",
+                        generation,
+                        batch_id.as_deref(),
+                        &[std::path::PathBuf::from(dest)],
+                        |token| {
+                            omegat_core::align::write_aligned_pairs_cancellable(
+                                &pairs,
+                                std::path::Path::new(dest),
+                                &source_lang,
+                                &target_lang,
+                                token,
+                            )
+                            .map_err(core_product_err)
+                        },
+                    )
+                    .map_err(product_transaction_err)?;
+                    scoped_product_receipt(&props, generation, batch_id.as_deref())?
+                } else {
+                    omegat_core::align::write_aligned_pairs_cancellable(
+                        &pairs,
+                        std::path::Path::new(dest),
+                        &source_lang,
+                        &target_lang,
+                        cancellation,
+                    )
+                    .map_err(core_err)?;
+                    None
+                };
+                Ok(json!({
+                    "ok": true,
+                    "count": pairs.len(),
+                    "dest": dest,
+                    "receipt": receipt,
+                }))
             }
             other => Err((
                 error_code::METHOD_NOT_FOUND,
@@ -1411,6 +1598,120 @@ impl App {
             .as_mut()
             .ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
     }
+}
+
+fn scoped_product_receipt(
+    props: &omegat_core::properties::ProjectProperties,
+    generation: u64,
+    batch_id: Option<&str>,
+) -> std::result::Result<Option<omegat_team::TransactionRendererReceipt>, (i32, String)> {
+    if generation == 0 {
+        return Ok(None);
+    }
+    omegat_team::transaction_receipt(
+        props,
+        generation,
+        batch_id.expect("scoped product transaction has a batch id"),
+    )
+    .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))
+}
+
+fn project_update_product_paths(
+    props: &omegat_core::properties::ProjectProperties,
+    params: &Value,
+) -> Vec<std::path::PathBuf> {
+    [
+        "source_dir",
+        "target_dir",
+        "tm_dir",
+        "glossary_dir",
+        "glossary_file",
+        "dictionary_dir",
+        "export_tm_dir",
+    ]
+    .into_iter()
+    .filter_map(|key| params.get(key).and_then(Value::as_str))
+    .filter(|value| !value.is_empty())
+    .map(|value| {
+        let path = std::path::PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            props.root.join(path)
+        }
+    })
+    .collect()
+}
+
+fn apply_project_update(
+    props: &mut omegat_core::properties::ProjectProperties,
+    params: &Value,
+) -> omegat_team::Result<()> {
+    let string = |key: &str| params.get(key).and_then(Value::as_str);
+    if let Some(value) = string("source_lang") {
+        props.source_lang = value.to_string();
+    }
+    if let Some(value) = string("target_lang") {
+        props.target_lang = value.to_string();
+    }
+    if let Some(value) = string("source_tok") {
+        props.source_tok = value.to_string();
+    }
+    if let Some(value) = string("target_tok") {
+        props.target_tok = value.to_string();
+    }
+    if let Some(value) = params
+        .get("sentence_segment")
+        .or_else(|| params.get("sentence_seg"))
+        .and_then(Value::as_bool)
+    {
+        props.sentence_seg = value;
+    }
+    if let Some(value) = params
+        .get("support_default_translations")
+        .and_then(Value::as_bool)
+    {
+        props.support_default_translations = value;
+    }
+    if let Some(value) = params.get("remove_tags").and_then(Value::as_bool) {
+        props.remove_tags = value;
+    }
+    if let Some(value) = string("export_tm_levels") {
+        props.export_tm_levels = value.to_string();
+    }
+    if let Some(value) = string("external_command") {
+        props.external_command = value.to_string();
+    }
+    if let Some(values) = params.get("source_dir_excludes").and_then(Value::as_array) {
+        props.source_dir_excludes = values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect();
+    }
+    let root = props.root.clone();
+    let resolve_path = |value: &str| {
+        let path = std::path::PathBuf::from(value);
+        if path.is_absolute() {
+            path
+        } else {
+            root.join(path)
+        }
+    };
+    for (key, target) in [
+        ("source_dir", &mut props.source_dir),
+        ("target_dir", &mut props.target_dir),
+        ("tm_dir", &mut props.tm_dir),
+        ("glossary_dir", &mut props.glossary_dir),
+        ("glossary_file", &mut props.glossary_file),
+        ("dictionary_dir", &mut props.dictionary_dir),
+        ("export_tm_dir", &mut props.export_tm_dir),
+    ] {
+        if let Some(value) = string(key) {
+            *target = resolve_path(value);
+        }
+    }
+    props.ensure_dirs().map_err(core_product_err)
 }
 
 fn invalid(e: serde_json::Error) -> (i32, String) {
@@ -1597,7 +1898,8 @@ fn pending_transaction_envelopes(
     owner_retry_attempts: usize,
     cancellation: &CancellationToken,
 ) -> std::result::Result<(Vec<Value>, Vec<u32>), (i32, String)> {
-    let mut envelopes = Vec::new();
+    refresh_journal::prepare(config_dir, &props.root, app_instance, generation)
+        .map_err(refresh_journal_err)?;
     let retried_after_owners = claim_transaction_owner_with_retry_cancellable(
         props,
         app_instance,
@@ -1617,61 +1919,16 @@ fn pending_transaction_envelopes(
         omegat_team::TeamError::Conflict(message) => (error_code::TEAM_CONFLICT, message),
         other => (error_code::INTERNAL_ERROR, other.to_string()),
     })?;
-    if let Some(receipt) = receipt {
-        envelopes.push(serde_json::to_value(receipt).map_err(|error| {
+    let envelopes = if let Some(receipt) = receipt {
+        vec![serde_json::to_value(receipt).map_err(|error| {
             (
                 error_code::INTERNAL_ERROR,
-                format!("serialize product transaction receipt: {error}"),
+                format!("serialize transaction receipt: {error}"),
             )
-        })?);
-    }
-    envelopes.extend(
-        refresh_journal::pending(config_dir, &props.root, app_instance, generation)
-            .map_err(refresh_journal_err)?
-            .into_iter()
-            // The refresh journal owns its internal FIFO. Only its durable
-            // head may compete with the product-receipt head; exposing a tail
-            // here could let a newer row bypass an unacknowledged refresh
-            // after the head transitions to sidecar_committed.
-            .take(1)
-            .map(|envelope| {
-                serde_json::to_value(envelope).map_err(|error| {
-                    (
-                        error_code::INTERNAL_ERROR,
-                        format!("serialize refresh transaction receipt: {error}"),
-                    )
-                })
-            })
-            .collect::<std::result::Result<Vec<_>, _>>()?,
-    );
-    envelopes.sort_by(|left, right| {
-        left.get("updated_unix_ms")
-            .and_then(Value::as_u64)
-            .unwrap_or(u64::MAX)
-            .cmp(
-                &right
-                    .get("updated_unix_ms")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(u64::MAX),
-            )
-            .then_with(|| {
-                left.get("batch_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .cmp(right.get("batch_id").and_then(Value::as_str).unwrap_or(""))
-            })
-            .then_with(|| {
-                left.pointer("/payload/operation")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .cmp(
-                        right
-                            .pointer("/payload/operation")
-                            .and_then(Value::as_str)
-                            .unwrap_or(""),
-                    )
-            })
-    });
+        })?]
+    } else {
+        Vec::new()
+    };
     Ok((envelopes, retried_after_owners))
 }
 
@@ -2012,37 +2269,19 @@ fn dispatch_refresh_journal(
                             ));
                         }
                     }
-                    let ack = if operation == "project.external-refresh" {
-                        let outcome = params
-                            .get("outcome")
-                            .and_then(Value::as_str)
-                            .filter(|value| {
-                                matches!(*value, "succeeded" | "cancelled" | "coalesced")
-                            })
-                            .ok_or((
-                                error_code::INVALID_PARAMS,
-                                "refresh acknowledgement requires a terminal outcome".into(),
-                            ))?;
-                        refresh_journal::acknowledge(
-                            config_dir,
-                            &root,
-                            &app_instance,
-                            generation,
-                            batch_id,
-                            outcome,
-                        )
-                        .map_err(|error| (error_code::TEAM_CONFLICT, error))?
-                    } else {
-                        omegat_team::acknowledge_transaction_receipt(
-                            &props, generation, batch_id, operation,
-                        )
-                        .map_err(|error| match error {
-                            omegat_team::TeamError::Conflict(message) => {
-                                (error_code::TEAM_CONFLICT, message)
-                            }
-                            other => (error_code::INTERNAL_ERROR, other.to_string()),
-                        })?
-                    };
+                    let outcome = params
+                        .get("outcome")
+                        .and_then(Value::as_str)
+                        .unwrap_or("succeeded");
+                    let ack = omegat_team::acknowledge_transaction_receipt_outcome(
+                        &props, generation, batch_id, operation, outcome,
+                    )
+                    .map_err(|error| match error {
+                        omegat_team::TeamError::Conflict(message) => {
+                            (error_code::TEAM_CONFLICT, message)
+                        }
+                        other => (error_code::INTERNAL_ERROR, other.to_string()),
+                    })?;
                     Ok(json!({ "ack": ack }))
                 }
                 _ => Err((
@@ -2196,6 +2435,7 @@ fn writes_watched_project_input(method: &str) -> bool {
         method,
         "entry.set"
             | "project.save"
+            | "project.reload"
             | "project.compile"
             | "project.close"
             | "project.update"
@@ -2208,6 +2448,8 @@ fn writes_watched_project_input(method: &str) -> bool {
             | "spell.ignore"
             | "spell.learn"
             | "wiki.import"
+            | "align.run"
+            | "align.write"
     )
 }
 

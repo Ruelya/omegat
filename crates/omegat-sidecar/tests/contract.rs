@@ -1069,9 +1069,6 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
         let owner_path = root.join(".repositories/transactions/renderer-owner.json");
         let active_path = root.join(".repositories/transactions/active.json");
         let history_path = root.join(".repositories/transactions/history.ndjson");
-        let refresh_path = root.join(".repositories/transactions/external-refresh.json");
-        let refresh_history_path =
-            root.join(".repositories/transactions/external-refresh-history.ndjson");
 
         let mut setup = spawn_sidecar(&config);
         rpc(
@@ -1437,7 +1434,6 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
             json!([])
         );
         assert!(!active_path.exists());
-        assert!(!refresh_path.exists());
 
         let product_history = std::fs::read_to_string(&history_path).unwrap();
         assert_eq!(
@@ -1453,9 +1449,8 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
             1,
             "{kind} head had duplicate terminal acknowledgements"
         );
-        let refresh_history = std::fs::read_to_string(&refresh_history_path).unwrap();
         assert_eq!(
-            refresh_history
+            product_history
                 .lines()
                 .map(|line| serde_json::from_str::<Value>(line).unwrap())
                 .filter(|row| { row["batch_id"] == refresh_batch && row["status"] == "completed" })
@@ -2441,13 +2436,22 @@ fn selected_global_head_survives_sidecar_kill_before_renderer_ack() {
         still_head["result"]["envelopes"][0]["batch_id"],
         "selected-team-head"
     );
-    let refresh_journal: Value = serde_json::from_slice(
-        &std::fs::read(root.join(".repositories/transactions/external-refresh.json")).unwrap(),
+    let shared_journal: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/active.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(refresh_journal["batches"][0]["batch_id"], refresh_id);
-    assert_eq!(refresh_journal["batches"][0]["status"], "pending");
-    assert_eq!(refresh_journal["batches"][0].get("commit"), None);
+    let refresh_row = shared_journal["batches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["batch_id"] == refresh_id)
+        .unwrap();
+    assert_eq!(refresh_row["status"], "pending");
+    assert_eq!(
+        refresh_row["payload"]["refresh"]["operation"],
+        "project.external-refresh"
+    );
+    assert_eq!(refresh_row.get("commit"), None);
 
     let team_ack = rpc(
         &mut second_in,
@@ -2704,6 +2708,270 @@ fn cancellation_reaches_languagetool_issues_and_filter_product_paths() {
 }
 
 #[test]
+fn project_configuration_workflow_persists_through_save_close_and_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("configured-project");
+    let remote = temp.path().join("configured-remote");
+    std::fs::create_dir_all(&remote).unwrap();
+    let mut first = spawn_sidecar(&config);
+    rpc(
+        &mut first.input,
+        &mut first.output,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": true
+        }),
+    );
+
+    let mut prefs = rpc(
+        &mut first.input,
+        &mut first.output,
+        2,
+        "prefs.get",
+        json!({}),
+    )["result"]
+        .clone();
+    prefs["filter_options"]["text"] = json!({"trim": "false"});
+    prefs["srx_path"] = json!("");
+    prefs["srx_xml"] = json!(
+        r#"<?xml version="1.0"?><srx><body><languagerules><languagerule languagerulename="English"><rule break="no"><beforebreak>\.</beforebreak><afterbreak>\s</afterbreak></rule></languagerule></languagerules><maprules><maprule><languagemap languagepattern="en.*" languagerulename="English"/></maprule></maprules></body></srx>"#
+    );
+    let saved_prefs = rpc(&mut first.input, &mut first.output, 3, "prefs.set", prefs);
+    assert_eq!(
+        saved_prefs["result"]["filter_options"]["text"]["trim"],
+        "false"
+    );
+
+    let source_dir = root.join("configured-source");
+    let target_dir = root.join("configured-target");
+    let tm_dir = root.join("configured-tm");
+    let glossary_dir = root.join("configured-glossary");
+    let glossary_file = glossary_dir.join("writeable.txt");
+    let dictionary_dir = root.join("configured-dictionary");
+    let export_tm_dir = root.join("configured-export");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(source_dir.join("chapter.txt"), "One. Two").unwrap();
+    let updated = rpc(
+        &mut first.input,
+        &mut first.output,
+        4,
+        "project.update",
+        json!({
+            "source_lang": "en",
+            "target_lang": "de-DE",
+            "source_tok": "org.omegat.tokenizer.DefaultTokenizer",
+            "target_tok": "org.omegat.tokenizer.LuceneGermanTokenizer",
+            "sentence_seg": true,
+            "source_dir": source_dir,
+            "target_dir": target_dir,
+            "tm_dir": tm_dir,
+            "glossary_dir": glossary_dir,
+            "glossary_file": glossary_file,
+            "dictionary_dir": dictionary_dir,
+            "export_tm_dir": export_tm_dir,
+            "export_tm_levels": "1,2",
+            "support_default_translations": false,
+            "remove_tags": true,
+            "external_command": "printf configured",
+            "source_dir_excludes": ["**/.ignored/**", "**/generated/**"],
+            "transaction_project_root": root,
+            "transaction_generation": 61,
+            "transaction_batch_id": "configured-properties"
+        }),
+    );
+    assert_eq!(updated["result"]["props"]["target_lang"], "de-DE");
+    assert_eq!(
+        updated["result"]["props"]["target_tok"],
+        "org.omegat.tokenizer.LuceneGermanTokenizer"
+    );
+    assert_eq!(
+        updated["result"]["props"]["source_dir_excludes"],
+        json!(["**/.ignored/**", "**/generated/**"])
+    );
+    assert_eq!(
+        updated["result"]["receipt"]["payload"]["operation"],
+        "project.update"
+    );
+    let property_ack = rpc(
+        &mut first.input,
+        &mut first.output,
+        5,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "configured-workflow",
+            "generation": 61,
+            "batch_id": "configured-properties",
+            "operation": "project.update",
+            "outcome": "succeeded"
+        }),
+    );
+    assert_eq!(property_ack["result"]["ack"]["acknowledged"], true);
+    let entries = rpc(
+        &mut first.input,
+        &mut first.output,
+        6,
+        "entry.list",
+        json!({}),
+    );
+    assert_eq!(entries["result"].as_array().unwrap().len(), 1);
+    assert_eq!(entries["result"][0]["source"], "One. Two");
+
+    let mapping = rpc(
+        &mut first.input,
+        &mut first.output,
+        7,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [{
+                    "local": "/source/",
+                    "repository": "/source/",
+                    "includes": ["**/*.txt"],
+                    "excludes": ["**/.ignored/**"]
+                }]
+            }],
+            "transaction_project_root": root,
+            "transaction_generation": 61,
+            "transaction_batch_id": "configured-mapping"
+        }),
+    );
+    assert_eq!(mapping["result"]["props"]["has_repositories"], true);
+    assert_eq!(
+        mapping["result"]["receipt"]["payload"]["operation"],
+        "team.mapping"
+    );
+    rpc(
+        &mut first.input,
+        &mut first.output,
+        8,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "configured-workflow",
+            "generation": 61,
+            "batch_id": "configured-mapping",
+            "operation": "team.mapping",
+            "outcome": "succeeded"
+        }),
+    );
+
+    let saved = rpc(
+        &mut first.input,
+        &mut first.output,
+        9,
+        "project.save",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 61,
+            "transaction_batch_id": "configured-save"
+        }),
+    );
+    assert_eq!(
+        saved["result"]["receipt"]["payload"]["operation"],
+        "project.save"
+    );
+    rpc(
+        &mut first.input,
+        &mut first.output,
+        10,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "configured-workflow",
+            "generation": 61,
+            "batch_id": "configured-save",
+            "operation": "project.save",
+            "outcome": "succeeded"
+        }),
+    );
+    let closed = rpc(
+        &mut first.input,
+        &mut first.output,
+        11,
+        "project.close",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 61,
+            "transaction_batch_id": "configured-close"
+        }),
+    );
+    assert_eq!(
+        closed["result"]["receipt"]["payload"]["operation"],
+        "project.close"
+    );
+    rpc(
+        &mut first.input,
+        &mut first.output,
+        12,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "configured-workflow",
+            "generation": 61,
+            "batch_id": "configured-close",
+            "operation": "project.close",
+            "outcome": "succeeded"
+        }),
+    );
+    first.child.kill().unwrap();
+    first.child.wait().unwrap();
+
+    let mut second = spawn_sidecar(&config);
+    let reopened = rpc(
+        &mut second.input,
+        &mut second.output,
+        13,
+        "project.open",
+        json!({"root": root}),
+    );
+    assert_eq!(reopened["result"]["target_lang"], "de-DE");
+    assert_eq!(reopened["result"]["external_command"], "printf configured");
+    assert_eq!(
+        reopened["result"]["source_dir_excludes"],
+        json!(["**/.ignored/**", "**/generated/**"])
+    );
+    assert_eq!(reopened["result"]["repositories"][0]["repo_type"], "file");
+    assert_eq!(
+        reopened["result"]["repositories"][0]["mappings"][0]["includes"],
+        json!(["**/*.txt"])
+    );
+    let reopened_entries = rpc(
+        &mut second.input,
+        &mut second.output,
+        14,
+        "entry.list",
+        json!({}),
+    );
+    assert_eq!(reopened_entries["result"].as_array().unwrap().len(), 1);
+    assert_eq!(reopened_entries["result"][0]["source"], "One. Two");
+    let reopened_prefs = rpc(
+        &mut second.input,
+        &mut second.output,
+        15,
+        "prefs.get",
+        json!({}),
+    );
+    assert_eq!(
+        reopened_prefs["result"]["filter_options"]["text"]["trim"],
+        "false"
+    );
+    assert!(reopened_prefs["result"]["srx_xml"]
+        .as_str()
+        .unwrap()
+        .contains("languagemap"));
+    let _ = second.child.kill();
+}
+
+#[test]
 fn protocol_cancellation_rolls_back_reload_and_compile_state() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())
@@ -2752,7 +3020,11 @@ fn protocol_cancellation_rolls_back_reload_and_compile_state() {
         &mut stdout,
         4,
         "project.reload",
-        json!({}),
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 9,
+            "transaction_batch_id": "cancelled-scoped-reload"
+        }),
         "project.reload.sources",
     );
     assert_eq!(
@@ -2804,7 +3076,11 @@ fn protocol_cancellation_rolls_back_reload_and_compile_state() {
         &mut stdout,
         7,
         "project.compile",
-        json!({}),
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 9,
+            "transaction_batch_id": "cancelled-scoped-compile"
+        }),
         "project.compile.targets",
     );
     assert_eq!(
@@ -2819,6 +3095,7 @@ fn protocol_cancellation_rolls_back_reload_and_compile_state() {
             .file_name()
             .to_string_lossy()
             .starts_with(".omegat-compile-")));
+    assert!(!root.join(".repositories/transactions/active.json").exists());
 
     let responsive = rpc(&mut stdin, &mut stdout, 8, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
@@ -3193,13 +3470,23 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     );
     let refresh_envelope: omegat_team::TransactionEnvelope<Value> =
         serde_json::from_value(refresh["result"]["batch"].clone()).unwrap();
-    let refresh_journal: Value = serde_json::from_slice(
-        &std::fs::read(root.join(".repositories/transactions/external-refresh.json")).unwrap(),
+    let shared_journal: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/active.json")).unwrap(),
     )
     .unwrap();
-    let persisted_refresh_envelope: omegat_team::TransactionEnvelope<Value> =
-        serde_json::from_value(refresh_journal["batches"][0].clone()).unwrap();
-    assert_eq!(persisted_refresh_envelope, refresh_envelope);
+    let persisted_refresh = &shared_journal["batches"][0];
+    assert_eq!(persisted_refresh["version"], refresh_envelope.version);
+    assert_eq!(
+        persisted_refresh["project_root"],
+        refresh_envelope.project_root
+    );
+    assert_eq!(persisted_refresh["generation"], refresh_envelope.generation);
+    assert_eq!(persisted_refresh["batch_id"], refresh_envelope.batch_id);
+    assert_eq!(persisted_refresh["status"], "pending");
+    assert_eq!(
+        persisted_refresh["payload"]["refresh"],
+        refresh_envelope.payload
+    );
     assert_eq!(refresh_envelope.version, team_envelope.version);
     assert_eq!(refresh_envelope.project_root, team_envelope.project_root);
     assert_eq!(refresh_envelope.generation, team_envelope.generation);
@@ -4150,13 +4437,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
                 generation,
                 batch_id.to_string(),
             );
-            waiters.push((
-                child,
-                pid,
-                Some(call),
-                wait_marker,
-                takeover_marker,
-            ));
+            waiters.push((child, pid, Some(call), wait_marker, takeover_marker));
         }
         for (waiter, pid, _, wait_marker, takeover_marker) in &mut waiters {
             wait_for_file(wait_marker, waiter);
@@ -4216,21 +4497,13 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             rollback_owner_pid = Some(waiters[rollback_index].1);
             waiters[rollback_index].0.kill().unwrap();
             waiters[rollback_index].0.wait().unwrap();
-            let (killed_response, _, _) = waiters[rollback_index]
-                .2
-                .take()
-                .unwrap()
-                .join()
-                .unwrap();
+            let (killed_response, _, _) = waiters[rollback_index].2.take().unwrap().join().unwrap();
             assert!(
                 killed_response.is_none(),
                 "rollback owner published a response before its second SIGKILL"
             );
 
-            wait_for_file(
-                &terminal_owner_marker,
-                &mut waiters[blocked_indices[0]].0,
-            );
+            wait_for_file(&terminal_owner_marker, &mut waiters[blocked_indices[0]].0);
             let terminal_owner: Value =
                 serde_json::from_slice(&std::fs::read(&terminal_owner_marker).unwrap()).unwrap();
             let terminal_index = waiters
@@ -4270,12 +4543,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             terminal_owner_pid = Some(waiters[terminal_index].1);
             waiters[terminal_index].0.kill().unwrap();
             waiters[terminal_index].0.wait().unwrap();
-            let (killed_response, _, _) = waiters[terminal_index]
-                .2
-                .take()
-                .unwrap()
-                .join()
-                .unwrap();
+            let (killed_response, _, _) = waiters[terminal_index].2.take().unwrap().join().unwrap();
             assert!(
                 killed_response.is_none(),
                 "terminal publisher returned before its third SIGKILL"
@@ -4313,15 +4581,9 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         } else {
             0
         };
-        let (
-            mut waiter,
-            waiter_pid,
-            waiter_call,
-            _wait_marker,
-            takeover_marker,
-        ) = waiters.swap_remove(survivor_index);
-        let (waiter_response, mut waiter_in, mut waiter_out) =
-            waiter_call.unwrap().join().unwrap();
+        let (mut waiter, waiter_pid, waiter_call, _wait_marker, takeover_marker) =
+            waiters.swap_remove(survivor_index);
+        let (waiter_response, mut waiter_in, mut waiter_out) = waiter_call.unwrap().join().unwrap();
         let waiter_response = waiter_response.expect("surviving waiter response");
         assert_eq!(
             waiter_response["error"],
@@ -5648,9 +5910,6 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let active_path = root.join(".repositories/transactions/active.json");
         let owner_path = root.join(".repositories/transactions/renderer-owner.json");
         let history_path = root.join(".repositories/transactions/history.ndjson");
-        let refresh_journal_path = root.join(".repositories/transactions/external-refresh.json");
-        let refresh_history_path =
-            root.join(".repositories/transactions/external-refresh-history.ndjson");
         let marker_path = temp.path().join(format!("product-{point}-checkpoint"));
         let save_tmx = root.join("omegat/project_save.tmx");
         let receipt_batch = format!("product-{point}-receipt");
@@ -6201,7 +6460,6 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         };
         assert_eq!(drained["result"]["envelopes"], json!([]));
         assert!(!active_path.exists());
-        assert!(!refresh_journal_path.exists());
         assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before);
         assert_eq!(
             std::fs::metadata(&save_tmx).unwrap().modified().unwrap(),
@@ -6222,9 +6480,8 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
                 "product terminal history duplicated {batch} at {point}"
             );
         }
-        let refresh_history = std::fs::read_to_string(&refresh_history_path).unwrap();
         assert_eq!(
-            refresh_history
+            terminal_history
                 .lines()
                 .map(|line| serde_json::from_str::<Value>(line).unwrap())
                 .filter(|row| { row["batch_id"] == refresh_batch && row["status"] == "completed" })
@@ -6240,7 +6497,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
 }
 
 #[test]
-fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_work() {
+fn unified_journal_migrates_refresh_envelopes_and_compacts_only_acked_work() {
     fn create_project(root: &std::path::Path, source: &str) {
         let props = omegat_core::properties::ProjectProperties::create(
             root.to_path_buf(),
@@ -6265,11 +6522,11 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         command.env("OMEGAT_CONFIG_DIR", config);
         match abort_compaction {
             Some("archive") => {
-                command.env("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_ARCHIVE", "1");
+                command.env("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_ARCHIVE", "1");
             }
             Some("queue-rename") => {
                 command.env(
-                    "OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_QUEUE_RENAME",
+                    "OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME",
                     "1",
                 );
             }
@@ -6340,9 +6597,8 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     }
 
     let compact_config = temp.path().join("compact-config");
-    let journal_path = compact_root.join(".repositories/transactions/external-refresh.json");
-    let history_path =
-        compact_root.join(".repositories/transactions/external-refresh-history.ndjson");
+    let journal_path = compact_root.join(".repositories/transactions/active.json");
+    let history_path = compact_root.join(".repositories/transactions/history.ndjson");
     let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config, None);
     rpc(
         &mut first_in,
@@ -6559,8 +6815,16 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     let compacted_on_disk: Value =
         serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
     assert_eq!(
-        compacted_on_disk["batches"][0],
-        compacted["result"]["envelopes"][0]
+        compacted_on_disk["batches"][0]["batch_id"],
+        compacted["result"]["envelopes"][0]["batch_id"]
+    );
+    assert_eq!(
+        compacted_on_disk["batches"][0]["status"],
+        compacted["result"]["envelopes"][0]["status"]
+    );
+    assert_eq!(
+        compacted_on_disk["batches"][0]["payload"]["refresh"],
+        compacted["result"]["envelopes"][0]["payload"]
     );
     assert_eq!(compacted_on_disk["batches"][1]["batch_id"], pending_batch);
     assert_eq!(compacted_on_disk["batches"][1]["status"], "pending");
@@ -6863,22 +7127,22 @@ fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
     );
     assert_eq!(completed["result"]["ack"]["acknowledged"], true);
     let terminal: omegat_team::TransactionEnvelope<Value> = serde_json::from_str(
-        std::fs::read_to_string(
-            root.join(".repositories/transactions/external-refresh-history.ndjson"),
-        )
-        .unwrap()
-        .lines()
-        .last()
-        .unwrap(),
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson"))
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(terminal.batch_id, batch_id);
     assert_eq!(terminal.generation, 1);
     assert_eq!(terminal.status, omegat_team::TransactionStatus::Completed);
     assert_eq!(terminal.error_code, None);
-    assert!(!root
-        .join(".repositories/transactions/external-refresh.json")
-        .exists());
+    assert_eq!(
+        terminal.payload["refresh"]["operation"],
+        "project.external-refresh"
+    );
+    assert!(!root.join(".repositories/transactions/active.json").exists());
     let _ = second_child.kill();
 }
 
@@ -6995,12 +7259,12 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         "before_atomic_publish",
         "candidate rolled back before receipt",
     );
-    let before_journal_path = before_root.join(".repositories/transactions/external-refresh.json");
+    let before_journal_path = before_root.join(".repositories/transactions/active.json");
     let before_journal: Value =
         serde_json::from_slice(&std::fs::read(&before_journal_path).unwrap()).unwrap();
     assert_eq!(before_journal["batches"][0]["status"], "pending");
     assert_eq!(
-        before_journal["batches"][0]["payload"].get("committed_result"),
+        before_journal["batches"][0]["payload"]["refresh"].get("committed_result"),
         None
     );
     assert_eq!(before_journal["batches"][0].get("commit"), None);
@@ -7079,13 +7343,14 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         "after_atomic_publish",
         "committed exactly once before crash",
     );
-    let after_journal_path = after_root.join(".repositories/transactions/external-refresh.json");
+    let after_journal_path = after_root.join(".repositories/transactions/active.json");
     let after_journal: Value =
         serde_json::from_slice(&std::fs::read(&after_journal_path).unwrap()).unwrap();
     assert_eq!(after_journal["batches"][0]["status"], "sidecar_committed");
     assert_eq!(after_journal["batches"][0]["commit"]["manifest_items"], 1);
     assert_eq!(
-        after_journal["batches"][0]["payload"]["committed_result"]["entry_list"][0]["source"],
+        after_journal["batches"][0]["payload"]["refresh"]["committed_result"]["entry_list"][0]
+            ["source"],
         "committed exactly once before crash"
     );
 
