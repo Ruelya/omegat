@@ -123,14 +123,28 @@ performs legacy preparation before one cancellable multi-round claim and
 continues from that exact app/PID/generation under a revalidated blocking lock;
 an empty queue durably releases that claim. Receipt lookup also takes this
 blocking coordinator path, closing the committed-response race with a
-concurrent recoverer.
+concurrent recoverer. All remaining project/team and shared-config domain lock
+entry points now execute as coordinator callbacks; the former public project
+lock shim and private config lock shim are gone. A coordinator keyed by the
+canonical lock path fails same-thread re-entry before touching the OS lock, and
+the regression test proves that the outer callback completes, the inner
+callback never runs, and the coordinator can be reopened afterward.
 One phase model covers all **22 project** and **4 config** writers. Core property
 matrices run every writer through all three acknowledgement publication/
 compaction crash boundaries, all ten legacy-history migration/segmentation/GC
-crash boundaries, and equal-revision active-replica divergence. Separate model
-tests cover multi-generation owner takeover, release, cancellation before lock
-preparation, fair cross-root ordering, invalid discovery records, and
-byte-different duplicate discovery records.
+crash boundaries, and equal-revision active-replica divergence. A separate
+reproducible random model runs four default seeds and 512 random scheduling
+steps per seed. Each seed creates a commit lane and a cancel lane for every
+writer (**52 transactions**), randomly interleaves enqueue, cancellation
+intent, commit, fair cross-root acknowledgement, terminal GC, reopen, and two
+project moves, then requires exact `[2 enqueue, 1 cancel, 1 commit, 1 ack,
+1 GC]` coverage per writer. It also survives at least three consecutive owner
+deaths on each root and checks every terminal through compacted sparse history.
+`OMEGAT_DURABLE_MODEL_SEEDS` reproduces a seed list and
+`OMEGAT_DURABLE_MODEL_STEPS` reduces the random prefix while deterministic
+drain preserves a valid shrink target. Other model tests cover cancellation
+before lock preparation, invalid discovery records, and byte-different
+duplicate discovery records.
 The real Linux packaged durable-FIFO stress runner passed all three
 multi-Electron drivers and parses their reports rather than accepting only
 child exit status. It covers enqueue; all eight active recovery/primary write,
@@ -142,13 +156,18 @@ hold at least three packaged Electron waiters concurrently and prove that a
 pre-existing third waiter takes over without launching another process. Per-
 contender claim markers are accepted only when they match the current durable
 owner app/PID/generation, including takeover between durable claim and renderer
-delivery. The third driver passed a seeded **24-step** random SIGKILL sequence
-over two project roots, mixing project-save deaths immediately before and after
-atomic product publication with config active-replica rename/parent-fsync and
-terminal-history deaths. Every row converged to one exact terminal decision,
-both project roots drained, active replicas converged, released-owner
-tombstones were observed, and no candidate files remained. Windows and macOS
-packaged file-lock, atomic-rename,
+delivery. The third driver now passes **3 seeds × 16 steps = 48** random
+SIGKILL rows over two project roots. Every seed forces both project-save
+pre/post-publication deaths and config active-replica rename/parent-fsync plus
+terminal-history deaths before adding seed-selected rows. History thresholds
+are reduced to two hot rows and one row per segment, so the same long sequence
+advances project and config GC generations. One project moves after its first
+immutable segment, subsequent faults use the moved root, mutable recent rows
+rebase, and the pre-move immutable bytes stay exact. Every row converged to one
+terminal decision, all project roots drained, active replicas converged,
+released-owner tombstones were observed, and no candidate files remained. The
+complete three-driver Linux stress orchestrator parsed and accepted this
+expanded report. Windows and macOS packaged file-lock, atomic-rename,
 directory-fsync, and Electron concurrency were not run because this runner is
 Linux-only.
 The raw NDJSON contract and real Linux packaged matrix also pass the
