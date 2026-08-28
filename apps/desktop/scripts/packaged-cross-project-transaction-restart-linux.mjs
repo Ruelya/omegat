@@ -539,6 +539,7 @@ try {
     JSON.stringify(unifiedJournal, null, 2),
     "utf8",
   );
+  const projectAQueueBeforeProjectB = await readFile(transactionJournal);
   await writeFile(join(prepDir, "conflicts.json"), "[]", "utf8");
   assert.deepEqual(
     unifiedJournal.batches.map((row) => row.batch_id),
@@ -561,21 +562,18 @@ try {
   assert.equal(stateB.entries[0].key.file, "b.txt");
   assert.notDeepEqual(stateB.entries[0].key, keyA);
   assert.deepEqual(stateB.conflicts, []);
-  await waitFor("project A refresh cancellation after opening B", async () => {
-    if (!await pathExists(transactionJournal)) return undefined;
-    const journal = JSON.parse(await readFile(transactionJournal, "utf8"));
-    return journal.batches.length === 1
-        && journal.batches[0]?.batch_id === teamEnvelope.batch_id
-      ? journal
-      : undefined;
-  });
+  assert.deepEqual(
+    await readFile(transactionJournal),
+    projectAQueueBeforeProjectB,
+    "opening project B mutated project A's durable FIFO",
+  );
   const refreshRows = parseNdjson(await readFile(transactionHistory, "utf8"));
-  const cancelledRefresh = refreshRows
+  const preservedRefresh = refreshRows
     .filter((row) => row.batch_id === refreshBatchId)
     .at(-1);
-  assert.equal(cancelledRefresh?.project_root, projectA);
-  assert.equal(cancelledRefresh?.generation, 71);
-  assert.equal(cancelledRefresh?.status, "cancelled");
+  assert.equal(preservedRefresh?.project_root, projectA);
+  assert.equal(preservedRefresh?.generation, 71);
+  assert.equal(preservedRefresh?.status, "pending");
 
   const killedB = await killPackaged(launched);
   launched = undefined;
@@ -589,9 +587,17 @@ try {
   assert.equal(recoveredA.entries.length, 1);
   assert.deepEqual(recoveredA.entries[0].key, keyA);
   assert.deepEqual(recoveredA.conflicts, [conflictA]);
-  assert.equal(await pathExists(transactionJournal), false);
+  await waitFor("project A unified FIFO recovery", async () =>
+    !await pathExists(transactionJournal) ? true : undefined
+  );
   assert.equal(await pathExists(snapshot), false);
   const teamRows = parseNdjson(await readFile(transactionHistory, "utf8"));
+  const recoveredRefresh = teamRows
+    .filter((row) => row.batch_id === refreshBatchId)
+    .at(-1);
+  assert.equal(recoveredRefresh?.project_root, projectA);
+  assert.equal(recoveredRefresh?.status, "completed");
+  assert.equal(recoveredRefresh?.payload?.phase, "renderer-acknowledged");
   const recoveredConflict = teamRows
     .filter((row) => row.batch_id === teamEnvelope.batch_id)
     .at(-1);
@@ -621,7 +627,7 @@ try {
     projectA: {
       recoveredEntryKey: recoveredA.entries[0].key,
       recoveredConflicts: recoveredA.conflicts.length,
-      refreshBatchStatus: cancelledRefresh.status,
+      refreshBatchStatus: recoveredRefresh.status,
       conflictBatchStatus: recoveredConflict.status,
     },
   }));
