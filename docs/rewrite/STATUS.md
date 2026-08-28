@@ -56,12 +56,26 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-28 verification:** core selected suites **152 passed**, filters
-**86 passed**, team **46 passed / 1 ignored**, script **10 passed**, CLI
+**2026-08-28 verification:** core selected suites **155 passed**, filters
+**86 passed**, team **49 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
 **19 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
+Project/team product transaction history now uses the shared immutable segmented
+store: dual hot/manifest replicas, hash-prefix sparse lookup, bounded
+`history.ndjson` recent projection, generational replacement, and post-manifest
+directory-fsynced GC replace the former unbounded append stream. Unit coverage
+fails closed on missing segments and equal-revision manifest/index conflicts,
+recovers multiple orphan generations, resumes interrupted legacy import, and
+rebases mutable state after moving a project without rewriting immutable segment
+bytes. The complete Linux unpacked-package driver passed with a two-row recent
+limit, consecutive process deaths after generation publication and after the
+first GC unlink, live dual-Electron owner rejection, lost-receipt adoption plus
+idempotent acknowledgement, five byte-identical immutable segments across a
+project-directory move, and zero remaining orphans. Windows and macOS file-lock,
+atomic-rename, directory-fsync, and packaged equivalents were not run because
+this runner is Linux-only.
 The raw NDJSON contract and real Linux packaged matrix also pass the
 three-owner-death cancellation row: the third pre-existing waiter reads the
 already-published terminal, all four logical callers receive **-32800**, and
