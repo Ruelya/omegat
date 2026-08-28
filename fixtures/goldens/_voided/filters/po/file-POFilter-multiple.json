@@ -1,0 +1,24 @@
+{
+  "id": "po",
+  "fixture": "po/file-POFilter-multiple.po",
+  "java_test": "org.omegat.filters.POFilterTest#testLoad",
+  "options": { "skipHeader": "true" },
+  "sources": [
+    "source1",
+    "source2",
+    "source3",
+    "source1",
+    "source1",
+    "source4",
+    "source4",
+    "source4",
+    "source5",
+    "source6"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "source3",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

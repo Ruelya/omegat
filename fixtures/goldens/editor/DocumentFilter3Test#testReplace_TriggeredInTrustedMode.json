@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.DocumentFilter3Test#testReplace_TriggeredInTrustedMode",
+  "trusted": true,
+  "offset": 0,
+  "length": 1,
+  "text": "trusted text",
+  "applied": true,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

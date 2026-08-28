@@ -1,0 +1,15 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/simple.properties",
+  "java_test": "org.omegat.filters dialect/table for properties",
+  "options": {},
+  "sources": [
+    "Value"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Value",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

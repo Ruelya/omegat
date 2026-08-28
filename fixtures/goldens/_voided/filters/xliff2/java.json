@@ -1,0 +1,15 @@
+{
+  "id": "xliff2",
+  "fixture": "xliff/simple2.xlf",
+  "java_test": "org.omegat.filters dialect/table for xliff2",
+  "options": {},
+  "sources": [
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Hello",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}
