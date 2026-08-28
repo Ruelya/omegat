@@ -922,6 +922,7 @@ where
 }
 
 #[cfg(test)]
+#[derive(Debug)]
 struct CoordinatorHistory {
     config_dir: PathBuf,
     options: SegmentedHistoryOptions,
