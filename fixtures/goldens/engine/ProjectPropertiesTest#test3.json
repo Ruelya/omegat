@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ProjectPropertiesTest#test3",
+  "source": "/tmp/source/",
+  "under": "source/",
+  "team": false,
+  "keys": [
+    "org.omegat.core.data.ProjectPropertiesTest#test3"
+  ]
+}

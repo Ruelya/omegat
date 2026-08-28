@@ -1,0 +1,30 @@
+{
+  "java_source": "org.omegat.gui.glossary.GlossaryManager + case/stem options",
+  "entries": "Cat\tchat\nrunning\tcourir\n",
+  "cases": [
+    {
+      "segment": "The CAT sat",
+      "ignore_case": true,
+      "use_stem": false,
+      "targets": ["chat"]
+    },
+    {
+      "segment": "The CAT sat",
+      "ignore_case": false,
+      "use_stem": false,
+      "targets": []
+    },
+    {
+      "segment": "I was run yesterday",
+      "ignore_case": true,
+      "use_stem": true,
+      "targets": ["courir"]
+    },
+    {
+      "segment": "I was run yesterday",
+      "ignore_case": true,
+      "use_stem": false,
+      "targets": []
+    }
+  ]
+}
