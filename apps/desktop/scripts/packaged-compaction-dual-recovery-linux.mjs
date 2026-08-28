@@ -385,6 +385,10 @@ function parseNdjson(raw) {
   return raw.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
 
+function productJournalBatches(journal) {
+  return Array.isArray(journal.batches) ? journal.batches : [journal];
+}
+
 async function waitForDroppedAck(path, batchId, operation) {
   return waitFor(`dropped ${operation} acknowledgement`, async () => {
     if (!await pathExists(path)) return undefined;
@@ -970,9 +974,12 @@ try {
   mixed.saveBatchId = save.receipt.batch_id;
   await waitFor("save receipt behind lost refresh ack", async () => {
     const active = JSON.parse(await readFile(mixed.activePath, "utf8"));
-    return active.batch_id === mixed.saveBatchId
-      && active.status === "sidecar_committed"
-      ? active
+    const receipt = productJournalBatches(active).find((row) =>
+      row.batch_id === mixed.saveBatchId
+      && row.status === "sidecar_committed"
+    );
+    return receipt
+      ? receipt
       : undefined;
   });
   const firstTrace = parseNdjson(await readFile(firstTracePath, "utf8"));
@@ -1128,8 +1135,9 @@ try {
     "commit-source",
   );
   const lostTeamActive = JSON.parse(await readFile(lostTeam.activePath, "utf8"));
-  assert.equal(lostTeamActive.batch_id, lostTeam.teamBatchId);
-  assert.equal(lostTeamActive.status, "sidecar_committed");
+  const lostTeamReceipt = productJournalBatches(lostTeamActive)[0];
+  assert.equal(lostTeamReceipt.batch_id, lostTeam.teamBatchId);
+  assert.equal(lostTeamReceipt.status, "sidecar_committed");
   const teamQueueBeforeKill = JSON.parse(
     await readFile(lostTeam.refreshJournalPath, "utf8"),
   );
@@ -1259,8 +1267,9 @@ try {
     "project.save",
   );
   const lostSaveActive = JSON.parse(await readFile(lostSave.activePath, "utf8"));
-  assert.equal(lostSaveActive.batch_id, lostSave.saveBatchId);
-  assert.equal(lostSaveActive.status, "sidecar_committed");
+  const lostSaveReceipt = productJournalBatches(lostSaveActive)[0];
+  assert.equal(lostSaveReceipt.batch_id, lostSave.saveBatchId);
+  assert.equal(lostSaveReceipt.status, "sidecar_committed");
 
   await mkdir(join(saveProject, "glossary"), { recursive: true });
   await writeFile(
@@ -1365,7 +1374,13 @@ try {
   const closeFirstTracePath = join(workDir, "close-first-envelope-trace.ndjson");
   const closeFirstAckTracePath = join(workDir, "close-first-ack-trace.ndjson");
   const closeRestartTracePath = join(workDir, "close-restart-envelope-trace.ndjson");
+  const closeContenderTracePath = join(
+    workDir,
+    "close-contender-envelope-trace.ndjson",
+  );
   const closeHeadMarkerPath = join(workDir, "close-selected-head-sidecar-kill.json");
+  const closeOwnerMarkerPath = join(workDir, "close-owner-claim.json");
+  const closeOwnerReleasePath = join(workDir, "close-owner-release");
   const lostClose = await prepareCloseReceiptProject(
     closeConfig,
     closeProject,
@@ -1426,13 +1441,31 @@ try {
   );
   assert.equal(closedBeforeKill.key, null);
   assert.equal(closedBeforeKill.translation, null);
-  const closeActive = JSON.parse(await readFile(lostClose.activePath, "utf8"));
-  assert.equal(closeActive.batch_id, closeBatchId);
-  assert.equal(closeActive.status, "sidecar_committed");
-  assert.equal(closeActive.payload.operation, "project.close");
+  let closeJournal = JSON.parse(await readFile(lostClose.activePath, "utf8"));
+  let closeBatches = productJournalBatches(closeJournal);
+  assert.equal(closeBatches[0].batch_id, closeBatchId);
+  assert.equal(closeBatches[0].status, "sidecar_committed");
+  assert.equal(closeBatches[0].payload.operation, "project.close");
 
   const closeTailSession = new SidecarSession(closeConfig);
   await closeTailSession.request("project.open", { root: closeProject });
+  const closeSaveBatchId = "lost-close-save-tail";
+  const closeSave = await closeTailSession.request("project.save", {
+    transaction_project_root: closeProject,
+    transaction_generation: closeBatches[0].generation,
+    transaction_batch_id: closeSaveBatchId,
+  });
+  assert.equal(closeSave.receipt.batch_id, closeSaveBatchId);
+  assert.equal(closeSave.receipt.payload.operation, "project.save");
+  closeJournal = JSON.parse(await readFile(lostClose.activePath, "utf8"));
+  closeBatches = productJournalBatches(closeJournal);
+  assert.deepEqual(
+    closeBatches.map((row) => [row.batch_id, row.status]),
+    [
+      [closeBatchId, "sidecar_committed"],
+      [closeSaveBatchId, "sidecar_committed"],
+    ],
+  );
   const closeTailPath = join(closeProject, "glossary", "after-close.txt");
   await mkdir(dirname(closeTailPath), { recursive: true });
   await writeFile(
@@ -1443,7 +1476,7 @@ try {
   const closeTail = await closeTailSession.request("project.refresh.enqueue", {
     root: closeProject,
     app_instance: "lost-close-tail-setup",
-    generation: closeActive.generation,
+    generation: closeBatches[0].generation,
     paths: [closeTailPath],
     fingerprints: { [closeTailPath]: "lost-close-refresh-tail" },
     sources: ["native"],
@@ -1470,9 +1503,46 @@ try {
   const killedAfterLostClose = await killPackaged(launchedA);
   launchedA = undefined;
 
-  launchedA = await launchPackaged(xvfb.display, closeConfig, null, {
-    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeRestartTracePath,
+  launchedA = await launchPackaged(
+    xvfb.display,
+    closeConfig,
+    null,
+    {
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeRestartTracePath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "project.close",
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: closeOwnerMarkerPath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: closeOwnerReleasePath,
+    },
+  );
+  const ownerClaim = await waitFor("durable close owner claim", async () =>
+    await pathExists(closeOwnerMarkerPath)
+      ? JSON.parse(await readFile(closeOwnerMarkerPath, "utf8"))
+      : undefined
+  );
+  assert.equal(ownerClaim.batch_id, closeBatchId);
+  assert.equal(ownerClaim.operation, "project.close");
+  assert.equal(ownerClaim.owner_process_id, launchedA.application.pid);
+  launchedB = await launchPackaged(xvfb.display, closeConfig, null, {
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeContenderTracePath,
   });
+  await waitFor("concurrent replacement owner rejection", () =>
+    launchedB.stderr().includes("owned by live app") ? true : undefined
+  );
+  assert.equal(
+    await launchedB.client.evaluate(
+      'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+      true,
+    ),
+    "6.2.0",
+  );
+  assert.equal(
+    await pathExists(closeContenderTracePath)
+      ? parseNdjson(await readFile(closeContenderTracePath, "utf8")).length
+      : 0,
+    0,
+    "the rejected replacement delivered an envelope owned by another process",
+  );
+  await writeFile(closeOwnerReleasePath, "release\n", "utf8");
   await waitFor("detached close and refresh FIFO drained", async () =>
     !await pathExists(lostClose.activePath)
       && !await pathExists(lostClose.refreshJournalPath)
@@ -1496,7 +1566,7 @@ try {
   );
   assertOrderedDispatch(
     closeRestartTrace,
-    [closeBatchId, closeTailBatchId],
+    [closeBatchId, closeSaveBatchId, closeTailBatchId],
     "detached lost close acknowledgement restart",
   );
   assert.equal(
@@ -1528,6 +1598,15 @@ try {
     1,
     "lost close acknowledgement produced more than one terminal history row",
   );
+  assert.equal(
+    closeHistory.filter((row) =>
+      row.batch_id === closeSaveBatchId
+      && row.status === "completed"
+      && row.payload.phase === "renderer-acknowledged"
+    ).length,
+    1,
+    "close save tail produced more than one terminal history row",
+  );
   const closeRefreshHistory = parseNdjson(
     await readFile(lostClose.refreshHistoryPath, "utf8"),
   );
@@ -1540,6 +1619,8 @@ try {
   );
   await terminatePackaged(launchedA);
   launchedA = undefined;
+  await terminatePackaged(launchedB);
+  launchedB = undefined;
 
   launchedA = await launchPackaged(
     xvfb.display,
@@ -1569,9 +1650,11 @@ try {
   assert.equal(reopenedDecoy.translation, "");
   closeReceiptRecovery = {
     lostAckBatchId: closeBatchId,
+    saveTailBatchId: closeSaveBatchId,
     refreshTailBatchId: closeTailBatchId,
-    restartedDispatchOrder: [closeBatchId, closeTailBatchId],
+    restartedDispatchOrder: [closeBatchId, closeSaveBatchId, closeTailBatchId],
     rendererStayedClosedDuringRecovery: true,
+    concurrentReplacementRejectedByDurableOwner: true,
     stableProjectTreeReplayed: false,
     completeEntryKey: lostClose.key,
     decoyEntryKey: lostClose.decoyKey,
@@ -1587,7 +1670,7 @@ try {
     receiptType: "close",
     lostAckBatchId: closeBatchId,
     notReplayed: ["lost-close-initial-entry"],
-    restartedDispatchOrder: [closeBatchId, closeTailBatchId],
+    restartedDispatchOrder: [closeBatchId, closeSaveBatchId, closeTailBatchId],
     trailingReceiptsDrained: true,
   });
   await terminatePackaged(launchedA);

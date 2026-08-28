@@ -205,6 +205,37 @@ function killSidecarAfterSelectedTransactionHead(
   return true;
 }
 
+async function holdAfterClaimingTransactionHead(
+  envelopes: TransactionEnvelope[],
+): Promise<void> {
+  const operation =
+    process.env.OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR;
+  const markerPath =
+    process.env.OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER;
+  const releasePath =
+    process.env.OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE;
+  const envelope = envelopes[0];
+  if (
+    !operation
+    || !markerPath
+    || !releasePath
+    || !envelope
+    || envelope.payload.operation !== operation
+    || existsSync(markerPath)
+  ) {
+    return;
+  }
+  durableTestMarker(markerPath, {
+    batch_id: envelope.batch_id,
+    operation,
+    app_instance: appInstance,
+    owner_process_id: process.pid,
+  });
+  while (!stoppingSidecar && !existsSync(releasePath)) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+}
+
 async function publishPendingTransactionEnvelopes(
   client: SidecarRpcClient,
   root: string,
@@ -237,6 +268,7 @@ async function publishPendingTransactionEnvelopes(
       endRecoveryWrite();
     }
   }
+  await holdAfterClaimingTransactionHead(envelopes);
   if (killSidecarAfterSelectedTransactionHead(envelopes)) return -1;
   envelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)

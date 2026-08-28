@@ -317,8 +317,9 @@ async function triggerEntrySet(client, translation) {
 async function activeEnvelope(path, status) {
   return waitFor(`${status} product envelope`, async () => {
     if (!await pathExists(path)) return undefined;
-    const envelope = JSON.parse(await readFile(path, "utf8"));
-    return envelope.status === status ? envelope : undefined;
+    const journal = JSON.parse(await readFile(path, "utf8"));
+    const envelopes = Array.isArray(journal.batches) ? journal.batches : [journal];
+    return envelopes.find((envelope) => envelope.status === status);
   });
 }
 
