@@ -2709,6 +2709,29 @@ fn cancellation_reaches_languagetool_issues_and_filter_product_paths() {
 
 #[test]
 fn project_configuration_workflow_persists_through_save_close_and_reopen() {
+    struct Sidecar {
+        child: std::process::Child,
+        input: std::process::ChildStdin,
+        output: BufReader<std::process::ChildStdout>,
+    }
+
+    fn spawn_sidecar(config: &std::path::Path) -> Sidecar {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("sidecar");
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        Sidecar {
+            child,
+            input,
+            output,
+        }
+    }
+
     let temp = tempfile::tempdir().unwrap();
     let config = temp.path().join("config");
     let root = temp.path().join("configured-project");
@@ -3478,7 +3501,7 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     assert_eq!(persisted_refresh["version"], refresh_envelope.version);
     assert_eq!(
         persisted_refresh["project_root"],
-        refresh_envelope.project_root
+        json!(refresh_envelope.project_root)
     );
     assert_eq!(persisted_refresh["generation"], refresh_envelope.generation);
     assert_eq!(persisted_refresh["batch_id"], refresh_envelope.batch_id);
