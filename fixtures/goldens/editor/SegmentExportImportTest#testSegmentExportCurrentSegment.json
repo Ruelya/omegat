@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.editor.SegmentExportImportTest#testSegmentExportCurrentSegment",
+  "source": "source",
+  "translation": "target",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

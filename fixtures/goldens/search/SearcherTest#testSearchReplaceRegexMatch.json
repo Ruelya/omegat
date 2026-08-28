@@ -1,0 +1,15 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchReplaceRegexMatch",
+  "query": "(\\d+) apples",
+  "replacement": "$1 bananas",
+  "input": "I have 5 apples and 10 apples.",
+  "replacements": [
+    "5 bananas",
+    "10 bananas"
+  ],
+  "count": 2,
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchReplaceRegexMatch"
+  ]
+}

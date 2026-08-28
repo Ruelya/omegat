@@ -1,0 +1,41 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.EncodingDetectorTest#testDetectHTMLEncoding",
+  "cases": [
+    {
+      "file": "file-HTMLUtils-utf8-content-type.html",
+      "default": null,
+      "encoding": "UTF-8"
+    },
+    {
+      "file": "file-HTMLUtils-utf16_be_with_bom.html",
+      "default": null,
+      "encoding": "UTF-16BE"
+    },
+    {
+      "file": "file-HTMLUtils-utf16_le_with_bom.html",
+      "default": null,
+      "encoding": "UTF-16LE"
+    },
+    {
+      "file": "file-HTMLUtils-utf8_with_bom.html",
+      "default": null,
+      "encoding": "UTF-8"
+    },
+    {
+      "file": "file-HTMLUtils-utf8-xml-declaration.html",
+      "default": null,
+      "encoding": "UTF-8"
+    },
+    {
+      "file": "file-HTMLUtils-no_header_no_bom.html",
+      "default": "ISO-8859-1",
+      "encoding": "ISO-8859-1"
+    },
+    {
+      "file": "file-HTMLUtils-no_header_no_bom.html",
+      "default": null,
+      "encoding": "UTF-8"
+    }
+  ]
+}

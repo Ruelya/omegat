@@ -1,0 +1,63 @@
+{
+  "id": "dokuwiki",
+  "fixture": "dokuwiki/dokuwiki.txt",
+  "java_test": "org.omegat.filters.DokuWikiFilterTest#testLoad",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Header",
+    "This is a flow text.",
+    "multiple spaces in text",
+    "* asterisk * asterisk",
+    "list item",
+    "- minus - minus",
+    "numeric item",
+    "before code",
+    "mid code",
+    "after code",
+    "<del>deleted</del>",
+    "header",
+    "cell1",
+    "cell2",
+    "cell3 {{..:images:f_n_16.png|Number}}"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "=== Header ===\n\n/* ignore */\n/*\ncomments\ncan also span\nmultiple line\n*/\nThis is a flow text.\n\nmultiple spaces in text\n\n* asterisk * asterisk\n  * list item\n- minus - minus\n  - numeric item\n\nbefore code\n<code java>This\n is\n ignored</code>\nmid code\n<code> ignore code </code>\nafter code\n \n<html> any html </html>\n~~MACRO~~\n<php> any php </php>\n{{..:images:f_n_16.png|Number}}\n<file> any file </file>\n<del>deleted</del>\n^ header | cell1 | cell2 | cell3 {{..:images:f_n_16.png|Number}} |\n \n "
+}
