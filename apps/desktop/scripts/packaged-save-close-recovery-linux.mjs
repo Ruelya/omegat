@@ -254,7 +254,7 @@ async function launchPackaged(display, configDir, project, extraEnv = {}) {
       const app = document.querySelector(".app");
       const segment = document.querySelector(".editor-segment.is-active");
       return {
-        project: app?.dataset.projectId ?? null,
+        project: app?.dataset.projectId || null,
         welcome: document.querySelector(".welcome") !== null,
         translation: segment?.querySelector(".editor-surface")?.textContent ?? null,
         key: segment?.getAttribute("data-entry-key") ?? null,
@@ -439,7 +439,7 @@ try {
     await pathExists(active) ? undefined : true
   );
   const recoveredCloseWorkspace = await launched.client.evaluate(`(() => ({
-    project: document.querySelector(".app")?.dataset.projectId ?? null,
+    project: document.querySelector(".app")?.dataset.projectId || null,
     welcome: document.querySelector(".welcome") !== null,
     activeSurfaces: document.querySelectorAll(
       ".editor-segment.is-active .editor-surface"
