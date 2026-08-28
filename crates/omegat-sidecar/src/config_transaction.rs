@@ -340,10 +340,6 @@ fn valid_envelope_version(
         }
 }
 
-fn valid_envelope(envelope: &ConfigTransactionEnvelope, config_dir: &Path, pending: bool) -> bool {
-    valid_envelope_version(envelope, config_dir, pending, CONFIG_TRANSACTION_VERSION)
-}
-
 fn migrate_envelope(mut envelope: ConfigTransactionEnvelope) -> ConfigTransactionEnvelope {
     envelope.version = CONFIG_TRANSACTION_VERSION;
     envelope
@@ -1305,21 +1301,20 @@ fn insert_unarchived(
     order: &mut Vec<String>,
     envelope: ConfigTransactionEnvelope,
 ) -> Result<(), String> {
+    match batches.get(&envelope.batch_id) {
+        Some(existing) if existing == &envelope => return Ok(()),
+        Some(_) => return Err(terminal_disagreement(&envelope.batch_id)),
+        None => {}
+    }
     if let Some(existing) = find_archived_terminal(config_dir, manifest, &envelope.batch_id)? {
         if existing != envelope {
             return Err(terminal_disagreement(&envelope.batch_id));
         }
         return Ok(());
     }
-    match batches.get(&envelope.batch_id) {
-        Some(existing) if existing == &envelope => Ok(()),
-        Some(_) => Err(terminal_disagreement(&envelope.batch_id)),
-        None => {
-            order.push(envelope.batch_id.clone());
-            batches.insert(envelope.batch_id.clone(), envelope);
-            Ok(())
-        }
-    }
+    order.push(envelope.batch_id.clone());
+    batches.insert(envelope.batch_id.clone(), envelope);
+    Ok(())
 }
 
 fn canonical_recent(
