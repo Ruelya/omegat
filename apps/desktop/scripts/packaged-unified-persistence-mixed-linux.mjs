@@ -824,7 +824,11 @@ async function runPreparedMixedQueueTakeovers(display, workDir, config) {
     const secondKilled = await killPackaged(second);
     second = undefined;
 
-    third = await launchPackagedRenderer(display, config, rootA, {
+    // A recovered close receipt must be discovered as a detached scope.
+    // Starting with OMEGAT_PROJECT would attach a watcher before the close is
+    // delivered, so renderer unwatch would follow the ordinary close path and
+    // cancel the queued refresh instead of draining the detached FIFO tail.
+    third = await launchPackagedRenderer(display, config, null, {
       ...limits,
       OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceA,
     });
