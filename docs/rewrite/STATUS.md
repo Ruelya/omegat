@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **21 passed** plus sidecar journal/watcher unit
+**4 passed**, sidecar contract **22 passed** plus sidecar journal/watcher unit
 **4 passed** and plugin filter **1 passed**, and desktop **24 files / 173 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
@@ -664,6 +664,17 @@ failure leaves the original queue authoritative; the second leaves the compacted
 queue authoritative. In both cases the next process receives the exact
 unacknowledged receipt and pending tail, while only the acknowledged terminal
 record can disappear.
+A real Linux `linux-unpacked` run now parks the packaged sidecar at both of those
+durable boundaries and externally SIGKILLs Electron's entire process group. At
+the archive boundary the original acknowledged + unacknowledged + pending queue
+remains authoritative; at the queue-rename boundary the compacted
+unacknowledged + pending queue is already authoritative. In each scenario a
+second Electron instance simultaneously recovers a different project's
+`entry.set` receipt and remains responsive while the first is killed. Restarting
+the first package while the second stays live drains only its own receipt and
+FIFO tail, retains the exact six-field `EntryKey` and one `Document3`, and leaves
+both histories free of the other project's batch IDs. This is Linux-only
+evidence.
 A separate contract keeps two replacement sidecars alive concurrently: project
 A recovers an `entry.set` receipt while project B recovers an external-refresh
 receipt from the other durable queue. Each response is re-stamped only to its
@@ -706,6 +717,15 @@ without replaying writes, and an unknown batch/operation is rejected. The real
 Linux save/close, cross-project, and two-repository Git+file packaged recovery
 runs exercise this shared dispatcher, including idempotent duplicate team
 acknowledgements and zero post-receipt write replay.
+The receipt query now merges the team/product `active.json` head with every
+refresh-journal candidate by its preserved durable timestamp and exposes exactly
+one global head. Renderer adoption re-stamps generation without changing that
+ordering key, direct enqueue/reply publication consults the same query, and an
+ack for a later candidate is rejected until the head is terminal. A sidecar
+contract creates an older refresh ahead of a team receipt, then two refresh
+tails ahead of a save receipt; it observes refresh → team → refresh → refresh →
+save with one envelope per turn, exact backend-specific payloads, one
+generation, and no starvation.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
