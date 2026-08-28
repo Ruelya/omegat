@@ -888,7 +888,7 @@ try {
       if (
         app?.dataset.operation === "reload"
         && app?.dataset.operationPhase === "progress"
-        && app?.dataset.operationStage === "project.reload.sources"
+        && app?.dataset.operationStage === "project.reload.snapshot"
       ) {
         const button = document.querySelector('[data-operation-action="cancel"]');
         if (!button || window.__omegatReloadProgress) return;
@@ -946,8 +946,8 @@ try {
       if (
         state.operation === "reload"
         && state.phase === "cancelled"
-        && state.stage === "project.reload.sources"
-        && state.operationStatus === "reload: cancelled (project.reload.sources)"
+        && state.stage === "project.reload.snapshot"
+        && state.operationStatus === "reload: cancelled (project.reload.snapshot)"
         && state.editorStatus.includes("reload cancelled")
         && !state.cancelVisible
       ) {
@@ -981,21 +981,20 @@ try {
     requestId: reloadPostCancel.visibleProgress.requestId,
     operation: "reload",
     phase: "progress",
-    stage: "project.reload.sources",
-    status: "reload: project.reload.sources",
+    stage: "project.reload.snapshot",
+    status: "reload: project.reload.snapshot",
     cancelVisible: true,
   });
   assert(reloadPostCancel.visibleProgress.requestId);
   assert.deepEqual(reloadRequestTrace, [
     "started:",
     "progress:project.reload.snapshot",
-    "progress:project.reload.sources",
     "cancelling:",
     "cancelled:",
   ]);
   assert(
     reloadPostCancel.domTrace.includes(
-      "reload|cancelling|project.reload.sources|reload: cancelling (project.reload.sources)",
+      "reload|cancelling|project.reload.snapshot|reload: cancelling (project.reload.snapshot)",
     ),
     `renderer never visibly entered reload cancelling: ${
       JSON.stringify(reloadPostCancel.domTrace)
@@ -2696,6 +2695,11 @@ try {
   if (keepWorkDir) {
     process.stderr.write(`Retained packaged E2E work directory: ${workDir}\n`);
   } else {
-    await rm(workDir, { recursive: true, force: true });
+    await rm(workDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 8,
+      retryDelay: 125,
+    });
   }
 }
