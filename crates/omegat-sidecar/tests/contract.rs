@@ -587,8 +587,7 @@ fn close_receipt_is_discovered_and_acknowledged_without_an_open_project() {
 
     let active_path = root.join(".repositories/transactions/active.json");
     let active_before_discovery = std::fs::read(&active_path).unwrap();
-    let (mut replacement, mut replacement_in, mut replacement_out) =
-        spawn_sidecar(&config);
+    let (mut replacement, mut replacement_in, mut replacement_out) = spawn_sidecar(&config);
     let discovered = rpc(
         &mut replacement_in,
         &mut replacement_out,
@@ -596,7 +595,10 @@ fn close_receipt_is_discovered_and_acknowledged_without_an_open_project() {
         "transaction.receipt.discover",
         json!({}),
     );
-    assert_eq!(discovered["result"]["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        discovered["result"]["projects"].as_array().unwrap().len(),
+        1
+    );
     assert_eq!(
         discovered["result"]["projects"][0]["project_root"],
         root.to_string_lossy().as_ref()

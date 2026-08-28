@@ -315,9 +315,7 @@ impl App {
                     let normalized = |path: &std::path::Path| {
                         path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
                     };
-                    if normalized(&session.props.root)
-                        != normalized(std::path::Path::new(root))
-                    {
+                    if normalized(&session.props.root) != normalized(std::path::Path::new(root)) {
                         return Err((
                             error_code::INVALID_PARAMS,
                             "recovery detach root is not the open project".into(),
@@ -1721,9 +1719,7 @@ fn dispatch_refresh_journal(
                 for root in refresh_journal::active_project_roots(config_dir)
                     .map_err(refresh_journal_err)?
                 {
-                    let Ok(props) =
-                        omegat_core::properties::ProjectProperties::load(&root)
-                    else {
+                    let Ok(props) = omegat_core::properties::ProjectProperties::load(&root) else {
                         continue;
                     };
                     let receipt = omegat_team::peek_transaction_receipt(&props)
