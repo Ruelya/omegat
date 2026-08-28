@@ -1771,6 +1771,7 @@ function publishClosedRendererState() {
 }
 
 export function connectTransactionEnvelopeEvents(): () => void {
+  let detachedScope: { root: string; generation: number } | null = null;
   let observedProject = "";
   const observedFingerprints = new Map<
     string,
@@ -1927,11 +1928,19 @@ export function connectTransactionEnvelopeEvents(): () => void {
       payload,
     } = envelope;
     const state = useApp.getState();
+    const activeScopeMatches = state.props?.root === root
+      && state.projectEvent.projectGeneration === generation;
+    const detachedScopeMatches = detachedScope?.root === root
+      && detachedScope.generation === generation;
+    const canAdoptDetachedClose = payload.operation === "project.close"
+      && (
+        state.props === null
+        || state.props.root === root
+      );
     if (
       envelope.version !== 1
       || !["pending", "sidecar_committed"].includes(status)
-      || state.props?.root !== root
-      || state.projectEvent.projectGeneration !== generation
+      || (!activeScopeMatches && !detachedScopeMatches && !canAdoptDetachedClose)
     ) return;
     if (payload.operation !== "project.external-refresh") {
       if (status !== "sidecar_committed") return;
@@ -1940,7 +1949,19 @@ export function connectTransactionEnvelopeEvents(): () => void {
       productInFlight.add(identity);
       void (async () => {
         if (payload.operation === "project.close") {
+          detachedScope = { root, generation };
           publishClosedRendererState();
+          await acknowledgeTransactionEnvelopeOrDefer(
+            envelope,
+            "succeeded",
+            true,
+          );
+          return;
+        }
+        if (detachedScopeMatches) {
+          // Product work behind a recovered close receipt is already durable.
+          // Its renderer publication is the continued closed state: never
+          // reopen or bind its EntryKey into the welcome screen.
           await acknowledgeTransactionEnvelopeOrDefer(
             envelope,
             "succeeded",
@@ -1959,6 +1980,38 @@ export function connectTransactionEnvelopeEvents(): () => void {
           current.props?.root === root
           && current.projectEvent.projectGeneration === generation
         ) {
+          useApp.setState({
+            error: `transaction receipt acknowledgement pending: ${String(error)}`,
+          });
+        }
+      }).finally(() => {
+        productInFlight.delete(identity);
+      });
+      return;
+    }
+    if (detachedScopeMatches) {
+      const identity = `${generation}\0${root}\0${id}`;
+      if (productInFlight.has(identity)) return;
+      productInFlight.add(identity);
+      void (async () => {
+        if (status === "pending") {
+          await rpc("project.external-refresh", {
+            transaction_project_root: root,
+            transaction_generation: generation,
+            transaction_batch_id: id,
+          });
+        }
+        // Refreshing a project after its close receipt must not republish that
+        // project's entries. The observable renderer result remains a closed
+        // workspace until the user explicitly opens a project again.
+        publishClosedRendererState();
+        await acknowledgeTransactionEnvelopeOrDefer(
+          envelope,
+          "succeeded",
+          true,
+        );
+      })().catch((error) => {
+        if (useApp.getState().props === null) {
           useApp.setState({
             error: `transaction receipt acknowledgement pending: ${String(error)}`,
           });

@@ -1509,6 +1509,27 @@ pub fn pending_transaction_receipt(
     transaction.renderer_receipt().map(Some)
 }
 
+/// Inspect a committed renderer receipt without adopting it into a new
+/// renderer generation.
+///
+/// Recovery discovery uses this read-only view to identify a project-close
+/// receipt while no project is open. Generation adoption remains the
+/// responsibility of [`pending_transaction_receipt`], after a caller has
+/// selected the exact project root.
+pub fn peek_transaction_receipt(
+    props: &ProjectProperties,
+) -> Result<Option<TransactionRendererReceipt>> {
+    let _lock = acquire_project_transaction_lock(props)?;
+    let Some(transaction) = SyncTransaction::load(props)? else {
+        return Ok(None);
+    };
+    transaction.validate_repository_shape(props)?;
+    if transaction.0.status != TransactionStatus::SidecarCommitted {
+        return Ok(None);
+    }
+    transaction.renderer_receipt().map(Some)
+}
+
 /// Idempotently acknowledge a product receipt after renderer publication.
 ///
 /// Only this transition removes `active.json` and its rollback snapshot. If

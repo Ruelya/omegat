@@ -33,10 +33,17 @@ import { SidecarRpcClient } from "./sidecar-rpc";
 let sidecar: ChildProcessWithoutNullStreams | null = null;
 let rpcClient: SidecarRpcClient | null = null;
 let sidecarRecovery: Promise<void> | null = null;
+let detachedRecovery: Promise<void> | null = null;
 let stoppingSidecar = false;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 const appInstance = randomUUID();
 let nextId = 1;
+type DetachedTransactionScope = {
+  root: string;
+  generation: number;
+  sidecarProjectOpen: boolean;
+};
+let detachedTransactionScope: DetachedTransactionScope | null = null;
 const watchedProjectWriteMethods = new Set([
   "entry.set",
   "project.save",
@@ -209,41 +216,138 @@ async function publishPendingTransactionEnvelopes(
     app_instance: appInstance,
   }) as { envelopes?: TransactionEnvelope[] };
   const envelopes = Array.isArray(result.envelopes) ? result.envelopes : [];
-  if (killSidecarAfterSelectedTransactionHead(envelopes)) return 0;
+  const head = envelopes[0];
+  const detached = detachedTransactionScope;
+  if (
+    head?.status === "pending"
+    && head.payload.operation === "project.external-refresh"
+    && detached
+    && normalizedProjectRoot(detached.root) === normalizedProjectRoot(root)
+    && detached.generation === generation
+    && !detached.sidecarProjectOpen
+  ) {
+    const endRecoveryWrite = projectFileWatcher.beginWriteSource(
+      "project.open.detached-recovery",
+    );
+    try {
+      await client.request("project.open", { root });
+      detached.sidecarProjectOpen = true;
+    } finally {
+      endRecoveryWrite();
+    }
+  }
+  if (killSidecarAfterSelectedTransactionHead(envelopes)) return -1;
   envelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)
   );
   return envelopes.length;
 }
 
+async function advanceDetachedTransactionRecovery(
+  client: SidecarRpcClient,
+) {
+  while (!stoppingSidecar) {
+    let scope = detachedTransactionScope;
+    const watched = projectFileWatcher.currentProject();
+    if (!scope) {
+      if (watched) return;
+      const discovered = await client.request(
+        "transaction.receipt.discover",
+        {},
+      ) as {
+        projects?: Array<{
+          project_root?: string;
+          generation?: number;
+        }>;
+      };
+      const candidate = discovered.projects?.find((project) =>
+        typeof project.project_root === "string"
+        && project.project_root.length > 0
+      );
+      if (!candidate?.project_root) return;
+      const previousGeneration = typeof candidate.generation === "number"
+        ? candidate.generation
+        : 0;
+      scope = {
+        root: candidate.project_root,
+        generation: Math.max(1, previousGeneration + 1),
+        sidecarProjectOpen: false,
+      };
+      detachedTransactionScope = scope;
+    } else if (
+      watched
+      && normalizedProjectRoot(watched.root) !== normalizedProjectRoot(scope.root)
+    ) {
+      return;
+    }
+
+    const published = await publishPendingTransactionEnvelopes(
+      client,
+      scope.root,
+      scope.generation,
+    );
+    if (published !== 0) return;
+    if (scope.sidecarProjectOpen) {
+      await client.request("project.recovery.detach", { root: scope.root });
+    }
+    if (detachedTransactionScope === scope) detachedTransactionScope = null;
+    if (projectFileWatcher.currentProject()) return;
+    // A config directory may contain more than one detached close receipt.
+    // Finish only the selected root, then discover the next exact root.
+  }
+}
+
+function scheduleDetachedTransactionRecovery(
+  replacementClient?: SidecarRpcClient,
+) {
+  if (stoppingSidecar || detachedRecovery) return;
+  detachedRecovery = (async () => {
+    const client = replacementClient ?? await statefulClient();
+    await advanceDetachedTransactionRecovery(client);
+  })().catch((error) => {
+    process.stderr.write(`detached transaction recovery failed: ${String(error)}\n`);
+  }).finally(() => {
+    detachedRecovery = null;
+    if (!stoppingSidecar && !rpcClient && !sidecarRecovery) {
+      setTimeout(() => scheduleDetachedTransactionRecovery(), 50);
+    }
+  });
+}
+
 function scheduleSidecarRecovery() {
   const watched = projectFileWatcher.currentProject();
-  if (stoppingSidecar || !watched || sidecarRecovery) return;
+  const detached = detachedTransactionScope;
+  if (stoppingSidecar || (!watched && !detached) || sidecarRecovery) return;
   sidecarRecovery = (async () => {
     // Let the child exit and pipe close notifications settle before replacing
     // the stateful process.
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
     const client = startSidecar();
-    const endRecoveryWrite = projectFileWatcher.beginWriteSource(
-      "project.open.recovery",
-    );
-    try {
-      await client.request("project.open", { root: watched.root });
-    } finally {
-      // Reopening recreates internal project directories and omegat/.lock.
-      // Those writes belong to recovery and must not become a new fingerprint
-      // batch behind the one this process is about to replay.
-      endRecoveryWrite();
-    }
-    if (
-      projectFileWatcher.currentProject()?.root === watched.root
-      && projectFileWatcher.currentProject()?.generation === watched.generation
-    ) {
-      await publishPendingTransactionEnvelopes(
-        client,
-        watched.root,
-        watched.generation,
+    if (detached) {
+      detached.sidecarProjectOpen = false;
+      await advanceDetachedTransactionRecovery(client);
+    } else if (watched) {
+      const endRecoveryWrite = projectFileWatcher.beginWriteSource(
+        "project.open.recovery",
       );
+      try {
+        await client.request("project.open", { root: watched.root });
+      } finally {
+        // Reopening recreates internal project directories and omegat/.lock.
+        // Those writes belong to recovery and must not become a new fingerprint
+        // batch behind the one this process is about to replay.
+        endRecoveryWrite();
+      }
+      if (
+        projectFileWatcher.currentProject()?.root === watched.root
+        && projectFileWatcher.currentProject()?.generation === watched.generation
+      ) {
+        await publishPendingTransactionEnvelopes(
+          client,
+          watched.root,
+          watched.generation,
+        );
+      }
     }
   })().catch((error) => {
     process.stderr.write(`sidecar recovery failed: ${String(error)}\n`);
@@ -446,6 +550,19 @@ async function rpc(
     && typeof receipt.project_root === "string"
     && typeof receipt.generation === "number"
   ) {
+    if (
+      "payload" in receipt
+      && receipt.payload !== null
+      && typeof receipt.payload === "object"
+      && "operation" in receipt.payload
+      && receipt.payload.operation === "project.close"
+    ) {
+      detachedTransactionScope = {
+        root: receipt.project_root,
+        generation: receipt.generation,
+        sidecarProjectOpen: false,
+      };
+    }
     await publishPendingTransactionEnvelopes(
       client,
       receipt.project_root,
@@ -546,16 +663,25 @@ app.whenReady().then(() => {
       outcome: TransactionOutcome = "succeeded",
     ) => {
       const active = projectFileWatcher.currentProject();
+      const activeMatches = Boolean(
+        active
+        && normalizedProjectRoot(active.root)
+          === normalizedProjectRoot(envelope.project_root)
+        && active.generation === envelope.generation
+      );
+      const detachedMatches = Boolean(
+        detachedTransactionScope
+        && normalizedProjectRoot(detachedTransactionScope.root)
+          === normalizedProjectRoot(envelope.project_root)
+        && detachedTransactionScope.generation === envelope.generation
+      );
       if (
-        envelope.payload.operation !== "project.close"
-        && (
-          !active
-          || normalizedProjectRoot(active.root)
-            !== normalizedProjectRoot(envelope.project_root)
-          || active.generation !== envelope.generation
-        )
+        !activeMatches
+        && !detachedMatches
       ) {
-        throw new Error("transaction receipt is not scoped to the watched project");
+        throw new Error(
+          "transaction receipt is not scoped to the watched or detached project",
+        );
       }
       if (
         process.env.OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR
@@ -591,12 +717,9 @@ app.whenReady().then(() => {
           result: "acknowledged",
         })}\n`);
       }
-      if (
-        active
-        && normalizedProjectRoot(active.root)
-          === normalizedProjectRoot(envelope.project_root)
-        && active.generation === envelope.generation
-      ) {
+      if (detachedMatches) {
+        setTimeout(() => scheduleDetachedTransactionRecovery(), 0);
+      } else if (activeMatches) {
         setTimeout(() => {
           void statefulClient()
             .then((client) =>
@@ -618,7 +741,18 @@ app.whenReady().then(() => {
   );
   ipcMain.handle("project-unwatch", async () => {
     const active = projectFileWatcher.currentProject();
-    if (active) {
+    const preserveDetached = Boolean(
+      active
+      && detachedTransactionScope
+      && normalizedProjectRoot(active.root)
+        === normalizedProjectRoot(detachedTransactionScope.root)
+      && active.generation === detachedTransactionScope.generation
+    );
+    // Closing the native watcher is the renderer-visible project boundary.
+    // Receipt discovery below must work without retaining this as an implicit
+    // active project.
+    projectFileWatcher.close();
+    if (active && !preserveDetached) {
       try {
         await rpc("project.refresh.discard", {
           root: active.root,
@@ -629,7 +763,9 @@ app.whenReady().then(() => {
         // A terminated process leaves the queue for crash recovery.
       }
     }
-    projectFileWatcher.close();
+    if (preserveDetached || (!active && !process.env.OMEGAT_PROJECT)) {
+      scheduleDetachedTransactionRecovery();
+    }
   });
   ipcMain.handle("save-text", async (_e, name: string, text: string) => {
     const r = await dialog.showSaveDialog({ defaultPath: name });

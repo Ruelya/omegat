@@ -7,6 +7,7 @@ import {
   mkdir,
   mkdtemp,
   open,
+  readdir,
   readFile,
   rm,
   stat,
@@ -268,6 +269,7 @@ async function workspaceState(client) {
     return {
       project: app?.dataset.projectId ?? null,
       generation: Number(app?.dataset.projectGeneration ?? 0),
+      welcome: document.querySelector(".welcome") !== null,
       source: segment?.querySelector(".src")?.textContent ?? null,
       translation: segment?.querySelector(".editor-surface")?.textContent ?? null,
       key: segment?.getAttribute("data-entry-key") ?? null,
@@ -281,32 +283,44 @@ async function workspaceState(client) {
 async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const port = await unusedPort();
   let stderr = "";
+  const environment = {
+    ...process.env,
+    DISPLAY: display,
+    OMEGAT_CONFIG_DIR: configDir,
+    ...extraEnv,
+  };
+  delete environment.OMEGAT_PROJECT;
+  if (project) environment.OMEGAT_PROJECT = project;
   const application = spawn(
     executable,
     [`--remote-debugging-port=${port}`, "--disable-gpu", "--no-sandbox"],
     {
       detached: true,
-      env: {
-        ...process.env,
-        DISPLAY: display,
-        OMEGAT_CONFIG_DIR: configDir,
-        OMEGAT_PROJECT: project,
-        ...extraEnv,
-      },
+      env: environment,
       stdio: ["ignore", "ignore", "pipe"],
     },
   );
   application.stderr.on("data", (chunk) => {
     stderr += chunk.toString();
   });
-  const target = await waitFor(`renderer for ${project}`, () => pageTarget(port));
+  const target = await waitFor(
+    project ? `renderer for ${project}` : "renderer without startup project",
+    () => pageTarget(port),
+  );
   const client = new DevToolsClient(target.webSocketDebuggerUrl);
   await client.connect();
   await client.command("Runtime.enable");
-  const workspace = await waitFor(`workspace for ${project}`, async () => {
-    const state = await workspaceState(client);
-    return state.project === project && state.key ? state : undefined;
-  });
+  const workspace = await waitFor(
+    project ? `workspace for ${project}` : "closed renderer workspace",
+    async () => {
+      const state = await workspaceState(client);
+      return project
+        ? state.project === project && state.key ? state : undefined
+        : state.project === null && state.welcome && state.activeSurfaces === 0
+          ? state
+          : undefined;
+    },
+  );
   return { application, client, workspace, stderr: () => stderr };
 }
 
@@ -631,6 +645,105 @@ async function prepareMixedReceiptProject(
   };
 }
 
+async function prepareCloseReceiptProject(configDir, project, label) {
+  const session = new SidecarSession(configDir);
+  await session.request("project.create", {
+    root: project,
+    source_lang: "en",
+    target_lang: "fr",
+    sentence_seg: false,
+  });
+  const source = `${label} duplicate source`;
+  await writeFile(join(project, "source", "a-wanted.txt"), source, "utf8");
+  await writeFile(join(project, "source", "z-decoy.txt"), source, "utf8");
+  await session.request("project.reload", {});
+  const entries = await session.request("entry.list", {});
+  assert.equal(entries.length, 2);
+  const wanted = entries.find((entry) => entry.key.file === "a-wanted.txt");
+  const decoy = entries.find((entry) => entry.key.file === "z-decoy.txt");
+  assert(wanted);
+  assert(decoy);
+  assertCompleteEntryKey(wanted.key);
+  assertCompleteEntryKey(decoy.key);
+  const translation = `${label} close translation 😀`;
+  const setBatchId = `${label}-initial-entry`;
+  const saved = await session.request("entry.set", {
+    index: wanted.index,
+    key: wanted.key,
+    translation,
+    note: "close receipt matrix",
+    revision: wanted.revision,
+    default_translation: false,
+    transaction_project_root: project,
+    transaction_generation: 111,
+    transaction_batch_id: setBatchId,
+  });
+  assert.equal(saved.receipt.payload.operation, "entry.set");
+  await session.request("transaction.receipt.ack", {
+    root: project,
+    app_instance: `${label}-setup`,
+    generation: 111,
+    batch_id: setBatchId,
+    operation: "entry.set",
+    outcome: "succeeded",
+  });
+  await session.close();
+  return {
+    source,
+    translation,
+    key: wanted.key,
+    decoyKey: decoy.key,
+    activePath: join(project, ".repositories", "transactions", "active.json"),
+    teamHistoryPath: join(
+      project,
+      ".repositories",
+      "transactions",
+      "history.ndjson",
+    ),
+    refreshJournalPath: join(
+      project,
+      ".repositories",
+      "transactions",
+      "external-refresh.json",
+    ),
+    refreshHistoryPath: join(
+      project,
+      ".repositories",
+      "transactions",
+      "external-refresh-history.ndjson",
+    ),
+  };
+}
+
+async function snapshotStableProjectTree(root) {
+  const snapshot = {};
+  const visit = async (directory, prefix = "") => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (
+        relative === ".repositories/transactions"
+        || relative.startsWith(".repositories/transactions/")
+        || relative === "omegat/.lock"
+      ) {
+        continue;
+      }
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path, relative);
+      } else if (entry.isFile()) {
+        const metadata = await stat(path, { bigint: true });
+        snapshot[relative] = {
+          bytes: (await readFile(path)).toString("base64"),
+          mtimeNs: metadata.mtimeNs.toString(),
+        };
+      }
+    }
+  };
+  await visit(root);
+  return snapshot;
+}
+
 if (process.platform !== "linux") {
   throw new Error("This E2E exercises packaged compaction recovery on Linux");
 }
@@ -644,6 +757,7 @@ let launchedA;
 let launchedB;
 let mixedReceiptRecovery;
 let selectedHeadCrashRecovery;
+let closeReceiptRecovery;
 
 try {
   for (const point of ["after_archive_fsync", "after_queue_rename"]) {
@@ -1246,6 +1360,239 @@ try {
   await terminatePackaged(launchedA);
   launchedA = undefined;
 
+  const closeConfig = join(workDir, "lost-close-config");
+  const closeProject = join(workDir, "lost-close-project");
+  const closeFirstTracePath = join(workDir, "close-first-envelope-trace.ndjson");
+  const closeFirstAckTracePath = join(workDir, "close-first-ack-trace.ndjson");
+  const closeRestartTracePath = join(workDir, "close-restart-envelope-trace.ndjson");
+  const closeHeadMarkerPath = join(workDir, "close-selected-head-sidecar-kill.json");
+  const lostClose = await prepareCloseReceiptProject(
+    closeConfig,
+    closeProject,
+    "lost-close",
+  );
+  launchedA = await launchPackaged(xvfb.display, closeConfig, closeProject, {
+    OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "project.close",
+    OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_FOR: "project.close",
+    OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_MARKER: closeHeadMarkerPath,
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeFirstTracePath,
+    OMEGAT_TEST_TRANSACTION_ACK_TRACE: closeFirstAckTracePath,
+  });
+  assert.equal(launchedA.workspace.translation, lostClose.translation);
+  assert.equal(launchedA.workspace.activeSurfaces, 1);
+  assert.deepEqual(JSON.parse(launchedA.workspace.key), lostClose.key);
+  const closeRequest = await launchedA.client.evaluate(
+    'window.omegat.rpc("project.close", {})',
+    true,
+  );
+  assert.equal(closeRequest.ok, true);
+  assert.equal(closeRequest.receipt.payload.operation, "project.close");
+  const closeBatchId = closeRequest.receipt.batch_id;
+  const closeSelectedMarker = await waitFor(
+    "selected close head sidecar SIGKILL",
+    async () =>
+      await pathExists(closeHeadMarkerPath)
+        ? JSON.parse(await readFile(closeHeadMarkerPath, "utf8"))
+        : undefined,
+  );
+  assert.equal(closeSelectedMarker.batch_id, closeBatchId);
+  assert.equal(closeSelectedMarker.operation, "project.close");
+  assert.equal(closeSelectedMarker.signal, "SIGKILL");
+  await waitForDroppedAck(
+    closeFirstAckTracePath,
+    closeBatchId,
+    "project.close",
+  );
+  const replacementAfterCloseHead = await waitFor(
+    "replacement sidecar after selected close head",
+    async () => {
+      const processes = await descendants(launchedA.application.pid);
+      return processes.find(({ command, pid }) =>
+        command.includes("omegat-sidecar")
+        && pid !== closeSelectedMarker.sidecar_pid
+      );
+    },
+  );
+  const closedBeforeKill = await waitFor(
+    "closed renderer after lost close acknowledgement",
+    async () => {
+      const state = await workspaceState(launchedA.client);
+      return state.project === null
+          && state.welcome
+          && state.activeSurfaces === 0
+        ? state
+        : undefined;
+    },
+  );
+  assert.equal(closedBeforeKill.key, null);
+  assert.equal(closedBeforeKill.translation, null);
+  const closeActive = JSON.parse(await readFile(lostClose.activePath, "utf8"));
+  assert.equal(closeActive.batch_id, closeBatchId);
+  assert.equal(closeActive.status, "sidecar_committed");
+  assert.equal(closeActive.payload.operation, "project.close");
+
+  const closeTailSession = new SidecarSession(closeConfig);
+  await closeTailSession.request("project.open", { root: closeProject });
+  const closeTailPath = join(closeProject, "glossary", "after-close.txt");
+  await mkdir(dirname(closeTailPath), { recursive: true });
+  await writeFile(
+    closeTailPath,
+    "after close source\tafter close target\n",
+    "utf8",
+  );
+  const closeTail = await closeTailSession.request("project.refresh.enqueue", {
+    root: closeProject,
+    app_instance: "lost-close-tail-setup",
+    generation: closeActive.generation,
+    paths: [closeTailPath],
+    fingerprints: { [closeTailPath]: "lost-close-refresh-tail" },
+    sources: ["native"],
+  });
+  const closeTailBatchId = closeTail.batch.batch_id;
+  await closeTailSession.close();
+  const closeQueueBeforeKill = JSON.parse(
+    await readFile(lostClose.refreshJournalPath, "utf8"),
+  );
+  assert.deepEqual(
+    closeQueueBeforeKill.batches.map((batch) => [batch.batch_id, batch.status]),
+    [[closeTailBatchId, "pending"]],
+  );
+  const closeFirstTrace = parseNdjson(
+    await readFile(closeFirstTracePath, "utf8"),
+  );
+  assert.equal(closeFirstTrace[0]?.batch_id, closeBatchId);
+  assert.equal(
+    closeFirstTrace.some((row) => row.batch_id === closeTailBatchId),
+    false,
+    "a refresh tail bypassed the unacknowledged close receipt",
+  );
+  const stableTreeBeforeRecovery = await snapshotStableProjectTree(closeProject);
+  const killedAfterLostClose = await killPackaged(launchedA);
+  launchedA = undefined;
+
+  launchedA = await launchPackaged(xvfb.display, closeConfig, null, {
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeRestartTracePath,
+  });
+  await waitFor("detached close and refresh FIFO drained", async () =>
+    !await pathExists(lostClose.activePath)
+      && !await pathExists(lostClose.refreshJournalPath)
+      ? true
+      : undefined
+  );
+  const detachedClosed = await workspaceState(launchedA.client);
+  assert.equal(detachedClosed.project, null);
+  assert.equal(detachedClosed.welcome, true);
+  assert.equal(detachedClosed.activeSurfaces, 0);
+  assert.equal(detachedClosed.key, null);
+  assert.equal(
+    await launchedA.client.evaluate(
+      'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+      true,
+    ),
+    "6.2.0",
+  );
+  const closeRestartTrace = parseNdjson(
+    await readFile(closeRestartTracePath, "utf8"),
+  );
+  assertOrderedDispatch(
+    closeRestartTrace,
+    [closeBatchId, closeTailBatchId],
+    "detached lost close acknowledgement restart",
+  );
+  assert.equal(
+    closeRestartTrace.some((row) =>
+      row.batch_id === "lost-close-initial-entry"
+    ),
+    false,
+    "restart replayed the acknowledged entry receipt before close",
+  );
+  assert.equal(
+    closeRestartTrace.filter((row) => row.batch_id === closeBatchId).length,
+    1,
+    "restart dispatched the close receipt more than once",
+  );
+  assert.deepEqual(
+    await snapshotStableProjectTree(closeProject),
+    stableTreeBeforeRecovery,
+    "close receipt recovery replayed TMX or another stable project-tree write",
+  );
+  const closeHistory = parseNdjson(
+    await readFile(lostClose.teamHistoryPath, "utf8"),
+  );
+  assert.equal(
+    closeHistory.filter((row) =>
+      row.batch_id === closeBatchId
+      && row.status === "completed"
+      && row.payload.phase === "renderer-acknowledged"
+    ).length,
+    1,
+    "lost close acknowledgement produced more than one terminal history row",
+  );
+  const closeRefreshHistory = parseNdjson(
+    await readFile(lostClose.refreshHistoryPath, "utf8"),
+  );
+  assert.equal(
+    closeRefreshHistory.filter((row) =>
+      row.batch_id === closeTailBatchId && row.status === "completed"
+    ).length,
+    1,
+    "close refresh tail produced more than one terminal history row",
+  );
+  await terminatePackaged(launchedA);
+  launchedA = undefined;
+
+  launchedA = await launchPackaged(
+    xvfb.display,
+    closeConfig,
+    closeProject,
+  );
+  const reopenedClose = await workspaceState(launchedA.client);
+  assert.equal(reopenedClose.project, closeProject);
+  assert.equal(reopenedClose.source, lostClose.source);
+  assert.equal(reopenedClose.translation, lostClose.translation);
+  assert.equal(reopenedClose.activeSurfaces, 1);
+  assert.deepEqual(JSON.parse(reopenedClose.key), lostClose.key);
+  const reopenedEntries = await launchedA.client.evaluate(
+    'window.omegat.rpc("entry.list", {})',
+    true,
+  );
+  assert.equal(reopenedEntries.length, 2);
+  const reopenedWanted = reopenedEntries.find((entry) =>
+    entry.key.file === lostClose.key.file
+  );
+  const reopenedDecoy = reopenedEntries.find((entry) =>
+    entry.key.file === lostClose.decoyKey.file
+  );
+  assert.deepEqual(reopenedWanted.key, lostClose.key);
+  assert.equal(reopenedWanted.translation, lostClose.translation);
+  assert.deepEqual(reopenedDecoy.key, lostClose.decoyKey);
+  assert.equal(reopenedDecoy.translation, "");
+  closeReceiptRecovery = {
+    lostAckBatchId: closeBatchId,
+    refreshTailBatchId: closeTailBatchId,
+    restartedDispatchOrder: [closeBatchId, closeTailBatchId],
+    rendererStayedClosedDuringRecovery: true,
+    stableProjectTreeReplayed: false,
+    completeEntryKey: lostClose.key,
+    decoyEntryKey: lostClose.decoyKey,
+    document3SurfacesAfterReopen: reopenedClose.activeSurfaces,
+    selectedHeadCrash: {
+      killedSidecarPid: closeSelectedMarker.sidecar_pid,
+      replacementSidecarPid: replacementAfterCloseHead.pid,
+      selectedBatchId: closeSelectedMarker.batch_id,
+    },
+    killedAfterLostAck: killedAfterLostClose,
+  };
+  receiptAckMatrix.push({
+    receiptType: "close",
+    lostAckBatchId: closeBatchId,
+    notReplayed: ["lost-close-initial-entry"],
+    restartedDispatchOrder: [closeBatchId, closeTailBatchId],
+    trailingReceiptsDrained: true,
+  });
+  await terminatePackaged(launchedA);
+  launchedA = undefined;
+
   const headConfig = join(workDir, "selected-head-crash-config");
   const headProject = join(workDir, "selected-head-crash-project");
   const headRemote = join(workDir, "selected-head-crash-remote");
@@ -1352,6 +1699,7 @@ try {
     scenarios: results,
     mixedReceiptRecovery,
     receiptAckMatrix,
+    closeReceiptRecovery,
     selectedHeadCrashRecovery,
   }));
 } catch (error) {

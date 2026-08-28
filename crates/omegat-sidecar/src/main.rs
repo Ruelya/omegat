@@ -302,6 +302,35 @@ impl App {
                 self.session = None;
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
+            "project.recovery.detach" => {
+                let root = params
+                    .get("root")
+                    .and_then(Value::as_str)
+                    .filter(|root| !root.is_empty())
+                    .ok_or((
+                        error_code::INVALID_PARAMS,
+                        "recovery detach requires root".into(),
+                    ))?;
+                if let Some(session) = self.session.as_ref() {
+                    let normalized = |path: &std::path::Path| {
+                        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+                    };
+                    if normalized(&session.props.root)
+                        != normalized(std::path::Path::new(root))
+                    {
+                        return Err((
+                            error_code::INVALID_PARAMS,
+                            "recovery detach root is not the open project".into(),
+                        ));
+                    }
+                }
+                // Detached FIFO recovery has already published every durable
+                // result to the closed renderer. Release the temporary
+                // ProjectSession without running project.close (which would
+                // rewrite TMX and create a second close transaction).
+                self.session = None;
+                Ok(json!({"ok": true}))
+            }
             "project.save" => {
                 let receipt =
                     self.save_product_transaction("project.save", &params, cancellation)?;
@@ -1579,8 +1608,6 @@ fn transaction_receipt_scope(
                 "transaction receipt root is not the open project".into(),
             ));
         }
-    } else if !require_batch_id {
-        return Err((error_code::PROJECT_NOT_OPEN, "no project".into()));
     }
     let app_instance = params
         .get("app_instance")
@@ -1689,6 +1716,55 @@ fn dispatch_refresh_journal(
     }
     Some((|| {
         if method.starts_with("transaction.receipt.") {
+            if method == "transaction.receipt.discover" {
+                let mut projects = Vec::new();
+                for root in refresh_journal::active_project_roots(config_dir)
+                    .map_err(refresh_journal_err)?
+                {
+                    let Ok(props) =
+                        omegat_core::properties::ProjectProperties::load(&root)
+                    else {
+                        continue;
+                    };
+                    let receipt = omegat_team::peek_transaction_receipt(&props)
+                        .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?;
+                    let Some(receipt) = receipt else {
+                        continue;
+                    };
+                    if receipt.payload.operation != "project.close" {
+                        continue;
+                    }
+                    projects.push(json!({
+                        "project_root": receipt.project_root,
+                        "generation": receipt.generation,
+                        "batch_id": receipt.batch_id,
+                        "updated_unix_ms": receipt.updated_unix_ms,
+                    }));
+                }
+                projects.sort_by(|left, right| {
+                    left.get("updated_unix_ms")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(u64::MAX)
+                        .cmp(
+                            &right
+                                .get("updated_unix_ms")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(u64::MAX),
+                        )
+                        .then_with(|| {
+                            left.get("project_root")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .cmp(
+                                    right
+                                        .get("project_root")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or(""),
+                                )
+                        })
+                });
+                return Ok(json!({ "projects": projects }));
+            }
             let require_batch_id = method == "transaction.receipt.ack";
             let (root, app_instance, generation, batch_id, operation) =
                 transaction_receipt_scope(&params, open_root, require_batch_id)?;
@@ -2157,7 +2233,7 @@ fn main() {
                             let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(2));
                         }
                     }
-                    "project.close" => {
+                    "project.close" | "project.recovery.detach" => {
                         *open_project.lock().unwrap() = None;
                         let _ = watch_commands.send(project_watcher::WatchCommand::Close);
                     }

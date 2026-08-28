@@ -18,12 +18,14 @@ const METHODS: &[&str] = &[
     "project.create",
     "project.open",
     "project.close",
+    "project.recovery.detach",
     "project.save",
     "project.compile",
     "project.reload",
     "project.external-refresh",
     "project.refresh.enqueue",
     "project.refresh.discard",
+    "transaction.receipt.discover",
     "transaction.receipt.pending",
     "transaction.receipt.ack",
     "project.props",
@@ -503,6 +505,167 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
     );
     assert!(!root.join(".repositories/transactions/active.json").exists());
     let _ = child.kill();
+}
+
+#[test]
+fn close_receipt_is_discovered_and_acknowledged_without_an_open_project() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("closed-project");
+    let (mut first, mut first_in, mut first_out) = spawn_sidecar(&config);
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    std::fs::write(root.join("source/source.txt"), "close discovery source").unwrap();
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    let closed = rpc(
+        &mut first_in,
+        &mut first_out,
+        3,
+        "project.close",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 9,
+            "transaction_batch_id": "detached-close-9",
+        }),
+    );
+    assert_eq!(
+        closed["result"]["receipt"]["payload"]["operation"],
+        "project.close"
+    );
+    let selected = rpc(
+        &mut first_in,
+        &mut first_out,
+        4,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "closed-electron",
+            "generation": 9,
+        }),
+    );
+    assert_eq!(
+        selected["result"]["envelopes"][0]["batch_id"],
+        "detached-close-9"
+    );
+    first.kill().unwrap();
+    first.wait().unwrap();
+
+    let active_path = root.join(".repositories/transactions/active.json");
+    let active_before_discovery = std::fs::read(&active_path).unwrap();
+    let (mut replacement, mut replacement_in, mut replacement_out) =
+        spawn_sidecar(&config);
+    let discovered = rpc(
+        &mut replacement_in,
+        &mut replacement_out,
+        5,
+        "transaction.receipt.discover",
+        json!({}),
+    );
+    assert_eq!(discovered["result"]["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        discovered["result"]["projects"][0]["project_root"],
+        root.to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        discovered["result"]["projects"][0]["batch_id"],
+        "detached-close-9"
+    );
+    assert_eq!(
+        std::fs::read(&active_path).unwrap(),
+        active_before_discovery,
+        "discovery adopted the receipt before selecting its exact root"
+    );
+
+    let adopted = rpc(
+        &mut replacement_in,
+        &mut replacement_out,
+        6,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "replacement-electron",
+            "generation": 10,
+        }),
+    );
+    assert_eq!(adopted["result"]["envelopes"][0]["generation"], 10);
+    assert_eq!(
+        adopted["result"]["envelopes"][0]["payload"]["operation"],
+        "project.close"
+    );
+    let acknowledged = rpc(
+        &mut replacement_in,
+        &mut replacement_out,
+        7,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "replacement-electron",
+            "generation": 10,
+            "batch_id": "detached-close-9",
+            "operation": "project.close",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(acknowledged["result"]["ack"]["acknowledged"], true);
+    let after = rpc(
+        &mut replacement_in,
+        &mut replacement_out,
+        8,
+        "transaction.receipt.discover",
+        json!({}),
+    );
+    assert_eq!(after["result"]["projects"], json!([]));
+    assert!(!active_path.exists());
+    let history =
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson")).unwrap();
+    assert_eq!(
+        history
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|row| {
+                row["batch_id"] == "detached-close-9"
+                    && row["status"] == "completed"
+                    && row["payload"]["phase"] == "renderer-acknowledged"
+            })
+            .count(),
+        1
+    );
+    replacement.kill().unwrap();
 }
 
 #[test]

@@ -367,6 +367,76 @@ fn select_active_project(config_dir: &Path, root: &Path, app_instance: &str) -> 
     write_active(config_dir, root, app_instance)
 }
 
+/// Return roots recorded by config-scoped Electron owners without adopting,
+/// cancelling, or re-stamping any project queue.
+///
+/// The caller must inspect each root's product receipt before treating it as a
+/// detached recovery candidate. Active pointers intentionally outlive a
+/// crashed renderer, so a close receipt can be found while no project is
+/// watched or open in the replacement process.
+pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    migrate_legacy_active(config_dir)?;
+    let directory = config_dir.join("transactions").join(ACTIVE_DIRECTORY);
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "read active refresh owners {}: {error}",
+                directory.display()
+            ))
+        }
+    };
+    let mut roots = BTreeMap::<PathBuf, u128>::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read active refresh owner entry {}: {error}",
+                directory.display()
+            )
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|error| {
+                format!(
+                    "inspect active refresh owner {}: {error}",
+                    entry.path().display()
+                )
+            })?
+            .is_file()
+        {
+            continue;
+        }
+        let Some(active) = read_json::<ActiveProject>(&entry.path())? else {
+            continue;
+        };
+        if active.version != TRANSACTION_ENVELOPE_VERSION {
+            return Err(format!(
+                "unsupported active refresh journal version {}",
+                active.version
+            ));
+        }
+        if active.app_instance.is_empty() {
+            return Err(format!(
+                "active refresh owner {} has an empty app instance",
+                entry.path().display()
+            ));
+        }
+        let root = normalized(&active.project_root);
+        roots
+            .entry(root)
+            .and_modify(|updated| *updated = (*updated).min(active.updated_unix_ms))
+            .or_insert(active.updated_unix_ms);
+    }
+    let mut roots = roots.into_iter().collect::<Vec<_>>();
+    roots.sort_by(|(left_root, left_updated), (right_root, right_updated)| {
+        left_updated
+            .cmp(right_updated)
+            .then_with(|| left_root.cmp(right_root))
+    });
+    Ok(roots.into_iter().map(|(root, _)| root).collect())
+}
+
 pub fn pending(
     config_dir: &Path,
     root: &Path,
@@ -675,6 +745,31 @@ mod tests {
 
     fn fingerprints(value: &str) -> BTreeMap<String, Option<String>> {
         BTreeMap::from([("/project/source/a.txt".to_string(), Some(value.to_string()))])
+    }
+
+    #[test]
+    fn active_root_discovery_is_read_only_and_deduplicated() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        write_active(&config, &first, "electron-a").unwrap();
+        write_active(&config, &first, "electron-b").unwrap();
+        write_active(&config, &second, "electron-c").unwrap();
+        let before = std::fs::read(active_path(&config, "electron-a")).unwrap();
+
+        let roots = active_project_roots(&config).unwrap();
+        assert_eq!(roots.len(), 2);
+        assert!(roots.contains(&normalized(&first)));
+        assert!(roots.contains(&normalized(&second)));
+        assert_eq!(
+            std::fs::read(active_path(&config, "electron-a")).unwrap(),
+            before,
+            "root discovery rewrote its durable owner pointer"
+        );
     }
 
     #[test]

@@ -1097,6 +1097,85 @@ describe("app store", () => {
     disconnect();
   });
 
+  it("drains a recovered close receipt and its FIFO tails while remaining closed", async () => {
+    const root = "/detached-close-recovery";
+    const generation = 77;
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "project.external-refresh") {
+        expect(params).toEqual({
+          transaction_project_root: root,
+          transaction_generation: generation,
+          transaction_batch_id: "refresh-after-close",
+        });
+        return { ok: true, entries: 1 };
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      props: null,
+      entries: [{ ...sampleEntry, translation: "must not survive close recovery" }],
+      document3: createDocument3(
+        sampleEntry.source,
+        "must not survive close recovery",
+      ),
+      screen: "welcome",
+    });
+    const disconnect = connectTransactionEnvelopeEvents();
+    const close = productEnvelope(
+      root,
+      generation,
+      "close-with-lost-ack",
+      "project.close",
+    );
+
+    transactionEnvelopeListener?.(close);
+    await vi.waitFor(() =>
+      expect(acknowledgeTransactionReceipt).toHaveBeenCalledTimes(1)
+    );
+    expect(useApp.getState().props).toBeNull();
+    expect(useApp.getState().entries).toEqual([]);
+    expect(useApp.getState().document3.translation).toBe("");
+
+    transactionEnvelopeListener?.(refreshEnvelope({
+      id: "refresh-after-close",
+      root,
+      paths: [`${root}/source/after.txt`],
+      fingerprints: { [`${root}/source/after.txt`]: "after-close" },
+      generation,
+      sources: ["native"],
+    }));
+    await vi.waitFor(() =>
+      expect(acknowledgeTransactionReceipt).toHaveBeenCalledTimes(2)
+    );
+
+    const saveTail = productEnvelope(
+      root,
+      generation,
+      "save-after-close",
+      "project.save",
+    );
+    transactionEnvelopeListener?.(saveTail);
+    await vi.waitFor(() =>
+      expect(acknowledgeTransactionReceipt).toHaveBeenCalledTimes(3)
+    );
+
+    expect(acknowledgeTransactionReceipt.mock.calls.map(([envelope]) =>
+      envelope.batch_id
+    )).toEqual([
+      "close-with-lost-ack",
+      "refresh-after-close",
+      "save-after-close",
+    ]);
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "project.external-refresh",
+    ]);
+    expect(useApp.getState().screen).toBe("welcome");
+    expect(useApp.getState().props).toBeNull();
+    expect(useApp.getState().entries).toEqual([]);
+    expect(useApp.getState().document3.translation).toBe("");
+    disconnect();
+  });
+
   it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {
     const props = {
       root: "/p",

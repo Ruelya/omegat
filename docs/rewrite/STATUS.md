@@ -707,6 +707,21 @@ and unchanged file-remote bytes/mtime prove recovery did not repeat product
 write-back. The sidecar NDJSON contract independently performs the same
 select-head → kill → reopen boundary and verifies the later refresh is still
 pending until the recovered head is acknowledged.
+A fifth Linux packaged scenario applies both boundaries to `project.close`.
+It SIGKILLs the sidecar after the unified dispatcher selects the close head but
+before renderer delivery, drops the replacement sidecar's close
+acknowledgement, and then SIGKILLs Electron after a refresh tail has been
+durably queued. The next package starts with no project argument, no active
+renderer project, and no native project watcher. A config-scoped, read-only
+receipt discovery step selects only a committed close root, adopts it into one
+replacement generation, and dispatches close → refresh without binding either
+receipt to another project. The renderer remains on the welcome screen while
+the refresh tail runs through a temporary sidecar session, which is detached
+without a second close/save. Exact byte and nanosecond-mtime snapshots prove
+that recovery does not rewrite the close receipt's TMX or stable project tree;
+each terminal history has one row. Explicitly reopening afterward restores the
+same complete six-field wanted key and its one `Document3` translation while a
+same-source decoy remains untranslated. This is Linux-only evidence.
 A separate contract keeps two replacement sidecars alive concurrently: project
 A recovers an `entry.set` receipt while project B recovers an external-refresh
 receipt from the other durable queue. Each response is re-stamped only to its
