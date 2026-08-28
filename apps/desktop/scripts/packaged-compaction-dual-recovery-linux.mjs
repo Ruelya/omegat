@@ -1100,6 +1100,7 @@ const receiptAckMatrix = [];
 const atomicReplacementElectionResults = [];
 let launchedA;
 let launchedB;
+let quorumReplacements = [];
 let mixedReceiptRecovery;
 let selectedHeadCrashRecovery;
 let closeReceiptRecovery;
@@ -1111,7 +1112,18 @@ try {
     const project = join(workDir, `${scenario}-project`);
     const remote = join(workDir, `${scenario}-remote`);
     const marker = join(workDir, `${scenario}.marker`);
-    const restartTracePath = join(workDir, `${scenario}-restart-trace.ndjson`);
+    const firstElectionMarker = join(workDir, `${scenario}-first-election.json`);
+    const firstElectionRelease = join(workDir, `${scenario}-first-election-release`);
+    const secondElectionMarker = join(workDir, `${scenario}-second-election.json`);
+    const secondElectionRelease = join(workDir, `${scenario}-second-election-release`);
+    const firstElectionTraces = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${scenario}-first-${index}-trace.ndjson`),
+    );
+    const secondElectionTraces = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${scenario}-second-${index}-trace.ndjson`),
+    );
     const prepared = await prepareProductCompactionProject(
       config,
       project,
@@ -1248,29 +1260,200 @@ try {
       "rejected pre-kill contender did not remain responsive",
     );
 
+    const preKillContenderPid = launchedB.application.pid;
+    await terminatePackaged(launchedB);
+    launchedB = undefined;
     const stableTreeBeforeRecovery = await snapshotStableProjectTree(project);
     const tmxPath = join(project, "omegat", "project_save.tmx");
     const tmxBeforeRecovery = await readFile(tmxPath);
     const tmxMtimeBeforeRecovery = (await stat(tmxPath, { bigint: true })).mtimeNs;
     const killed = await killPackaged(launchedA);
     launchedA = undefined;
+    assert.equal(
+      await pathExists(`/proc/${killed.browserPid}`),
+      false,
+      `product ${point} old owner PID remained live before quorum election`,
+    );
 
-    launchedA = await launchPackaged(xvfb.display, config, project, {
-      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: restartTracePath,
-    });
+    const launchElectionWave = (markerPath, releasePath, traces) =>
+      Promise.all(traces.map((tracePath) =>
+        launchPackagedRenderer(xvfb.display, config, project, {
+          OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "entry.set",
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: markerPath,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: releasePath,
+        })
+      ));
+    const assertLosingReplacement = async (
+      replacement,
+      generation,
+      label,
+    ) => {
+      const scope = {
+        root: project,
+        app_instance: `${scenario}-${label}`,
+        owner_process_id: replacement.application.pid,
+        generation,
+      };
+      const pending = await invokeRpcResult(
+        replacement.client,
+        "transaction.receipt.pending",
+        scope,
+      );
+      assert.equal(
+        pending.resolved,
+        false,
+        `product ${point} ${label} obtained the elected product head`,
+      );
+      assert.match(pending.error, /locked by another process|owned by live app/);
+      const acknowledgement = await invokeRpcResult(
+        replacement.client,
+        "transaction.receipt.ack",
+        {
+          ...scope,
+          batch_id: prepared.receiptBatchId,
+          operation: "entry.set",
+          outcome: "succeeded",
+        },
+      );
+      assert.equal(
+        acknowledgement.resolved,
+        false,
+        `product ${point} ${label} acknowledged the elected product head`,
+      );
+      assert.match(
+        acknowledgement.error,
+        /locked by another process|owned by live app/,
+      );
+    };
+
+    const firstWave = await launchElectionWave(
+      firstElectionMarker,
+      firstElectionRelease,
+      firstElectionTraces,
+    );
+    quorumReplacements = firstWave;
+    const firstElection = await waitFor(
+      `${point} first three-replacement election`,
+      async () =>
+        await pathExists(firstElectionMarker)
+          ? JSON.parse(await readFile(firstElectionMarker, "utf8"))
+          : undefined,
+    );
+    assert.equal(firstElection.batch_id, prepared.receiptBatchId);
+    assert.equal(firstElection.operation, "entry.set");
+    const firstWinnerIndex = firstWave.findIndex((replacement) =>
+      replacement.application.pid === firstElection.owner_process_id
+    );
+    assert.notEqual(firstWinnerIndex, -1);
+    const firstWinner = firstWave[firstWinnerIndex];
+    const firstDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(firstDurableOwner.process_id, firstWinner.application.pid);
+    assert.equal(firstDurableOwner.app_instance, firstElection.app_instance);
+    assert.equal(firstDurableOwner.generation, firstElection.generation);
+    assert.notEqual(firstDurableOwner.claim_id, durableOwner.claim_id);
+    for (const tracePath of firstElectionTraces) {
+      assert.equal(
+        await pathExists(tracePath)
+          ? parseNdjson(await readFile(tracePath, "utf8")).length
+          : 0,
+        0,
+        `product ${point} first election delivered before winner release`,
+      );
+    }
+    const firstLosers = firstWave.filter((_, index) => index !== firstWinnerIndex);
+    await Promise.all(firstLosers.map((replacement, index) =>
+      assertLosingReplacement(
+        replacement,
+        firstElection.generation + index + 1,
+        `first-loser-${index}`,
+      )
+    ));
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      firstDurableOwner,
+      `product ${point} first-wave loser changed the winning claim`,
+    );
+    await Promise.all(firstLosers.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [firstWinner];
+    const firstWinnerKilled = await killPackaged(firstWinner);
+    quorumReplacements = [];
+    assert.equal(
+      await pathExists(`/proc/${firstWinnerKilled.browserPid}`),
+      false,
+      `product ${point} first elected owner remained live before reelection`,
+    );
+    for (const tracePath of firstElectionTraces) {
+      assert.equal(
+        await pathExists(tracePath)
+          ? parseNdjson(await readFile(tracePath, "utf8")).length
+          : 0,
+        0,
+        `product ${point} first elected owner leaked a renderer envelope`,
+      );
+    }
+
+    const secondWave = await launchElectionWave(
+      secondElectionMarker,
+      secondElectionRelease,
+      secondElectionTraces,
+    );
+    quorumReplacements = secondWave;
+    const secondElection = await waitFor(
+      `${point} second three-replacement election`,
+      async () =>
+        await pathExists(secondElectionMarker)
+          ? JSON.parse(await readFile(secondElectionMarker, "utf8"))
+          : undefined,
+    );
+    assert.equal(secondElection.batch_id, prepared.receiptBatchId);
+    assert.equal(secondElection.operation, "entry.set");
+    const secondWinnerIndex = secondWave.findIndex((replacement) =>
+      replacement.application.pid === secondElection.owner_process_id
+    );
+    assert.notEqual(secondWinnerIndex, -1);
+    const winner = secondWave[secondWinnerIndex];
+    const secondDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(secondDurableOwner.process_id, winner.application.pid);
+    assert.equal(secondDurableOwner.app_instance, secondElection.app_instance);
+    assert.equal(secondDurableOwner.generation, secondElection.generation);
+    assert.notEqual(secondDurableOwner.claim_id, firstDurableOwner.claim_id);
+    const secondLosers = secondWave.filter((_, index) => index !== secondWinnerIndex);
+    await Promise.all(secondLosers.map((replacement, index) =>
+      assertLosingReplacement(
+        replacement,
+        secondElection.generation + index + 1,
+        `second-loser-${index}`,
+      )
+    ));
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      secondDurableOwner,
+      `product ${point} second-wave loser changed the winning claim`,
+    );
+    for (const tracePath of secondElectionTraces) {
+      assert.equal(
+        await pathExists(tracePath)
+          ? parseNdjson(await readFile(tracePath, "utf8")).length
+          : 0,
+        0,
+        `product ${point} second election delivered before winner release`,
+      );
+    }
+    await writeFile(secondElectionRelease, "release\n", "utf8");
     await waitFor(`${point} product FIFO drain`, async () =>
       !await pathExists(prepared.activePath)
         && !await pathExists(prepared.refreshJournalPath)
         ? true
         : undefined
     );
-    const recovered = await workspaceState(launchedA.client);
+    const recovered = await workspaceState(winner.client);
     assert.equal(recovered.project, project);
     assert.equal(recovered.source, prepared.source);
     assert.equal(recovered.translation, prepared.translation);
     assert.equal(recovered.activeSurfaces, 1);
     assert.deepEqual(JSON.parse(recovered.key), prepared.key);
-    const entries = await launchedA.client.evaluate(
+    const entries = await winner.client.evaluate(
       'window.omegat.rpc("entry.list", {})',
       true,
     );
@@ -1281,7 +1464,9 @@ try {
     assert.deepEqual(decoy.key, prepared.decoyKey);
     assert.equal(decoy.translation, "");
 
-    const restartTrace = parseNdjson(await readFile(restartTracePath, "utf8"));
+    const restartTrace = parseNdjson(
+      await readFile(secondElectionTraces[secondWinnerIndex], "utf8"),
+    );
     assertOrderedDispatch(
       restartTrace,
       [
@@ -1340,9 +1525,9 @@ try {
       `product ${point} recovery replayed the team remote write`,
     );
     const takeoverOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
-    assert.equal(takeoverOwner.process_id, launchedA.application.pid);
+    assert.equal(takeoverOwner.process_id, winner.application.pid);
     assert.notEqual(takeoverOwner.process_id, durableOwner.process_id);
-    assert.notEqual(takeoverOwner.claim_id, durableOwner.claim_id);
+    assert.equal(takeoverOwner.claim_id, secondDurableOwner.claim_id);
     assert.equal(takeoverOwner.generation, recovered.generation);
 
     productCompactionResults.push({
@@ -1357,10 +1542,27 @@ try {
       ],
       archivedTerminalCount: 1,
       preKillContender: {
-        browserPid: launchedB.application.pid,
+        browserPid: preKillContenderPid,
         pendingRejected: true,
         acknowledgementRejected: true,
         remainedResponsive: true,
+      },
+      firstElection: {
+        simultaneousReplacementCount: firstWave.length,
+        winnerClaimId: firstDurableOwner.claim_id,
+        loserCount: firstLosers.length,
+        loserPendingRejected: true,
+        loserAcknowledgementRejected: true,
+        deliveredEnvelopes: 0,
+        killedBeforeRendererDelivery: firstWinnerKilled,
+      },
+      secondElection: {
+        simultaneousReplacementCount: secondWave.length,
+        winnerClaimId: secondDurableOwner.claim_id,
+        loserCount: secondLosers.length,
+        loserPendingRejected: true,
+        loserAcknowledgementRejected: true,
+        recoveredBatchId: secondElection.batch_id,
       },
       completeEntryKey: prepared.key,
       document3Surfaces: recovered.activeSurfaces,
@@ -1368,10 +1570,8 @@ try {
       teamRemoteWriteReplayed: false,
       replacementOwnerClaimId: takeoverOwner.claim_id,
     });
-    await terminatePackaged(launchedA);
-    launchedA = undefined;
-    await terminatePackaged(launchedB);
-    launchedB = undefined;
+    await Promise.all(secondWave.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [];
   }
 
   for (const point of ["after_archive_fsync", "after_queue_rename"]) {
@@ -2878,6 +3078,7 @@ try {
 } finally {
   await terminatePackaged(launchedA);
   await terminatePackaged(launchedB);
+  await Promise.all(quorumReplacements.map((launched) => terminatePackaged(launched)));
   try {
     process.kill(xvfb.child.pid, "SIGTERM");
   } catch (error) {

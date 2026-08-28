@@ -902,6 +902,52 @@ fn product_compaction_checkpoint(point: &str) -> Result<()> {
     }
 }
 
+fn product_owner_claim_checkpoint(
+    props: &ProjectProperties,
+    app_instance: &str,
+    process_id: u32,
+    generation: u64,
+) -> Result<()> {
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_HOLD_AFTER_PRODUCT_OWNER_CLAIM_MARKER") else {
+        return Ok(());
+    };
+    let Some(release) = std::env::var_os("OMEGAT_TEST_HOLD_AFTER_PRODUCT_OWNER_CLAIM_RELEASE")
+    else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(TeamError::Io(error)),
+    };
+    serde_json::to_writer(
+        &mut file,
+        &serde_json::json!({
+            "project_root": normalized(&props.root),
+            "app_instance": app_instance,
+            "process_id": process_id,
+            "generation": generation,
+        }),
+    )
+    .map_err(|error| TeamError::Command(format!("renderer owner checkpoint: {error}")))?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    sync_parent(&marker)?;
+    let release = PathBuf::from(release);
+    while !release.is_file() {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Ok(())
+}
+
 fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
     let mut journal = load_product_journal(props)?;
     let terminal = journal
@@ -1825,6 +1871,11 @@ pub fn pending_transaction_receipt_for_owner(
         ));
     }
     claim_transaction_dispatch(props, app_instance, process_id, generation)?;
+    // This durable boundary deliberately sits after atomic owner publication
+    // and before queue compaction/head lookup. A killed claimant therefore
+    // cannot leak a half-returned envelope, and a later process must run the
+    // same owner election before it can observe the FIFO head.
+    product_owner_claim_checkpoint(props, app_instance, process_id, generation)?;
     let _lock = acquire_project_transaction_lock(props)?;
     compact_terminal_product_transactions(props)?;
     let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? else {

@@ -3499,6 +3499,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
     fn spawn_sidecar(
         config: &std::path::Path,
         compaction_checkpoint: Option<(&str, &std::path::Path)>,
+        owner_checkpoint: Option<(&std::path::Path, &std::path::Path)>,
     ) -> (
         std::process::Child,
         std::process::ChildStdin,
@@ -3515,6 +3516,14 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             command
                 .env("OMEGAT_TEST_PRODUCT_COMPACTION_POINT", point)
                 .env("OMEGAT_TEST_PRODUCT_COMPACTION_MARKER", marker);
+        }
+        if let Some((marker, release)) = owner_checkpoint {
+            command
+                .env("OMEGAT_TEST_HOLD_AFTER_PRODUCT_OWNER_CLAIM_MARKER", marker)
+                .env(
+                    "OMEGAT_TEST_HOLD_AFTER_PRODUCT_OWNER_CLAIM_RELEASE",
+                    release,
+                );
         }
         let mut child = command
             .stdin(Stdio::piped())
@@ -3539,7 +3548,10 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        panic!("timed out waiting for compaction checkpoint {}", path.display());
+        panic!(
+            "timed out waiting for compaction checkpoint {}",
+            path.display()
+        );
     }
 
     fn receipt_scope(root: &std::path::Path, app: &str, generation: u64) -> Value {
@@ -3557,17 +3569,16 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let active_path = root.join(".repositories/transactions/active.json");
         let owner_path = root.join(".repositories/transactions/renderer-owner.json");
         let history_path = root.join(".repositories/transactions/history.ndjson");
-        let refresh_journal_path = root
-            .join(".repositories/transactions/external-refresh.json");
-        let refresh_history_path = root
-            .join(".repositories/transactions/external-refresh-history.ndjson");
+        let refresh_journal_path = root.join(".repositories/transactions/external-refresh.json");
+        let refresh_history_path =
+            root.join(".repositories/transactions/external-refresh-history.ndjson");
         let marker_path = temp.path().join(format!("product-{point}-checkpoint"));
         let save_tmx = root.join("omegat/project_save.tmx");
         let receipt_batch = format!("product-{point}-receipt");
         let tail_batch = format!("product-{point}-save-tail");
         let terminal_batch = format!("product-{point}-acknowledged-terminal");
 
-        let (mut setup, mut setup_in, mut setup_out) = spawn_sidecar(&config, None);
+        let (mut setup, mut setup_in, mut setup_out) = spawn_sidecar(&config, None, None);
         rpc(
             &mut setup_in,
             &mut setup_out,
@@ -3689,7 +3700,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let tmx_mtime_before = std::fs::metadata(&save_tmx).unwrap().modified().unwrap();
 
         let (mut interrupted, mut interrupted_in, mut interrupted_out) =
-            spawn_sidecar(&config, Some((point, &marker_path)));
+            spawn_sidecar(&config, Some((point, &marker_path)), None);
         rpc(
             &mut interrupted_in,
             &mut interrupted_out,
@@ -3751,7 +3762,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         );
 
         let (mut contender, mut contender_in, mut contender_out) =
-            spawn_sidecar(&config, None);
+            spawn_sidecar(&config, None, None);
         let contender_pending = rpc(
             &mut contender_in,
             &mut contender_out,
@@ -3794,6 +3805,8 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             queue_at_checkpoint_bytes,
             "rejected contender changed the product queue at {point}"
         );
+        contender.kill().unwrap();
+        contender.wait().unwrap();
         assert!(
             interrupted.try_wait().unwrap().is_none(),
             "checkpoint owner exited before the external kill"
@@ -3809,22 +3822,189 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let dead_owner: Value =
             serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
         assert_eq!(dead_owner["process_id"], interrupted_pid);
-        let (mut replacement, mut replacement_in, mut replacement_out) =
-            spawn_sidecar(&config, None);
-        rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            8,
-            "project.open",
-            json!({ "root": root }),
+        assert!(
+            !std::path::Path::new("/proc")
+                .join(interrupted_pid.to_string())
+                .exists(),
+            "checkpoint owner PID remained live before the replacement election"
         );
-        let recovered_head = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            9,
-            "transaction.receipt.pending",
-            receipt_scope(&root, &format!("replacement-{point}"), 10),
+
+        let first_claim_marker = temp.path().join(format!("{point}-first-claim"));
+        let first_claim_release = temp.path().join(format!("{point}-first-release"));
+        let mut first_wave = (0..3)
+            .map(|index| {
+                let app_instance = format!("replacement-{point}-first-{index}");
+                let generation = (20 + index) as u64;
+                let (mut child, mut input, mut output) = spawn_sidecar(
+                    &config,
+                    None,
+                    Some((&first_claim_marker, &first_claim_release)),
+                );
+                rpc(
+                    &mut input,
+                    &mut output,
+                    8,
+                    "project.open",
+                    json!({ "root": root }),
+                );
+                (child, input, output, app_instance, generation)
+            })
+            .collect::<Vec<_>>();
+        for replacement in &mut first_wave {
+            writeln!(
+                replacement.1,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "transaction.receipt.pending",
+                    "params": receipt_scope(&root, &replacement.3, replacement.4),
+                })
+            )
+            .unwrap();
+            replacement.1.flush().unwrap();
+        }
+        for _ in 0..1_000 {
+            for replacement in &mut first_wave {
+                assert!(
+                    replacement.0.try_wait().unwrap().is_none(),
+                    "first-wave replacement exited before owner election at {point}"
+                );
+            }
+            if first_claim_marker.is_file() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            first_claim_marker.is_file(),
+            "first-wave owner checkpoint was not reached at {point}"
         );
+        let first_claim: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        let first_winner_pid = first_claim["process_id"].as_u64().unwrap() as u32;
+        let first_winner_index = first_wave
+            .iter()
+            .position(|replacement| replacement.0.id() == first_winner_pid)
+            .expect("first-wave winner must be one of three simultaneous replacements");
+        assert_ne!(first_claim["claim_id"], dead_owner["claim_id"]);
+        assert_eq!(
+            first_claim["app_instance"],
+            first_wave[first_winner_index].3
+        );
+        assert_eq!(first_claim["generation"], first_wave[first_winner_index].4);
+        let first_checkpoint: Value =
+            serde_json::from_slice(&std::fs::read(&first_claim_marker).unwrap()).unwrap();
+        assert_eq!(first_checkpoint["process_id"], first_winner_pid);
+        for (index, replacement) in first_wave.iter_mut().enumerate() {
+            if index == first_winner_index {
+                continue;
+            }
+            let rejected = response_for(&mut replacement.2, 9);
+            assert_eq!(rejected["error"]["code"], -32005);
+            assert_eq!(rejected["result"], Value::Null);
+        }
+        for (index, replacement) in first_wave.iter_mut().enumerate() {
+            if index == first_winner_index {
+                continue;
+            }
+            replacement.0.kill().unwrap();
+            replacement.0.wait().unwrap();
+        }
+        first_wave[first_winner_index].0.kill().unwrap();
+        assert!(
+            !first_wave[first_winner_index].0.wait().unwrap().success(),
+            "first elected replacement unexpectedly exited successfully"
+        );
+        assert!(
+            !std::path::Path::new("/proc")
+                .join(first_winner_pid.to_string())
+                .exists(),
+            "first elected owner PID remained live before second election"
+        );
+        assert_eq!(
+            std::fs::read(&active_path).unwrap(),
+            queue_at_checkpoint_bytes,
+            "first elected owner changed the queue before returning its head at {point}"
+        );
+
+        let second_claim_marker = temp.path().join(format!("{point}-second-claim"));
+        let second_claim_release = temp.path().join(format!("{point}-second-release"));
+        let mut second_wave = (0..3)
+            .map(|index| {
+                let app_instance = format!("replacement-{point}-second-{index}");
+                let generation = (30 + index) as u64;
+                let (mut child, mut input, mut output) = spawn_sidecar(
+                    &config,
+                    None,
+                    Some((&second_claim_marker, &second_claim_release)),
+                );
+                rpc(
+                    &mut input,
+                    &mut output,
+                    10,
+                    "project.open",
+                    json!({ "root": root }),
+                );
+                (child, input, output, app_instance, generation)
+            })
+            .collect::<Vec<_>>();
+        for replacement in &mut second_wave {
+            writeln!(
+                replacement.1,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "transaction.receipt.pending",
+                    "params": receipt_scope(&root, &replacement.3, replacement.4),
+                })
+            )
+            .unwrap();
+            replacement.1.flush().unwrap();
+        }
+        for _ in 0..1_000 {
+            for replacement in &mut second_wave {
+                assert!(
+                    replacement.0.try_wait().unwrap().is_none(),
+                    "second-wave replacement exited before owner election at {point}"
+                );
+            }
+            if second_claim_marker.is_file() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            second_claim_marker.is_file(),
+            "second-wave owner checkpoint was not reached at {point}"
+        );
+        let replacement_owner: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        let second_winner_pid = replacement_owner["process_id"].as_u64().unwrap() as u32;
+        let second_winner_index = second_wave
+            .iter()
+            .position(|replacement| replacement.0.id() == second_winner_pid)
+            .expect("second-wave winner must be one of three simultaneous replacements");
+        assert_ne!(replacement_owner["claim_id"], first_claim["claim_id"]);
+        assert_eq!(
+            replacement_owner["app_instance"],
+            second_wave[second_winner_index].3
+        );
+        assert_eq!(
+            replacement_owner["generation"],
+            second_wave[second_winner_index].4
+        );
+        for (index, replacement) in second_wave.iter_mut().enumerate() {
+            if index == second_winner_index {
+                continue;
+            }
+            let rejected = response_for(&mut replacement.2, 11);
+            assert_eq!(rejected["error"]["code"], -32005);
+            assert_eq!(rejected["result"], Value::Null);
+        }
+        std::fs::write(&second_claim_release, b"release\n").unwrap();
+        let recovered_head = response_for(&mut second_wave[second_winner_index].2, 11);
         assert_eq!(
             recovered_head["result"]["envelopes"][0]["batch_id"],
             receipt_batch
@@ -3833,38 +4013,37 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             recovered_head["result"]["envelopes"][0]["status"],
             "sidecar_committed"
         );
-        let replacement_owner: Value =
-            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
-        assert_eq!(
-            replacement_owner["app_instance"],
-            format!("replacement-{point}")
-        );
-        assert_eq!(replacement_owner["process_id"], replacement.id());
-        assert_eq!(replacement_owner["generation"], 10);
-        assert_ne!(replacement_owner["claim_id"], dead_owner["claim_id"]);
+        let replacement_app = second_wave[second_winner_index].3.clone();
+        let replacement_generation = second_wave[second_winner_index].4;
 
-        let first_ack = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            10,
-            "transaction.receipt.ack",
-            json!({
-                "root": root,
-                "app_instance": format!("replacement-{point}"),
-                "generation": 10,
-                "batch_id": receipt_batch,
-                "operation": "entry.set",
-                "outcome": "succeeded",
-            }),
-        );
+        let first_ack = {
+            let replacement = &mut second_wave[second_winner_index];
+            rpc(
+                &mut replacement.1,
+                &mut replacement.2,
+                12,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": replacement_app,
+                    "generation": replacement_generation,
+                    "batch_id": receipt_batch,
+                    "operation": "entry.set",
+                    "outcome": "succeeded",
+                }),
+            )
+        };
         assert_eq!(first_ack["result"]["ack"]["acknowledged"], true);
-        let recovered_tail = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            11,
-            "transaction.receipt.pending",
-            receipt_scope(&root, &format!("replacement-{point}"), 10),
-        );
+        let recovered_tail = {
+            let replacement = &mut second_wave[second_winner_index];
+            rpc(
+                &mut replacement.1,
+                &mut replacement.2,
+                13,
+                "transaction.receipt.pending",
+                receipt_scope(&root, &replacement_app, replacement_generation),
+            )
+        };
         assert_eq!(
             recovered_tail["result"]["envelopes"][0]["batch_id"],
             tail_batch
@@ -3873,28 +4052,34 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             recovered_tail["result"]["envelopes"][0]["payload"]["operation"],
             "project.save"
         );
-        let tail_ack = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            12,
-            "transaction.receipt.ack",
-            json!({
-                "root": root,
-                "app_instance": format!("replacement-{point}"),
-                "generation": 10,
-                "batch_id": tail_batch,
-                "operation": "project.save",
-                "outcome": "succeeded",
-            }),
-        );
+        let tail_ack = {
+            let replacement = &mut second_wave[second_winner_index];
+            rpc(
+                &mut replacement.1,
+                &mut replacement.2,
+                14,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": replacement_app,
+                    "generation": replacement_generation,
+                    "batch_id": tail_batch,
+                    "operation": "project.save",
+                    "outcome": "succeeded",
+                }),
+            )
+        };
         assert_eq!(tail_ack["result"]["ack"]["acknowledged"], true);
-        let recovered_refresh_tail = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            13,
-            "transaction.receipt.pending",
-            receipt_scope(&root, &format!("replacement-{point}"), 10),
-        );
+        let recovered_refresh_tail = {
+            let replacement = &mut second_wave[second_winner_index];
+            rpc(
+                &mut replacement.1,
+                &mut replacement.2,
+                15,
+                "transaction.receipt.pending",
+                receipt_scope(&root, &replacement_app, replacement_generation),
+            )
+        };
         assert_eq!(
             recovered_refresh_tail["result"]["envelopes"][0]["batch_id"],
             refresh_batch
@@ -3907,28 +4092,34 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             recovered_refresh_tail["result"]["envelopes"][0]["status"],
             "pending"
         );
-        let refresh_ack = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            14,
-            "transaction.receipt.ack",
-            json!({
-                "root": root,
-                "app_instance": format!("replacement-{point}"),
-                "generation": 10,
-                "batch_id": refresh_batch,
-                "operation": "project.external-refresh",
-                "outcome": "coalesced",
-            }),
-        );
+        let refresh_ack = {
+            let replacement = &mut second_wave[second_winner_index];
+            rpc(
+                &mut replacement.1,
+                &mut replacement.2,
+                16,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": replacement_app,
+                    "generation": replacement_generation,
+                    "batch_id": refresh_batch,
+                    "operation": "project.external-refresh",
+                    "outcome": "coalesced",
+                }),
+            )
+        };
         assert_eq!(refresh_ack["result"]["ack"]["acknowledged"], true);
-        let drained = rpc(
-            &mut replacement_in,
-            &mut replacement_out,
-            15,
-            "transaction.receipt.pending",
-            receipt_scope(&root, &format!("replacement-{point}"), 10),
-        );
+        let drained = {
+            let replacement = &mut second_wave[second_winner_index];
+            rpc(
+                &mut replacement.1,
+                &mut replacement.2,
+                17,
+                "transaction.receipt.pending",
+                receipt_scope(&root, &replacement_app, replacement_generation),
+            )
+        };
         assert_eq!(drained["result"]["envelopes"], json!([]));
         assert!(!active_path.exists());
         assert!(!refresh_journal_path.exists());
@@ -3957,17 +4148,15 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             refresh_history
                 .lines()
                 .map(|line| serde_json::from_str::<Value>(line).unwrap())
-                .filter(|row| {
-                    row["batch_id"] == refresh_batch && row["status"] == "completed"
-                })
+                .filter(|row| { row["batch_id"] == refresh_batch && row["status"] == "completed" })
                 .count(),
             1,
             "refresh tail terminal history duplicated at {point}"
         );
-        contender.kill().unwrap();
-        contender.wait().unwrap();
-        replacement.kill().unwrap();
-        replacement.wait().unwrap();
+        for replacement in &mut second_wave {
+            replacement.0.kill().unwrap();
+            replacement.0.wait().unwrap();
+        }
     }
 }
 
