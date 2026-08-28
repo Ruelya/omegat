@@ -1,25 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-const PRODUCT_TRANSACTION_METHODS = new Set([
-  "entry.set",
-  "project.save",
-  "project.close",
-  "project.reload",
-  "project.compile",
-  "project.import",
-  "project.update",
-  "team.mapping",
-  "glossary.add",
-  "search.replace",
-  "spell.ignore",
-  "spell.learn",
-  "tmx.export",
-  "wiki.import",
-  "script.run",
-  "script.slot",
-  "align.run",
-  "align.write",
-]);
+import { isProjectTransactionMethod } from "../shared/writer-catalog";
 
 export function scopeProductTransaction(
   method: string,
@@ -27,7 +8,7 @@ export function scopeProductTransaction(
   project: { root: string; generation: number } | null,
   createBatchId: () => string,
 ): unknown {
-  if (!project || !PRODUCT_TRANSACTION_METHODS.has(method)) return params;
+  if (!project || !isProjectTransactionMethod(method)) return params;
   const input = params !== null && typeof params === "object" ? params : {};
   return {
     ...input,

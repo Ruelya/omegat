@@ -1,76 +1,12 @@
 //! Contract tests: every exposed sidecar method has a stable request/response shape.
 
+use omegat_ipc::{RPC_METHOD_REGISTRY, RPC_REGISTRY_VERSION, WRITER_CATALOG};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
-
-const METHODS: &[&str] = &[
-    "sys.version",
-    "sys.capabilities",
-    "sys.plugins",
-    "markers.list",
-    "markers.query",
-    "prefs.get",
-    "prefs.set",
-    "prefs.patch",
-    "project.create",
-    "project.open",
-    "project.close",
-    "project.recovery.detach",
-    "project.save",
-    "project.compile",
-    "project.reload",
-    "project.external-refresh",
-    "project.refresh.enqueue",
-    "project.refresh.discard",
-    "transaction.receipt.discover",
-    "transaction.receipt.pending",
-    "transaction.receipt.ack",
-    "project.props",
-    "entry.list",
-    "entry.get",
-    "entry.set",
-    "matches.query",
-    "glossary.query",
-    "glossary.add",
-    "search.run",
-    "search.replace",
-    "stats.get",
-    "issues.list",
-    "filters.list",
-    "filters.options",
-    "filters.parse",
-    "script.slots",
-    "mt.query",
-    "dict.query",
-    "completer.query",
-    "spell.check",
-    "spell.learn",
-    "spell.ignore",
-    "spell.install",
-    "tmx.export",
-    "languagetool.check",
-    "finder.run",
-    "team.sync",
-    "team.commit",
-    "team.conflicts",
-    "team.resolve",
-    "team.mapping",
-    "project.update",
-    "script.run",
-    "align.run",
-    "align.edit",
-    "align.write",
-    "aligner.configure",
-    "wiki.import",
-    "med.open",
-    "project.convert",
-    "project.import",
-    "script.slot",
-];
 
 fn rpc(
     child_in: &mut impl Write,
@@ -267,15 +203,48 @@ fn every_listed_method_is_known() {
     let caps = rpc(&mut stdin, &mut stdout, 2, "sys.capabilities", json!({}));
     assert!(caps["result"]["filters"].is_array());
 
-    for (i, method) in METHODS.iter().enumerate() {
-        let resp = rpc(&mut stdin, &mut stdout, 100 + i as i64, method, json!({}));
+    for (i, entry) in RPC_METHOD_REGISTRY.iter().enumerate() {
+        let resp = rpc(
+            &mut stdin,
+            &mut stdout,
+            100 + i as i64,
+            entry.method,
+            json!({}),
+        );
         let err_code = resp["error"]["code"].as_i64();
         assert_ne!(
             err_code,
             Some(-32601),
-            "{method} must not be METHOD_NOT_FOUND"
+            "{} must not be METHOD_NOT_FOUND",
+            entry.method
         );
     }
+
+    let registry = rpc(
+        &mut stdin,
+        &mut stdout,
+        1000,
+        "sys.rpc-registry",
+        json!({}),
+    );
+    assert_eq!(registry["result"]["version"], RPC_REGISTRY_VERSION);
+    assert_eq!(
+        registry["result"]["methods"],
+        serde_json::to_value(RPC_METHOD_REGISTRY).unwrap()
+    );
+    let writers = rpc(
+        &mut stdin,
+        &mut stdout,
+        1001,
+        "sys.writer-catalog",
+        json!({}),
+    );
+    assert_eq!(writers["result"]["version"], RPC_REGISTRY_VERSION);
+    assert_eq!(
+        writers["result"]["writers"],
+        serde_json::to_value(WRITER_CATALOG).unwrap()
+    );
+    assert_eq!(WRITER_CATALOG.len(), 26);
 
     let unknown = rpc(&mut stdin, &mut stdout, 999, "no.such.method", json!({}));
     assert_eq!(unknown["error"]["code"], -32601);

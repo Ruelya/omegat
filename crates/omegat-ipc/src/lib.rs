@@ -9,6 +9,57 @@ pub const APP_NAME: &str = "OmegaT";
 pub const APP_VERSION: &str = "6.2.0";
 pub const PROTOCOL_VERSION: &str = "1.0";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriterScope {
+    Project,
+    Config,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriterActivation {
+    Always,
+    PersistTrue,
+    Recovery,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptRoute {
+    Caller,
+    Recovery,
+    Config,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct WriterSpec {
+    pub scope: WriterScope,
+    pub activation: WriterActivation,
+    pub receipt_route: ReceiptRoute,
+    pub journal_operation: &'static str,
+    pub watches_project_inputs: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct RpcMethodSpec {
+    pub method: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub writer: Option<WriterSpec>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct WriterCatalogEntry {
+    pub method: &'static str,
+    pub scope: WriterScope,
+    pub activation: WriterActivation,
+    pub receipt_route: ReceiptRoute,
+    pub journal_operation: &'static str,
+    pub watches_project_inputs: bool,
+}
+
+include!(concat!(env!("OUT_DIR"), "/rpc_registry.rs"));
+
 /// JSON-RPC reserved and application error codes.
 pub mod error_code {
     pub const PARSE_ERROR: i32 = -32700;

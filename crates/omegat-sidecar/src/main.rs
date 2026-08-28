@@ -243,6 +243,14 @@ impl App {
         match method {
             "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
             "sys.capabilities" => Ok(serde_json::to_value(capabilities()).unwrap()),
+            "sys.rpc-registry" => Ok(json!({
+                "version": RPC_REGISTRY_VERSION,
+                "methods": RPC_METHOD_REGISTRY,
+            })),
+            "sys.writer-catalog" => Ok(json!({
+                "version": RPC_REGISTRY_VERSION,
+                "writers": WRITER_CATALOG,
+            })),
             "sys.plugins" => Ok(serde_json::to_value(self.plugins.list(None)).unwrap()),
             "markers.list" => Ok(serde_json::to_value(self.plugins.registered_markers()).unwrap()),
             "markers.query" => {
@@ -2675,28 +2683,10 @@ fn request_key(id: &Value) -> String {
 }
 
 fn writes_watched_project_input(method: &str) -> bool {
-    matches!(
-        method,
-        "entry.set"
-            | "project.open"
-            | "project.recovery.detach"
-            | "project.save"
-            | "project.reload"
-            | "project.compile"
-            | "project.close"
-            | "project.update"
-            | "project.import"
-            | "team.mapping"
-            | "team.sync"
-            | "team.commit"
-            | "team.resolve"
-            | "glossary.add"
-            | "spell.ignore"
-            | "spell.learn"
-            | "wiki.import"
-            | "align.run"
-            | "align.write"
-    )
+    matches!(method, "project.open" | "project.recovery.detach")
+        || WRITER_CATALOG
+            .iter()
+            .any(|writer| writer.method == method && writer.watches_project_inputs)
 }
 
 fn plugin_marker_worker_main(

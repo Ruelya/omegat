@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-const CONFIG_TRANSACTION_METHODS = new Set([
-  "prefs.set",
-  "prefs.patch",
-  "spell.install",
-]);
+import { isConfigTransactionMethodFromCatalog } from "../shared/writer-catalog";
 
 export function isConfigTransactionMethod(method: string, params: unknown): boolean {
-  if (CONFIG_TRANSACTION_METHODS.has(method)) return true;
-  return method === "aligner.configure"
-    && params !== null
-    && typeof params === "object"
-    && "persist" in params
-    && params.persist === true;
+  return isConfigTransactionMethodFromCatalog(method, params);
 }
 
 export function scopeConfigTransaction(

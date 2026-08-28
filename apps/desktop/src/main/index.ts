@@ -14,6 +14,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import { isLongOperationMethod } from "../shared/rpc-operation";
+import { WRITER_CATALOG } from "../shared/writer-catalog";
 import {
   isCallerManagedTransactionMethod,
   type TransactionEnvelope,
@@ -76,29 +77,11 @@ let detachedTransactionScope: DetachedTransactionScope | null = null;
 // like a project-lifecycle transition and discard a pending refresh tail.
 const detachedTransactionGenerations = new Map<string, number>();
 const watchedProjectWriteMethods = new Set([
-  "entry.set",
   "project.open",
   "project.recovery.detach",
-  "project.save",
-  "project.reload",
-  "project.compile",
-  "project.close",
-  "project.update",
-  "project.import",
-  "team.mapping",
-  "team.sync",
-  "team.commit",
-  "team.resolve",
-  "glossary.add",
-  "search.replace",
-  "spell.ignore",
-  "spell.learn",
-  "tmx.export",
-  "wiki.import",
-  "script.run",
-  "script.slot",
-  "align.run",
-  "align.write",
+  ...WRITER_CATALOG
+    .filter(({ watches_project_inputs }) => watches_project_inputs)
+    .map(({ method }) => method),
 ]);
 const projectFileWatcher = new ProjectFileWatcher((event) => {
   void persistExternalProjectChange(event);

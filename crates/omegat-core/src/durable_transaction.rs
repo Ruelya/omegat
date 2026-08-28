@@ -513,6 +513,44 @@ impl std::fmt::Display for DurableOwnerElectionError {
     }
 }
 
+/// Proof that the caller currently owns the transaction coordinator's OS lock.
+///
+/// Only coordinator/election code can construct this value. Legacy domain
+/// migration may use it to open the one workflow needed by a locked callback;
+/// ordinary callers must enter through [`DurableTransactionCoordinator`].
+#[derive(Clone, Copy, Debug)]
+pub struct DurableCoordinatorCapability<'lock> {
+    _lock: &'lock DurableFifoLock,
+}
+
+/// A workflow whose lifetime is bounded by the coordinator lock capability
+/// that opened it.
+///
+/// Legacy election preparation needs this wrapper because it cannot use the
+/// self-owning [`DurableTransactionCoordinator`] while that election already
+/// holds the domain lock. The lock lifetime prevents the opened workflow from
+/// escaping the callback that owns the capability.
+pub struct LockedDurableTransactionWorkflow<'lock, T: DurableTransactionRecord> {
+    workflow: DurableTransactionWorkflow<T>,
+    _lock: &'lock DurableFifoLock,
+}
+
+impl<T: DurableTransactionRecord> std::ops::Deref for LockedDurableTransactionWorkflow<'_, T> {
+    type Target = DurableTransactionWorkflow<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.workflow
+    }
+}
+
+impl<T: DurableTransactionRecord> std::ops::DerefMut
+    for LockedDurableTransactionWorkflow<'_, T>
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.workflow
+    }
+}
+
 /// Elect one dispatcher, optionally waiting through multiple owner deaths.
 ///
 /// Every claim attempt and domain recovery callback runs under the same OS
@@ -534,7 +572,7 @@ where
     F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String> + Copy,
     A: Fn(u32) -> bool,
     C: FnMut() -> bool,
-    P: FnMut() -> Result<(), String>,
+    P: for<'lock> FnMut(DurableCoordinatorCapability<'lock>) -> Result<(), String>,
     W: FnMut(&DurableOwnerClaim) -> Result<(), String>,
 {
     let deadline = retry.map(|options| Instant::now() + options.timeout);
@@ -565,7 +603,8 @@ where
                 }
             }
         };
-        prepare_locked().map_err(DurableOwnerElectionError::Durable)?;
+        prepare_locked(DurableCoordinatorCapability { _lock: &lock })
+            .map_err(DurableOwnerElectionError::Durable)?;
         let outcome = durable_fifo::claim_owner_with_legacy(
             directory,
             scope,
@@ -942,13 +981,47 @@ impl<T: DurableTransactionRecord> DurableTransactionCoordinator<T> {
     }
 }
 
+impl<'lock> DurableCoordinatorCapability<'lock> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_workflow_with_legacy<T, Q, H, C>(
+        &self,
+        directory: &Path,
+        scope: &Path,
+        layout: DurableTransactionLayout,
+        options: SegmentedHistoryOptions,
+        decode_queue: Q,
+        legacy_history: H,
+        checkpoint: &mut C,
+    ) -> Result<LockedDurableTransactionWorkflow<'lock, T>, String>
+    where
+        T: DurableTransactionRecord,
+        Q: Fn(&[u8]) -> Result<Option<LegacyFifoState<T>>, String>,
+        H: FnOnce() -> Result<Vec<T>, String>,
+        C: FnMut(Option<&T>, &str) -> Result<(), String>,
+    {
+        let workflow = DurableTransactionWorkflow::open_with_legacy(
+            directory,
+            scope,
+            layout,
+            options,
+            decode_queue,
+            legacy_history,
+            checkpoint,
+        )?;
+        Ok(LockedDurableTransactionWorkflow {
+            workflow,
+            _lock: self._lock,
+        })
+    }
+}
+
 impl<T: DurableTransactionRecord> DurableTransactionWorkflow<T> {
     /// Open both stores, restartably importing a former append-only history.
     ///
     /// `legacy_history` is evaluated only when neither the segmented store nor
     /// its durable migration seed exists.  The seed is removed only after every
     /// row is present in segmented history.
-    pub fn open_with_legacy<Q, H, C>(
+    fn open_with_legacy<Q, H, C>(
         directory: &Path,
         scope: &Path,
         layout: DurableTransactionLayout,
@@ -1005,7 +1078,8 @@ impl<T: DurableTransactionRecord> DurableTransactionWorkflow<T> {
         })
     }
 
-    pub fn open(
+    #[cfg(test)]
+    fn open(
         directory: &Path,
         scope: &Path,
         layout: DurableTransactionLayout,
@@ -1421,6 +1495,7 @@ fn remove_durable(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use omegat_ipc::WRITER_CATALOG;
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
@@ -1759,40 +1834,8 @@ mod tests {
         );
     }
 
-    const PROJECT_WRITERS: &[&str] = &[
-        "entry.set",
-        "project.save",
-        "project.close",
-        "project.reload",
-        "project.compile",
-        "project.import",
-        "project.update",
-        "team.mapping",
-        "team.sync",
-        "team.commit",
-        "team.resolve",
-        "align.write",
-        "glossary.add",
-        "search.replace",
-        "spell.ignore",
-        "spell.learn",
-        "tmx.export",
-        "wiki.import",
-        "script.run",
-        "script.slot",
-        "align.run",
-        "project.external-refresh",
-    ];
-
-    const CONFIG_WRITERS: &[&str] = &[
-        "prefs.set",
-        "prefs.patch",
-        "aligner.configure",
-        "spell.install",
-    ];
-
     fn all_writers() -> impl Iterator<Item = &'static str> {
-        PROJECT_WRITERS.iter().chain(CONFIG_WRITERS).copied()
+        WRITER_CATALOG.iter().map(|writer| writer.method)
     }
 
     #[test]
@@ -2213,7 +2256,7 @@ mod tests {
                 pid == 101 && liveness_checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2
             },
             || false,
-            || Ok(()),
+            |_| Ok(()),
             |_| Ok(()),
         )
         .unwrap();
@@ -2251,7 +2294,7 @@ mod tests {
             |_| Ok(None),
             |_| false,
             || true,
-            || panic!("cancelled election acquired and prepared the lock"),
+            |_| panic!("cancelled election acquired and prepared the lock"),
             |_| Ok(()),
         )
         .unwrap_err();
@@ -2522,7 +2565,7 @@ mod tests {
                 |_| Ok(None),
                 |pid| pid == previous && previous != 0 && checks.replace(checks.get() + 1) == 0,
                 || false,
-                || Ok(()),
+                |_| Ok(()),
                 |_| Ok(()),
             )
             .unwrap();

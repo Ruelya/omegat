@@ -14,11 +14,11 @@ use omegat_core::durable_fifo::{
 };
 use omegat_core::durable_transaction::{
     elect_owner_with_legacy, normalized, write_json_atomic, DurableCoordinatorExecutionError,
-    DurableCoordinatorLockMode, DurableCoordinatorOpenError, DurableOwnerElectionError,
-    DurableOwnerIdentity, DurableOwnerRetry, DurableTransactionCoordinator,
+    DurableCoordinatorCapability, DurableCoordinatorLockMode, DurableCoordinatorOpenError,
+    DurableOwnerElectionError, DurableOwnerIdentity, DurableOwnerRetry, DurableTransactionCoordinator,
     DurableTransactionLayout, DurableTransactionPhase, DurableTransactionRecord,
-    DurableTransactionWorkflow, TransactionCommit, TransactionEnvelope, TransactionStatus,
-    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
+    DurableTransactionWorkflow, LockedDurableTransactionWorkflow, TransactionCommit,
+    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 use omegat_core::properties::ProjectProperties;
 use omegat_core::segmented_history::{
@@ -1210,11 +1210,12 @@ fn product_workflow_layout() -> DurableTransactionLayout {
     }
 }
 
-fn open_product_workflow(
+fn open_product_workflow<'lock>(
     props: &ProjectProperties,
-) -> Result<DurableTransactionWorkflow<SyncTransaction>> {
+    capability: DurableCoordinatorCapability<'lock>,
+) -> Result<LockedDurableTransactionWorkflow<'lock, SyncTransaction>> {
     let directory = transaction_dir(props);
-    DurableTransactionWorkflow::open_with_legacy(
+    capability.open_workflow_with_legacy(
         &directory,
         &props.root,
         product_workflow_layout(),
@@ -1391,8 +1392,13 @@ fn legacy_product_history(props: &ProjectProperties) -> Result<Vec<SyncTransacti
 }
 
 #[cfg(test)]
-fn open_product_history(props: &ProjectProperties) -> Result<SegmentedHistory<SyncTransaction>> {
-    Ok(open_product_workflow(props)?.into_history())
+fn product_history_records(props: &ProjectProperties, batch_id: &str) -> Result<Vec<SyncTransaction>> {
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Wait, |coordinator| {
+        coordinator
+            .workflow()
+            .history_records(batch_id)
+            .map_err(TeamError::Command)
+    })
 }
 
 fn archive_terminal_product_transactions_in(
@@ -1749,8 +1755,8 @@ pub fn claim_transaction_dispatch_with_retry_cancellable(
         decode_legacy_renderer_owner,
         process_is_alive,
         || cancellation.is_cancelled(),
-        || {
-            recover_pending_cancellation_locked(props)
+        |capability| {
+            recover_pending_cancellation_locked(props, capability)
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         },
@@ -2019,8 +2025,11 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
     })
 }
 
-fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool> {
-    let mut workflow = open_product_workflow(props)?;
+fn recover_pending_cancellation_locked(
+    props: &ProjectProperties,
+    capability: DurableCoordinatorCapability<'_>,
+) -> Result<bool> {
+    let mut workflow = open_product_workflow(props, capability)?;
     recover_pending_cancellation_in(props, &mut workflow)
 }
 
@@ -3851,12 +3860,9 @@ mod segmented_product_history_tests {
         partial.append(rows[1].clone()).unwrap();
         drop(partial);
 
-        let recovered = open_product_history(&props).unwrap();
         for (sequence, row) in rows.iter().enumerate() {
             assert_eq!(
-                recovered
-                    .records_for(&format!("legacy-product-{sequence}"))
-                    .unwrap(),
+                product_history_records(&props, &format!("legacy-product-{sequence}")).unwrap(),
                 vec![row.clone()]
             );
         }

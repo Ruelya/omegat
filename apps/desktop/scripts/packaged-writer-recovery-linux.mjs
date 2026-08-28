@@ -26,6 +26,15 @@ const sidecar =
   process.env.OMEGAT_SIDECAR
   ?? resolve(desktopDir, "..", "..", "target", "release", "omegat-sidecar");
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+const writerCatalog = JSON.parse(
+  await readFile(
+    new URL("../../../crates/omegat-ipc/rpc-methods.json", import.meta.url),
+    "utf8",
+  ),
+).methods.flatMap(({ method, writer }) =>
+  writer ? [{ method, ...writer }] : []
+);
+assert.equal(writerCatalog.length, 26);
 
 async function waitFor(label, check, timeoutMs = WAIT_MS) {
   const deadline = Date.now() + timeoutMs;
@@ -1287,11 +1296,11 @@ function configFaultEnv(operation, point, marker) {
 }
 
 async function assertProjectJournalsIsolated(projects, label) {
-  const configOperations = new Set([
-    "prefs.patch",
-    "aligner.configure",
-    "spell.install",
-  ]);
+  const configOperations = new Set(
+    writerCatalog
+      .filter(({ scope }) => scope === "config")
+      .map(({ journal_operation }) => journal_operation),
+  );
   for (const project of projects) {
     const activePath = join(project, ".repositories", "transactions", "active.json");
     if (await pathExists(activePath)) {

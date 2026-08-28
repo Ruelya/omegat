@@ -19,7 +19,7 @@ use omegat_core::durable_transaction::{
 };
 use omegat_core::prefs::Preferences;
 use omegat_core::segmented_history::{
-    SegmentedHistory, SegmentedHistoryLayout, SegmentedHistoryOptions, SegmentedHistoryRecord,
+    SegmentedHistoryLayout, SegmentedHistoryOptions, SegmentedHistoryRecord,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -445,23 +445,41 @@ fn decode_legacy_active(
     }))
 }
 
-fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
-    Ok(open_workflow_with_options(config_dir, history_options())?.into_queue())
+#[cfg(test)]
+fn with_config_workflow<T>(
+    config_dir: &Path,
+    options: SegmentedHistoryOptions,
+    operation: impl FnOnce(
+        &mut DurableTransactionWorkflow<ConfigTransactionEnvelope>,
+    ) -> Result<T, String>,
+) -> Result<T, String> {
+    execute_config_coordinator(config_dir, options, |coordinator| {
+        operation(coordinator.workflow_mut())
+    })
 }
 
+#[cfg(test)]
+fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
+    with_config_workflow(config_dir, history_options(), |workflow| {
+        Ok(workflow.queue().clone())
+    })
+}
+
+#[cfg(test)]
 fn persist_journal(
     config_dir: &Path,
     journal: &mut ConfigTransactionJournal,
 ) -> Result<(), String> {
-    let mut workflow = open_workflow_with_options(config_dir, history_options())?;
-    *workflow.queue_mut() = journal.clone();
-    if workflow.queue().batches.is_empty() {
-        workflow.clear_queue()
-    } else {
-        workflow.persist_queue()
-    }?;
-    *journal = workflow.into_queue();
-    Ok(())
+    with_config_workflow(config_dir, history_options(), |workflow| {
+        *workflow.queue_mut() = journal.clone();
+        if workflow.queue().batches.is_empty() {
+            workflow.clear_queue()
+        } else {
+            workflow.persist_queue()
+        }?;
+        *journal = workflow.queue().clone();
+        Ok(())
+    })
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -862,36 +880,6 @@ fn config_workflow_layout() -> DurableTransactionLayout {
     }
 }
 
-fn open_workflow_with_options(
-    config_dir: &Path,
-    options: SegmentedHistoryOptions,
-) -> Result<DurableTransactionWorkflow<ConfigTransactionEnvelope>, String> {
-    let directory = transaction_dir(config_dir);
-    std::fs::create_dir_all(&directory)
-        .map_err(|error| format!("create config transaction directory: {error}"))?;
-    cleanup_interrupted_candidates(config_dir)?;
-    let had_legacy = legacy_history_exists(config_dir);
-    let workflow = DurableTransactionWorkflow::open_with_legacy(
-        &directory,
-        config_dir,
-        config_workflow_layout(),
-        options,
-        decode_legacy_active,
-        || legacy_terminal_records(config_dir),
-        &mut |owner, point| {
-            if let Some(owner) = owner {
-                checkpoint(&owner.operation, point, owner)?;
-            }
-            Ok(())
-        },
-    )
-    .map_err(|error| format!("config transaction workflow: {error}"))?;
-    if had_legacy {
-        remove_legacy_history(config_dir)?;
-    }
-    Ok(workflow)
-}
-
 fn execute_config_coordinator<T, O>(
     config_dir: &Path,
     options: SegmentedHistoryOptions,
@@ -933,18 +921,52 @@ where
     })
 }
 
+#[cfg(test)]
+struct CoordinatorHistory {
+    config_dir: PathBuf,
+    options: SegmentedHistoryOptions,
+}
+
+#[cfg(test)]
+impl CoordinatorHistory {
+    fn recent(&self) -> Vec<ConfigTransactionEnvelope> {
+        with_config_workflow(&self.config_dir, self.options.clone(), |workflow| {
+            Ok(workflow.recent_history())
+        })
+        .unwrap()
+    }
+
+    fn records_for(&self, batch_id: &str) -> Result<Vec<ConfigTransactionEnvelope>, String> {
+        with_config_workflow(&self.config_dir, self.options.clone(), |workflow| {
+            workflow.history_records(batch_id)
+        })
+    }
+
+    fn append(&mut self, row: ConfigTransactionEnvelope) -> Result<(), String> {
+        with_config_workflow(&self.config_dir, self.options.clone(), |workflow| {
+            workflow.append_history(row, &mut |_| Ok(())).map(|_| ())
+        })
+    }
+}
+
+#[cfg(test)]
 fn open_history_with_options(
     config_dir: &Path,
     _owner: Option<&ConfigTransactionEnvelope>,
     options: SegmentedHistoryOptions,
-) -> Result<SegmentedHistory<ConfigTransactionEnvelope>, String> {
-    Ok(open_workflow_with_options(config_dir, options)?.into_history())
+) -> Result<CoordinatorHistory, String> {
+    with_config_workflow(config_dir, options.clone(), |_| Ok(()))?;
+    Ok(CoordinatorHistory {
+        config_dir: config_dir.to_path_buf(),
+        options,
+    })
 }
 
+#[cfg(test)]
 fn open_history(
     config_dir: &Path,
     owner: Option<&ConfigTransactionEnvelope>,
-) -> Result<SegmentedHistory<ConfigTransactionEnvelope>, String> {
+) -> Result<CoordinatorHistory, String> {
     open_history_with_options(config_dir, owner, history_options())
 }
 
@@ -1521,10 +1543,11 @@ mod tests {
             payload.clone(),
             json!({"exact": "retained"}),
         );
-        let mut workflow = open_workflow_with_options(&config, history_options()).unwrap();
-        workflow.upsert(terminal.clone()).unwrap();
-        workflow.persist_queue().unwrap();
-        drop(workflow);
+        with_config_workflow(&config, history_options(), |workflow| {
+            workflow.upsert(terminal.clone())?;
+            workflow.persist_queue()
+        })
+        .unwrap();
 
         recover(&config).unwrap();
         assert!(!active_path(&config).exists());
