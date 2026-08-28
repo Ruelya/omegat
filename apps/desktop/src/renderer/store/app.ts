@@ -26,6 +26,7 @@ import { applyColorVars, defaultPreferences } from "../lib/preferences";
 import { projectEvents, type ProjectEvent } from "../lib/project-events";
 import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchForm } from "../lib/search-params";
 import type {
+  CommittedRefreshResult,
   CompleterItemDto,
   DictHitDto,
   EditorConflict,
@@ -248,6 +249,7 @@ type ProjectRebindRequest = {
     generation: number;
     batchId: string;
   };
+  committedResult?: CommittedRefreshResult;
 };
 
 export type AppState = {
@@ -383,6 +385,7 @@ export type AppState = {
     changedKeys?: readonly EntryKeyDto[],
     reloadFromDisk?: boolean,
     transaction?: { root: string; generation: number; batchId: string },
+    committedResult?: CommittedRefreshResult,
   ) => Promise<boolean>;
   toggleTheme: () => void;
   setSearchForm: (patch: Partial<SearchForm>) => void;
@@ -811,22 +814,29 @@ export const useApp = create<AppState>((set, get) => ({
 
     const before = get();
     let refreshedProps: ProjectPropsDto | null = before.props;
+    const committedResult = kind === "external-refresh"
+      ? request.committedResult
+      : undefined;
     try {
       if (kind === "reload") {
         const result = await get().runLongOperation<{ props?: ProjectPropsDto }>("reload");
         refreshedProps = result.props ?? before.props;
       } else if (kind === "external-refresh") {
-        const result = await get().runLongOperation<{ props?: ProjectPropsDto }>(
-          "externalRefresh",
-          transaction
-            ? {
-                transaction_project_root: transaction.root,
-                transaction_generation: transaction.generation,
-                transaction_batch_id: transaction.batchId,
-              }
-            : {},
-        );
-        refreshedProps = result.props ?? before.props;
+        if (committedResult) {
+          refreshedProps = committedResult.props;
+        } else {
+          const result = await get().runLongOperation<{ props?: ProjectPropsDto }>(
+            "externalRefresh",
+            transaction
+              ? {
+                  transaction_project_root: transaction.root,
+                  transaction_generation: transaction.generation,
+                  transaction_batch_id: transaction.batchId,
+                }
+              : {},
+          );
+          refreshedProps = result.props ?? before.props;
+        }
       }
     } catch (error) {
       if (!isAbortError(error)) throw error;
@@ -841,10 +851,10 @@ export const useApp = create<AppState>((set, get) => ({
     }
 
     if (!dockLifecycle.isCurrent(lifecycle)) return false;
-    const listed = await rpc<EntryDto[]>("entry.list");
+    const listed = committedResult?.entry_list ?? await rpc<EntryDto[]>("entry.list");
     if (!dockLifecycle.isCurrent(lifecycle)) return false;
     const entries = Array.isArray(listed) ? listed : [];
-    const stats = await rpc<StatsDto>("stats.get");
+    const stats = committedResult?.stats ?? await rpc<StatsDto>("stats.get");
     if (!dockLifecycle.isCurrent(lifecycle)) return false;
 
     // Publish entries, active Document3, note, caret and navigation reset as
@@ -1254,11 +1264,13 @@ export const useApp = create<AppState>((set, get) => ({
     changedKeys,
     reloadFromDisk = false,
     transaction,
+    committedResult,
   ) => {
     return get().rebindProjectEntries({
       kind: reloadFromDisk ? "external-refresh" : "memory",
       changedKeys,
       transaction,
+      committedResult,
     });
   },
   setDraft: (v) => {
@@ -1654,6 +1666,7 @@ export function connectExternalProjectEvents(): () => void {
     paths: string[];
     sources: Array<"native" | "sidecar">;
     status: "pending" | "sidecar_committed";
+    committedResult?: CommittedRefreshResult;
     coalesced: boolean;
   }> = [];
   let draining = false;
@@ -1697,7 +1710,14 @@ export function connectExternalProjectEvents(): () => void {
           const refreshed = batch.coalesced
             ? null
             : batch.status === "sidecar_committed"
-              ? await state.refreshEntriesAfterExternalChange()
+              ? batch.committedResult
+                ? await state.refreshEntriesAfterExternalChange(
+                    undefined,
+                    true,
+                    undefined,
+                    batch.committedResult,
+                  )
+                : await state.refreshEntriesAfterExternalChange()
               : await state.refreshEntriesAfterExternalChange(
                   undefined,
                   true,
@@ -1789,6 +1809,7 @@ export function connectExternalProjectEvents(): () => void {
     generation,
     sources,
     status,
+    committed_result,
   }) => {
     const state = useApp.getState();
     if (
@@ -1798,6 +1819,7 @@ export function connectExternalProjectEvents(): () => void {
     const existing = pending.find((batch) => batch.id === id);
     if (existing) {
       existing.status = status ?? existing.status;
+      existing.committedResult = committed_result ?? existing.committedResult;
       blocked = null;
       void drain();
       return;
@@ -1838,6 +1860,7 @@ export function connectExternalProjectEvents(): () => void {
         paths: [...paths],
         sources: [...sources],
         status: status ?? "pending",
+        committedResult: committed_result,
         coalesced: true,
       });
     } else {
@@ -1848,6 +1871,7 @@ export function connectExternalProjectEvents(): () => void {
         paths: changedPaths,
         sources: [...sources],
         status: status ?? "pending",
+        committedResult: committed_result,
         coalesced: false,
       });
     }

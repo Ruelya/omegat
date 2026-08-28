@@ -57,7 +57,8 @@ pub use team_utils::{
 };
 pub use tmx_rebase::rebase_tmx;
 pub use transaction_envelope::{
-    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
+    write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
+    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 pub use user_pass_dialog::UserPass;
 
@@ -601,6 +602,127 @@ mod tests {
         )
         .unwrap();
         panic!("resolution crash injection did not terminate the worker");
+    }
+
+    #[test]
+    fn committed_resolution_receipt_survives_crash_without_rollback_or_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let props = ProjectProperties::create(root.clone(), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let key = EntryKeyDto {
+            file: "atomic.txt".into(),
+            source_text: "Atomic conflict".into(),
+            id: Some("atomic_0".into()),
+            prev: None,
+            next: None,
+            path: Some("atomic".into()),
+        };
+        let mut tmx = ProjectTmx::new();
+        tmx.insert(TmxEntry {
+            source: key.source_text.clone(),
+            translation: "ours before commit".into(),
+            default_translation: false,
+            file: Some(key.file.clone()),
+            id: key.id.clone(),
+            prev: key.prev.clone(),
+            next: key.next.clone(),
+            path: key.path.clone(),
+            ..Default::default()
+        });
+        tmx.write(&props.save_tmx_path(), "en", "fr").unwrap();
+        crate::team_settings::save_conflicts(
+            &props,
+            &[Conflict {
+                kind: "tmx".into(),
+                source: key.source_text.clone(),
+                ours: "ours before commit".into(),
+                theirs: "theirs committed once".into(),
+                message: "atomic conflict".into(),
+                entry_key: Some(key.clone()),
+            }],
+        )
+        .unwrap();
+
+        let status = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::team_resolution_committed_crash_worker",
+                "--nocapture",
+            ])
+            .env("OMEGAT_TEAM_COMMITTED_CRASH_PROJECT", &root)
+            .env(
+                "OMEGAT_TEAM_COMMITTED_CRASH_KEY",
+                serde_json::to_string(&key).unwrap(),
+            )
+            .status()
+            .unwrap();
+        assert!(!status.success());
+
+        let active = root.join(".repositories/transactions/active.json");
+        let committed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
+        assert_eq!(committed["status"], "completed");
+        assert_eq!(committed["payload"]["phase"], "committed");
+        assert!(committed["payload"]["product_manifest"]["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|receipt| receipt["path"] == "project/omegat/project_save.tmx"));
+        assert_eq!(
+            committed["commit"]["manifest_sha256"]
+                .as_str()
+                .unwrap()
+                .len(),
+            64
+        );
+        assert!(committed["commit"]["manifest_items"].as_u64().unwrap() > 0);
+
+        let saved = parse_tmx(
+            &std::fs::read_to_string(props.save_tmx_path()).unwrap(),
+            "en",
+            "fr",
+        );
+        assert_eq!(
+            saved
+                .get_multiple_translation_for_key(&key)
+                .unwrap()
+                .translation,
+            "theirs committed once"
+        );
+        assert!(list_conflicts(&props).is_empty());
+
+        assert!(!recover_interrupted_sync(&props).unwrap());
+        assert!(!active.exists());
+        let reopened = parse_tmx(
+            &std::fs::read_to_string(props.save_tmx_path()).unwrap(),
+            "en",
+            "fr",
+        );
+        assert_eq!(
+            reopened
+                .get_multiple_translation_for_key(&key)
+                .unwrap()
+                .translation,
+            "theirs committed once"
+        );
+        assert!(list_conflicts(&props).is_empty());
+    }
+
+    #[test]
+    fn team_resolution_committed_crash_worker() {
+        let (Ok(root), Ok(raw_key)) = (
+            std::env::var("OMEGAT_TEAM_COMMITTED_CRASH_PROJECT"),
+            std::env::var("OMEGAT_TEAM_COMMITTED_CRASH_KEY"),
+        ) else {
+            return;
+        };
+        let props = ProjectProperties::load(Path::new(&root)).unwrap();
+        let key: EntryKeyDto = serde_json::from_str(&raw_key).unwrap();
+        crate::remote_repository_provider::crash_after_product_commit();
+        resolve_for_key(&props, &key.source_text, Some(&key), "theirs", None).unwrap();
+        panic!("committed resolution crash injection did not terminate the worker");
     }
 
     #[test]

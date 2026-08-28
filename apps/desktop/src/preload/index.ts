@@ -53,6 +53,11 @@ contextBridge.exposeInMainWorld("omegat", {
       envelopeVersion?: number;
       status?: "pending" | "sidecar_committed";
       errorCode?: number | null;
+      committed_result?: {
+        entry_list: unknown[];
+        props: unknown;
+        stats: unknown;
+      };
     }) => void,
   ) => {
     const listener = (
@@ -68,6 +73,11 @@ contextBridge.exposeInMainWorld("omegat", {
         envelopeVersion?: number;
         status?: "pending" | "sidecar_committed";
         errorCode?: number | null;
+        committed_result?: {
+          entry_list: unknown[];
+          props: unknown;
+          stats: unknown;
+        };
       },
     ) => fn(event);
     ipcRenderer.on("project:external-change", listener);

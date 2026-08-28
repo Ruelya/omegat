@@ -28,6 +28,11 @@ export type EntrySetResult = {
   entry: EntryDto;
   updated: EntryDto[];
 };
+export type CommittedRefreshResult = {
+  entry_list: EntryDto[];
+  props: ProjectPropsDto;
+  stats: StatsDto;
+};
 export type EditorConflict = {
   index: number;
   key: EntryKeyDto;
@@ -349,6 +354,7 @@ declare global {
           envelopeVersion?: number;
           status?: "pending" | "sidecar_committed";
           errorCode?: number | null;
+          committed_result?: CommittedRefreshResult;
         }) => void,
       ) => () => void;
       saveText?: (name: string, text: string) => Promise<string | null>;

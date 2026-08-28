@@ -1796,7 +1796,7 @@ describe("app store", () => {
     disconnect();
   });
 
-  it("publishes a sidecar-committed checkpoint by memory rebind without replay", async () => {
+  it("rebinds the exact durable sidecar result without refresh, list, or stats replay", async () => {
     const root = "/checkpoint-root";
     const committed = {
       ...sampleEntry,
@@ -1809,6 +1809,14 @@ describe("app store", () => {
       },
       file: "committed.txt",
     };
+    const committedStats = {
+      files: 1,
+      segments: 1,
+      translated: 1,
+      unique_segments: 1,
+      source_words: 2,
+      target_words: 2,
+    };
     const complete = vi.fn(async () => ({ remaining: [] }));
     let notify: Parameters<NonNullable<typeof window.omegat.onProjectExternalChange>>[0]
       | undefined;
@@ -1820,17 +1828,6 @@ describe("app store", () => {
       };
     };
     rpc.mockImplementation(async (method: string) => {
-      if (method === "entry.list") return [committed];
-      if (method === "stats.get") {
-        return {
-          files: 1,
-          segments: 1,
-          translated: 1,
-          unique_segments: 1,
-          source_words: 2,
-          target_words: 2,
-        };
-      }
       if (
         method === "matches.query"
         || method === "glossary.query"
@@ -1866,6 +1863,17 @@ describe("app store", () => {
       envelopeProjectRoot: root,
       status: "sidecar_committed",
       errorCode: null,
+      committed_result: {
+        entry_list: [committed],
+        props: {
+          root,
+          source_lang: "en",
+          target_lang: "fr",
+          sentence_seg: true,
+          has_repositories: false,
+        },
+        stats: committedStats,
+      },
     });
 
     await vi.waitFor(() =>
@@ -1878,6 +1886,8 @@ describe("app store", () => {
     );
     expect(rpc.mock.calls.some(([method]) =>
       method === "project.external-refresh"
+      || method === "entry.list"
+      || method === "stats.get"
     )).toBe(false);
     expect(useApp.getState().document3).toEqual(
       createDocument3("committed source", "committed translation"),

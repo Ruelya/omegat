@@ -282,6 +282,43 @@ pub fn commit(dir: &Path, message: &str) -> Result<String> {
     }
 }
 
+/// Commit a project-root repository without staging the crash-recovery
+/// transaction journal itself.
+pub fn commit_project_tree(dir: &Path, message: &str) -> Result<String> {
+    let repo = open(dir)?;
+    let mut index = repo.index().map_err(map_err)?;
+    index
+        .add_all(["*"].iter(), IndexAddOption::DEFAULT, None)
+        .map_err(map_err)?;
+    index
+        .remove_all([".repositories/transactions/**"].iter(), None)
+        .map_err(map_err)?;
+    index.write().map_err(map_err)?;
+    let oid = index.write_tree().map_err(map_err)?;
+    let tree = repo.find_tree(oid).map_err(map_err)?;
+    let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
+    if let Some(parent) = &parent {
+        if parent.tree_id() == tree.id() {
+            return Ok(parent.id().to_string());
+        }
+    }
+    let signature = repo
+        .signature()
+        .or_else(|_| Signature::now("OmegaT", "omegat@example.com"))
+        .map_err(map_err)?;
+    let parents: Vec<&git2::Commit> = parent.iter().collect();
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        message,
+        &tree,
+        &parents,
+    )
+    .map(|id| id.to_string())
+    .map_err(map_err)
+}
+
 /// Restore an earlier tree without rewriting published history.
 ///
 /// A multi-repository sync can publish one repository before another remote

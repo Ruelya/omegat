@@ -791,10 +791,8 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
             .to_string_lossy()
             .ends_with(".snapshot")));
 
-    let team_history = std::fs::read_to_string(
-        root.join(".repositories/transactions/history.ndjson"),
-    )
-    .unwrap();
+    let team_history =
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson")).unwrap();
     let team_envelope: omegat_team::TransactionEnvelope<Value> =
         serde_json::from_str(team_history.lines().last().unwrap()).unwrap();
     assert_eq!(team_envelope.version, 1);
@@ -1366,12 +1364,29 @@ fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
     assert_eq!(checkpoint["batch_id"], batch_id);
     assert_eq!(checkpoint["status"], "sidecar_committed");
     assert_eq!(checkpoint["generation"], 1);
+    assert_eq!(
+        checkpoint["payload"]["committed_result"]["entry_list"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(checkpoint["commit"]["manifest_items"], 2);
+    assert_eq!(
+        checkpoint["commit"]["manifest_sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
 
     let entries = rpc(&mut second_in, &mut second_out, 6, "entry.list", json!({}));
     assert_eq!(entries["result"].as_array().unwrap().len(), 2);
-    assert!(entries["result"].as_array().unwrap().iter().any(|entry| {
-        entry["source"] == "sidecar committed before renderer ack"
-    }));
+    assert!(entries["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| { entry["source"] == "sidecar committed before renderer ack" }));
 
     let completed = rpc(
         &mut second_in,
@@ -1405,6 +1420,265 @@ fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
         .join(".repositories/transactions/external-refresh.json")
         .exists());
     let _ = second_child.kill();
+}
+
+#[test]
+fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+        fault: Option<&str>,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
+        command.env("OMEGAT_CONFIG_DIR", config);
+        if let Some(fault) = fault {
+            command.env("OMEGAT_TEST_ABORT_EXTERNAL_REFRESH_AT", fault);
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    fn create_project(root: &std::path::Path, initial: &str) {
+        let props = omegat_core::properties::ProjectProperties::create(
+            root.to_path_buf(),
+            "en".into(),
+            "fr".into(),
+            false,
+        );
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        std::fs::write(props.source_dir.join("source.txt"), initial).unwrap();
+    }
+
+    fn start_faulted_refresh(
+        config: &std::path::Path,
+        root: &std::path::Path,
+        app_instance: &str,
+        fault: &str,
+        replacement: &str,
+    ) -> String {
+        let (mut child, mut stdin, mut stdout) = spawn_sidecar(config, Some(fault));
+        rpc(
+            &mut stdin,
+            &mut stdout,
+            1,
+            "project.open",
+            json!({ "root": root }),
+        );
+        let source = root.join("source/source.txt");
+        std::fs::write(&source, replacement).unwrap();
+        let enqueued = rpc(
+            &mut stdin,
+            &mut stdout,
+            2,
+            "project.refresh.enqueue",
+            json!({
+                "root": root,
+                "app_instance": app_instance,
+                "generation": 9,
+                "paths": [source],
+                "fingerprints": { "source/source.txt": replacement },
+                "sources": ["native"]
+            }),
+        );
+        let batch_id = enqueued["result"]["batch"]["batch_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::to_string(&json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "project.external-refresh",
+                "params": {
+                    "transaction_project_root": root,
+                    "transaction_generation": 9,
+                    "transaction_batch_id": batch_id,
+                    "app_instance": app_instance
+                }
+            }))
+            .unwrap()
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+        drop(stdin);
+        assert!(
+            !child.wait().unwrap().success(),
+            "{fault} did not terminate the sidecar"
+        );
+        batch_id
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let before_root = temp.path().join("before-publish");
+    let after_root = temp.path().join("after-publish");
+    create_project(&before_root, "before");
+    create_project(&after_root, "before");
+
+    let before_batch = start_faulted_refresh(
+        &config,
+        &before_root,
+        "electron-before-publish",
+        "before_atomic_publish",
+        "candidate rolled back before receipt",
+    );
+    let before_journal_path = before_root.join(".repositories/transactions/external-refresh.json");
+    let before_journal: Value =
+        serde_json::from_slice(&std::fs::read(&before_journal_path).unwrap()).unwrap();
+    assert_eq!(before_journal["batches"][0]["status"], "pending");
+    assert_eq!(
+        before_journal["batches"][0]["payload"].get("committed_result"),
+        None
+    );
+    assert_eq!(before_journal["batches"][0].get("commit"), None);
+
+    let (mut replay_child, mut replay_in, mut replay_out) = spawn_sidecar(&config, None);
+    rpc(
+        &mut replay_in,
+        &mut replay_out,
+        4,
+        "project.open",
+        json!({ "root": before_root }),
+    );
+    let replay_pending = rpc(
+        &mut replay_in,
+        &mut replay_out,
+        5,
+        "project.refresh.pending",
+        json!({
+            "root": before_root,
+            "app_instance": "electron-replay",
+            "generation": 1
+        }),
+    );
+    assert_eq!(replay_pending["result"]["batches"][0]["status"], "pending");
+    let replayed = rpc(
+        &mut replay_in,
+        &mut replay_out,
+        6,
+        "project.external-refresh",
+        json!({
+            "transaction_project_root": before_root,
+            "transaction_generation": 1,
+            "transaction_batch_id": before_batch,
+            "app_instance": "electron-replay"
+        }),
+    );
+    assert_eq!(replayed["error"], Value::Null);
+    assert_eq!(replayed["result"]["entries"], 1);
+    assert_eq!(
+        replayed["result"]["entry_list"][0]["source"],
+        "candidate rolled back before receipt"
+    );
+    let replay_committed: Value =
+        serde_json::from_slice(&std::fs::read(&before_journal_path).unwrap()).unwrap();
+    assert_eq!(
+        replay_committed["batches"][0]["status"],
+        "sidecar_committed"
+    );
+    assert_eq!(
+        replay_committed["batches"][0]["commit"]["manifest_items"],
+        1
+    );
+    rpc(
+        &mut replay_in,
+        &mut replay_out,
+        7,
+        "project.refresh.complete",
+        json!({
+            "root": before_root,
+            "app_instance": "electron-replay",
+            "generation": 1,
+            "batch_id": before_batch,
+            "outcome": "succeeded"
+        }),
+    );
+    let _ = replay_child.kill();
+
+    let after_batch = start_faulted_refresh(
+        &config,
+        &after_root,
+        "electron-after-publish",
+        "after_atomic_publish",
+        "committed exactly once before crash",
+    );
+    let after_journal_path = after_root.join(".repositories/transactions/external-refresh.json");
+    let after_journal: Value =
+        serde_json::from_slice(&std::fs::read(&after_journal_path).unwrap()).unwrap();
+    assert_eq!(after_journal["batches"][0]["status"], "sidecar_committed");
+    assert_eq!(after_journal["batches"][0]["commit"]["manifest_items"], 1);
+    assert_eq!(
+        after_journal["batches"][0]["payload"]["committed_result"]["entry_list"][0]["source"],
+        "committed exactly once before crash"
+    );
+
+    let (mut rebound_child, mut rebound_in, mut rebound_out) = spawn_sidecar(&config, None);
+    rpc(
+        &mut rebound_in,
+        &mut rebound_out,
+        8,
+        "project.open",
+        json!({ "root": after_root }),
+    );
+    let rebound_pending = rpc(
+        &mut rebound_in,
+        &mut rebound_out,
+        9,
+        "project.refresh.pending",
+        json!({
+            "root": after_root,
+            "app_instance": "electron-rebind",
+            "generation": 1
+        }),
+    );
+    assert_eq!(
+        rebound_pending["result"]["batches"][0]["status"],
+        "sidecar_committed"
+    );
+    assert_eq!(
+        rebound_pending["result"]["batches"][0]["payload"]["committed_result"]["entry_list"][0]
+            ["source"],
+        "committed exactly once before crash"
+    );
+    let rebound_entries = rpc(
+        &mut rebound_in,
+        &mut rebound_out,
+        10,
+        "entry.list",
+        json!({}),
+    );
+    assert_eq!(
+        rebound_entries["result"][0]["source"],
+        "committed exactly once before crash"
+    );
+    rpc(
+        &mut rebound_in,
+        &mut rebound_out,
+        11,
+        "project.refresh.complete",
+        json!({
+            "root": after_root,
+            "app_instance": "electron-rebind",
+            "generation": 1,
+            "batch_id": after_batch,
+            "outcome": "succeeded"
+        }),
+    );
+    assert!(!after_journal_path.exists());
+    let _ = rebound_child.kill();
 }
 
 #[test]

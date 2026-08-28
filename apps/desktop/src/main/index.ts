@@ -107,6 +107,11 @@ type RefreshBatch = {
     paths: string[];
     fingerprints: Record<string, string | null>;
     sources: Array<"native" | "sidecar">;
+    committed_result?: {
+      entry_list: unknown[];
+      props: unknown;
+      stats: unknown;
+    };
   };
 };
 

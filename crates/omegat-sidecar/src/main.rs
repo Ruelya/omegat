@@ -116,6 +116,33 @@ impl App {
         }
     }
 
+    fn handle_external_refresh_transactional(
+        &mut self,
+        id: Value,
+        cancellation: &CancellationToken,
+        publish_commit: impl FnOnce(&Value) -> Result<(), String>,
+    ) -> RpcResponse {
+        let mut committed_result = None;
+        let result = self.session_mut().and_then(|session| {
+            session
+                .refresh_external_cancellable_before_commit(cancellation, |candidate| {
+                    let result = external_refresh_result(candidate);
+                    publish_commit(&result).map_err(omegat_core::CoreError::InvalidProject)?;
+                    committed_result = Some(result);
+                    Ok(())
+                })
+                .map_err(core_err)?;
+            committed_result.ok_or((
+                error_code::INTERNAL_ERROR,
+                "external refresh committed without a product result".into(),
+            ))
+        });
+        match result {
+            Ok(result) => RpcResponse::ok(id, result),
+            Err((code, message)) => RpcResponse::err(id, code, message),
+        }
+    }
+
     fn dispatch(
         &mut self,
         method: &str,
@@ -233,16 +260,7 @@ impl App {
                 self.session_mut()?
                     .refresh_external_cancellable(cancellation)
                     .map_err(core_err)?;
-                let list: Vec<EntryDto> = self
-                    .session()?
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .map(|(i, e)| e.to_dto(i))
-                    .collect();
-                Ok(
-                    json!({"ok": true, "entries": list.len(), "props": self.session()?.props.to_dto()}),
-                )
+                Ok(external_refresh_result(self.session()?))
             }
             "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
             "project.update" => {
@@ -1239,7 +1257,6 @@ impl App {
             .as_mut()
             .ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))
     }
-
 }
 
 fn invalid(e: serde_json::Error) -> (i32, String) {
@@ -1257,6 +1274,22 @@ fn core_err(e: omegat_core::CoreError) -> (i32, String) {
         _ => error_code::INTERNAL_ERROR,
     };
     (code, e.to_string())
+}
+
+fn external_refresh_result(session: &ProjectSession) -> Value {
+    let entry_list: Vec<EntryDto> = session
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| entry.to_dto(index))
+        .collect();
+    json!({
+        "ok": true,
+        "entries": entry_list.len(),
+        "entry_list": entry_list,
+        "props": session.props.to_dto(),
+        "stats": session.stats(),
+    })
 }
 
 fn refresh_journal_err(error: String) -> (i32, String) {
@@ -1320,10 +1353,7 @@ fn refresh_scope(
     params: &Value,
     open_root: Option<&std::path::Path>,
 ) -> std::result::Result<(std::path::PathBuf, String, u64), (i32, String)> {
-    let session_root = open_root.ok_or((
-        error_code::PROJECT_NOT_OPEN,
-        "no project".into(),
-    ))?;
+    let session_root = open_root.ok_or((error_code::PROJECT_NOT_OPEN, "no project".into()))?;
     let root = params
         .get("root")
         .and_then(Value::as_str)
@@ -1477,6 +1507,7 @@ fn settle_external_refresh_journal(
     config_dir: &std::path::Path,
     open_root: Option<&std::path::Path>,
     response_error_code: Option<i32>,
+    response_result: Option<&Value>,
 ) -> Result<(), String> {
     if method != "project.external-refresh" {
         return Ok(());
@@ -1510,14 +1541,29 @@ fn settle_external_refresh_journal(
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "checkpoint requires app_instance".to_string())?;
     match response_error_code {
-        None => refresh_journal::checkpoint_sidecar_commit(
-            config_dir,
-            &root,
-            app_instance,
-            generation,
-            batch_id,
-        )
-        .map(|_| ()),
+        None => {
+            let committed_result = response_result
+                .ok_or_else(|| "successful refresh has no product result".to_string())?;
+            if std::env::var("OMEGAT_TEST_ABORT_EXTERNAL_REFRESH_AT").as_deref()
+                == Ok("before_atomic_publish")
+            {
+                std::process::abort();
+            }
+            refresh_journal::checkpoint_sidecar_commit(
+                config_dir,
+                &root,
+                app_instance,
+                generation,
+                batch_id,
+                committed_result,
+            )?;
+            if std::env::var("OMEGAT_TEST_ABORT_EXTERNAL_REFRESH_AT").as_deref()
+                == Ok("after_atomic_publish")
+            {
+                std::process::abort();
+            }
+            Ok(())
+        }
         Some(error_code::REQUEST_CANCELLED) => refresh_journal::request_cancelled(
             config_dir,
             &root,
@@ -1680,12 +1726,62 @@ fn main() {
                     active.as_deref(),
                 )
             };
-            let mut resp = match refresh_result {
-                Some(Ok(result)) => RpcResponse::ok(id.clone(), result),
-                Some(Err((code, message))) => RpcResponse::err(id.clone(), code, message),
-                None => app.lock().unwrap().handle(req, &cancellation),
+            let scoped_external_refresh = project_lifecycle_method == "project.external-refresh"
+                && transaction_params
+                    .get("transaction_batch_id")
+                    .and_then(Value::as_str)
+                    .is_some();
+            let (mut resp, checkpoint_result, checkpoint_settled) = match refresh_result {
+                Some(Ok(result)) => (RpcResponse::ok(id.clone(), result), Ok(()), false),
+                Some(Err((code, message))) => {
+                    (RpcResponse::err(id.clone(), code, message), Ok(()), false)
+                }
+                None if scoped_external_refresh => {
+                    // Hold the session and journal locks across candidate
+                    // publication. Readers can observe neither the refreshed
+                    // entry list nor its receipt until the atomic rename wins.
+                    let _journal = refresh_journal_lock.lock().unwrap();
+                    let active = open_project.lock().unwrap();
+                    let mut app = app.lock().unwrap();
+                    let response = app.handle_external_refresh_transactional(
+                        id.clone(),
+                        &cancellation,
+                        |committed_result| {
+                            settle_external_refresh_journal(
+                                &project_lifecycle_method,
+                                &transaction_params,
+                                &refresh_config_dir,
+                                active.as_deref(),
+                                None,
+                                Some(committed_result),
+                            )
+                        },
+                    );
+                    let cancellation_checkpoint = if response.error.as_ref().map(|error| error.code)
+                        == Some(error_code::REQUEST_CANCELLED)
+                    {
+                        settle_external_refresh_journal(
+                            &project_lifecycle_method,
+                            &transaction_params,
+                            &refresh_config_dir,
+                            active.as_deref(),
+                            Some(error_code::REQUEST_CANCELLED),
+                            None,
+                        )
+                    } else {
+                        Ok(())
+                    };
+                    (response, cancellation_checkpoint, true)
+                }
+                None => (
+                    app.lock().unwrap().handle(req, &cancellation),
+                    Ok(()),
+                    false,
+                ),
             };
-            let checkpoint_result = {
+            let checkpoint_result = if checkpoint_settled {
+                checkpoint_result
+            } else {
                 let _journal = refresh_journal_lock.lock().unwrap();
                 let active = open_project.lock().unwrap();
                 settle_external_refresh_journal(
@@ -1694,6 +1790,7 @@ fn main() {
                     &refresh_config_dir,
                     active.as_deref(),
                     resp.error.as_ref().map(|error| error.code),
+                    resp.result.as_ref(),
                 )
             };
             if let Err(error) = checkpoint_result {

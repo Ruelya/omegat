@@ -168,6 +168,14 @@ impl ProjectSession {
         self.refresh_external_cancellable(&CancellationToken::default())
     }
 
+    pub fn refresh_external_cancellable_before_commit(
+        &mut self,
+        cancellation: &CancellationToken,
+        before_commit: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<()> {
+        self.refresh_external_cancellable_impl(cancellation, before_commit)
+    }
+
     /// Build an external-filesystem candidate behind one rollback boundary.
     ///
     /// The active session is restored in full if parsing fails or cancellation
@@ -176,6 +184,14 @@ impl ProjectSession {
     pub fn refresh_external_cancellable(
         &mut self,
         cancellation: &CancellationToken,
+    ) -> Result<()> {
+        self.refresh_external_cancellable_impl(cancellation, |_| Ok(()))
+    }
+
+    fn refresh_external_cancellable_impl(
+        &mut self,
+        cancellation: &CancellationToken,
+        before_commit: impl FnOnce(&Self) -> Result<()>,
     ) -> Result<()> {
         let previous_props = self.props.clone();
         let previous_tmx = self.tmx.clone();
@@ -222,6 +238,10 @@ impl ProjectSession {
             if cancellation.is_cancelled() {
                 return Err(CoreError::Cancelled);
             }
+            // The caller may durably publish a transaction envelope here.
+            // ProjectSession remains exclusively borrowed until that publish
+            // succeeds, so no reader can observe the candidate first.
+            before_commit(self)?;
             Ok(())
         })();
         if let Err(error) = result {

@@ -7,12 +7,15 @@ use crate::rebase_and_commit::rebase_all;
 use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
-use crate::transaction_envelope::{TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE};
+use crate::transaction_envelope::{
+    write_json_atomic, TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
+};
 use crate::{team_enabled, SyncReport};
 use fs2::FileExt;
 use omegat_core::cancellation::CancellationToken;
 use omegat_core::properties::ProjectProperties;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -26,6 +29,8 @@ static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
 #[cfg(test)]
 static CRASH_AFTER_PUBLISH_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
+#[cfg(test)]
+static CRASH_AFTER_PRODUCT_COMMIT: AtomicUsize = AtomicUsize::new(0);
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
     if cancellation.is_cancelled() {
@@ -73,6 +78,11 @@ pub(crate) fn crash_after_publish_for(repository_index: usize) {
     CRASH_AFTER_PUBLISH_REPOSITORY.store(repository_index, Ordering::SeqCst);
 }
 
+#[cfg(test)]
+pub(crate) fn crash_after_product_commit() {
+    CRASH_AFTER_PRODUCT_COMMIT.store(1, Ordering::SeqCst);
+}
+
 fn commit_repository(
     props: &ProjectProperties,
     repository_index: usize,
@@ -102,6 +112,7 @@ fn commit_repository(
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct FileRemoteSnapshot {
     repository_index: usize,
     source: PathBuf,
@@ -284,7 +295,25 @@ impl SyncSnapshot {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProductFileReceipt {
+    path: String,
+    kind: String,
+    bytes: u64,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TeamProductManifest {
+    files: Vec<ProductFileReceipt>,
+    repository_versions: Vec<Option<String>>,
+    root_git_version: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct SyncTransactionPayload {
     operation: String,
     phase: String,
@@ -295,6 +324,10 @@ struct SyncTransactionPayload {
     rollback_versions: Vec<Option<String>>,
     commit_started: Vec<usize>,
     published: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    product_manifest: Option<TeamProductManifest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    root_git_rollback: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -344,6 +377,8 @@ impl SyncTransaction {
                 rollback_versions: vec![None; props.repositories.len()],
                 commit_started: Vec::new(),
                 published: Vec::new(),
+                product_manifest: None,
+                root_git_rollback: None,
             },
         ));
         transaction.persist(props)?;
@@ -379,6 +414,8 @@ impl SyncTransaction {
                 rollback_versions: vec![None; props.repositories.len()],
                 commit_started: Vec::new(),
                 published: Vec::new(),
+                product_manifest: None,
+                root_git_rollback: None,
             },
         ));
         transaction.persist(props)?;
@@ -409,30 +446,10 @@ impl SyncTransaction {
         let dir = transaction_dir(props);
         std::fs::create_dir_all(&dir)?;
         let active = dir.join("active.json");
-        let temporary = dir.join(format!(
-            ".active-{}-{}.tmp",
-            std::process::id(),
-            SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let json = serde_json::to_vec_pretty(self)
-            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
-        {
-            let mut file = std::fs::File::create(&temporary)?;
-            file.write_all(&json)?;
-            file.sync_all()?;
-        }
         let previous = dir.join(".active.previous.json");
         remove_path(&previous)?;
-        if active.exists() {
-            std::fs::rename(&active, &previous)?;
-        }
-        if let Err(error) = std::fs::rename(&temporary, &active) {
-            if previous.exists() {
-                let _ = std::fs::rename(&previous, &active);
-            }
-            return Err(error.into());
-        }
-        remove_path(&previous)?;
+        write_json_atomic(&active, self)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         let mut history = OpenOptions::new()
             .create(true)
             .append(true)
@@ -454,6 +471,31 @@ impl SyncTransaction {
         self.phase = phase.into();
         self.0.transition(status, error_code);
         self.persist(props)?;
+        remove_path(&transaction_dir(props).join("active.json"))?;
+        remove_path(&transaction_dir(props).join(".active.previous.json"))?;
+        remove_path(&self.snapshot)?;
+        Ok(())
+    }
+
+    fn publish_product_commit(&mut self, props: &ProjectProperties, phase: &str) -> Result<()> {
+        let manifest = capture_product_manifest(props)?;
+        let manifest_items = manifest.files.len() as u64
+            + manifest.repository_versions.len() as u64
+            + u64::from(manifest.root_git_version.is_some());
+        self.phase = phase.into();
+        self.product_manifest = Some(manifest.clone());
+        self.0
+            .commit_product(TransactionStatus::Completed, &manifest, manifest_items)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        self.persist(props)?;
+        #[cfg(test)]
+        if CRASH_AFTER_PRODUCT_COMMIT.swap(0, Ordering::SeqCst) == 1 {
+            std::process::abort();
+        }
+        Ok(())
+    }
+
+    fn cleanup(self, props: &ProjectProperties) -> Result<()> {
         remove_path(&transaction_dir(props).join("active.json"))?;
         remove_path(&transaction_dir(props).join(".active.previous.json"))?;
         remove_path(&self.snapshot)?;
@@ -496,6 +538,17 @@ impl SyncTransaction {
             .validate_for_root(&props.root)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         if !transaction.0.status.is_recoverable() {
+            if let Some(manifest) = transaction.product_manifest.as_ref() {
+                let manifest_items = manifest.files.len() as u64
+                    + manifest.repository_versions.len() as u64
+                    + u64::from(manifest.root_git_version.is_some());
+                if !transaction.0.verify_product(manifest, manifest_items) {
+                    return Err(TeamError::Command(format!(
+                        "team transaction {} product receipt mismatch",
+                        transaction.0.batch_id
+                    )));
+                }
+            }
             remove_path(&transaction.snapshot)?;
             remove_path(&active)?;
             remove_path(&previous)?;
@@ -503,6 +556,114 @@ impl SyncTransaction {
         }
         Ok(Some(transaction))
     }
+}
+
+fn capture_product_manifest(props: &ProjectProperties) -> Result<TeamProductManifest> {
+    let mut files = Vec::new();
+    collect_product_tree(&props.root, "project", true, &mut files)?;
+    for (index, repo) in props.repositories.iter().enumerate() {
+        if repo.repo_type != "file" || is_inplace(props, repo) {
+            continue;
+        }
+        let remote = PathBuf::from(&repo.url);
+        let prefix = format!("file-remote/{index}");
+        if remote.exists() || remote.is_symlink() {
+            collect_product_tree(&remote, &prefix, false, &mut files)?;
+        } else {
+            files.push(ProductFileReceipt {
+                path: prefix,
+                kind: "missing".into(),
+                bytes: 0,
+                sha256: format!("{:x}", Sha256::digest([])),
+            });
+        }
+    }
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut repository_versions = Vec::with_capacity(props.repositories.len());
+    for repo in &props.repositories {
+        repository_versions.push(if repo.repo_type == "git" {
+            remote_repository_factory::file_version(props, repo, "")?
+        } else {
+            None
+        });
+    }
+    let root_git_version = if props.root.join(".git").exists() {
+        Some(crate::git2_ops::current_version(&props.root)?)
+    } else {
+        None
+    };
+    Ok(TeamProductManifest {
+        files,
+        repository_versions,
+        root_git_version,
+    })
+}
+
+fn collect_product_tree(
+    root: &Path,
+    prefix: &str,
+    exclude_transaction_state: bool,
+    receipts: &mut Vec<ProductFileReceipt>,
+) -> Result<()> {
+    let walker = walkdir::WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            let Ok(relative) = entry.path().strip_prefix(root) else {
+                return false;
+            };
+            if relative.as_os_str().is_empty() {
+                return true;
+            }
+            let mut components = relative.components();
+            let first = components
+                .next()
+                .map(|component| component.as_os_str().to_string_lossy());
+            if matches!(first.as_deref(), Some(".git" | ".svn")) {
+                return false;
+            }
+            !(exclude_transaction_state
+                && relative.starts_with(Path::new(".repositories").join("transactions")))
+        });
+    for entry in walker {
+        let entry = entry.map_err(|error| {
+            TeamError::Command(format!(
+                "walk team product manifest {}: {error}",
+                root.display()
+            ))
+        })?;
+        let relative = entry.path().strip_prefix(root).map_err(|error| {
+            TeamError::Command(format!(
+                "team product manifest path {}: {error}",
+                entry.path().display()
+            ))
+        })?;
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let path = format!("{prefix}/{relative}");
+        let (kind, bytes) = if entry.file_type().is_symlink() {
+            (
+                "symlink",
+                std::fs::read_link(entry.path())?
+                    .to_string_lossy()
+                    .into_owned()
+                    .into_bytes(),
+            )
+        } else if entry.file_type().is_dir() {
+            ("directory", Vec::new())
+        } else {
+            ("file", std::fs::read(entry.path())?)
+        };
+        receipts.push(ProductFileReceipt {
+            path,
+            kind: kind.into(),
+            bytes: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+        });
+    }
+    Ok(())
 }
 
 fn unix_ms() -> u128 {
@@ -637,6 +798,11 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         &transaction.published,
         &transaction.commit_started,
     );
+    if let Some(version) = transaction.root_git_rollback.as_deref() {
+        if let Err(error) = crate::git2_ops::reset_hard(&props.root, version) {
+            failures.push(format!("root git: {error}"));
+        }
+    }
     if let Err(error) = snapshot.restore_project_and_prep(props) {
         failures.push(format!("project: {error}"));
     }
@@ -684,7 +850,12 @@ pub(crate) fn mutate_project_cancellable<T>(
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
-            journal.finish(props, "committed", TransactionStatus::Completed, None)?;
+            if let Err(error) = journal.publish_product_commit(props, "committed") {
+                snapshot.restore_project_and_prep(props)?;
+                journal.finish_for_error(props, "rolled-back", &error)?;
+                return Err(error);
+            }
+            journal.cleanup(props)?;
             Ok(value)
         }
         Err(error) => {
@@ -870,7 +1041,29 @@ pub fn sync_cancellable_scoped(
         )));
     }
 
-    journal.finish(props, "committed", TransactionStatus::Completed, None)?;
+    if let Err(error) = journal.publish_product_commit(props, "committed") {
+        let mut rollback_failures = rollback_repositories(
+            props,
+            &snapshot,
+            &rollback_versions,
+            &published,
+            &commit_started,
+        );
+        if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+            rollback_failures.push(format!("project: {rollback_error}"));
+        }
+        if rollback_failures.is_empty() {
+            journal.finish_for_error(props, "rolled-back", &error)?;
+            return Err(error);
+        }
+        journal.phase = "rollback-failed".into();
+        let _ = journal.persist(props);
+        return Err(TeamError::Command(format!(
+            "{error}; rollback failed: {}",
+            rollback_failures.join(" | ")
+        )));
+    }
+    journal.cleanup(props)?;
     for repo in &props.repositories {
         report
             .message
@@ -924,10 +1117,12 @@ pub fn commit_project_files_cancellable_scoped(
     if !dir.exists() {
         return Err(TeamError::Command(format!("{label} directory missing")));
     }
-    if !props.repositories.is_empty() {
+    let root_git = props.root.join(".git").exists();
+    if !props.repositories.is_empty() || root_git {
         let (mut journal, snapshot) =
             SyncTransaction::begin(props, &format!("commit-{label}"), generation, batch_id)?;
         let mut rollback_versions = vec![None; props.repositories.len()];
+        let mut root_git_rollback = None;
         let mut published = Vec::new();
         let mut commit_started = Vec::new();
         let transaction = (|| -> Result<()> {
@@ -941,12 +1136,19 @@ pub fn commit_project_files_cancellable_scoped(
                         remote_repository_factory::file_version(props, repo, "")?;
                 }
             }
+            if root_git {
+                root_git_rollback = Some(crate::git2_ops::current_version(&props.root)?);
+            }
             journal.rollback_versions.clone_from(&rollback_versions);
+            journal.root_git_rollback.clone_from(&root_git_rollback);
             journal.phase = "staging".into();
             journal.persist(props)?;
             for repo in &props.repositories {
                 check_cancelled(cancellation)?;
                 copy_mapped_cancellable(props, repo, CopyDir::ProjectToRepo, cancellation)?;
+                check_cancelled(cancellation)?;
+            }
+            if root_git {
                 check_cancelled(cancellation)?;
             }
             journal.phase = "publishing".into();
@@ -967,6 +1169,13 @@ pub fn commit_project_files_cancellable_scoped(
                 journal.persist(props)?;
                 check_cancelled(cancellation)?;
             }
+            if root_git {
+                crate::git2_ops::commit_project_tree(
+                    &props.root,
+                    &format!("OmegaT commit {label} files"),
+                )?;
+                check_cancelled(cancellation)?;
+            }
             Ok(())
         })();
         if let Err(error) = transaction {
@@ -977,6 +1186,11 @@ pub fn commit_project_files_cancellable_scoped(
                 &published,
                 &commit_started,
             );
+            if let Some(version) = root_git_rollback.as_deref() {
+                if let Err(rollback_error) = crate::git2_ops::reset_hard(&props.root, version) {
+                    rollback_failures.push(format!("root git: {rollback_error}"));
+                }
+            }
             if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
@@ -991,16 +1205,34 @@ pub fn commit_project_files_cancellable_scoped(
                 rollback_failures.join(" | ")
             )));
         }
-        journal.finish(props, "committed", TransactionStatus::Completed, None)?;
-    } else if props.root.join(".git").exists() {
-        check_cancelled(cancellation)?;
-        crate::git2_ops::add_all(&props.root)?;
-        check_cancelled(cancellation)?;
-        crate::git_remote_repository2::commit(
-            &props.root,
-            &format!("OmegaT commit {label} files"),
-        )?;
-        check_cancelled(cancellation)?;
+        if let Err(error) = journal.publish_product_commit(props, "committed") {
+            let mut rollback_failures = rollback_repositories(
+                props,
+                &snapshot,
+                &rollback_versions,
+                &published,
+                &commit_started,
+            );
+            if let Some(version) = root_git_rollback.as_deref() {
+                if let Err(rollback_error) = crate::git2_ops::reset_hard(&props.root, version) {
+                    rollback_failures.push(format!("root git: {rollback_error}"));
+                }
+            }
+            if let Err(rollback_error) = snapshot.restore_project_and_prep(props) {
+                rollback_failures.push(format!("project: {rollback_error}"));
+            }
+            if rollback_failures.is_empty() {
+                journal.finish_for_error(props, "rolled-back", &error)?;
+                return Err(error);
+            }
+            journal.phase = "rollback-failed".into();
+            let _ = journal.persist(props);
+            return Err(TeamError::Command(format!(
+                "{error}; rollback failed: {}",
+                rollback_failures.join(" | ")
+            )));
+        }
+        journal.cleanup(props)?;
     }
     Ok(SyncReport {
         action: format!("commit-{label}"),
