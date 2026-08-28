@@ -382,7 +382,7 @@ try {
   );
   await triggerEntrySet(launched.client, afterReceipt);
   await waitFor("post-receipt checkpoint", () => pathExists(postMarker));
-  const committed = await activeEnvelope(active, "completed");
+  const committed = await activeEnvelope(active, "sidecar_committed");
   assert.equal(committed.payload.operation, "entry.set");
   assert.equal(committed.commit.manifest_sha256.length, 64);
   const killedAfterReceipt = await killPackaged(launched);
@@ -418,7 +418,7 @@ try {
     void window.omegat.rpc("project.close", {}).catch(() => {});
   })()`);
   await waitFor("close receipt checkpoint", () => pathExists(closeMarker));
-  const closeEnvelope = await activeEnvelope(active, "completed");
+  const closeEnvelope = await activeEnvelope(active, "sidecar_committed");
   assert.equal(closeEnvelope.payload.operation, "project.close");
   const killedAfterClose = await killPackaged(launched);
   launched = undefined;
