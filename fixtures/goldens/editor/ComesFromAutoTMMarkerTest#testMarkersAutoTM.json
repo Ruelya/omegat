@@ -1,0 +1,14 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.ComesFromAutoTMMarkerTest#testMarkersAutoTM",
+  "source": "Edit",
+  "translation": "target",
+  "from_auto": true,
+  "marks": [
+    {
+      "startOffset": 0,
+      "endOffset": 6,
+      "entryPart": "TRANSLATION"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

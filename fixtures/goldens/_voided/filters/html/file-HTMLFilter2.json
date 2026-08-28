@@ -1,0 +1,13 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testParse",
+  "options": {},
+  "sources": ["en", "This is first line.", "This is second line."],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "This is first line.",
+    "translation": "Ceci est la premiere ligne.",
+    "must_contain": "Ceci est la premiere ligne."
+  }
+}

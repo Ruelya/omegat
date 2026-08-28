@@ -1,0 +1,82 @@
+{
+  "java_test": "org.omegat.gui.glossary.GlossaryAutoCompleterViewTest#testSuggestions",
+  "terms": [
+    "foo",
+    "bar",
+    "BAZ"
+  ],
+  "cases": [
+    {
+      "chunk": "",
+      "contextual_only": false,
+      "payloads": [
+        "foo",
+        "bar",
+        "BAZ"
+      ]
+    },
+    {
+      "chunk": "f",
+      "contextual_only": false,
+      "payloads": [
+        "foo"
+      ]
+    },
+    {
+      "chunk": "b",
+      "contextual_only": false,
+      "payloads": [
+        "bar",
+        "baz",
+        "BAZ"
+      ]
+    },
+    {
+      "chunk": "F",
+      "contextual_only": false,
+      "payloads": [
+        "Foo",
+        "foo"
+      ]
+    },
+    {
+      "chunk": "FO",
+      "contextual_only": false,
+      "payloads": [
+        "FOO",
+        "foo"
+      ]
+    },
+    {
+      "chunk": "B",
+      "contextual_only": false,
+      "payloads": [
+        "BAZ",
+        "Bar",
+        "bar"
+      ]
+    },
+    {
+      "chunk": "foo",
+      "contextual_only": false,
+      "payloads": [
+        "foo",
+        "bar",
+        "BAZ"
+      ]
+    },
+    {
+      "chunk": "",
+      "contextual_only": true,
+      "payloads": []
+    },
+    {
+      "chunk": "f",
+      "contextual_only": true,
+      "payloads": [
+        "foo"
+      ]
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
