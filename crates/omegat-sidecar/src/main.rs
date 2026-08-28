@@ -2138,76 +2138,14 @@ fn owner_retry_json(previous_owner_process_ids: &[u32]) -> Value {
     })
 }
 
-fn claim_transaction_owner_with_retry_cancellable(
-    props: &omegat_core::properties::ProjectProperties,
-    app_instance: &str,
-    owner_process_id: u32,
-    generation: u64,
-    owner_retry_timeout: Option<std::time::Duration>,
-    owner_retry_attempts: usize,
-    cancellation: &CancellationToken,
-) -> std::result::Result<Vec<u32>, (i32, String)> {
-    let mut conflict_message = match omegat_team::claim_transaction_dispatch(
-        props,
-        app_instance,
-        owner_process_id,
-        generation,
-    ) {
-        Ok(()) => return Ok(Vec::new()),
-        Err(omegat_team::TeamError::Conflict(message)) => message,
-        Err(other) => return Err((error_code::INTERNAL_ERROR, other.to_string())),
-    };
-    let Some(timeout) = owner_retry_timeout else {
-        return Err((error_code::TEAM_CONFLICT, conflict_message));
-    };
-    let deadline = std::time::Instant::now() + timeout;
-    let mut previous_owners = Vec::with_capacity(owner_retry_attempts);
-    for attempt in 0..owner_retry_attempts {
-        if cancellation.is_cancelled() {
-            return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
+fn transaction_owner_election_error(error: omegat_team::TeamError) -> (i32, String) {
+    match error {
+        omegat_team::TeamError::Cancelled => {
+            (error_code::REQUEST_CANCELLED, "request cancelled".into())
         }
-        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
-            return Err((error_code::TEAM_CONFLICT, conflict_message));
-        };
-        let previous_owner = omegat_team::wait_for_transaction_dispatch_owner_exit_cancellable(
-            props,
-            remaining,
-            cancellation,
-        )
-        .map_err(|error| match error {
-            omegat_team::TeamError::Cancelled => {
-                (error_code::REQUEST_CANCELLED, "request cancelled".into())
-            }
-            other => (error_code::INTERNAL_ERROR, other.to_string()),
-        })?;
-        let Some(previous_owner) = previous_owner else {
-            return Err((error_code::TEAM_CONFLICT, conflict_message));
-        };
-        previous_owners.push(previous_owner);
-        match omegat_team::claim_transaction_dispatch(
-            props,
-            app_instance,
-            owner_process_id,
-            generation,
-        ) {
-            Ok(()) => return Ok(previous_owners),
-            Err(omegat_team::TeamError::Conflict(message))
-                if attempt + 1 < owner_retry_attempts =>
-            {
-                conflict_message = message;
-            }
-            Err(omegat_team::TeamError::Conflict(message)) => {
-                return Err((
-                    error_code::TEAM_CONFLICT,
-                    format!(
-                        "replacement retry after owner pid {previous_owner} exited was rejected: {message}"
-                    ),
-                ));
-            }
-            Err(other) => return Err((error_code::INTERNAL_ERROR, other.to_string())),
-        }
+        omegat_team::TeamError::Conflict(message) => (error_code::TEAM_CONFLICT, message),
+        other => (error_code::INTERNAL_ERROR, other.to_string()),
     }
-    Err((error_code::TEAM_CONFLICT, conflict_message))
 }
 
 fn pending_transaction_envelopes(
@@ -2226,7 +2164,7 @@ fn pending_transaction_envelopes(
     } else {
         refresh_journal::prepare(config_dir, &props.root, app_instance, generation)
             .map_err(refresh_journal_err)?;
-        claim_transaction_owner_with_retry_cancellable(
+        omegat_team::claim_transaction_dispatch_with_retry_cancellable(
             props,
             app_instance,
             owner_process_id,
@@ -2234,7 +2172,8 @@ fn pending_transaction_envelopes(
             owner_retry_timeout,
             owner_retry_attempts,
             cancellation,
-        )?
+        )
+        .map_err(transaction_owner_election_error)?
     };
     let receipt = omegat_team::pending_transaction_receipt_for_claimed_owner(
         props,
@@ -2918,7 +2857,7 @@ fn main() {
                                 )
                                 .map_err(refresh_journal_err)?;
                             }
-                            claim_transaction_owner_with_retry_cancellable(
+                            omegat_team::claim_transaction_dispatch_with_retry_cancellable(
                                 &props,
                                 &app_instance,
                                 owner_process_id,
@@ -2927,6 +2866,7 @@ fn main() {
                                 owner_retry_attempts,
                                 &cancellation,
                             )
+                            .map_err(transaction_owner_election_error)
                         })())
                     }
                     Ok(None) => None,

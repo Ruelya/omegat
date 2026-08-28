@@ -13,8 +13,8 @@ use omegat_core::durable_fifo::{
     DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
 };
 use omegat_core::durable_transaction::{
-    DurableTransactionLayout, DurableTransactionPhase, DurableTransactionRecord,
-    DurableTransactionWorkflow,
+    DurableCoordinatorLockMode, DurableTransactionCoordinator, DurableTransactionLayout,
+    DurableTransactionPhase, DurableTransactionRecord, DurableTransactionWorkflow,
 };
 use omegat_core::prefs::Preferences;
 use omegat_core::segmented_history::{
@@ -377,10 +377,7 @@ impl DurableFifoEntry for ConfigTransactionEnvelope {
         if valid_envelope(self, scope, true) || valid_envelope(self, scope, false) {
             Ok(())
         } else {
-            Err(format!(
-                "invalid config transaction {}",
-                self.batch_id
-            ))
+            Err(format!("invalid config transaction {}", self.batch_id))
         }
     }
 
@@ -900,6 +897,36 @@ fn open_workflow_with_options(
     Ok(workflow)
 }
 
+fn open_config_coordinator(
+    config_dir: &Path,
+    options: SegmentedHistoryOptions,
+) -> Result<DurableTransactionCoordinator<ConfigTransactionEnvelope>, String> {
+    let directory = transaction_dir(config_dir);
+    let had_legacy = legacy_history_exists(config_dir);
+    let coordinator = DurableTransactionCoordinator::open_with_legacy(
+        &directory,
+        config_dir,
+        config_workflow_layout(),
+        options,
+        DurableCoordinatorLockMode::Wait,
+        decode_legacy_active,
+        || legacy_terminal_records(config_dir),
+        &mut |owner, point| {
+            if let Some(owner) = owner {
+                checkpoint(&owner.operation, point, owner)?;
+            }
+            Ok(())
+        },
+        &mut || cleanup_interrupted_candidates(config_dir),
+        &mut || Ok(()),
+    )
+    .map_err(|error| format!("config transaction coordinator: {error}"))?;
+    if had_legacy {
+        remove_legacy_history(config_dir)?;
+    }
+    Ok(coordinator)
+}
+
 fn open_history_with_options(
     config_dir: &Path,
     _owner: Option<&ConfigTransactionEnvelope>,
@@ -1246,13 +1273,13 @@ pub fn execute(
     }
     std::fs::create_dir_all(config_dir)
         .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
-    let _lock = acquire_lock(config_dir)?;
-    let mut workflow = open_workflow_with_options(config_dir, history_options())?;
-    if let Some(existing) = find_terminal(&workflow, batch_id)? {
+    let mut coordinator = open_config_coordinator(config_dir, history_options())?;
+    if let Some(existing) = find_terminal(coordinator.workflow(), batch_id)? {
         validate_identity(&existing, operation, &payload)?;
         return result_from_terminal(&existing);
     }
-    if let Some(existing) = workflow
+    if let Some(existing) = coordinator
+        .workflow()
         .queue()
         .batches
         .iter()
@@ -1273,12 +1300,12 @@ pub fn execute(
             error: None,
             updated_unix_ms: unix_ms(),
         };
-        workflow.upsert(envelope.clone())?;
-        workflow.persist_queue()?;
+        coordinator.workflow_mut().upsert(envelope.clone())?;
+        coordinator.workflow_mut().persist_queue()?;
         checkpoint(operation, "after_enqueue", &envelope)?;
     }
-    drain_locked(config_dir, &mut workflow)?;
-    let terminal = find_terminal(&workflow, batch_id)?
+    drain_locked(config_dir, coordinator.workflow_mut())?;
+    let terminal = find_terminal(coordinator.workflow(), batch_id)?
         .ok_or_else(|| format!("config transaction {batch_id} did not reach history"))?;
     result_from_terminal(&terminal)
 }
@@ -1287,9 +1314,8 @@ pub fn execute(
 pub fn recover(config_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(config_dir)
         .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
-    let _lock = acquire_lock(config_dir)?;
-    let mut workflow = open_workflow_with_options(config_dir, history_options())?;
-    drain_locked(config_dir, &mut workflow)
+    let mut coordinator = open_config_coordinator(config_dir, history_options())?;
+    drain_locked(config_dir, coordinator.workflow_mut())
 }
 
 /// Recover pending writes and read the latest process-shared preferences.
@@ -1484,8 +1510,7 @@ mod tests {
             payload.clone(),
             json!({"exact": "retained"}),
         );
-        let mut workflow =
-            open_workflow_with_options(&config, history_options()).unwrap();
+        let mut workflow = open_workflow_with_options(&config, history_options()).unwrap();
         workflow.upsert(terminal.clone()).unwrap();
         workflow.persist_queue().unwrap();
         drop(workflow);

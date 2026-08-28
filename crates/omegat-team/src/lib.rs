@@ -29,12 +29,15 @@ mod team_settings;
 mod team_tool;
 mod team_utils;
 mod tmx_rebase;
-mod transaction_envelope;
 mod user_pass_dialog;
 
 pub use error::{Conflict, SyncReport, TeamError};
 pub use mapping::{
     copy_mapped, copy_mapped_from_worktree, default_mapping, glob_match, propagate_deleted, CopyDir,
+};
+pub use omegat_core::durable_transaction::{
+    write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
+    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 pub use passphrase_dialog::Passphrase;
 pub use prepared_file_info::PreparedFileInfo;
@@ -47,16 +50,16 @@ pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
     acknowledge_transaction_receipt, acknowledge_transaction_receipt_outcome,
     cancel_refresh_transaction, cancel_transaction_receipt, checkpoint_refresh_transaction,
-    claim_transaction_dispatch, commit_after_version, commit_product_transaction_cancellable,
+    claim_transaction_dispatch, claim_transaction_dispatch_with_retry_cancellable,
+    commit_after_version, commit_product_transaction_cancellable,
     commit_product_transaction_with_paths_cancellable, commit_project_files,
     commit_project_files_cancellable, commit_project_files_cancellable_scoped,
     discard_refresh_transactions, enqueue_refresh_transaction, get_version,
     migrate_refresh_transactions, peek_transaction_receipt, pending_transaction_receipt,
     pending_transaction_receipt_for_claimed_owner, pending_transaction_receipt_for_owner,
     recover_interrupted_sync, switch_to_version, sync, sync_cancellable, sync_cancellable_scoped,
-    transaction_receipt,
-    wait_for_transaction_dispatch_owner_exit, wait_for_transaction_dispatch_owner_exit_cancellable,
-    TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt,
+    transaction_receipt, TransactionRendererAck, TransactionRendererPayload,
+    TransactionRendererReceipt,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -65,10 +68,6 @@ pub use team_utils::{
     relative_remote_to_absolute_local, with_leading_slash, with_slashes, without_slashes,
 };
 pub use tmx_rebase::rebase_tmx;
-pub use transaction_envelope::{
-    write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
-    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
-};
 pub use user_pass_dialog::UserPass;
 
 pub type Result<T> = error::Result<T>;

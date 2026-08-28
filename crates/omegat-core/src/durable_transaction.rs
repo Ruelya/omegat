@@ -9,18 +9,20 @@
 //! publication, compaction, and restartable legacy-history import.
 
 use crate::durable_fifo::{
-    self, DurableFifoEntry, DurableFifoLayout, DurableFifoState, LegacyFifoState,
+    self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState,
+    DurableOwnerClaim, LegacyFifoState, LegacyOwnerClaim, OwnerClaimError, OwnerClaimOutcome,
 };
 use crate::segmented_history::{
     SegmentedHistory, SegmentedHistoryLayout, SegmentedHistoryOptions, SegmentedHistoryRecord,
     SegmentedHistoryStatus,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const TRANSACTION_ENVELOPE_VERSION: u8 = 1;
 pub const REQUEST_CANCELLED_CODE: i32 = -32800;
@@ -226,6 +228,33 @@ impl DurableTransactionPhase {
     pub fn is_dispatchable(self) -> bool {
         matches!(self, Self::Committed)
     }
+
+    /// Whether replacing an active row with `next` preserves the unified
+    /// transaction state machine.
+    pub fn allows(self, next: Self) -> bool {
+        match self {
+            Self::Pending => matches!(
+                next,
+                Self::Pending
+                    | Self::CancellationPending
+                    | Self::Committed
+                    | Self::Terminal
+                    | Self::Acknowledged
+            ),
+            Self::CancellationPending => {
+                matches!(
+                    next,
+                    Self::CancellationPending | Self::Terminal | Self::Acknowledged
+                )
+            }
+            Self::Committed => matches!(
+                next,
+                Self::Committed | Self::CancellationPending | Self::Terminal | Self::Acknowledged
+            ),
+            Self::Terminal => matches!(next, Self::Terminal | Self::Acknowledged),
+            Self::Acknowledged => next == Self::Acknowledged,
+        }
+    }
 }
 
 /// Domain record contract for the shared transaction state machine.
@@ -290,6 +319,13 @@ pub enum DurableAcknowledgement<T> {
     AlreadyPublished(T),
 }
 
+/// Generic record stored in a config-scoped cross-root discovery directory.
+pub trait DurableScopeDiscoveryRecord: DeserializeOwned {
+    fn discovery_scope(&self) -> &Path;
+    fn discovery_updated_unix_ms(&self) -> u128;
+    fn validate_discovery_record(&self) -> Result<(), String>;
+}
+
 /// Deduplicate scopes and order their oldest owner timestamp first.
 ///
 /// Config-scoped receipt discovery calls this after collecting all live and
@@ -312,6 +348,278 @@ pub fn fair_scope_order(candidates: impl IntoIterator<Item = (PathBuf, u128)>) -
     scopes.into_iter().map(|(scope, _)| scope).collect()
 }
 
+/// Read, validate, deduplicate, and fairly order a directory of scope records.
+///
+/// Hidden replacement candidates and non-JSON entries are never considered.
+/// A malformed durable record fails closed instead of silently hiding a root.
+pub fn discover_scopes<T: DurableScopeDiscoveryRecord>(
+    directory: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "read durable transaction discovery directory {}: {error}",
+                directory.display()
+            ))
+        }
+    };
+    let mut candidates = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read durable transaction discovery entry {}: {error}",
+                directory.display()
+            )
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|error| {
+                format!(
+                    "inspect durable transaction discovery entry {}: {error}",
+                    entry.path().display()
+                )
+            })?
+            .is_file()
+        {
+            continue;
+        }
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.')
+            || path.extension().and_then(|value| value.to_str()) != Some("json")
+        {
+            continue;
+        }
+        let bytes = std::fs::read(&path).map_err(|error| {
+            format!(
+                "read durable transaction discovery record {}: {error}",
+                path.display()
+            )
+        })?;
+        let record: T = serde_json::from_slice(&bytes).map_err(|error| {
+            format!(
+                "parse durable transaction discovery record {}: {error}",
+                path.display()
+            )
+        })?;
+        record.validate_discovery_record().map_err(|error| {
+            format!(
+                "invalid durable transaction discovery record {}: {error}",
+                path.display()
+            )
+        })?;
+        if record.discovery_scope().as_os_str().is_empty() {
+            return Err(format!(
+                "invalid durable transaction discovery record {}: scope is empty",
+                path.display()
+            ));
+        }
+        candidates.push((
+            record.discovery_scope().to_path_buf(),
+            record.discovery_updated_unix_ms(),
+        ));
+    }
+    Ok(fair_scope_order(candidates))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableOwnerIdentity {
+    pub app_instance: String,
+    pub process_id: u32,
+    pub generation: u64,
+}
+
+impl DurableOwnerIdentity {
+    pub fn new(
+        app_instance: impl Into<String>,
+        process_id: u32,
+        generation: u64,
+    ) -> Result<Self, String> {
+        let identity = Self {
+            app_instance: app_instance.into(),
+            process_id,
+            generation,
+        };
+        if identity.app_instance.is_empty() || identity.process_id == 0 || identity.generation == 0
+        {
+            return Err(
+                "durable owner identity requires app instance, process id, and generation".into(),
+            );
+        }
+        Ok(identity)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurableOwnerRetry {
+    pub timeout: Duration,
+    pub max_owner_deaths: usize,
+    pub poll_interval: Duration,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DurableOwnerElection {
+    pub claim: DurableOwnerClaim,
+    pub previous_owner_process_ids: Vec<u32>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DurableOwnerElectionError {
+    Busy,
+    Live(DurableOwnerClaim),
+    Cancelled,
+    TimedOut(Option<DurableOwnerClaim>),
+    Durable(String),
+}
+
+impl std::fmt::Display for DurableOwnerElectionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Busy => formatter.write_str("durable transaction coordinator is locked"),
+            Self::Live(claim) => write!(
+                formatter,
+                "transaction dispatcher is owned by live app {} (pid {})",
+                claim.app_instance, claim.process_id
+            ),
+            Self::Cancelled => formatter.write_str("durable owner election was cancelled"),
+            Self::TimedOut(Some(claim)) => write!(
+                formatter,
+                "timed out waiting for transaction dispatcher {} (pid {})",
+                claim.app_instance, claim.process_id
+            ),
+            Self::TimedOut(None) => {
+                formatter.write_str("timed out waiting for durable transaction coordinator")
+            }
+            Self::Durable(error) => formatter.write_str(error),
+        }
+    }
+}
+
+/// Elect one dispatcher, optionally waiting through multiple owner deaths.
+///
+/// Every claim attempt and domain recovery callback runs under the same OS
+/// lock. Cancellation is observed only while waiting and therefore cannot
+/// mutate, release, or partially replace the current durable owner.
+pub fn elect_owner_with_legacy<F, A, C, P, W>(
+    directory: &Path,
+    scope: &Path,
+    layout: &DurableFifoLayout,
+    identity: &DurableOwnerIdentity,
+    retry: Option<DurableOwnerRetry>,
+    decode_legacy: F,
+    process_is_alive: A,
+    mut is_cancelled: C,
+    mut prepare_locked: P,
+    mut owner_waiting: W,
+) -> Result<DurableOwnerElection, DurableOwnerElectionError>
+where
+    F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String> + Copy,
+    A: Fn(u32) -> bool,
+    C: FnMut() -> bool,
+    P: FnMut() -> Result<(), String>,
+    W: FnMut(&DurableOwnerClaim) -> Result<(), String>,
+{
+    let deadline = retry.map(|options| Instant::now() + options.timeout);
+    let poll_interval = retry
+        .map(|options| options.poll_interval)
+        .filter(|interval| !interval.is_zero())
+        .unwrap_or(Duration::from_millis(25));
+    let mut previous_owner_process_ids = Vec::new();
+    let mut last_live_owner = None;
+    loop {
+        if is_cancelled() {
+            return Err(DurableOwnerElectionError::Cancelled);
+        }
+        let lock = loop {
+            match DurableFifoLock::try_acquire(directory, &layout.lock_file)
+                .map_err(DurableOwnerElectionError::Durable)?
+            {
+                Some(lock) => break lock,
+                None if retry.is_none() => return Err(DurableOwnerElectionError::Busy),
+                None => {
+                    if is_cancelled() {
+                        return Err(DurableOwnerElectionError::Cancelled);
+                    }
+                    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                        return Err(DurableOwnerElectionError::TimedOut(last_live_owner.clone()));
+                    }
+                    std::thread::sleep(poll_interval);
+                }
+            }
+        };
+        prepare_locked().map_err(DurableOwnerElectionError::Durable)?;
+        let outcome = durable_fifo::claim_owner_with_legacy(
+            directory,
+            scope,
+            layout,
+            &identity.app_instance,
+            identity.process_id,
+            identity.generation,
+            decode_legacy,
+            &process_is_alive,
+        );
+        drop(lock);
+        match outcome {
+            Ok(OwnerClaimOutcome::Retained(claim))
+            | Ok(OwnerClaimOutcome::Published { claim, .. }) => {
+                return Ok(DurableOwnerElection {
+                    claim,
+                    previous_owner_process_ids,
+                })
+            }
+            Err(OwnerClaimError::Durable(error)) => {
+                return Err(DurableOwnerElectionError::Durable(error))
+            }
+            Err(OwnerClaimError::Live(claim)) => {
+                if retry.is_none() {
+                    return Err(DurableOwnerElectionError::Live(claim));
+                }
+                let options = retry.expect("checked above");
+                if previous_owner_process_ids.len() >= options.max_owner_deaths {
+                    return Err(DurableOwnerElectionError::Live(claim));
+                }
+                owner_waiting(&claim).map_err(DurableOwnerElectionError::Durable)?;
+                last_live_owner = Some(claim.clone());
+                while process_is_alive(claim.process_id) {
+                    if is_cancelled() {
+                        return Err(DurableOwnerElectionError::Cancelled);
+                    }
+                    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                        return Err(DurableOwnerElectionError::TimedOut(Some(claim)));
+                    }
+                    std::thread::sleep(poll_interval);
+                }
+                previous_owner_process_ids.push(claim.process_id);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DurableCoordinatorLockMode {
+    Try,
+    Wait,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DurableCoordinatorOpenError {
+    Locked,
+    Durable(String),
+}
+
+impl std::fmt::Display for DurableCoordinatorOpenError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Locked => formatter.write_str("durable transaction coordinator is locked"),
+            Self::Durable(error) => formatter.write_str(error),
+        }
+    }
+}
+
 /// One opened transaction queue and its exact segmented history.
 ///
 /// Callers hold the domain OS lock for the lifetime of this value.
@@ -322,6 +630,170 @@ pub struct DurableTransactionWorkflow<T: DurableTransactionRecord> {
     queue: DurableFifoState<T>,
     history: SegmentedHistory<T>,
     imported_legacy_history: bool,
+}
+
+/// One locked generic transaction workflow.
+///
+/// Queue/history recovery and the OS exclusion guard share this lifetime, so a
+/// domain cannot accidentally reopen state outside the lock or split owner
+/// validation from FIFO-head selection.
+pub struct DurableTransactionCoordinator<T: DurableTransactionRecord> {
+    directory: PathBuf,
+    scope: PathBuf,
+    layout: DurableTransactionLayout,
+    _lock: DurableFifoLock,
+    waited: bool,
+    workflow: DurableTransactionWorkflow<T>,
+}
+
+impl<T: DurableTransactionRecord> DurableTransactionCoordinator<T> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_with_legacy<Q, H, C, P, W>(
+        directory: &Path,
+        scope: &Path,
+        layout: DurableTransactionLayout,
+        options: SegmentedHistoryOptions,
+        lock_mode: DurableCoordinatorLockMode,
+        decode_queue: Q,
+        legacy_history: H,
+        checkpoint: &mut C,
+        prepare_locked: &mut P,
+        wait_hook: &mut W,
+    ) -> Result<Self, DurableCoordinatorOpenError>
+    where
+        Q: Fn(&[u8]) -> Result<Option<LegacyFifoState<T>>, String>,
+        H: FnOnce() -> Result<Vec<T>, String>,
+        C: FnMut(Option<&T>, &str) -> Result<(), String>,
+        P: FnMut() -> Result<(), String>,
+        W: FnMut() -> Result<(), String>,
+    {
+        let (lock, waited) = match DurableFifoLock::try_acquire(directory, &layout.fifo.lock_file)
+            .map_err(DurableCoordinatorOpenError::Durable)?
+        {
+            Some(lock) => (lock, false),
+            None if lock_mode == DurableCoordinatorLockMode::Try => {
+                return Err(DurableCoordinatorOpenError::Locked)
+            }
+            None => {
+                wait_hook().map_err(DurableCoordinatorOpenError::Durable)?;
+                (
+                    DurableFifoLock::acquire(directory, &layout.fifo.lock_file)
+                        .map_err(DurableCoordinatorOpenError::Durable)?,
+                    true,
+                )
+            }
+        };
+        prepare_locked().map_err(DurableCoordinatorOpenError::Durable)?;
+        let workflow = DurableTransactionWorkflow::open_with_legacy(
+            directory,
+            scope,
+            layout.clone(),
+            options,
+            decode_queue,
+            legacy_history,
+            checkpoint,
+        )
+        .map_err(DurableCoordinatorOpenError::Durable)?;
+        Ok(Self {
+            directory: directory.to_path_buf(),
+            scope: durable_fifo::normalized(scope),
+            layout,
+            _lock: lock,
+            waited,
+            workflow,
+        })
+    }
+
+    pub fn open(
+        directory: &Path,
+        scope: &Path,
+        layout: DurableTransactionLayout,
+        options: SegmentedHistoryOptions,
+        lock_mode: DurableCoordinatorLockMode,
+    ) -> Result<Self, DurableCoordinatorOpenError> {
+        Self::open_with_legacy(
+            directory,
+            scope,
+            layout,
+            options,
+            lock_mode,
+            |_| Ok(None),
+            || Ok(Vec::new()),
+            &mut |_, _| Ok(()),
+            &mut || Ok(()),
+            &mut || Ok(()),
+        )
+    }
+
+    pub fn waited(&self) -> bool {
+        self.waited
+    }
+
+    pub fn workflow(&self) -> &DurableTransactionWorkflow<T> {
+        &self.workflow
+    }
+
+    pub fn workflow_mut(&mut self) -> &mut DurableTransactionWorkflow<T> {
+        &mut self.workflow
+    }
+
+    pub fn load_owner_with_legacy<F>(
+        &self,
+        decode_legacy: F,
+    ) -> Result<Option<DurableOwnerClaim>, String>
+    where
+        F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String>,
+    {
+        durable_fifo::load_owner_with_legacy(
+            &self.directory,
+            &self.scope,
+            &self.layout.fifo,
+            decode_legacy,
+        )
+    }
+
+    pub fn verify_owner_with_legacy<F>(
+        &self,
+        identity: &DurableOwnerIdentity,
+        decode_legacy: F,
+    ) -> Result<DurableOwnerClaim, String>
+    where
+        F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String>,
+    {
+        let owner = self
+            .load_owner_with_legacy(decode_legacy)?
+            .ok_or_else(|| "transaction dispatcher owner disappeared".to_string())?;
+        if owner.app_instance != identity.app_instance
+            || owner.process_id != identity.process_id
+            || owner.generation != identity.generation
+        {
+            return Err(format!(
+                "transaction dispatcher owner changed to {} (pid {}, generation {})",
+                owner.app_instance, owner.process_id, owner.generation
+            ));
+        }
+        Ok(owner)
+    }
+
+    /// Release the current owner only after the active FIFO is empty.
+    pub fn release_idle_owner_with_legacy<F>(&mut self, decode_legacy: F) -> Result<bool, String>
+    where
+        F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String> + Copy,
+    {
+        if !self.workflow.queue().batches.is_empty() {
+            return Ok(false);
+        }
+        let Some(owner) = self.load_owner_with_legacy(decode_legacy)? else {
+            return Ok(false);
+        };
+        durable_fifo::release_owner_with_legacy(
+            &self.directory,
+            &self.scope,
+            &self.layout.fifo,
+            &owner,
+            decode_legacy,
+        )
+    }
 }
 
 impl<T: DurableTransactionRecord> DurableTransactionWorkflow<T> {
@@ -448,6 +920,13 @@ impl<T: DurableTransactionRecord> DurableTransactionWorkflow<T> {
             .iter_mut()
             .find(|existing| existing.transaction_id() == id)
         {
+            let current = existing.transaction_phase();
+            let next = record.transaction_phase();
+            if !current.allows(next) {
+                return Err(format!(
+                    "invalid durable transaction transition {current:?} -> {next:?} for {id}"
+                ));
+            }
             *existing = record;
         } else {
             self.queue.batches.push(record);
@@ -1132,5 +1611,377 @@ mod tests {
                 durable_fifo::normalized(&c),
             ]
         );
+    }
+
+    const PROJECT_WRITERS: &[&str] = &[
+        "entry.set",
+        "project.save",
+        "project.close",
+        "project.reload",
+        "project.compile",
+        "project.import",
+        "project.update",
+        "team.mapping",
+        "team.sync",
+        "team.commit",
+        "team.resolve",
+        "align.write",
+        "glossary.add",
+        "search.replace",
+        "spell.ignore",
+        "spell.learn",
+        "tmx.export",
+        "wiki.import",
+        "script.run",
+        "script.slot",
+        "project.external-refresh",
+    ];
+
+    const CONFIG_WRITERS: &[&str] = &["prefs.patch", "aligner.configure", "spell.install"];
+
+    fn all_writers() -> impl Iterator<Item = &'static str> {
+        PROJECT_WRITERS.iter().chain(CONFIG_WRITERS).copied()
+    }
+
+    #[test]
+    fn every_writer_recovers_every_acknowledgement_crash_boundary() {
+        for (sequence, operation) in all_writers().enumerate() {
+            for stopped_at in [
+                "after_terminal_queue_publish",
+                "after_terminal_history_publish",
+                "after_ack_queue_compaction",
+            ] {
+                let temp = tempfile::tempdir().unwrap();
+                let scope = temp.path().join(format!("scope-{sequence}"));
+                std::fs::create_dir_all(&scope).unwrap();
+                let directory = scope.join("transactions");
+                let layout = DurableTransactionLayout::default();
+                let id = format!("{operation}-{stopped_at}");
+                let mut workflow =
+                    DurableTransactionWorkflow::open(&directory, &scope, layout.clone(), options())
+                        .unwrap();
+                let mut committed = record(&scope, &id, "committed", sequence as u64);
+                committed.value = serde_json::json!({"operation": operation});
+                workflow.upsert(committed).unwrap();
+                workflow.persist_queue().unwrap();
+                let mut terminal = record(&scope, &id, "acknowledged", sequence as u64);
+                terminal.value = serde_json::json!({"operation": operation});
+                let error = workflow
+                    .acknowledge_head(
+                        &id,
+                        terminal.clone(),
+                        |row| row.transaction_phase().is_dispatchable(),
+                        &mut |_| Ok(()),
+                        &mut |point| {
+                            if point == stopped_at {
+                                Err(format!("crash:{point}"))
+                            } else {
+                                Ok(())
+                            }
+                        },
+                    )
+                    .unwrap_err();
+                assert_eq!(error, format!("crash:{stopped_at}"));
+                drop(workflow);
+
+                let mut recovered =
+                    DurableTransactionWorkflow::open(&directory, &scope, layout, options())
+                        .unwrap();
+                recovered
+                    .acknowledge_head(
+                        &id,
+                        terminal.clone(),
+                        |row| row.transaction_phase().is_dispatchable(),
+                        &mut |_| Ok(()),
+                        &mut |_| Ok(()),
+                    )
+                    .unwrap();
+                assert_eq!(recovered.history_records(&id).unwrap(), vec![terminal]);
+                assert_eq!(
+                    recovered
+                        .queue()
+                        .batches
+                        .iter()
+                        .filter(|row| row.transaction_id() == id)
+                        .count(),
+                    0
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_writer_resumes_every_history_migration_crash_boundary() {
+        const POINTS: &[&str] = &[
+            "after_recent_append",
+            "after_hot_append",
+            "after_segment_candidate_write",
+            "after_segment_candidate_fsync",
+            "after_segment_rename",
+            "after_segment_parent_fsync",
+            "after_manifest_publish",
+            "after_hot_prune",
+            "after_generation_manifest_publish",
+            "after_gc_delete",
+        ];
+        for (writer_index, operation) in all_writers().enumerate() {
+            for point in POINTS {
+                let temp = tempfile::tempdir().unwrap();
+                let scope = temp.path().join(format!("migration-{writer_index}"));
+                std::fs::create_dir_all(&scope).unwrap();
+                let directory = scope.join("transactions");
+                let layout = DurableTransactionLayout::default();
+                let legacy = (0..8)
+                    .map(|row| {
+                        let mut record = record(
+                            &scope,
+                            &format!("{operation}-legacy-{row}"),
+                            "acknowledged",
+                            row,
+                        );
+                        record.value = serde_json::json!({
+                            "operation": operation,
+                            "sequence": row,
+                        });
+                        record
+                    })
+                    .collect::<Vec<_>>();
+                let stopped = std::cell::Cell::new(false);
+                let first = DurableTransactionWorkflow::open_with_legacy(
+                    &directory,
+                    &scope,
+                    layout.clone(),
+                    options(),
+                    |_| Ok(None),
+                    || Ok(legacy.clone()),
+                    &mut |_, reached| {
+                        if reached == *point && !stopped.replace(true) {
+                            Err(format!("crash:{reached}"))
+                        } else {
+                            Ok(())
+                        }
+                    },
+                );
+                assert!(
+                    stopped.get(),
+                    "{operation} did not reach migration crash point {point}"
+                );
+                assert_eq!(first.err().unwrap(), format!("crash:{point}"));
+
+                let recovered = DurableTransactionWorkflow::open_with_legacy(
+                    &directory,
+                    &scope,
+                    layout,
+                    options(),
+                    |_| Ok(None),
+                    || panic!("durable migration seed did not suppress legacy rediscovery"),
+                    &mut |_, _| Ok(()),
+                )
+                .unwrap();
+                for expected in legacy {
+                    assert_eq!(
+                        recovered
+                            .history_records(expected.transaction_id())
+                            .unwrap(),
+                        vec![expected]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_writer_fails_closed_on_equal_revision_replica_divergence() {
+        for (sequence, operation) in all_writers().enumerate() {
+            let temp = tempfile::tempdir().unwrap();
+            let scope = temp.path().join(format!("replica-{sequence}"));
+            std::fs::create_dir_all(&scope).unwrap();
+            let directory = scope.join("transactions");
+            let layout = DurableTransactionLayout::default();
+            let id = format!("{operation}-replica");
+            let mut workflow =
+                DurableTransactionWorkflow::open(&directory, &scope, layout.clone(), options())
+                    .unwrap();
+            let mut pending = record(&scope, &id, "pending", sequence as u64);
+            pending.value = serde_json::json!({"operation": operation, "copy": "recovery"});
+            workflow.upsert(pending).unwrap();
+            workflow.persist_queue().unwrap();
+            drop(workflow);
+
+            let mut primary: DurableFifoState<Record> = serde_json::from_slice(
+                &std::fs::read(directory.join(&layout.fifo.primary_file)).unwrap(),
+            )
+            .unwrap();
+            primary.batches[0].value["copy"] = Value::String("primary".into());
+            std::fs::write(
+                directory.join(&layout.fifo.primary_file),
+                serde_json::to_vec_pretty(&primary).unwrap(),
+            )
+            .unwrap();
+            let error =
+                DurableTransactionWorkflow::<Record>::open(&directory, &scope, layout, options())
+                    .err()
+                    .unwrap();
+            assert!(error.contains("replicas disagree at revision 1"));
+        }
+    }
+
+    #[test]
+    fn coordinator_handles_multi_generation_takeover_release_and_cancelled_wait() {
+        let temp = tempfile::tempdir().unwrap();
+        let scope = temp.path().join("scope");
+        std::fs::create_dir_all(&scope).unwrap();
+        let directory = scope.join("transactions");
+        let layout = DurableTransactionLayout::default();
+        let first = durable_fifo::claim_owner(
+            &directory,
+            &scope,
+            &layout.fifo,
+            "generation-one",
+            101,
+            1,
+            |_| false,
+        )
+        .unwrap();
+        let OwnerClaimOutcome::Published {
+            claim: first_claim, ..
+        } = first
+        else {
+            panic!("first owner was not published");
+        };
+        let liveness_checks = std::sync::atomic::AtomicU64::new(0);
+        let election = elect_owner_with_legacy(
+            &directory,
+            &scope,
+            &layout.fifo,
+            &DurableOwnerIdentity::new("generation-two", 202, 2).unwrap(),
+            Some(DurableOwnerRetry {
+                timeout: Duration::from_secs(1),
+                max_owner_deaths: 3,
+                poll_interval: Duration::from_millis(1),
+            }),
+            |_| Ok(None),
+            |pid| {
+                pid == 101 && liveness_checks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2
+            },
+            || false,
+            || Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(election.previous_owner_process_ids, vec![101]);
+        assert_eq!(election.claim.generation, 2);
+        assert!(election.claim.revision > first_claim.revision);
+
+        let mut coordinator = DurableTransactionCoordinator::<Record>::open(
+            &directory,
+            &scope,
+            layout.clone(),
+            options(),
+            DurableCoordinatorLockMode::Wait,
+        )
+        .unwrap();
+        assert!(coordinator
+            .release_idle_owner_with_legacy(|_| Ok(None))
+            .unwrap());
+        assert_eq!(
+            durable_fifo::load_owner(&directory, &scope, &layout.fifo).unwrap(),
+            None
+        );
+        drop(coordinator);
+
+        let cancelled = elect_owner_with_legacy(
+            &directory,
+            &scope,
+            &layout.fifo,
+            &DurableOwnerIdentity::new("generation-three", 303, 3).unwrap(),
+            Some(DurableOwnerRetry {
+                timeout: Duration::from_secs(1),
+                max_owner_deaths: 3,
+                poll_interval: Duration::from_millis(1),
+            }),
+            |_| Ok(None),
+            |_| false,
+            || true,
+            || panic!("cancelled election acquired and prepared the lock"),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(cancelled, DurableOwnerElectionError::Cancelled);
+        assert_eq!(
+            durable_fifo::load_owner(&directory, &scope, &layout.fifo).unwrap(),
+            None
+        );
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct DiscoveryRecord {
+        root: PathBuf,
+        updated: u128,
+        valid: bool,
+    }
+
+    impl DurableScopeDiscoveryRecord for DiscoveryRecord {
+        fn discovery_scope(&self) -> &Path {
+            &self.root
+        }
+
+        fn discovery_updated_unix_ms(&self) -> u128 {
+            self.updated
+        }
+
+        fn validate_discovery_record(&self) -> Result<(), String> {
+            if self.valid {
+                Ok(())
+            } else {
+                Err("record was marked invalid".into())
+            }
+        }
+    }
+
+    #[test]
+    fn generic_cross_root_discovery_is_fair_and_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("discovery");
+        std::fs::create_dir_all(&directory).unwrap();
+        let a = temp.path().join("a");
+        let b = temp.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        for (name, root, updated) in [
+            ("a-old.json", &a, 1_u128),
+            ("a-new.json", &a, 3),
+            ("b.json", &b, 2),
+        ] {
+            std::fs::write(
+                directory.join(name),
+                serde_json::to_vec(&serde_json::json!({
+                    "root": root,
+                    "updated": updated,
+                    "valid": true,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        std::fs::write(directory.join(".candidate.json"), b"{").unwrap();
+        std::fs::write(directory.join("ignored.txt"), b"{").unwrap();
+        assert_eq!(
+            discover_scopes::<DiscoveryRecord>(&directory).unwrap(),
+            vec![durable_fifo::normalized(&b), durable_fifo::normalized(&a)]
+        );
+
+        std::fs::write(
+            directory.join("invalid.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "root": a,
+                "updated": 4,
+                "valid": false,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let error = discover_scopes::<DiscoveryRecord>(&directory).unwrap_err();
+        assert!(error.contains("record was marked invalid"));
     }
 }

@@ -427,6 +427,12 @@ pub struct DurableOwnerClaim {
     pub process_id: u32,
     pub generation: u64,
     pub claim_id: String,
+    /// Durable tombstone written when an idle dispatcher releases ownership.
+    ///
+    /// Keeping the tombstone in both replicas makes release restart-safe: a
+    /// crash can never leave one surviving live claim that resurrects an owner.
+    #[serde(default)]
+    pub released: bool,
     pub updated_unix_ms: u128,
 }
 
@@ -514,6 +520,7 @@ where
                     process_id: legacy.process_id,
                     generation: legacy.generation,
                     claim_id: legacy.claim_id,
+                    released: false,
                     updated_unix_ms: legacy.updated_unix_ms,
                 }
             }
@@ -555,7 +562,7 @@ where
     })
 }
 
-pub fn load_owner_with_legacy<F>(
+fn load_owner_record_with_legacy<F>(
     directory: &Path,
     scope: &Path,
     layout: &DurableFifoLayout,
@@ -624,6 +631,21 @@ where
     Ok(Some(selected))
 }
 
+pub fn load_owner_with_legacy<F>(
+    directory: &Path,
+    scope: &Path,
+    layout: &DurableFifoLayout,
+    decode_legacy: F,
+) -> Result<Option<DurableOwnerClaim>, String>
+where
+    F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String>,
+{
+    Ok(
+        load_owner_record_with_legacy(directory, scope, layout, decode_legacy)?
+            .filter(|claim| !claim.released),
+    )
+}
+
 pub fn load_owner(
     directory: &Path,
     scope: &Path,
@@ -672,13 +694,17 @@ where
             "durable owner claim requires app instance, process id, and generation".into(),
         ));
     }
-    let previous = load_owner_with_legacy(directory, scope, layout, decode_legacy)
+    let previous = load_owner_record_with_legacy(directory, scope, layout, decode_legacy)
         .map_err(OwnerClaimError::Durable)?;
     if let Some(previous) = &previous {
-        if previous.app_instance != app_instance && process_is_alive(previous.process_id) {
+        if !previous.released
+            && previous.app_instance != app_instance
+            && process_is_alive(previous.process_id)
+        {
             return Err(OwnerClaimError::Live(previous.clone()));
         }
-        if previous.app_instance == app_instance
+        if !previous.released
+            && previous.app_instance == app_instance
             && previous.process_id == process_id
             && previous.generation == generation
         {
@@ -697,11 +723,14 @@ where
         process_id,
         generation,
         claim_id: format!("{}-{process_id}-{sequence}", unix_ms()),
+        released: false,
         updated_unix_ms: unix_ms(),
     };
     publish_owner_exact(directory, layout, &claim).map_err(OwnerClaimError::Durable)?;
     Ok(OwnerClaimOutcome::Published {
-        previous_process_id: previous.map(|claim| claim.process_id),
+        previous_process_id: previous
+            .filter(|claim| !claim.released)
+            .map(|claim| claim.process_id),
         claim,
     })
 }
@@ -728,6 +757,57 @@ where
         |_| Ok(None),
         process_is_alive,
     )
+}
+
+/// Publish an exact durable owner tombstone.
+///
+/// The caller must hold [`DurableFifoLock`]. A stale owner cannot release a
+/// newer claim because all identity fields, including `claim_id`, are checked.
+/// Tombstones intentionally remain as same-value replicas so process death at
+/// any later point cannot resurrect the released owner.
+pub fn release_owner_with_legacy<F>(
+    directory: &Path,
+    scope: &Path,
+    layout: &DurableFifoLayout,
+    expected: &DurableOwnerClaim,
+    decode_legacy: F,
+) -> Result<bool, String>
+where
+    F: Fn(&[u8]) -> Result<Option<LegacyOwnerClaim>, String>,
+{
+    let Some(current) = load_owner_record_with_legacy(directory, scope, layout, decode_legacy)?
+    else {
+        return Ok(false);
+    };
+    if current.released {
+        return Ok(false);
+    }
+    if current.scope != expected.scope
+        || current.app_instance != expected.app_instance
+        || current.process_id != expected.process_id
+        || current.generation != expected.generation
+        || current.claim_id != expected.claim_id
+    {
+        return Err(format!(
+            "durable owner changed before release to {} (pid {}, generation {})",
+            current.app_instance, current.process_id, current.generation
+        ));
+    }
+    let mut tombstone = current;
+    tombstone.revision = tombstone.revision.saturating_add(1);
+    tombstone.released = true;
+    tombstone.updated_unix_ms = unix_ms();
+    publish_owner_exact(directory, layout, &tombstone)?;
+    Ok(true)
+}
+
+pub fn release_owner(
+    directory: &Path,
+    scope: &Path,
+    layout: &DurableFifoLayout,
+    expected: &DurableOwnerClaim,
+) -> Result<bool, String> {
+    release_owner_with_legacy(directory, scope, layout, expected, |_| Ok(None))
 }
 
 pub fn normalized(path: &Path) -> PathBuf {

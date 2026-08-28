@@ -9,11 +9,10 @@
 //! `external-refresh.json` installations idempotently.
 
 use omegat_core::durable_transaction::{
-    write_json_atomic, TransactionEnvelope, TRANSACTION_ENVELOPE_VERSION,
+    discover_scopes, write_json_atomic, DurableScopeDiscoveryRecord, TransactionEnvelope,
+    TRANSACTION_ENVELOPE_VERSION,
 };
-use omegat_team::{
-    TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt,
-};
+use omegat_team::{TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -52,6 +51,29 @@ struct ActiveProject {
     #[serde(default)]
     generation: u64,
     updated_unix_ms: u128,
+}
+
+impl DurableScopeDiscoveryRecord for ActiveProject {
+    fn discovery_scope(&self) -> &Path {
+        &self.project_root
+    }
+
+    fn discovery_updated_unix_ms(&self) -> u128 {
+        self.updated_unix_ms
+    }
+
+    fn validate_discovery_record(&self) -> Result<(), String> {
+        if self.version != TRANSACTION_ENVELOPE_VERSION {
+            return Err(format!(
+                "unsupported active refresh owner version {}",
+                self.version
+            ));
+        }
+        if self.project_root.as_os_str().is_empty() || self.app_instance.is_empty() {
+            return Err("active refresh owner requires project root and app instance".into());
+        }
+        Ok(())
+    }
 }
 
 fn unix_ms() -> u128 {
@@ -366,50 +388,7 @@ pub fn prepare(
 pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
     migrate_legacy_active(config_dir)?;
     let directory = config_dir.join("transactions").join(ACTIVE_DIRECTORY);
-    let entries = match std::fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(format!(
-                "read active refresh owners {}: {error}",
-                directory.display()
-            ))
-        }
-    };
-    let mut roots = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            format!(
-                "read active refresh owner entry {}: {error}",
-                directory.display()
-            )
-        })?;
-        if !entry
-            .file_type()
-            .map_err(|error| format!("inspect active refresh owner: {error}"))?
-            .is_file()
-        {
-            continue;
-        }
-        let path = entry.path();
-        if path.extension().and_then(|value| value.to_str()) != Some("json")
-            || path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|name| name.starts_with('.'))
-        {
-            continue;
-        }
-        let Some(active) = read_json::<ActiveProject>(&path)? else {
-            continue;
-        };
-        if active.version != TRANSACTION_ENVELOPE_VERSION || active.app_instance.is_empty() {
-            return Err(format!("invalid active refresh owner {}", path.display()));
-        }
-        let root = normalized(&active.project_root);
-        roots.push((root, active.updated_unix_ms));
-    }
-    let roots = omegat_core::durable_transaction::fair_scope_order(roots);
+    let roots = discover_scopes::<ActiveProject>(&directory)?;
     for root in &roots {
         migrate_legacy_journal(root)?;
     }

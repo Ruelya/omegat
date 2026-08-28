@@ -11,12 +11,14 @@ use crate::{team_enabled, SyncReport};
 use omegat_core::cancellation::CancellationToken;
 use omegat_core::durable_fifo::{
     self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
-    LegacyOwnerClaim, OwnerClaimError,
+    LegacyOwnerClaim,
 };
 use omegat_core::durable_transaction::{
-    normalized, write_json_atomic, DurableTransactionLayout, DurableTransactionPhase,
-    DurableTransactionRecord, DurableTransactionWorkflow, TransactionCommit,
-    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
+    elect_owner_with_legacy, normalized, write_json_atomic, DurableCoordinatorLockMode,
+    DurableCoordinatorOpenError, DurableOwnerElectionError, DurableOwnerIdentity,
+    DurableOwnerRetry, DurableTransactionCoordinator, DurableTransactionLayout,
+    DurableTransactionPhase, DurableTransactionRecord, DurableTransactionWorkflow,
+    TransactionCommit, TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
     TRANSACTION_ENVELOPE_VERSION,
 };
 use omegat_core::properties::ProjectProperties;
@@ -34,7 +36,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const PRODUCT_JOURNAL_VERSION: u8 = 2;
@@ -57,7 +59,6 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
 
 pub(crate) struct ProjectTransactionLock {
     _lock: DurableFifoLock,
-    waited: bool,
 }
 
 pub(crate) fn acquire_project_transaction_lock(
@@ -72,47 +73,7 @@ pub(crate) fn acquire_project_transaction_lock(
                 props.root.display()
             ))
         })?;
-    Ok(ProjectTransactionLock {
-        _lock: lock,
-        waited: false,
-    })
-}
-
-fn acquire_blocking_project_transaction_lock(
-    props: &ProjectProperties,
-) -> Result<ProjectTransactionLock> {
-    let dir = transaction_dir(props);
-    let lock = DurableFifoLock::acquire(&dir, &product_fifo_layout().lock_file)
-        .map_err(TeamError::Command)?;
-    Ok(ProjectTransactionLock {
-        _lock: lock,
-        waited: true,
-    })
-}
-
-fn wait_for_project_transaction_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
-    let dir = transaction_dir(props);
-    let (lock, waited) = match DurableFifoLock::try_acquire(&dir, &product_fifo_layout().lock_file)
-        .map_err(TeamError::Command)?
-    {
-        Some(lock) => (lock, false),
-        None => {
-            resolve_cancellation_lock_checkpoint(
-                "OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER",
-                props,
-                "waiting-for-owner-lock",
-            )?;
-            (
-                DurableFifoLock::acquire(&dir, &product_fifo_layout().lock_file)
-                    .map_err(TeamError::Command)?,
-                true,
-            )
-        }
-    };
-    Ok(ProjectTransactionLock {
-        _lock: lock,
-        waited,
-    })
+    Ok(ProjectTransactionLock { _lock: lock })
 }
 
 #[cfg(test)]
@@ -665,9 +626,7 @@ impl DurableTransactionRecord for SyncTransaction {
     fn transaction_phase(&self) -> DurableTransactionPhase {
         match self.0.status {
             TransactionStatus::Pending => DurableTransactionPhase::Pending,
-            TransactionStatus::CancellationPending => {
-                DurableTransactionPhase::CancellationPending
-            }
+            TransactionStatus::CancellationPending => DurableTransactionPhase::CancellationPending,
             TransactionStatus::SidecarCommitted => DurableTransactionPhase::Committed,
             TransactionStatus::Completed if self.phase == "renderer-acknowledged" => {
                 DurableTransactionPhase::Acknowledged
@@ -1036,16 +995,17 @@ impl SyncTransaction {
 
     fn load_dispatch_head(props: &ProjectProperties) -> Result<Option<Self>> {
         Ok(open_product_workflow(props)?.dispatch_head(|transaction| {
-                transaction.0.status == TransactionStatus::SidecarCommitted
-                    || (transaction.is_refresh()
-                        && transaction.0.status == TransactionStatus::Pending)
-            }))
+            transaction.0.status == TransactionStatus::SidecarCommitted
+                || (transaction.is_refresh() && transaction.0.status == TransactionStatus::Pending)
+        }))
     }
 
     fn load_receipt(props: &ProjectProperties, batch_id: &str) -> Result<Option<Self>> {
-        Ok(open_product_workflow(props)?.receipt(batch_id, |transaction| {
-            transaction.0.status == TransactionStatus::SidecarCommitted
-        }))
+        Ok(
+            open_product_workflow(props)?.receipt(batch_id, |transaction| {
+                transaction.0.status == TransactionStatus::SidecarCommitted
+            }),
+        )
     }
 
     fn remove_from_journal(self, props: &ProjectProperties) -> Result<()> {
@@ -1282,6 +1242,48 @@ fn open_product_workflow(
         &mut |_, point| product_history_checkpoint(point),
     )
     .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
+}
+
+fn coordinator_error(props: &ProjectProperties, error: DurableCoordinatorOpenError) -> TeamError {
+    match error {
+        DurableCoordinatorOpenError::Locked => TeamError::Conflict(format!(
+            "team project is locked by another process: {}",
+            props.root.display()
+        )),
+        DurableCoordinatorOpenError::Durable(error) => {
+            TeamError::Command(format!("team transaction coordinator: {error}"))
+        }
+    }
+}
+
+fn open_product_coordinator_with_wait_hook<W>(
+    props: &ProjectProperties,
+    lock_mode: DurableCoordinatorLockMode,
+    wait_hook: &mut W,
+) -> Result<DurableTransactionCoordinator<SyncTransaction>>
+where
+    W: FnMut() -> std::result::Result<(), String>,
+{
+    DurableTransactionCoordinator::open_with_legacy(
+        &transaction_dir(props),
+        &props.root,
+        product_workflow_layout(),
+        product_history_options(),
+        lock_mode,
+        decode_legacy_product_journal,
+        || legacy_product_history(props).map_err(|error| error.to_string()),
+        &mut |_, point| product_history_checkpoint(point),
+        &mut || Ok(()),
+        wait_hook,
+    )
+    .map_err(|error| coordinator_error(props, error))
+}
+
+fn open_product_coordinator(
+    props: &ProjectProperties,
+    lock_mode: DurableCoordinatorLockMode,
+) -> Result<DurableTransactionCoordinator<SyncTransaction>> {
+    open_product_coordinator_with_wait_hook(props, lock_mode, &mut || Ok(()))
 }
 
 fn product_history_checkpoint(point: &str) -> std::result::Result<(), String> {
@@ -1586,8 +1588,10 @@ fn product_owner_claim_checkpoint(
     Ok(())
 }
 
-fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
-    let mut workflow = open_product_workflow(props)?;
+fn compact_terminal_product_transactions_in(
+    props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+) -> Result<()> {
     workflow
         .compact_terminals(
             |transaction| !transaction.0.status.is_recoverable(),
@@ -1604,10 +1608,8 @@ fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()
                         .as_deref()
                         == Ok("1"))
                     || (point == "after_queue_rename"
-                        && std::env::var(
-                            "OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME",
-                        )
-                        .as_deref()
+                        && std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME")
+                            .as_deref()
                             == Ok("1"))
                 {
                     std::process::abort();
@@ -1617,6 +1619,11 @@ fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()
         )
         .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     Ok(())
+}
+
+fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
+    let mut workflow = open_product_workflow(props)?;
+    compact_terminal_product_transactions_in(props, &mut workflow)
 }
 
 fn decode_legacy_renderer_owner(
@@ -1649,18 +1656,6 @@ fn decode_legacy_renderer_owner(
         claim_id: claim.claim_id,
         updated_unix_ms: claim.updated_unix_ms,
     }))
-}
-
-fn load_renderer_owner_claim(
-    props: &ProjectProperties,
-) -> Result<Option<omegat_core::durable_fifo::DurableOwnerClaim>> {
-    durable_fifo::load_owner_with_legacy(
-        &transaction_dir(props),
-        &props.root,
-        &product_fifo_layout(),
-        decode_legacy_renderer_owner,
-    )
-    .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))
 }
 
 fn process_is_alive(process_id: u32) -> bool {
@@ -1713,62 +1708,6 @@ fn transaction_owner_retry_wait_checkpoint(
     .map_err(|error| TeamError::Command(format!("owner retry wait checkpoint: {error}")))
 }
 
-/// Wait for the currently recorded dispatcher owner to exit.
-///
-/// Callers use the returned PID as one bounded replacement-election boundary.
-/// Any additional retry is an explicit caller decision and observes the newly
-/// published claim again rather than spinning against a stale owner.
-pub fn wait_for_transaction_dispatch_owner_exit(
-    props: &ProjectProperties,
-    timeout: Duration,
-) -> Result<Option<u32>> {
-    wait_for_transaction_dispatch_owner_exit_cancellable(
-        props,
-        timeout,
-        &CancellationToken::default(),
-    )
-}
-
-/// Cancellable owner-liveness boundary used by the NDJSON replacement
-/// dispatcher. Cancelling a waiting contender never changes the durable owner
-/// claim or exposes the product head.
-pub fn wait_for_transaction_dispatch_owner_exit_cancellable(
-    props: &ProjectProperties,
-    timeout: Duration,
-    cancellation: &CancellationToken,
-) -> Result<Option<u32>> {
-    let deadline = Instant::now() + timeout;
-    let claim = loop {
-        check_cancelled(cancellation)?;
-        match acquire_project_transaction_lock(props) {
-            Ok(_lock) => {
-                if let Some(claim) = load_renderer_owner_claim(props)? {
-                    break claim;
-                }
-            }
-            Err(TeamError::Conflict(_)) => {}
-            Err(error) => return Err(error),
-        }
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        // A competing claimant can hold operation.lock while the previous
-        // dead owner file is still present. Wait until its atomic claim has
-        // been published, then observe that stable owner rather than retrying
-        // against a stale PID.
-        std::thread::sleep(Duration::from_millis(25));
-    };
-    transaction_owner_retry_wait_checkpoint(props, claim.process_id)?;
-    while process_is_alive(claim.process_id) {
-        check_cancelled(cancellation)?;
-        if Instant::now() >= deadline {
-            return Ok(None);
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    Ok(Some(claim.process_id))
-}
-
 /// Claim the unified product/refresh renderer dispatcher for one live app.
 ///
 /// The claim is persisted separately from either backend journal, so a second
@@ -1781,33 +1720,74 @@ pub fn claim_transaction_dispatch(
     process_id: u32,
     generation: u64,
 ) -> Result<()> {
-    if app_instance.is_empty() || process_id == 0 || generation == 0 {
-        return Err(TeamError::Command(
-            "renderer owner claim requires app instance, process id, and generation".into(),
-        ));
-    }
-    let _lock = acquire_project_transaction_lock(props)?;
-    recover_pending_cancellation_locked(props)?;
-    durable_fifo::claim_owner_with_legacy(
-        &transaction_dir(props),
-        &props.root,
-        &product_fifo_layout(),
+    claim_transaction_dispatch_with_retry_cancellable(
+        props,
         app_instance,
         process_id,
         generation,
-        decode_legacy_renderer_owner,
-        process_is_alive,
+        None,
+        0,
+        &CancellationToken::default(),
     )
     .map(|_| ())
+}
+
+/// Elect a dispatcher under the core coordinator, optionally surviving a
+/// bounded sequence of live-owner deaths without returning to the sidecar.
+pub fn claim_transaction_dispatch_with_retry_cancellable(
+    props: &ProjectProperties,
+    app_instance: &str,
+    process_id: u32,
+    generation: u64,
+    retry_timeout: Option<Duration>,
+    max_owner_deaths: usize,
+    cancellation: &CancellationToken,
+) -> Result<Vec<u32>> {
+    let identity = DurableOwnerIdentity::new(app_instance, process_id, generation)
+        .map_err(TeamError::Command)?;
+    let retry = retry_timeout.map(|timeout| DurableOwnerRetry {
+        timeout,
+        max_owner_deaths,
+        poll_interval: Duration::from_millis(25),
+    });
+    let election = elect_owner_with_legacy(
+        &transaction_dir(props),
+        &props.root,
+        &product_fifo_layout(),
+        &identity,
+        retry,
+        decode_legacy_renderer_owner,
+        process_is_alive,
+        || cancellation.is_cancelled(),
+        || recover_pending_cancellation_locked(props).map_err(|error| error.to_string()),
+        |claim| {
+            transaction_owner_retry_wait_checkpoint(props, claim.process_id)
+                .map_err(|error| error.to_string())
+        },
+    )
     .map_err(|error| match error {
-        OwnerClaimError::Live(claim) => TeamError::Conflict(format!(
+        DurableOwnerElectionError::Cancelled => TeamError::Cancelled,
+        DurableOwnerElectionError::Busy => TeamError::Conflict(format!(
+            "team project is locked by another process: {}",
+            props.root.display()
+        )),
+        DurableOwnerElectionError::Live(claim) => TeamError::Conflict(format!(
             "transaction dispatcher is owned by live app {} (pid {})",
             claim.app_instance, claim.process_id
         )),
-        OwnerClaimError::Durable(error) => {
+        DurableOwnerElectionError::TimedOut(Some(claim)) => TeamError::Conflict(format!(
+            "timed out waiting for transaction dispatcher {} (pid {})",
+            claim.app_instance, claim.process_id
+        )),
+        DurableOwnerElectionError::TimedOut(None) => TeamError::Conflict(format!(
+            "timed out waiting for team project lock: {}",
+            props.root.display()
+        )),
+        DurableOwnerElectionError::Durable(error) => {
             TeamError::Command(format!("renderer owner claim: {error}"))
         }
-    })
+    })?;
+    Ok(election.previous_owner_process_ids)
 }
 
 fn capture_product_manifest(
@@ -2978,13 +2958,15 @@ pub fn discard_refresh_transactions(props: &ProjectProperties) -> Result<()> {
     compact_terminal_product_transactions(props)
 }
 
-fn acknowledged_receipt_in_history(
-    props: &ProjectProperties,
+fn acknowledged_receipt_in_workflow(
+    workflow: &DurableTransactionWorkflow<SyncTransaction>,
     generation: u64,
     batch_id: &str,
     operation: &str,
 ) -> Result<bool> {
-    for transaction in product_history_for_batch(props, batch_id)?
+    for transaction in workflow
+        .history_records(batch_id)
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?
         .into_iter()
         .rev()
     {
@@ -3027,12 +3009,7 @@ pub fn pending_transaction_receipt_for_owner(
         ));
     }
     claim_transaction_dispatch(props, app_instance, process_id, generation)?;
-    pending_transaction_receipt_for_claimed_owner(
-        props,
-        generation,
-        app_instance,
-        process_id,
-    )
+    pending_transaction_receipt_for_claimed_owner(props, generation, app_instance, process_id)
 }
 
 /// Return the durable FIFO head after the caller has completed owner election.
@@ -3059,30 +3036,34 @@ pub fn pending_transaction_receipt_for_claimed_owner(
     // cannot leak a half-returned envelope, and a later process must run the
     // same owner election before it can observe the FIFO head.
     product_owner_claim_checkpoint(props, app_instance, process_id, generation)?;
-    let _lock = acquire_blocking_project_transaction_lock(props)?;
-    let Some(owner) = load_renderer_owner_claim(props)? else {
-        return Err(TeamError::Conflict(
-            "transaction dispatcher owner disappeared before head lookup".into(),
-        ));
-    };
-    if owner.app_instance != app_instance
-        || owner.process_id != process_id
-        || owner.generation != generation
-    {
-        return Err(TeamError::Conflict(format!(
-            "transaction dispatcher owner changed before head lookup to {} (pid {}, generation {})",
-            owner.app_instance, owner.process_id, owner.generation
-        )));
-    }
-    compact_terminal_product_transactions(props)?;
-    let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
+    let mut coordinator = open_product_coordinator(props, DurableCoordinatorLockMode::Wait)?;
+    let identity = DurableOwnerIdentity::new(app_instance, process_id, generation)
+        .map_err(TeamError::Command)?;
+    coordinator
+        .verify_owner_with_legacy(&identity, decode_legacy_renderer_owner)
+        .map_err(|error| TeamError::Conflict(format!("{error} before head lookup")))?;
+    compact_terminal_product_transactions_in(props, coordinator.workflow_mut())?;
+    let Some(mut transaction) = coordinator.workflow().dispatch_head(|candidate| {
+        candidate.0.status == TransactionStatus::SidecarCommitted
+            || (candidate.is_refresh() && candidate.0.status == TransactionStatus::Pending)
+    }) else {
+        coordinator
+            .release_idle_owner_with_legacy(decode_legacy_renderer_owner)
+            .map_err(|error| TeamError::Command(format!("renderer owner release: {error}")))?;
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
     if transaction.0.generation != generation {
         // Renderer adoption changes ownership, not durable FIFO order.
         transaction.0.generation = generation;
-        transaction.persist_preserving_dispatch_order(props)?;
+        coordinator
+            .workflow_mut()
+            .upsert(transaction.clone())
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+        coordinator
+            .workflow_mut()
+            .persist_queue()
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     }
     transaction.renderer_receipt().map(Some)
 }
@@ -3100,8 +3081,11 @@ pub fn peek_transaction_receipt(
     // concurrent claimant is inside its short owner-publication critical
     // section. Closed Electron processes have no filesystem event that would
     // otherwise wake discovery again after the lock is released.
-    let _lock = acquire_blocking_project_transaction_lock(props)?;
-    let Some(transaction) = SyncTransaction::load_dispatch_head(props)? else {
+    let coordinator = open_product_coordinator(props, DurableCoordinatorLockMode::Wait)?;
+    let Some(transaction) = coordinator.workflow().dispatch_head(|candidate| {
+        candidate.0.status == TransactionStatus::SidecarCommitted
+            || (candidate.is_refresh() && candidate.0.status == TransactionStatus::Pending)
+    }) else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
@@ -3167,9 +3151,8 @@ pub fn acknowledge_transaction_receipt_outcome(
             "unsupported renderer acknowledgement outcome {outcome}"
         )));
     }
-    let _lock = acquire_project_transaction_lock(props)?;
-    let mut workflow = open_product_workflow(props)?;
-    if let Some(mut transaction) = workflow.dispatch_head(|transaction| {
+    let mut coordinator = open_product_coordinator(props, DurableCoordinatorLockMode::Try)?;
+    if let Some(mut transaction) = coordinator.workflow().dispatch_head(|transaction| {
         transaction.0.status == TransactionStatus::SidecarCommitted
             || (transaction.is_refresh() && transaction.0.status == TransactionStatus::Pending)
     }) {
@@ -3221,7 +3204,8 @@ pub fn acknowledge_transaction_receipt_outcome(
         } else {
             transaction.0.transition(TransactionStatus::Completed, None);
         }
-        workflow
+        coordinator
+            .workflow_mut()
             .acknowledge_head(
                 batch_id,
                 transaction,
@@ -3245,6 +3229,9 @@ pub fn acknowledge_transaction_receipt_outcome(
                     TeamError::Command(format!("team transaction workflow: {error}"))
                 }
             })?;
+        coordinator
+            .release_idle_owner_with_legacy(decode_legacy_renderer_owner)
+            .map_err(|error| TeamError::Command(format!("renderer owner release: {error}")))?;
         return Ok(TransactionRendererAck {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(&props.root),
@@ -3254,7 +3241,10 @@ pub fn acknowledge_transaction_receipt_outcome(
             already_acknowledged: false,
         });
     }
-    if acknowledged_receipt_in_history(props, generation, batch_id, operation)? {
+    if acknowledged_receipt_in_workflow(coordinator.workflow(), generation, batch_id, operation)? {
+        coordinator
+            .release_idle_owner_with_legacy(decode_legacy_renderer_owner)
+            .map_err(|error| TeamError::Command(format!("renderer owner release: {error}")))?;
         return Ok(TransactionRendererAck {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(&props.root),
@@ -3290,16 +3280,31 @@ pub fn cancel_transaction_receipt(
     // idempotency key. Unlike unrelated team operations, the loser must wait
     // for the current cancellation owner (or its OS-released lock after
     // process death), then observe the sole terminal decision as -32800.
-    let lock = wait_for_project_transaction_lock(props)?;
-    let mut cancellation_workflow = open_product_workflow(props)?;
-    let Some(mut transaction) = cancellation_workflow
+    let mut coordinator = open_product_coordinator_with_wait_hook(
+        props,
+        DurableCoordinatorLockMode::Wait,
+        &mut || {
+            resolve_cancellation_lock_checkpoint(
+                "OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER",
+                props,
+                "waiting-for-owner-lock",
+            )
+            .map_err(|error| error.to_string())
+        },
+    )?;
+    let waited = coordinator.waited();
+    let Some(mut transaction) = coordinator
+        .workflow()
         .queue()
         .batches
         .iter()
         .find(|transaction| transaction.0.batch_id == batch_id)
         .cloned()
     else {
-        for archived in product_history_for_batch(props, batch_id)?
+        for archived in coordinator
+            .workflow()
+            .history_records(batch_id)
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?
             .into_iter()
             .rev()
         {
@@ -3328,7 +3333,7 @@ pub fn cancel_transaction_receipt(
         )));
     }
     if transaction.0.status == TransactionStatus::CancellationPending {
-        if lock.waited {
+        if waited {
             resolve_cancellation_lock_checkpoint(
                 "OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER",
                 props,
@@ -3336,15 +3341,50 @@ pub fn cancel_transaction_receipt(
             )?;
         }
         validate_pending_resolve_cancellation(props, &transaction)?;
-        rollback_pending_resolve_cancellation(props, &mut transaction)?;
+        if transaction.phase == "renderer-cancelling" {
+            let snapshot = SyncSnapshot::open(
+                props,
+                transaction.snapshot.clone(),
+                transaction.prep_existed,
+                transaction.file_remotes.clone(),
+                transaction.external_products.clone(),
+            )?;
+            snapshot.restore_project_and_prep_durable(props)?;
+            transaction.phase = "renderer-rollback-durable".into();
+            coordinator
+                .workflow_mut()
+                .upsert(transaction.clone())
+                .map_err(|error| {
+                    TeamError::Command(format!("team transaction workflow: {error}"))
+                })?;
+            coordinator
+                .workflow_mut()
+                .persist_queue()
+                .map_err(|error| {
+                    TeamError::Command(format!("team transaction workflow: {error}"))
+                })?;
+        } else if transaction.phase != "renderer-rollback-durable" {
+            return Err(TeamError::Command(format!(
+                "pending cancellation {} has invalid phase {}",
+                transaction.0.batch_id, transaction.phase
+            )));
+        }
         resolve_cancellation_checkpoint("after_rollback_fsync")?;
-        persist_terminal_resolve_cancellation(
-            props,
-            &mut transaction,
-            "renderer-cancelled-takeover",
-        )?;
+        transaction.phase = "renderer-cancelled-takeover".into();
+        transaction.0.transition(
+            TransactionStatus::RequestCancelled,
+            Some(REQUEST_CANCELLED_CODE),
+        );
+        coordinator
+            .workflow_mut()
+            .upsert(transaction)
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+        coordinator
+            .workflow_mut()
+            .persist_queue()
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
         resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
-        return compact_terminal_product_transactions(props);
+        return compact_terminal_product_transactions_in(props, coordinator.workflow_mut());
     }
     if transaction.0.status == TransactionStatus::RequestCancelled
         && transaction.0.error_code == Some(REQUEST_CANCELLED_CODE)
@@ -3353,7 +3393,7 @@ pub fn cancel_transaction_receipt(
         // archive/queue-rename compactor as dispatcher recovery. A waiter that
         // acquired operation.lock only after the terminal publisher died must
         // never rewrite the rollback or terminal decision.
-        return compact_terminal_product_transactions(props);
+        return compact_terminal_product_transactions_in(props, coordinator.workflow_mut());
     }
     if transaction.0.status != TransactionStatus::SidecarCommitted {
         return Err(TeamError::Conflict(format!(
@@ -3385,18 +3425,50 @@ pub fn cancel_transaction_receipt(
     // Cancelling a FIFO tail must not change the durable order of any older
     // receipt. The row becomes undispatchable in the same atomic queue rename.
     transaction.0.updated_unix_ms = dispatch_order;
-    cancellation_workflow
+    coordinator
+        .workflow_mut()
         .persist_cancellation_intent(batch_id, transaction.clone())
         .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
-    append_product_history(props, transaction.clone())?;
+    coordinator
+        .workflow_mut()
+        .append_history(transaction.clone(), &mut product_history_checkpoint)
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     resolve_cancellation_checkpoint("after_intent_queue_rename")?;
 
-    rollback_pending_resolve_cancellation(props, &mut transaction)?;
+    let snapshot = SyncSnapshot::open(
+        props,
+        transaction.snapshot.clone(),
+        transaction.prep_existed,
+        transaction.file_remotes.clone(),
+        transaction.external_products.clone(),
+    )?;
+    snapshot.restore_project_and_prep_durable(props)?;
+    transaction.phase = "renderer-rollback-durable".into();
+    coordinator
+        .workflow_mut()
+        .upsert(transaction.clone())
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    coordinator
+        .workflow_mut()
+        .persist_queue()
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     resolve_cancellation_checkpoint("after_rollback_fsync")?;
 
-    persist_terminal_resolve_cancellation(props, &mut transaction, "renderer-cancelled")?;
+    transaction.phase = "renderer-cancelled".into();
+    transaction.0.transition(
+        TransactionStatus::RequestCancelled,
+        Some(REQUEST_CANCELLED_CODE),
+    );
+    coordinator
+        .workflow_mut()
+        .upsert(transaction)
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    coordinator
+        .workflow_mut()
+        .persist_queue()
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
-    compact_terminal_product_transactions(props)
+    compact_terminal_product_transactions_in(props, coordinator.workflow_mut())
 }
 
 pub fn get_version(
