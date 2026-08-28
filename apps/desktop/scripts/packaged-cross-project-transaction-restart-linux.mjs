@@ -456,9 +456,9 @@ try {
   const checkpointRows = parseNdjson(
     await readFile(checkpointHistory, "utf8"),
   );
-  const completedCheckpoint = checkpointRows.find((row) =>
-    row.batch_id === checkpointBatchId
-  );
+  const completedCheckpoint = checkpointRows
+    .filter((row) => row.batch_id === checkpointBatchId)
+    .at(-1);
   assert.equal(completedCheckpoint?.status, "completed");
   const killedCheckpointRecovery = await killPackaged(launched);
   launched = undefined;
@@ -570,9 +570,9 @@ try {
       : undefined;
   });
   const refreshRows = parseNdjson(await readFile(transactionHistory, "utf8"));
-  const cancelledRefresh = refreshRows.find((row) =>
-    row.batch_id === refreshBatchId
-  );
+  const cancelledRefresh = refreshRows
+    .filter((row) => row.batch_id === refreshBatchId)
+    .at(-1);
   assert.equal(cancelledRefresh?.project_root, projectA);
   assert.equal(cancelledRefresh?.generation, 71);
   assert.equal(cancelledRefresh?.status, "cancelled");
