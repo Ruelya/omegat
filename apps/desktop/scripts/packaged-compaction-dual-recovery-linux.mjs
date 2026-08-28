@@ -4136,12 +4136,13 @@ try {
     await waitFor("cancelled resolve rollback recovered", async () =>
       !await pathExists(prepared.activePath) ? true : undefined
     );
-    const firstReplacementOwner = await waitFor(
-      "sole owner after cancelled resolve rollback",
+    const releasedReplacementOwner = await waitFor(
+      "released owner after cancelled resolve rollback",
       async () => {
         if (!await pathExists(prepared.ownerPath)) return undefined;
         const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
         return claim.claim_id !== durableOldOwner.claim_id
+            && claim.released === true
             && replacements.some((replacement) =>
               replacement.application.pid === claim.process_id
             )
@@ -4150,12 +4151,12 @@ try {
       },
     );
     const winnerIndex = replacements.findIndex((replacement) =>
-      replacement.application.pid === firstReplacementOwner.process_id
+      replacement.application.pid === releasedReplacementOwner.process_id
     );
     assert.notEqual(winnerIndex, -1);
     const winner = replacements[winnerIndex];
     const losers = replacements.filter((_, index) => index !== winnerIndex);
-    assert.notEqual(firstReplacementOwner.claim_id, durableOldOwner.claim_id);
+    assert.notEqual(releasedReplacementOwner.claim_id, durableOldOwner.claim_id);
 
     const winnerState = await waitFor(
       "winning cancellation replacement workspace",
@@ -4215,8 +4216,8 @@ try {
           generation: oldOwner.generation + index + 20,
         },
       );
-      assert.equal(rejected.resolved, false);
-      assert.match(rejected.error, /locked by another process|owned by live app/);
+      assert.equal(rejected.resolved, true);
+      assert.deepEqual(rejected.value.envelopes, []);
       const rejectedAck = await invokeRpcResult(
         replacement.client,
         "transaction.receipt.ack",
@@ -4233,13 +4234,18 @@ try {
       assert.equal(rejectedAck.resolved, false);
       assert.match(
         rejectedAck.error,
-        /locked by another process|owned by live app/,
+        /unknown renderer receipt/,
       );
     }
-    assert.deepEqual(
-      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
-      firstReplacementOwner,
-      "a losing process replaced the sole post-cancellation owner",
+    const finalReleasedOwner = JSON.parse(
+      await readFile(prepared.ownerPath, "utf8"),
+    );
+    assert.equal(finalReleasedOwner.released, true);
+    assert(
+      replacements.some((replacement) =>
+        replacement.application.pid === finalReleasedOwner.process_id
+      ),
+      "an idle query left an owner outside the replacement quorum",
     );
     const protocolCancellation = await invokeRpcResult(
       winner.client,
@@ -4297,7 +4303,7 @@ try {
       oldOwnerSidecarPid: killed.sidecarPid,
       laterResolveEnvelopeCount: 0,
       replacementProcessCount: replacements.length,
-      soleDurableOwnerPid: firstReplacementOwner.process_id,
+      releasedOwnerPid: finalReleasedOwner.process_id,
       protocolErrorCode: -32800,
       projectRollback: true,
       fileRemoteWrite: false,
