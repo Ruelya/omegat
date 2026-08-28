@@ -1113,7 +1113,6 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
             key_fields,
             ["file", "id", "next", "path", "prev", "source_text"]
         );
-        let initial_batch = format!("atomic-{kind}-initial-entry");
         let initial = rpc(
             &mut setup.input,
             &mut setup.output,
@@ -1126,40 +1125,9 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
                 "note": "atomic replacement election",
                 "revision": entry["revision"],
                 "default_translation": false,
-                "transaction_project_root": root,
-                "transaction_generation": 60,
-                "transaction_batch_id": initial_batch,
             }),
         );
-        assert_eq!(
-            initial["result"]["receipt"]["payload"]["operation"],
-            "entry.set"
-        );
-        let initial_ack = rpc(
-            &mut setup.input,
-            &mut setup.output,
-            22,
-            "transaction.receipt.ack",
-            json!({
-                "root": root,
-                "app_instance": format!("atomic-{kind}-setup"),
-                "generation": 60,
-                "batch_id": initial_batch,
-                "operation": "entry.set",
-                "outcome": "succeeded",
-            }),
-        );
-        assert_eq!(initial_ack["result"]["ack"]["acknowledged"], true);
-        assert_eq!(
-            pending(
-                &mut setup,
-                23,
-                &root,
-                &format!("atomic-{kind}-setup"),
-                60,
-            )["result"]["envelopes"],
-            json!([])
-        );
+        assert_eq!(initial["result"]["receipt"], Value::Null);
 
         let remote_path = remote.join("target/atomic.txt");
         if kind == "team" {
@@ -1278,7 +1246,7 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
             &mut setup,
             8,
             &root,
-            &format!("atomic-{kind}-setup"),
+            &format!("atomic-{kind}-old-owner"),
             62,
         );
         assert_eq!(
@@ -1288,7 +1256,10 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
         let old_owner: Value =
             serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
         assert_eq!(old_owner["process_id"], setup.child.id());
-        assert_eq!(old_owner["app_instance"], format!("atomic-{kind}-setup"));
+        assert_eq!(
+            old_owner["app_instance"],
+            format!("atomic-{kind}-old-owner")
+        );
 
         let mut live_contender = spawn_sidecar(&config);
         let rejected_while_old_owner_lived = pending(
