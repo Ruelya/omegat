@@ -1245,8 +1245,17 @@ try {
     window.__omegatDomOperationTrace = [];
     window.__omegatExternalChangeTrace = [];
     window.__omegatStopExternalTrace?.();
-    window.__omegatStopExternalTrace = window.omegat.onProjectExternalChange((event) => {
-      window.__omegatExternalChangeTrace.push(event);
+    window.__omegatStopExternalTrace = window.omegat.onTransactionEnvelope((envelope) => {
+      if (envelope.payload?.operation !== "project.external-refresh") return;
+      window.__omegatExternalChangeTrace.push({
+        id: envelope.batch_id,
+        root: envelope.project_root,
+        generation: envelope.generation,
+        status: envelope.status,
+        paths: envelope.payload.paths ?? [],
+        fingerprints: envelope.payload.fingerprints ?? {},
+        sources: envelope.payload.sources ?? [],
+      });
     });
     window.__omegatExternalRefreshProgress = null;
     window.__omegatExternalRefreshCancelled = null;
