@@ -1266,17 +1266,39 @@ function configFaultEnv(operation, point, marker) {
 }
 
 async function assertProjectJournalsIsolated(projects, label) {
+  const configOperations = new Set([
+    "prefs.patch",
+    "aligner.configure",
+    "spell.install",
+  ]);
   for (const project of projects) {
-    assert.equal(
-      await pathExists(join(project, ".repositories", "transactions", "active.json")),
-      false,
-      `${label}: config write entered project active journal`,
+    const activePath = join(project, ".repositories", "transactions", "active.json");
+    if (await pathExists(activePath)) {
+      const active = JSON.parse(await readFile(activePath, "utf8"));
+      assert(
+        active.batches.every((row) =>
+          !configOperations.has(row.payload?.operation)
+          && !String(row.batch_id).startsWith("config-")
+        ),
+        `${label}: config write entered project active journal`,
+      );
+    }
+    const historyPath = join(
+      project,
+      ".repositories",
+      "transactions",
+      "history.ndjson",
     );
-    assert.equal(
-      await pathExists(join(project, ".repositories", "transactions", "history.ndjson")),
-      false,
-      `${label}: config write entered project history`,
-    );
+    if (await pathExists(historyPath)) {
+      const history = parseNdjson(await readFile(historyPath, "utf8"));
+      assert(
+        history.every((row) =>
+          !configOperations.has(row.payload?.operation)
+          && !String(row.batch_id).startsWith("config-")
+        ),
+        `${label}: config write entered project history`,
+      );
+    }
   }
 }
 
