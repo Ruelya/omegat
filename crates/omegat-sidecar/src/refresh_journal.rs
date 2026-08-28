@@ -301,6 +301,14 @@ pub fn pending(
         }
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
+        if std::env::var("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_QUEUE_RENAME").as_deref()
+            == Ok("1")
+        {
+            // The compacted queue is already durable. A replacement process
+            // must adopt its unacknowledged receipt and pending tail rather
+            // than treating process death as an acknowledgement.
+            std::process::abort();
+        }
     }
     if journal.app_instance == app_instance && journal.generation != generation {
         // The same Electron process advanced its project generation.  This is

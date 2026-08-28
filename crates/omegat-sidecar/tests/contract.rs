@@ -1695,7 +1695,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
 
     fn spawn_sidecar(
         config: &std::path::Path,
-        abort_compaction: bool,
+        abort_compaction: Option<&str>,
     ) -> (
         std::process::Child,
         std::process::ChildStdin,
@@ -1703,8 +1703,17 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     ) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
         command.env("OMEGAT_CONFIG_DIR", config);
-        if abort_compaction {
-            command.env("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_ARCHIVE", "1");
+        match abort_compaction {
+            Some("archive") => {
+                command.env("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_ARCHIVE", "1");
+            }
+            Some("queue-rename") => {
+                command.env(
+                    "OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_QUEUE_RENAME",
+                    "1",
+                );
+            }
+            _ => {}
         }
         let mut child = command
             .stdin(Stdio::piped())
@@ -1774,7 +1783,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     let journal_path = compact_root.join(".repositories/transactions/external-refresh.json");
     let history_path =
         compact_root.join(".repositories/transactions/external-refresh-history.ndjson");
-    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config, false);
+    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config, None);
     rpc(
         &mut first_in,
         &mut first_out,
@@ -1850,7 +1859,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
 
     let journal_before_interrupted_compaction = std::fs::read(&journal_path).unwrap();
     let (mut interrupted_child, mut interrupted_in, mut interrupted_out) =
-        spawn_sidecar(&compact_config, true);
+        spawn_sidecar(&compact_config, Some("archive"));
     rpc(
         &mut interrupted_in,
         &mut interrupted_out,
@@ -1891,7 +1900,51 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     assert_eq!(after_interruption["batches"][1]["commit"], receipt);
     assert_eq!(after_interruption["batches"][2]["status"], "pending");
 
-    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&compact_config, false);
+    let (mut renamed_child, mut renamed_in, mut renamed_out) =
+        spawn_sidecar(&compact_config, Some("queue-rename"));
+    rpc(
+        &mut renamed_in,
+        &mut renamed_out,
+        51,
+        "project.open",
+        json!({ "root": compact_root }),
+    );
+    writeln!(
+        renamed_in,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 61,
+            "method": "transaction.receipt.pending",
+            "params": refresh_scope(
+                &compact_root,
+                "electron-interrupted-queue-rename",
+                1,
+            ),
+        })
+    )
+    .unwrap();
+    renamed_in.flush().unwrap();
+    drop(renamed_in);
+    assert!(!renamed_child.wait().unwrap().success());
+    let queue_after_rename: Value =
+        serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
+    assert_eq!(queue_after_rename["batches"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        queue_after_rename["batches"][0]["batch_id"],
+        receipt_batch.as_str()
+    );
+    assert_eq!(
+        queue_after_rename["batches"][0]["status"],
+        "sidecar_committed"
+    );
+    assert_eq!(
+        queue_after_rename["batches"][1]["batch_id"],
+        pending_batch.as_str()
+    );
+    assert_eq!(queue_after_rename["batches"][1]["status"], "pending");
+
+    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&compact_config, None);
     rpc(
         &mut second_in,
         &mut second_out,
@@ -2054,7 +2107,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
             serde_json::to_vec_pretty(&raw_journal(root, envelope_version, unknown_payload))
                 .unwrap();
         std::fs::write(&malformed_path, &malformed).unwrap();
-        let (mut child, mut child_in, mut child_out) = spawn_sidecar(&config, false);
+        let (mut child, mut child_in, mut child_out) = spawn_sidecar(&config, None);
         rpc(
             &mut child_in,
             &mut child_out,
