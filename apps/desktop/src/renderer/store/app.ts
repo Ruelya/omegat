@@ -1096,6 +1096,10 @@ export const useApp = create<AppState>((set, get) => ({
   savePrefs: async (p) => {
     const current = get().prefs;
     const patch = current ? preferenceMergePatch(current, p) : p;
+    if (current && Object.keys(patch).length === 0) {
+      get().applyPrefs(p);
+      return;
+    }
     const prefs = await rpc<Preferences>("prefs.patch", patch);
     get().applyPrefs(prefs && typeof prefs === "object" && "marks" in prefs ? prefs : p);
     get().logLine("saved preferences");
