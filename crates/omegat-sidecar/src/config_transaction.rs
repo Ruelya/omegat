@@ -579,7 +579,28 @@ pub fn recover(config_dir: &Path) -> Result<(), String> {
 pub fn load_preferences(config_dir: &Path) -> Result<Preferences, String> {
     recover(config_dir)?;
     let _lock = acquire_lock(config_dir)?;
-    Ok(Preferences::load_or_default(config_dir))
+    let path = config_dir.join("omegat.prefs.json");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let preferences = Preferences::default_in(config_dir.to_path_buf());
+            preferences
+                .save()
+                .map_err(|error| format!("create shared preferences {}: {error}", path.display()))?;
+            return Ok(preferences);
+        }
+        Err(error) => {
+            return Err(format!(
+                "read shared preferences {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let mut preferences: Preferences = serde_json::from_str(&raw)
+        .map_err(|error| format!("parse shared preferences {}: {error}", path.display()))?;
+    preferences.config_dir = config_dir.to_path_buf();
+    preferences.normalize();
+    Ok(preferences)
 }
 
 #[cfg(test)]

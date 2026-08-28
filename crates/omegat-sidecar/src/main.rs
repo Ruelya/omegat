@@ -258,8 +258,16 @@ impl App {
                 Ok(json!({ "marks": marks }))
             }
             "prefs.get" => {
-                let preferences = config_transaction::load_preferences(&self.prefs.config_dir)
-                    .map_err(|error| (error_code::IO, error))?;
+                let preferences =
+                    match config_transaction::load_preferences(&self.prefs.config_dir) {
+                        Ok(preferences) => preferences,
+                        Err(error) => {
+                            log::warn!(
+                                "cannot refresh process-shared preferences; retaining last valid snapshot: {error}"
+                            );
+                            self.prefs.clone()
+                        }
+                    };
                 if let Some(session) = self.session.as_mut() {
                     session.prefs = preferences.clone();
                 }
