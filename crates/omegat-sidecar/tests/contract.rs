@@ -704,6 +704,270 @@ fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
 }
 
 #[test]
+fn concurrent_project_recoveries_isolate_product_and_refresh_receipts() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    fn create_project(
+        child_in: &mut impl Write,
+        child_out: &mut impl BufRead,
+        id: i64,
+        root: &std::path::Path,
+        source: &str,
+    ) -> Value {
+        rpc(
+            child_in,
+            child_out,
+            id,
+            "project.create",
+            json!({
+                "root": root,
+                "source_lang": "en",
+                "target_lang": "fr",
+                "sentence_seg": false,
+            }),
+        );
+        std::fs::write(root.join("source/source.txt"), source).unwrap();
+        rpc(child_in, child_out, id + 1, "project.reload", json!({}));
+        rpc(child_in, child_out, id + 2, "entry.list", json!({}))["result"][0].clone()
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let root_a = temp.path().join("project-a");
+    let root_b = temp.path().join("project-b");
+    let config_a = temp.path().join("config-a");
+    let config_b = temp.path().join("config-b");
+    let (mut first_a, mut first_a_in, mut first_a_out) = spawn_sidecar(&config_a);
+    let (mut first_b, mut first_b_in, mut first_b_out) = spawn_sidecar(&config_b);
+
+    let entry_a = create_project(
+        &mut first_a_in,
+        &mut first_a_out,
+        1,
+        &root_a,
+        "project A source",
+    );
+    let committed_a = rpc(
+        &mut first_a_in,
+        &mut first_a_out,
+        4,
+        "entry.set",
+        json!({
+            "index": entry_a["index"],
+            "key": entry_a["key"],
+            "translation": "project A committed",
+            "note": "concurrent recovery",
+            "revision": entry_a["revision"],
+            "default_translation": false,
+            "transaction_project_root": root_a,
+            "transaction_generation": 7,
+            "transaction_batch_id": "concurrent-product-a",
+        }),
+    );
+    assert_eq!(
+        committed_a["result"]["receipt"]["payload"]["operation"],
+        "entry.set"
+    );
+
+    create_project(
+        &mut first_b_in,
+        &mut first_b_out,
+        11,
+        &root_b,
+        "project B before refresh",
+    );
+    std::fs::write(root_b.join("source/source.txt"), "project B after refresh").unwrap();
+    let queued_b = rpc(
+        &mut first_b_in,
+        &mut first_b_out,
+        14,
+        "project.refresh.enqueue",
+        json!({
+            "root": root_b,
+            "app_instance": "project-b-before-kill",
+            "generation": 8,
+            "paths": [root_b.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "project-b-after-refresh" },
+            "sources": ["native"],
+        }),
+    );
+    let batch_b = queued_b["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let committed_b = rpc(
+        &mut first_b_in,
+        &mut first_b_out,
+        15,
+        "project.external-refresh",
+        json!({
+            "transaction_project_root": root_b,
+            "transaction_generation": 8,
+            "transaction_batch_id": batch_b,
+            "app_instance": "project-b-before-kill",
+        }),
+    );
+    assert_eq!(committed_b["error"], Value::Null);
+
+    first_a.kill().unwrap();
+    first_b.kill().unwrap();
+    first_a.wait().unwrap();
+    first_b.wait().unwrap();
+
+    let (mut recovered_a, mut recovered_a_in, mut recovered_a_out) = spawn_sidecar(&config_a);
+    let (mut recovered_b, mut recovered_b_in, mut recovered_b_out) = spawn_sidecar(&config_b);
+    rpc(
+        &mut recovered_a_in,
+        &mut recovered_a_out,
+        101,
+        "project.open",
+        json!({ "root": root_a }),
+    );
+    rpc(
+        &mut recovered_b_in,
+        &mut recovered_b_out,
+        201,
+        "project.open",
+        json!({ "root": root_b }),
+    );
+
+    let pending_a = rpc(
+        &mut recovered_a_in,
+        &mut recovered_a_out,
+        102,
+        "transaction.receipt.pending",
+        json!({
+            "root": root_a,
+            "app_instance": "project-a-after-kill",
+            "generation": 101,
+        }),
+    );
+    let pending_b = rpc(
+        &mut recovered_b_in,
+        &mut recovered_b_out,
+        202,
+        "transaction.receipt.pending",
+        json!({
+            "root": root_b,
+            "app_instance": "project-b-after-kill",
+            "generation": 202,
+        }),
+    );
+    assert_eq!(
+        pending_a["result"]["envelopes"][0]["batch_id"],
+        "concurrent-product-a"
+    );
+    assert_eq!(
+        pending_a["result"]["envelopes"][0]["project_root"],
+        root_a.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(pending_a["result"]["envelopes"][0]["generation"], 101);
+    assert_eq!(
+        pending_a["result"]["envelopes"][0]["payload"]["operation"],
+        "entry.set"
+    );
+    assert_eq!(
+        pending_b["result"]["envelopes"][0]["batch_id"],
+        batch_b.as_str()
+    );
+    assert_eq!(
+        pending_b["result"]["envelopes"][0]["project_root"],
+        root_b.canonicalize().unwrap().to_string_lossy().as_ref()
+    );
+    assert_eq!(pending_b["result"]["envelopes"][0]["generation"], 202);
+    assert_eq!(
+        pending_b["result"]["envelopes"][0]["payload"]["operation"],
+        "project.external-refresh"
+    );
+
+    let cross_root = rpc(
+        &mut recovered_a_in,
+        &mut recovered_a_out,
+        103,
+        "transaction.receipt.pending",
+        json!({
+            "root": root_b,
+            "app_instance": "project-a-after-kill",
+            "generation": 101,
+        }),
+    );
+    assert_eq!(cross_root["error"]["code"], -32602);
+    let still_a = rpc(
+        &mut recovered_a_in,
+        &mut recovered_a_out,
+        104,
+        "transaction.receipt.pending",
+        json!({
+            "root": root_a,
+            "app_instance": "project-a-after-kill",
+            "generation": 101,
+        }),
+    );
+    assert_eq!(
+        still_a["result"]["envelopes"][0]["batch_id"],
+        "concurrent-product-a"
+    );
+
+    let ack_a = rpc(
+        &mut recovered_a_in,
+        &mut recovered_a_out,
+        105,
+        "transaction.receipt.ack",
+        json!({
+            "root": root_a,
+            "app_instance": "project-a-after-kill",
+            "generation": 101,
+            "batch_id": "concurrent-product-a",
+            "operation": "entry.set",
+            "outcome": "succeeded",
+        }),
+    );
+    let ack_b = rpc(
+        &mut recovered_b_in,
+        &mut recovered_b_out,
+        203,
+        "transaction.receipt.ack",
+        json!({
+            "root": root_b,
+            "app_instance": "project-b-after-kill",
+            "generation": 202,
+            "batch_id": batch_b,
+            "operation": "project.external-refresh",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(ack_a["result"]["ack"]["acknowledged"], true);
+    assert_eq!(ack_b["result"]["ack"]["acknowledged"], true);
+    assert!(!root_a
+        .join(".repositories/transactions/active.json")
+        .exists());
+    assert!(!root_b
+        .join(".repositories/transactions/external-refresh.json")
+        .exists());
+
+    recovered_a.kill().unwrap();
+    recovered_b.kill().unwrap();
+    recovered_a.wait().unwrap();
+    recovered_b.wait().unwrap();
+}
+
+#[test]
 fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())
