@@ -1420,13 +1420,20 @@ async function runConfigLostAck(display, workDir) {
       "lost-ack-rules.srx",
     );
     await openPrefsPage(contender.client, "filters");
+    await click(
+      contender.client,
+      '[data-window-id="prefs"] [data-action="open-filter-editor"]',
+    );
+    await waitForSelector(contender.client, '[data-window-id="filters"]');
+    await waitForSelector(contender.client, '[data-filter-open="text"]');
+    await click(contender.client, '[data-filter-open="text"]');
     await waitForSelector(
       contender.client,
-      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
+      '[data-window-id="filters"] [data-filter-option="preserve_spaces"]',
     );
     await setControl(
       contender.client,
-      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
+      '[data-window-id="filters"] [data-filter-option="preserve_spaces"]',
       "lost-ack-filter",
     );
     await savePrefsDraft(owner.client);
@@ -1443,7 +1450,10 @@ async function runConfigLostAck(display, workDir) {
     assert.equal(historyAtKill.at(-1).status, "completed");
     // This request blocks behind the owner whose response is deliberately
     // withheld, proving the second field cannot bypass the lost-ack head.
-    await savePrefsDraft(contender.client);
+    await click(
+      contender.client,
+      '[data-window-id="filters"] [data-action="save-filter-options"]',
+    );
     const killedLostAckOwner = await killPackaged(owner);
     owner = undefined;
     const merged = await waitFor("lost-ack field merge", async () => {
