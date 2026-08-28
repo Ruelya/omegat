@@ -19,9 +19,7 @@ const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
 let rpcOperationListener: ((event: RpcOperationEvent) => void) | null = null;
 let transactionEnvelopeListener: ((envelope: TransactionEnvelope) => void) | null = null;
-const acknowledgeTransactionReceipt = vi.fn(async () => ({
-  ack: { acknowledged: true, already_acknowledged: false },
-}));
+const acknowledgeTransactionReceipt = vi.fn(transactionAck);
 const refreshEntriesAfterExternalChange =
   useApp.getState().refreshEntriesAfterExternalChange;
 
