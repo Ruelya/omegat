@@ -56,10 +56,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-28 verification:** core selected suites **155 passed**, filters
+**2026-08-28 verification:** core selected suites **156 passed**, filters
 **86 passed**, team **49 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
-**19 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
+**12 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 Project/team product transaction history now uses the shared immutable segmented
@@ -76,6 +76,25 @@ idempotent acknowledgement, five byte-identical immutable segments across a
 project-directory move, and zero remaining orphans. Windows and macOS file-lock,
 atomic-rename, directory-fsync, and packaged equivalents were not run because
 this runner is Linux-only.
+Shared-config terminal/dedupe history now uses that same
+`omegat-core::segmented_history` implementation instead of maintaining a second
+segment, manifest, sparse-index, and GC stack in the sidecar. The version-3
+config envelope partitions exact batch retries, preserves one global config
+FIFO across projects, and restartably imports legacy v1/v2 hot dedupe,
+manifest/archive, recent, and active replicas before removing old files.
+`history.ndjson` is a bounded write-ahead projection, so a terminal published
+before either hot replica is recoverable without replaying its product write.
+The real Linux unpacked-package mixed matrix passed: five legacy plus four new
+config rows (including a one-hex SHA-256 prefix collision), strict
+close → team commit → save → refresh order for project A, isolated save order
+for project B, three globally ordered config batches, two consecutive owner
+deaths, deleted-root replacement, and six byte-identical immutable project
+segments across a pending-receipt directory move. It also passed all ten
+history/compaction kill points, all sixteen hot/manifest replica
+write/fsync/rename/parent-fsync kill points, and fail-closed dual corruption of
+both hot and both manifest replicas with no product mutation. Windows and macOS
+packaged locking, rename, and directory-persistence evidence was not run on this
+Linux-only runner.
 The raw NDJSON contract and real Linux packaged matrix also pass the
 three-owner-death cancellation row: the third pre-existing waiter reads the
 already-published terminal, all four logical callers receive **-32800**, and
