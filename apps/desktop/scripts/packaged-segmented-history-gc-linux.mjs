@@ -82,6 +82,33 @@ const manifestRecoveryPath = (project) =>
   join(historyDirectory(project), ".history-manifest.recovery.json");
 const archiveDirectory = (project) =>
   join(historyDirectory(project), "history-archive");
+const hotPath = (project) => join(historyDirectory(project), "history-hot.json");
+
+async function durableHistoryRows(project) {
+  const rows = [];
+  if (await pathExists(hotPath(project))) {
+    rows.push(
+      ...JSON.parse(await readFile(hotPath(project), "utf8")).records,
+    );
+  }
+  if (await pathExists(archiveDirectory(project))) {
+    for (const file of await readdir(archiveDirectory(project))) {
+      const segment = JSON.parse(
+        await readFile(join(archiveDirectory(project), file), "utf8"),
+      );
+      rows.push(...segment.records);
+    }
+  }
+  return rows;
+}
+
+async function openUnscopedProject(launched, project) {
+  await rpc(launched.client, "project.open", { root: project });
+  return waitFor(`unscoped workspace for ${project}`, async () => {
+    const state = await workspaceState(launched.client);
+    return state.project === project && state.key ? state : undefined;
+  });
+}
 
 async function waitForReceiptDrain(project) {
   const active = join(historyDirectory(project), "active.json");
@@ -192,16 +219,24 @@ try {
       OMEGAT_TEST_PRODUCT_HISTORY_MARKER: generationMarker,
     },
   );
-  const lostReceiptBatchId = "history-lost-receipt";
   const interruptedSave = rpc(firstOwner.client, "project.save", {
     transaction_project_root: originalProject,
     transaction_generation: 300,
-    transaction_batch_id: lostReceiptBatchId,
+    transaction_batch_id: "history-interrupted-compaction",
   });
   void interruptedSave.catch(() => undefined);
   await waitFor("generation manifest owner checkpoint", () =>
     pathExists(generationMarker)
   );
+  const interruptedJournal = JSON.parse(
+    await readFile(
+      join(historyDirectory(originalProject), "active.json"),
+      "utf8",
+    ),
+  );
+  const interruptedBatch = interruptedJournal.batches[0];
+  assert.equal(interruptedBatch.status, "pending");
+  assert.equal(interruptedBatch.payload.operation, "project.save");
   const firstKilled = await killPackaged(firstOwner);
   firstOwner = undefined;
 
@@ -234,12 +269,49 @@ try {
   assert.equal(recoveredState.project, originalProject);
   assert.equal(recoveredState.source, "segmented history packaged source");
 
-  const terminalRows = (await readFile(historyPath(originalProject), "utf8"))
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  const lostTerminal = terminalRows.find((row) =>
+  const interruptedTerminal = (
+    await durableHistoryRows(originalProject)
+  ).find((row) =>
+    row.batch_id === interruptedBatch.batch_id
+      && row.status === "cancelled"
+      && row.payload.phase === "recovered-capture"
+  );
+  assert(
+    interruptedTerminal,
+    "replacement did not durably recover interrupted compaction owner",
+  );
+  await terminatePackaged(recoveredOwner);
+  recoveredOwner = undefined;
+
+  // Create a committed receipt through a renderer that main-process scoping has
+  // not attached to a project, then terminate it before any pending/ack call.
+  // A replacement Electron must adopt and acknowledge that exact receipt.
+  setup = await launchPackagedRenderer(
+    display.display,
+    config,
+    null,
+    limits,
+  );
+  await openUnscopedProject(setup, originalProject);
+  const lostReceiptBatchId = "history-lost-receipt";
+  const lostReceipt = await rpc(setup.client, "project.save", {
+    transaction_project_root: originalProject,
+    transaction_generation: 501,
+    transaction_batch_id: lostReceiptBatchId,
+  });
+  assert.equal(lostReceipt.receipt.batch_id, lostReceiptBatchId);
+  assert.equal(lostReceipt.receipt.status, "sidecar_committed");
+  await terminatePackaged(setup);
+  setup = undefined;
+
+  recoveredOwner = await launchPackaged(
+    display.display,
+    config,
+    originalProject,
+    limits,
+  );
+  await waitForReceiptDrain(originalProject);
+  const lostTerminal = (await durableHistoryRows(originalProject)).find((row) =>
     row.batch_id === lostReceiptBatchId
       && row.status === "completed"
       && row.payload.phase === "renderer-acknowledged"
@@ -296,12 +368,17 @@ try {
   // Move the whole project, including hot replicas, immutable generations,
   // owner claim, and a fresh unacknowledged receipt. Mutable paths are rebased
   // while immutable segment bytes remain untouched.
-  setup = await launchPackaged(
+  const relocationLimits = {
+    ...limits,
+    OMEGAT_TEST_PRODUCT_HISTORY_COMPACTION_SEGMENTS: "1024",
+  };
+  setup = await launchPackagedRenderer(
     display.display,
     config,
-    originalProject,
-    limits,
+    null,
+    relocationLimits,
   );
+  await openUnscopedProject(setup, originalProject);
   const moveReceipt = await rpc(setup.client, "project.save", {
     transaction_project_root: originalProject,
     transaction_generation: 401,
@@ -325,7 +402,7 @@ try {
     display.display,
     config,
     movedProject,
-    limits,
+    relocationLimits,
   );
   await waitForReceiptDrain(movedProject);
   const movedState = await workspaceState(recoveredOwner.client);
@@ -341,15 +418,13 @@ try {
     "bounded recent rows retained the old project path",
   );
   for (const [file, bytes] of immutableBefore) {
-    if (await pathExists(join(archiveDirectory(movedProject), file))) {
-      assert.equal(
-        (await readFile(join(archiveDirectory(movedProject), file))).toString(
-          "base64",
-        ),
-        bytes,
-        "project relocation rewrote an immutable history segment",
-      );
-    }
+    assert.equal(
+      (await readFile(join(archiveDirectory(movedProject), file))).toString(
+        "base64",
+      ),
+      bytes,
+      "project relocation removed or rewrote an immutable history segment",
+    );
   }
 
   const manifest = JSON.parse(
