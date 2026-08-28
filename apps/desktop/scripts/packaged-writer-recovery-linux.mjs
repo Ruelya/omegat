@@ -1316,12 +1316,38 @@ async function runConfigOwnerDeath(display, workDir) {
       "Shared Config Font",
     );
     await savePrefsDraft(contender.client);
+    const mergeStarted = Date.now();
     const merged = await waitFor("owner-death field merge", async () => {
       const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+      if (prefs.locale === "fr" && prefs.font_ui === "Shared Config Font") {
+        return prefs;
+      }
+      if (Date.now() - mergeStarted >= 3_000) {
+        throw new Error(JSON.stringify({
+          prefs: {
+            locale: prefs.locale,
+            font_ui: prefs.font_ui,
+          },
+          active: await pathExists(prepared.activePath)
+            ? JSON.parse(await readFile(prepared.activePath, "utf8"))
+            : null,
+          history: await pathExists(prepared.historyPath)
+            ? parseNdjson(await readFile(prepared.historyPath, "utf8"))
+            : [],
+          renderer: await contender.client.evaluate(`(() => ({
+            font: document.querySelector(
+              '[data-window-id="prefs"] .prefs-grid > .form label input'
+            )?.value ?? null,
+            error: document.querySelector(
+              '[data-window-id="prefs"] [data-persistence-error="prefs"]'
+            )?.textContent ?? null,
+          }))()`),
+        }));
+      }
       return prefs.locale === "fr" && prefs.font_ui === "Shared Config Font"
         ? prefs
         : undefined;
-    });
+    }, 10_000);
     assert.equal(merged.locale, "fr");
     assert.equal(merged.font_ui, "Shared Config Font");
     await waitFor("owner-death config queue cleanup", async () =>
@@ -1642,13 +1668,19 @@ await Promise.all([access(executable), access(sidecar)]);
 const workDir = await mkdtemp(join(tmpdir(), "omegat-writer-recovery-e2e-"));
 const xvfb = await startXvfb();
 try {
-  const sigkill = await runWriterSigkillMatrix(xvfb.display, workDir);
-  const fifo = await runMixedWriterFifo(xvfb.display, workDir);
-  const diskFaults = await runDiskFaultMatrix(xvfb.display, workDir);
-  const sharedConfig = await runSharedConfigTransactionMatrix(
-    xvfb.display,
-    workDir,
-  );
+  const scope = process.env.OMEGAT_WRITER_E2E_SCOPE ?? "all";
+  const sigkill = scope === "shared-config"
+    ? []
+    : await runWriterSigkillMatrix(xvfb.display, workDir);
+  const fifo = scope === "shared-config"
+    ? null
+    : await runMixedWriterFifo(xvfb.display, workDir);
+  const diskFaults = scope === "shared-config"
+    ? []
+    : await runDiskFaultMatrix(xvfb.display, workDir);
+  const sharedConfig = scope === "legacy"
+    ? null
+    : await runSharedConfigTransactionMatrix(xvfb.display, workDir);
   const leftovers = await readdir(workDir);
   console.log(JSON.stringify({
     result: "passed",
