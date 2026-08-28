@@ -1015,11 +1015,9 @@ describe("app store", () => {
       order.push("renderer-rebound");
       return true;
     });
-    acknowledgeTransactionReceipt.mockImplementationOnce(async () => {
+    acknowledgeTransactionReceipt.mockImplementationOnce(async (envelope, outcome) => {
       order.push("renderer-acked");
-      return {
-        ack: { acknowledged: true, already_acknowledged: false },
-      };
+      return transactionAck(envelope, outcome);
     });
     useApp.setState({
       props: {
@@ -1064,8 +1062,10 @@ describe("app store", () => {
     const rebind = vi.fn(async () => true);
     acknowledgeTransactionReceipt
       .mockRejectedValueOnce(new Error("sidecar exited before ack"))
-      .mockResolvedValueOnce({
-        ack: { acknowledged: true, already_acknowledged: true },
+      .mockImplementationOnce(async (envelope, outcome) => {
+        const result = await transactionAck(envelope, outcome);
+        result.ack.already_acknowledged = true;
+        return result;
       });
     useApp.setState({
       props: {
