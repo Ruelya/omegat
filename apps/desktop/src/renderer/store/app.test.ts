@@ -17,6 +17,8 @@ import {
 const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
 let rpcOperationListener: ((event: RpcOperationEvent) => void) | null = null;
+const refreshEntriesAfterExternalChange =
+  useApp.getState().refreshEntriesAfterExternalChange;
 
 function installBridge() {
   const mem = new Map<string, string>();
@@ -84,6 +86,7 @@ describe("app store", () => {
     rpcOperationListener = null;
     installBridge();
     resetAppState();
+    useApp.setState({ refreshEntriesAfterExternalChange });
   });
 
   it("undoes draft edits and inserts fuzzy 1–5", () => {
@@ -1522,14 +1525,9 @@ describe("app store", () => {
     const root = "/active-operation-root";
     const complete = vi.fn(async () => ({ remaining: [] }));
     const refresh = vi.fn(async () => true);
-    let notify: ((event: {
-      id: string;
-      root: string;
-      paths: string[];
-      fingerprints: Record<string, string | null>;
-      generation: number;
-      sources: Array<"native" | "sidecar">;
-    }) => void) | undefined;
+    let notify: Parameters<
+      NonNullable<typeof window.omegat.onProjectExternalChange>
+    >[0] | undefined;
     window.omegat!.completeExternalRefresh = complete;
     window.omegat!.onProjectExternalChange = (listener) => {
       notify = listener;
@@ -1725,14 +1723,9 @@ describe("app store", () => {
       .mockRejectedValueOnce(new Error("sidecar exited (SIGKILL)"))
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(true);
-    let notify: ((event: {
-      id: string;
-      root: string;
-      paths: string[];
-      fingerprints: Record<string, string | null>;
-      generation: number;
-      sources: Array<"native" | "sidecar">;
-    }) => void) | undefined;
+    let notify: Parameters<
+      NonNullable<typeof window.omegat.onProjectExternalChange>
+    >[0] | undefined;
     window.omegat!.onProjectExternalChange = (listener) => {
       notify = listener;
       return () => {
