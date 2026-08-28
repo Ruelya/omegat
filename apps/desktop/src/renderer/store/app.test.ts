@@ -1100,7 +1100,7 @@ describe("app store", () => {
     disconnect();
   });
 
-  it("drains a recovered close receipt and its FIFO tails while remaining closed", async () => {
+  it("drains recovered FIFO tails fairly across roots while remaining closed", async () => {
     const root = "/detached-close-recovery";
     const generation = 77;
     rpc.mockImplementation(async (method: string, params?: unknown) => {
@@ -1162,12 +1162,25 @@ describe("app store", () => {
       expect(acknowledgeTransactionReceipt).toHaveBeenCalledTimes(3)
     );
 
+    const otherRoot = "/second-detached-recovery";
+    const otherSave = productEnvelope(
+      otherRoot,
+      generation + 1,
+      "save-from-other-root",
+      "project.save",
+    );
+    transactionEnvelopeListener?.(otherSave);
+    await vi.waitFor(() =>
+      expect(acknowledgeTransactionReceipt).toHaveBeenCalledTimes(4)
+    );
+
     expect(acknowledgeTransactionReceipt.mock.calls.map(([envelope]) =>
       envelope.batch_id
     )).toEqual([
       "close-with-lost-ack",
       "refresh-after-close",
       "save-after-close",
+      "save-from-other-root",
     ]);
     expect(rpc.mock.calls.map(([method]) => method)).toEqual([
       "project.external-refresh",

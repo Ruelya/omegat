@@ -2012,16 +2012,28 @@ export function connectTransactionEnvelopeEvents(): () => void {
       && state.projectEvent.projectGeneration === generation;
     const detachedScopeMatches = detachedScope?.root === root
       && detachedScope.generation === generation;
-    const canAdoptDetachedClose = payload.operation === "project.close"
-      && (
-        state.props === null
-        || state.props.root === root
+    const canAdoptDetachedReceipt = state.props === null
+      || (
+        payload.operation === "project.close"
+        && state.props.root === root
       );
     if (
       envelope.version !== 1
       || !["pending", "sidecar_committed"].includes(status)
-      || (!activeScopeMatches && !detachedScopeMatches && !canAdoptDetachedClose)
+      || (
+        !activeScopeMatches
+        && !detachedScopeMatches
+        && !canAdoptDetachedReceipt
+      )
     ) return;
+    const handlesDetachedReceipt = detachedScopeMatches
+      || (!activeScopeMatches && canAdoptDetachedReceipt);
+    if (handlesDetachedReceipt && !detachedScopeMatches) {
+      // Main-process discovery publishes one durable head at a time. Once the
+      // previous detached head is acknowledged it may fairly rotate to a
+      // different project root, so a closed renderer adopts that exact scope.
+      detachedScope = { root, generation };
+    }
     if (payload.operation !== "project.external-refresh") {
       if (status !== "sidecar_committed") return;
       const identity = `${generation}\0${root}\0${id}`;
@@ -2038,7 +2050,7 @@ export function connectTransactionEnvelopeEvents(): () => void {
           );
           return;
         }
-        if (detachedScopeMatches) {
+        if (handlesDetachedReceipt) {
           // Product work behind a recovered close receipt is already durable.
           // Its renderer publication is the continued closed state: never
           // reopen or bind its EntryKey into the welcome screen.
@@ -2069,7 +2081,7 @@ export function connectTransactionEnvelopeEvents(): () => void {
       });
       return;
     }
-    if (detachedScopeMatches) {
+    if (handlesDetachedReceipt) {
       const identity = `${generation}\0${root}\0${id}`;
       if (productInFlight.has(identity)) return;
       productInFlight.add(identity);
