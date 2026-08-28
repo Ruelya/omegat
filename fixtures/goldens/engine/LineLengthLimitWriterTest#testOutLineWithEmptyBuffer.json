@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLineWithEmptyBuffer",
+  "empty": true,
+  "length": 0,
+  "keys": [
+    "org.omegat.filters2.text.LineLengthLimitWriterTest#testOutLineWithEmptyBuffer"
+  ]
+}

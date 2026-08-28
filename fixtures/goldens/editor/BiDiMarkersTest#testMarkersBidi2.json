@@ -1,0 +1,15 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.BiDiMarkersTest#testMarkersBidi2",
+  "enabled": true,
+  "source": "The title is \"مفتاح معايير الويب!‏\" in Arabic.",
+  "translation": "The title is \"مفتاح معايير الويب!‏\" in Arabic.",
+  "is_active": true,
+  "marks": [
+    {
+      "startOffset": 33,
+      "endOffset": 34,
+      "entryPart": "TRANSLATION"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

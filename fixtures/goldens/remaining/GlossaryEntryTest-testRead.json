@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.GlossaryEntryTest#testRead",
+  "empty_eq": true,
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryEntryTest#testRead"
+  ]
+}
