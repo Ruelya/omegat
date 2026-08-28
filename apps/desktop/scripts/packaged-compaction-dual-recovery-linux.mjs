@@ -328,7 +328,10 @@ async function startTracedRpc(client, traceKey, method, params, requestId) {
         record.errorCode =
           typeof error === "object" && error !== null && "code" in error
             ? error.code
-            : null;
+            : record.error ===
+                "Error: Error invoking remote method 'rpc': AbortError: request cancelled"
+              ? -32800
+              : null;
       },
     ).finally(() => {
       record.settled = true;
@@ -3783,7 +3786,10 @@ try {
       for (const state of concurrentResults) {
         assert.equal(state.started, true);
         assert.equal(state.resolved, false);
-        assert.equal(state.error, "AbortError: request cancelled");
+        assert.equal(
+          state.error,
+          "Error: Error invoking remote method 'rpc': AbortError: request cancelled",
+        );
         assert.equal(state.errorCode, -32800);
       }
       const takeoverIndices = [];
