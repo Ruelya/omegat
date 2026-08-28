@@ -8221,7 +8221,7 @@ fn editor_commit_propagates_defaults_and_scopes_alternatives_over_ndjson() {
         "spell.learn",
         json!({"word": "xyzzyqq"}),
     );
-    assert_eq!(learned["result"], json!({"ok": true}));
+    assert_eq!(learned["result"], json!({"ok": true, "receipt": null}));
     let rechecked = rpc(
         &mut stdin,
         &mut stdout,
