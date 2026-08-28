@@ -104,21 +104,43 @@ fail closed when equal revisions disagree. Per-root active ownership and stable
 detached generations provide cross-root round-robin dispatch without dropping
 refresh tails, while replacement waiters recover through consecutive dead
 owners.
+Receipt discovery, dispatch, acknowledgement, cancellation intent, terminal
+publication, and terminal compaction now converge through the generic
+`omegat-core::durable_transaction` workflow layered on that FIFO and immutable
+segmented history. Config and project/team retain only domain mutation,
+validation, rollback, and cleanup callbacks. A durable migration seed resumes
+old receipt/cancel history import after interruption; acknowledgement first
+parks the terminal in the active queue, then archives it, cleans domain
+artifacts, and finally removes the queue row, so restart closes both publication
+crash windows without replaying product writes. Close, save, team
+sync/commit/resolve, refresh, and config callers share those invariants.
+Config-scoped root discovery uses the core fairness order. Sidecar replacement
+recovery performs legacy preparation before one cancellable multi-round owner
+claim and continues from that exact app/PID/generation under a revalidated
+blocking lock, avoiding both orphan live owners and false empty discovery
+results during another contender's short critical section.
 The real Linux packaged durable-FIFO stress runner passed both constituent
-multi-Electron drivers. It covers enqueue; all eight active recovery/primary
-write, fsync, rename, and parent-fsync boundaries; product publication; ten
-history/compaction kill points; sixteen history replica boundaries; renderer
-acknowledgement and compaction; cancellation before lock, after lock, and after
-rollback; cross-root order; and consecutive owner deaths. Windows and macOS
-packaged file-lock, atomic-rename, directory-fsync, and Electron concurrency
-were not run because this runner is Linux-only.
+multi-Electron drivers and parses their reports rather than accepting only
+child exit status. It covers enqueue; all eight active recovery/primary write,
+fsync, rename, and parent-fsync boundaries; product publication; ten
+history/compaction kill points; sixteen history replica boundaries; all four
+lost-ack receipt classes; cancellation before and after owner claim; cross-root
+order and project-root movement; and consecutive owner deaths. The mixed rows
+hold at least three packaged Electron waiters concurrently and prove that a
+pre-existing third waiter takes over without launching another process. Per-
+contender claim markers are accepted only when they match the current durable
+owner app/PID/generation, including takeover between durable claim and renderer
+delivery. Windows and macOS packaged file-lock, atomic-rename,
+directory-fsync, and Electron concurrency were not run because this runner is
+Linux-only.
 The raw NDJSON contract and real Linux packaged matrix also pass the
 three-owner-death cancellation row: the third pre-existing waiter reads the
 already-published terminal, all four logical callers receive **-32800**, and
 the resolve envelope count remains zero.
 The sidecar contract and real Linux package both exercise pre-kill contender
-rejection at each product compaction checkpoint; the packaged result records
-`pendingRejected` and `acknowledgementRejected` before the old PID exits.
+blocking at each product compaction checkpoint; while `operation.lock` is held,
+the packaged result proves the contender browser remains live, receives no
+envelope, and cannot change either durable owner replica or the active queue.
 The real Linux unpacked package restart E2E, including atomic refresh receipt
 recovery and cross-project transaction isolation, also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
