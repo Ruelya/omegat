@@ -3229,11 +3229,14 @@ try {
     const oldOwnerMarkerPath = join(workDir, `${label}-old-owner.json`);
     const oldOwnerReleasePath = join(workDir, `${label}-old-owner-release`);
     const preKillTracePath = join(workDir, `${label}-pre-kill-trace.ndjson`);
-    const electionMarkerPath = join(workDir, `${label}-winner.json`);
     const electionReleasePath = join(workDir, `${label}-winner-release`);
     const replacementTracePaths = Array.from(
       { length: 3 },
       (_, index) => join(workDir, `${label}-replacement-${index}-trace.ndjson`),
+    );
+    const replacementOwnerMarkerPaths = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${label}-replacement-${index}-owner.json`),
     );
     const replacementWaitPaths = Array.from(
       { length: 3 },
@@ -3359,31 +3362,29 @@ try {
           OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER:
             replacementWaitPaths[index],
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: prepared.operation,
-          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: electionMarkerPath,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER:
+            replacementOwnerMarkerPaths[index],
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: electionReleasePath,
         })
       ),
     );
     quorumReplacements = replacements;
-    let election = await waitFor(
-      `${headKind} simultaneous replacement winner`,
-      async () => {
-        if (await pathExists(electionMarkerPath)) {
-          return {
-            marker: JSON.parse(await readFile(electionMarkerPath, "utf8")),
-            rendererMarkerObserved: true,
-          };
-        }
-        if (!await pathExists(prepared.ownerPath)) return undefined;
-        const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
-        if (
-          claim.claim_id === oldDurableOwner.claim_id
-          || !replacements.some((replacement) =>
-            replacement.application.pid === claim.process_id
-          )
-        ) {
-          return undefined;
-        }
+    const readConsistentElection = async (previousClaimId, excludedProcessId) => {
+      if (!await pathExists(prepared.ownerPath)) return undefined;
+      const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+      const ownerIndex = replacements.findIndex((replacement) =>
+        replacement.application.pid === claim.process_id
+      );
+      if (
+        claim.claim_id === previousClaimId
+        || ownerIndex === -1
+        || claim.process_id === excludedProcessId
+        || !await pathExists(`/proc/${claim.process_id}`)
+      ) {
+        return undefined;
+      }
+      const markerPath = replacementOwnerMarkerPaths[ownerIndex];
+      if (!await pathExists(markerPath)) {
         return {
           marker: {
             batch_id: prepared.headBatchId,
@@ -3392,9 +3393,27 @@ try {
             owner_process_id: claim.process_id,
             generation: claim.generation,
           },
+          durableOwner: claim,
           rendererMarkerObserved: false,
         };
-      },
+      }
+      const marker = JSON.parse(await readFile(markerPath, "utf8"));
+      if (
+        marker.owner_process_id !== claim.process_id
+        || marker.app_instance !== claim.app_instance
+        || marker.generation !== claim.generation
+      ) {
+        return undefined;
+      }
+      return {
+        marker,
+        durableOwner: claim,
+        rendererMarkerObserved: true,
+      };
+    };
+    let election = await waitFor(
+      `${headKind} simultaneous replacement winner`,
+      () => readConsistentElection(oldDurableOwner.claim_id),
     );
     let preDeliveryClaimKill = null;
     if (!election.rendererMarkerObserved) {
@@ -3406,17 +3425,16 @@ try {
       quorumReplacements = replacements.filter((replacement) =>
         replacement !== claimed
       );
-      const marker = await waitFor(
+      election = await waitFor(
         `${headKind} pre-existing waiter takeover after pre-delivery death`,
-        async () =>
-          await pathExists(electionMarkerPath)
-            ? JSON.parse(await readFile(electionMarkerPath, "utf8"))
-            : undefined,
+        async () => {
+          const takeover = await readConsistentElection(
+            election.durableOwner.claim_id,
+            preDeliveryClaimKill.browserPid,
+          );
+          return takeover?.rendererMarkerObserved ? takeover : undefined;
+        },
       );
-      election = {
-        marker,
-        rendererMarkerObserved: true,
-      };
     }
     const electionMarker = election.marker;
     assert.equal(electionMarker.batch_id, prepared.headBatchId);
@@ -3432,7 +3450,7 @@ try {
       index !== winnerIndex
       && replacement.application.pid !== preDeliveryClaimKill?.browserPid
     );
-    const durableWinner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    const durableWinner = election.durableOwner;
     assert.equal(durableWinner.process_id, winner.application.pid);
     assert.equal(durableWinner.app_instance, electionMarker.app_instance);
     assert.equal(durableWinner.generation, electionMarker.generation);
