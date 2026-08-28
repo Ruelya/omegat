@@ -768,6 +768,10 @@ export const useApp = create<AppState>((set, get) => ({
   },
   closeProject: async () => {
     const before = get();
+    let closed: {
+      ok: boolean;
+      receipt?: TransactionEnvelope | null;
+    } | null = null;
     dockLifecycle.beginProject(null, "close");
     try {
       const current = before.entries[before.index];
@@ -780,7 +784,7 @@ export const useApp = create<AppState>((set, get) => ({
       ) {
         await get().commitCurrent();
       }
-      const closed = await rpc<{
+      closed = await rpc<{
         ok: boolean;
         receipt?: TransactionEnvelope | null;
       }>("project.close");
@@ -790,7 +794,7 @@ export const useApp = create<AppState>((set, get) => ({
       throw error;
     }
     publishClosedRendererState();
-    if (closed.receipt) {
+    if (closed?.receipt) {
       await acknowledgeTransactionEnvelopeOrDefer(
         closed.receipt,
         "succeeded",

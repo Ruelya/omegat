@@ -2085,9 +2085,11 @@ describe("app store", () => {
 
     await vi.waitFor(() =>
       expect(complete).toHaveBeenCalledWith(
-        root,
-        generation,
-        "checkpointed-batch",
+        expect.objectContaining({
+          project_root: root,
+          generation,
+          batch_id: "checkpointed-batch",
+        }),
         "succeeded",
       )
     );
