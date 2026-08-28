@@ -1,0 +1,21 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-Comments.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testCommentEscaping",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Value"
+  ],
+  "ids": [
+    "ID"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "# Foo\\\nID=Value\n"
+}

@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.RealProjectTest#testImportSameTranslations",
+  "default": "Liste des sections de %s",
+  "alt_id3": "Ceci est la liste des sections de %s",
+  "keys": [
+    "org.omegat.core.data.RealProjectTest#testImportSameTranslations"
+  ]
+}

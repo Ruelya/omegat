@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithSpecialCharacters",
+  "input": "!@#$%^&*()-_=+[]{}|;:',.<>?",
+  "count": 27,
+  "keys": [
+    "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithSpecialCharacters"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "java_source": "org.omegat.core.data.RealProject#loadTM / appendFromAutoTMX",
+  "source": "Hello world",
+  "auto": "AUTO_HIT",
+  "enforce": "ENFORCE_HIT",
+  "mt": "MT_HIT",
+  "penalty": 10
+}

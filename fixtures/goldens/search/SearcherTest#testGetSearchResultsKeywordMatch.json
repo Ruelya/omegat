@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testGetSearchResultsKeywordMatch",
+  "count": 2,
+  "src": "OmegaT is great software",
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testGetSearchResultsKeywordMatch"
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "java_test": "org.omegat.core.statistics.CalcMatchStatisticsTest#testCalcMatchStatics",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "percent": 101,
+      "bin": "exact"
+    },
+    {
+      "percent": 100,
+      "bin": "fuzzy_95"
+    },
+    {
+      "percent": 95,
+      "bin": "fuzzy_95"
+    },
+    {
+      "percent": 94,
+      "bin": "fuzzy_85"
+    },
+    {
+      "percent": 85,
+      "bin": "fuzzy_85"
+    },
+    {
+      "percent": 84,
+      "bin": "fuzzy_75"
+    },
+    {
+      "percent": 75,
+      "bin": "fuzzy_75"
+    },
+    {
+      "percent": 74,
+      "bin": "fuzzy_50"
+    },
+    {
+      "percent": 50,
+      "bin": "fuzzy_50"
+    },
+    {
+      "percent": 49,
+      "bin": "none"
+    },
+    {
+      "percent": 0,
+      "bin": "none"
+    }
+  ],
+  "word_counts": [
+    {
+      "text": "Hello world",
+      "words": 2,
+      "chars_nosp": 10,
+      "chars": 11
+    },
+    {
+      "text": "Second line",
+      "words": 2,
+      "chars_nosp": 10,
+      "chars": 11
+    },
+    {
+      "text": "你好",
+      "words": 1,
+      "chars_nosp": 2,
+      "chars": 2
+    }
+  ],
+  "percent_exact_match": 101
+}

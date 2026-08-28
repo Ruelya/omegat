@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testBackupFilename",
+  "pattern": "backup.test.202305141735.bak",
+  "keys": [
+    "org.omegat.util.FileUtilTest#testBackupFilename"
+  ]
+}
