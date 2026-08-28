@@ -4380,15 +4380,15 @@ try {
       const cancelledQueue = JSON.parse(
         await readFile(prepared.activePath, "utf8"),
       );
-      const cancelledResolve = productJournalBatches(cancelledQueue).find(
-        (row) => row.batch_id === resolveBatchId,
-      );
-      assert(cancelledResolve);
-      assert.equal(cancelledResolve.status, "request_cancelled");
-      assert.equal(cancelledResolve.error_code, -32800);
-      assert.equal(
-        cancelledResolve.payload.phase,
-        "renderer-cancelled-takeover",
+      assert.deepEqual(
+        productJournalBatches(cancelledQueue).map((row) => [
+          row.batch_id,
+          row.status,
+        ]),
+        prepared.fifoHeads.map(({ batchId }) => [
+          batchId,
+          "sidecar_committed",
+        ]),
       );
       const takeoverHistory = parseNdjson(
         await readFile(prepared.historyPath, "utf8"),
@@ -4401,6 +4401,16 @@ try {
         ).length,
         1,
         `${killBoundary} did not leave exactly one durable rollback`,
+      );
+      assert.equal(
+        takeoverHistory.filter((row) =>
+          row.batch_id === resolveBatchId
+          && row.status === "request_cancelled"
+          && row.error_code === -32800
+          && row.payload.phase === "renderer-cancelled-takeover"
+        ).length,
+        1,
+        `${killBoundary} did not publish exactly one takeover terminal`,
       );
       waitingCancellationTakeover = {
         waitingCallerBrowserPids:
