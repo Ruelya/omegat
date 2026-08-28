@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticle2",
+  "count": 2,
+  "prefix": "ta",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadArticle2"
+  ]
+}

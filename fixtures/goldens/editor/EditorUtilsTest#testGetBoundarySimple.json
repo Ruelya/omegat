@@ -1,0 +1,28 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorUtilsTest#testGetBoundarySimple",
+  "text": "Hello world of toys!",
+  "locale": "en",
+  "cases": [
+    {
+      "offset": 8,
+      "forward": false,
+      "expect": 6
+    },
+    {
+      "offset": 8,
+      "forward": true,
+      "expect": 11
+    },
+    {
+      "offset": 15,
+      "forward": true,
+      "expect": 19
+    },
+    {
+      "offset": 22,
+      "forward": true,
+      "expect": 20
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

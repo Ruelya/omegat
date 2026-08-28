@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.externalfinder.ExternalFinderTest#testGetItemUrl",
+  "url0": "https://www.google.com/search?q={target}",
+  "url1": "https://www.google.com/search?q=define%3A{target}",
+  "count": 2,
+  "keys": [
+    "org.omegat.externalfinder.ExternalFinderTest#testGetItemUrl"
+  ]
+}

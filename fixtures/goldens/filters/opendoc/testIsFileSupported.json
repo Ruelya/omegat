@@ -1,0 +1,14 @@
+{
+  "id": "opendoc",
+  "java_test": "org.omegat.filters.OpenDocFilterTest#testIsFileSupported",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "supported": [
+    {
+      "fixture": "openDoc/file-OpenDocFilter.odt",
+      "ok": true
+    }
+  ]
+}
