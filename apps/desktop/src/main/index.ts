@@ -237,17 +237,55 @@ async function holdAfterClaimingTransactionHead(
   }
 }
 
+function traceTransactionOwnerRetry(value: unknown) {
+  const trace = process.env.OMEGAT_TEST_TRANSACTION_OWNER_RETRY_TRACE;
+  if (trace) appendFileSync(trace, `${JSON.stringify(value)}\n`);
+}
+
 async function publishPendingTransactionEnvelopes(
   client: SidecarRpcClient,
   root: string,
   generation: number,
 ) {
-  const result = await client.request("transaction.receipt.pending", {
-    root,
-    generation,
-    app_instance: appInstance,
-    owner_process_id: process.pid,
-  }) as { envelopes?: TransactionEnvelope[] };
+  let result: {
+    envelopes?: TransactionEnvelope[];
+    owner_retry?: { previous_owner_process_id?: number } | null;
+  };
+  try {
+    result = await client.request("transaction.receipt.pending", {
+      root,
+      generation,
+      app_instance: appInstance,
+      owner_process_id: process.pid,
+      // Linux is the platform where dispatcher ownership has a real PID
+      // liveness contract. A losing packaged process stays alive here and gets
+      // exactly one retry after the owner it observed exits.
+      ...(process.platform === "linux"
+        ? { owner_retry_timeout_ms: 300_000 }
+        : {}),
+    }) as typeof result;
+  } catch (error) {
+    const message = String(error);
+    const previousOwner = message.match(
+      /replacement retry after owner pid (\d+) exited/,
+    );
+    if (previousOwner) {
+      traceTransactionOwnerRetry({
+        result: "rejected",
+        replacement_process_id: process.pid,
+        previous_owner_process_id: Number(previousOwner[1]),
+        error: message,
+      });
+    }
+    throw error;
+  }
+  if (typeof result.owner_retry?.previous_owner_process_id === "number") {
+    traceTransactionOwnerRetry({
+      result: "claimed",
+      replacement_process_id: process.pid,
+      previous_owner_process_id: result.owner_retry.previous_owner_process_id,
+    });
+  }
   const envelopes = Array.isArray(result.envelopes) ? result.envelopes : [];
   const head = envelopes[0];
   const detached = detachedTransactionScope;

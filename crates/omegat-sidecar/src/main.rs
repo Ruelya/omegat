@@ -175,7 +175,7 @@ impl App {
                 generation,
                 batch_id.as_deref().expect("scoped product batch id"),
             )
-                .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))
+            .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))
         }
     }
 
@@ -212,7 +212,7 @@ impl App {
                 generation,
                 batch_id.as_deref().expect("scoped product batch id"),
             )
-                .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+            .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
         };
         let mut value = serde_json::to_value(updated).unwrap();
         value
@@ -1480,19 +1480,51 @@ fn pending_transaction_envelopes(
     app_instance: &str,
     owner_process_id: u32,
     generation: u64,
-) -> std::result::Result<Vec<Value>, (i32, String)> {
+    owner_retry_timeout: Option<std::time::Duration>,
+) -> std::result::Result<(Vec<Value>, Option<u32>), (i32, String)> {
     let mut envelopes = Vec::new();
-    if let Some(receipt) = omegat_team::pending_transaction_receipt_for_owner(
+    let first_receipt = omegat_team::pending_transaction_receipt_for_owner(
         props,
         generation,
         app_instance,
         owner_process_id,
-    )
-    .map_err(|error| match error {
-        omegat_team::TeamError::Conflict(message) => (error_code::TEAM_CONFLICT, message),
-        other => (error_code::INTERNAL_ERROR, other.to_string()),
-    })?
-    {
+    );
+    let mut retried_after_owner = None;
+    let receipt = match (first_receipt, owner_retry_timeout) {
+        (Ok(receipt), _) => receipt,
+        (Err(omegat_team::TeamError::Conflict(message)), Some(timeout)) => {
+            let previous_owner =
+                omegat_team::wait_for_transaction_dispatch_owner_exit(props, timeout)
+                    .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?;
+            let Some(previous_owner) = previous_owner else {
+                return Err((error_code::TEAM_CONFLICT, message));
+            };
+            let retried = omegat_team::pending_transaction_receipt_for_owner(
+                props,
+                generation,
+                app_instance,
+                owner_process_id,
+            )
+            .map_err(|error| match error {
+                omegat_team::TeamError::Conflict(message) => (
+                    error_code::TEAM_CONFLICT,
+                    format!(
+                        "replacement retry after owner pid {previous_owner} exited was rejected: {message}"
+                    ),
+                ),
+                other => (error_code::INTERNAL_ERROR, other.to_string()),
+            })?;
+            retried_after_owner = Some(previous_owner);
+            retried
+        }
+        (Err(omegat_team::TeamError::Conflict(message)), None) => {
+            return Err((error_code::TEAM_CONFLICT, message));
+        }
+        (Err(other), _) => {
+            return Err((error_code::INTERNAL_ERROR, other.to_string()));
+        }
+    };
+    if let Some(receipt) = receipt {
         envelopes.push(serde_json::to_value(receipt).map_err(|error| {
             (
                 error_code::INTERNAL_ERROR,
@@ -1547,7 +1579,7 @@ fn pending_transaction_envelopes(
                     )
             })
     });
-    Ok(envelopes)
+    Ok((envelopes, retried_after_owner))
 }
 
 fn transaction_scope(
@@ -1816,30 +1848,50 @@ fn dispatch_refresh_journal(
                 omegat_core::properties::ProjectProperties::load(&root).map_err(core_err)?;
             return match method {
                 "transaction.receipt.pending" => {
-                    let mut envelopes = pending_transaction_envelopes(
+                    let owner_retry_timeout = params
+                        .get("owner_retry_timeout_ms")
+                        .map(|value| {
+                            value
+                                .as_u64()
+                                .filter(|value| (1..=300_000).contains(value))
+                                .map(std::time::Duration::from_millis)
+                                .ok_or((
+                                    error_code::INVALID_PARAMS,
+                                    "owner retry timeout must be between 1 and 300000 ms".into(),
+                                ))
+                        })
+                        .transpose()?;
+                    let (mut envelopes, previous_owner_process_id) = pending_transaction_envelopes(
                         config_dir,
                         &props,
                         &app_instance,
                         owner_process_id,
                         generation,
+                        owner_retry_timeout,
                     )?;
                     // Expose exactly one durable head. The Electron dispatcher
                     // asks again after its renderer acknowledgement, so neither
                     // backend can race or publish around an older receipt.
                     envelopes.truncate(1);
-                    Ok(json!({ "envelopes": envelopes }))
+                    Ok(json!({
+                        "envelopes": envelopes,
+                        "owner_retry": previous_owner_process_id.map(|process_id| json!({
+                            "previous_owner_process_id": process_id,
+                        })),
+                    }))
                 }
                 "transaction.receipt.ack" => {
                     let batch_id = batch_id.as_deref().expect("required transaction batch id");
                     let operation = operation
                         .as_deref()
                         .expect("required transaction operation");
-                    let pending = pending_transaction_envelopes(
+                    let (pending, _) = pending_transaction_envelopes(
                         config_dir,
                         &props,
                         &app_instance,
                         owner_process_id,
                         generation,
+                        None,
                     )?;
                     if let Some(index) = pending.iter().position(|envelope| {
                         envelope.get("batch_id").and_then(Value::as_str) == Some(batch_id)

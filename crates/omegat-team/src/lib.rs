@@ -50,7 +50,8 @@ pub use remote_repository_provider::{
     commit_project_files_cancellable_scoped, get_version, peek_transaction_receipt,
     pending_transaction_receipt, pending_transaction_receipt_for_owner, recover_interrupted_sync,
     switch_to_version, sync, sync_cancellable, sync_cancellable_scoped, transaction_receipt,
-    TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt,
+    wait_for_transaction_dispatch_owner_exit, TransactionRendererAck, TransactionRendererPayload,
+    TransactionRendererReceipt,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;

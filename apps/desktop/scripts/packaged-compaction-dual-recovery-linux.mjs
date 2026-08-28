@@ -301,6 +301,23 @@ async function invokeRpcResult(client, method, params) {
   ))()`, true);
 }
 
+async function clickTeamResolveTheirs(client, entryKey) {
+  return client.evaluate(`(() => {
+    document.querySelector('[data-operation-action="team-window"]')?.click();
+    const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+      .find((candidate) =>
+        candidate.getAttribute("data-team-conflict-key")
+          === ${JSON.stringify(JSON.stringify(entryKey))}
+      );
+    const button = row?.querySelector(
+      '[data-operation-action="team-resolve-theirs"]'
+    );
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.click();
+    return true;
+  })()`);
+}
+
 async function launchPackagedRenderer(display, configDir, project, extraEnv = {}) {
   const port = await unusedPort();
   let stderr = "";
@@ -922,6 +939,168 @@ async function prepareCloseReceiptProject(configDir, project, remote, label) {
   };
 }
 
+async function prepareResolveElectionProject(
+  configDir,
+  project,
+  remote,
+  label,
+) {
+  const gitRemote = join(remote, "main.git");
+  const gitSeed = join(remote, "main-seed");
+  const fileRemote = join(remote, "file-remote");
+  const fileRemotePath = join(fileRemote, "mapping.marker");
+  await Promise.all([
+    mkdir(gitSeed, { recursive: true }),
+    mkdir(fileRemote, { recursive: true }),
+  ]);
+  const session = new SidecarSession(configDir);
+  await session.request("project.create", {
+    root: project,
+    source_lang: "en",
+    target_lang: "fr",
+    sentence_seg: false,
+  });
+  const source = `${label} duplicate resolve source`;
+  await Promise.all([
+    writeFile(join(project, "source", "a-wanted.txt"), source, "utf8"),
+    writeFile(join(project, "source", "z-decoy.txt"), source, "utf8"),
+  ]);
+  await session.request("project.reload", {});
+  const entries = await session.request("entry.list", {});
+  const wanted = entries.find((entry) => entry.key.file === "a-wanted.txt");
+  const decoy = entries.find((entry) => entry.key.file === "z-decoy.txt");
+  assert(wanted);
+  assert(decoy);
+  assertCompleteEntryKey(wanted.key);
+  assertCompleteEntryKey(decoy.key);
+  const baseTranslation = `${label} base translation`;
+  const ours = `${label} ours translation 😀`;
+  const theirs = `${label} them translation 😀`;
+  assert.equal(ours.length, theirs.length);
+  await session.request("entry.set", {
+    index: wanted.index,
+    key: wanted.key,
+    translation: baseTranslation,
+    note: "resolve election base",
+    revision: wanted.revision,
+    default_translation: false,
+  });
+  await session.request("project.save", {});
+
+  await git(["init", "--bare", gitRemote], remote);
+  await git(["init", "-b", "main"], gitSeed);
+  await git(["config", "user.name", "OmegaT E2E"], gitSeed);
+  await git(["config", "user.email", "omegat-e2e@example.invalid"], gitSeed);
+  await mkdir(join(gitSeed, "omegat"), { recursive: true });
+  await writeFile(
+    join(gitSeed, "omegat", "project_save.tmx"),
+    await readFile(join(project, "omegat", "project_save.tmx")),
+  );
+  await writeFile(join(gitSeed, "main-seed.keep"), "resolve main seed\n", "utf8");
+  await git(["add", "-A"], gitSeed);
+  await git(["commit", "-m", "seed resolve conflict base"], gitSeed);
+  await git(["remote", "add", "origin", gitRemote], gitSeed);
+  await git(["push", "-u", "origin", "HEAD:refs/heads/main"], gitSeed);
+  await writeFile(fileRemotePath, `${label} file mapping v1\n`, "utf8");
+
+  await session.request("team.mapping", {
+    repositories: [{
+      repo_type: "git",
+      url: gitRemote,
+      branch: "main",
+      mappings: [{
+        local: "/omegat/project_save.tmx",
+        repository: "/omegat/project_save.tmx",
+        includes: [],
+        excludes: [],
+      }],
+    }, {
+      repo_type: "file",
+      url: fileRemote,
+      branch: null,
+      mappings: [{
+        local: "/team-mapping.marker",
+        repository: "/mapping.marker",
+        includes: [],
+        excludes: [],
+      }],
+    }],
+  });
+  await session.request("team.sync", {});
+
+  const syncedEntries = await session.request("entry.list", {});
+  const syncedWanted = syncedEntries.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(wanted.key)
+  );
+  assert(syncedWanted);
+  await session.request("entry.set", {
+    index: syncedWanted.index,
+    key: syncedWanted.key,
+    translation: ours,
+    note: "resolve election ours",
+    revision: syncedWanted.revision,
+    default_translation: false,
+  });
+  await session.request("project.save", {});
+
+  const remoteTmxPath = join(gitSeed, "omegat", "project_save.tmx");
+  const remoteTmx = await readFile(remoteTmxPath, "utf8");
+  assert(remoteTmx.includes(`<seg>${baseTranslation}</seg>`));
+  await writeFile(
+    remoteTmxPath,
+    remoteTmx.replace(
+      `<seg>${baseTranslation}</seg>`,
+      `<seg>${theirs}</seg>`,
+    ),
+    "utf8",
+  );
+  await git(["add", "-A"], gitSeed);
+  await git(["commit", "-m", "publish resolve conflict theirs"], gitSeed);
+  await git(["push", "origin", "HEAD:refs/heads/main"], gitSeed);
+  const fileRemoteContent = `${label} file mapping v2\n`;
+  await writeFile(fileRemotePath, fileRemoteContent, "utf8");
+  await assert.rejects(
+    session.request("team.sync", {}),
+    /-32005/,
+  );
+  const conflictResult = await session.request("team.conflicts", {});
+  assert.equal(conflictResult.conflicts.length, 1);
+  assert.deepEqual(conflictResult.conflicts[0].entry_key, wanted.key);
+  assert.equal(conflictResult.conflicts[0].ours, ours);
+  assert.equal(conflictResult.conflicts[0].theirs, theirs);
+  await session.close();
+
+  return {
+    source,
+    wantedKey: wanted.key,
+    decoyKey: decoy.key,
+    ours,
+    theirs,
+    gitRemote,
+    gitHead: await git([
+      "--git-dir",
+      gitRemote,
+      "rev-parse",
+      "refs/heads/main",
+    ]),
+    fileRemotePath,
+    fileRemoteContent,
+    activePath: join(project, ".repositories", "transactions", "active.json"),
+    ownerPath: join(
+      project,
+      ".repositories",
+      "transactions",
+      "renderer-owner.json",
+    ),
+    historyPath: join(
+      project,
+      ".repositories",
+      "transactions",
+      "history.ndjson",
+    ),
+  };
+}
+
 async function prepareAtomicElectionProject(
   configDir,
   project,
@@ -1192,6 +1371,7 @@ const results = [];
 const productCompactionResults = [];
 const receiptAckMatrix = [];
 const atomicReplacementElectionResults = [];
+let resolveReplacementElection;
 let launchedA;
 let launchedB;
 let quorumReplacements = [];
@@ -3174,6 +3354,449 @@ try {
     }
   }
 
+  {
+    const label = "atomic-team-resolve";
+    const config = join(workDir, `${label}-config`);
+    const project = join(workDir, `${label}-project`);
+    const remote = join(workDir, `${label}-remote`);
+    const oldOwnerMarkerPath = join(workDir, `${label}-old-owner.json`);
+    const oldOwnerReleasePath = join(workDir, `${label}-old-owner.release`);
+    const prepared = await prepareResolveElectionProject(
+      config,
+      project,
+      remote,
+      label,
+    );
+    launchedA = await launchPackaged(xvfb.display, config, project, {
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "resolve-conflict",
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: oldOwnerMarkerPath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: oldOwnerReleasePath,
+    });
+    const visibleConflict = await waitFor(
+      "real Git team.resolve complete-key conflict",
+      async () =>
+        launchedA.client.evaluate(`(() => {
+          document.querySelector('[data-operation-action="team-window"]')?.click();
+          const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+            .find((candidate) =>
+              candidate.getAttribute("data-team-conflict-key")
+                === ${JSON.stringify(JSON.stringify(prepared.wantedKey))}
+            );
+          return row ? {
+            key: row.getAttribute("data-team-conflict-key"),
+            text: row.textContent ?? "",
+            conflictCount: document.querySelectorAll("[data-team-conflict-key]").length,
+          } : null;
+        })()`),
+    );
+    assert.deepEqual(JSON.parse(visibleConflict.key), prepared.wantedKey);
+    assert.equal(visibleConflict.conflictCount, 1);
+    assert(visibleConflict.text.includes(`ours: ${prepared.ours}`));
+    assert(visibleConflict.text.includes(`theirs: ${prepared.theirs}`));
+    const beforeResolve = await workspaceState(launchedA.client);
+    assert.equal(beforeResolve.project, project);
+    assert.equal(beforeResolve.translation, prepared.ours);
+    assert.equal(beforeResolve.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(beforeResolve.key), prepared.wantedKey);
+    assert.equal(
+      await clickTeamResolveTheirs(launchedA.client, prepared.wantedKey),
+      true,
+      "visible team.resolve keep-theirs action was unavailable",
+    );
+    const oldOwnerMarker = await waitFor(
+      "team.resolve owner claim before renderer delivery",
+      async () =>
+        await pathExists(oldOwnerMarkerPath)
+          ? JSON.parse(await readFile(oldOwnerMarkerPath, "utf8"))
+          : undefined,
+    );
+    assert.equal(oldOwnerMarker.operation, "resolve-conflict");
+    assert.equal(oldOwnerMarker.owner_process_id, launchedA.application.pid);
+    const resolveBatchId = oldOwnerMarker.batch_id;
+    const oldDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(oldDurableOwner.process_id, launchedA.application.pid);
+    assert.equal(oldDurableOwner.app_instance, oldOwnerMarker.app_instance);
+    assert.equal(oldDurableOwner.generation, oldOwnerMarker.generation);
+    const resolveJournal = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    const resolveHead = productJournalBatches(resolveJournal).find((row) =>
+      row.batch_id === resolveBatchId
+    );
+    assert(resolveHead);
+    assert.equal(resolveHead.status, "sidecar_committed");
+    assert.equal(resolveHead.payload.operation, "resolve-conflict");
+    assert.equal(resolveHead.commit.manifest_sha256.length, 64);
+
+    const stableTreeAfterResolve = await snapshotStableProjectTree(project);
+    const tmxPath = join(project, "omegat", "project_save.tmx");
+    const tmxAfterResolve = await readFile(tmxPath);
+    const tmxMtimeAfterResolve = (await stat(tmxPath, { bigint: true })).mtimeNs;
+    const fileRemoteAfterResolve = await readFile(prepared.fileRemotePath);
+    const fileRemoteMtimeAfterResolve =
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs;
+    const gitHeadAfterResolve = await git([
+      "--git-dir",
+      prepared.gitRemote,
+      "rev-parse",
+      "refs/heads/main",
+    ]);
+    assert.equal(gitHeadAfterResolve, prepared.gitHead);
+    assert.equal(
+      await pathExists(join(project, ".repositories", "prep", "conflicts.json")),
+      true,
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(
+          join(project, ".repositories", "prep", "conflicts.json"),
+          "utf8",
+        ),
+      ),
+      [],
+    );
+
+    const killedOldOwner = await killPackaged(launchedA);
+    launchedA = undefined;
+    assert.equal(killedOldOwner.browserPid, oldOwnerMarker.owner_process_id);
+    assert.equal(
+      await pathExists(`/proc/${killedOldOwner.browserPid}`),
+      false,
+      "team.resolve old owner remained live before replacement election",
+    );
+
+    const candidates = Array.from({ length: 4 }, (_, index) => ({
+      ownerMarker: join(workDir, `${label}-candidate-${index}-owner.json`),
+      ownerRelease: join(workDir, `${label}-candidate-${index}-owner.release`),
+      waitMarker: join(workDir, `${label}-candidate-${index}-wait.json`),
+      retryTrace: join(workDir, `${label}-candidate-${index}-retry.ndjson`),
+      envelopeTrace: join(workDir, `${label}-candidate-${index}-envelope.ndjson`),
+    }));
+    const replacements = await Promise.all(
+      candidates.map((candidate) =>
+        launchPackagedRenderer(xvfb.display, config, project, {
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "resolve-conflict",
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER:
+            candidate.ownerMarker,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE:
+            candidate.ownerRelease,
+          OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: candidate.waitMarker,
+          OMEGAT_TEST_TRANSACTION_OWNER_RETRY_TRACE: candidate.retryTrace,
+          OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: candidate.envelopeTrace,
+        })
+      ),
+    );
+    quorumReplacements = replacements;
+    const firstWinnerIndex = await waitFor(
+      "team.resolve first four-replacement election",
+      async () => {
+        for (const [index, candidate] of candidates.entries()) {
+          if (await pathExists(candidate.ownerMarker)) return { index };
+        }
+        return undefined;
+      },
+    ).then((winner) => winner.index);
+    const firstOwnerMarker = JSON.parse(
+      await readFile(candidates[firstWinnerIndex].ownerMarker, "utf8"),
+    );
+    assert.equal(firstOwnerMarker.batch_id, resolveBatchId);
+    assert.equal(firstOwnerMarker.operation, "resolve-conflict");
+    const firstWinner = replacements[firstWinnerIndex];
+    assert.equal(firstOwnerMarker.owner_process_id, firstWinner.application.pid);
+    const firstLoserIndices = candidates
+      .map((_, index) => index)
+      .filter((index) => index !== firstWinnerIndex);
+    await waitFor("all surviving team.resolve losers entered owner wait", async () => {
+      const waits = await Promise.all(
+        firstLoserIndices.map((index) => pathExists(candidates[index].waitMarker)),
+      );
+      return waits.every(Boolean) ? true : undefined;
+    });
+    for (const index of firstLoserIndices) {
+      const wait = JSON.parse(await readFile(candidates[index].waitMarker, "utf8"));
+      assert.equal(
+        wait.previous_owner_process_id,
+        firstWinner.application.pid,
+        "replacement did not wait for the first elected owner",
+      );
+    }
+    assert.equal(await pathExists(candidates[firstWinnerIndex].waitMarker), false);
+    const firstDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(firstDurableOwner.process_id, firstWinner.application.pid);
+    assert.equal(firstDurableOwner.app_instance, firstOwnerMarker.app_instance);
+    assert.equal(firstDurableOwner.generation, firstOwnerMarker.generation);
+    assert.notEqual(firstDurableOwner.claim_id, oldDurableOwner.claim_id);
+    for (const candidate of candidates) {
+      assert.equal(
+        await pathExists(candidate.envelopeTrace)
+          ? parseNdjson(await readFile(candidate.envelopeTrace, "utf8")).length
+          : 0,
+        0,
+        "team.resolve first owner leaked an envelope before release",
+      );
+    }
+    for (const index of firstLoserIndices) {
+      const loser = replacements[index];
+      const scope = {
+        root: project,
+        app_instance: `${label}-first-loser-${index}`,
+        owner_process_id: loser.application.pid,
+        generation: firstOwnerMarker.generation + index + 10,
+      };
+      const pending = await invokeRpcResult(
+        loser.client,
+        "transaction.receipt.pending",
+        scope,
+      );
+      assert.equal(pending.resolved, false);
+      assert.match(pending.error, /locked by another process|owned by live app/);
+      const ack = await invokeRpcResult(
+        loser.client,
+        "transaction.receipt.ack",
+        {
+          ...scope,
+          batch_id: resolveBatchId,
+          operation: "resolve-conflict",
+          outcome: "succeeded",
+        },
+      );
+      assert.equal(ack.resolved, false);
+      assert.match(ack.error, /locked by another process|owned by live app/);
+      assert.equal(
+        await loser.client.evaluate(
+          'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+          true,
+        ),
+        "6.2.0",
+      );
+    }
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      firstDurableOwner,
+      "team.resolve first-wave loser changed the winning claim",
+    );
+
+    const firstWinnerKilled = await killPackaged(firstWinner);
+    assert.equal(firstWinnerKilled.browserPid, firstOwnerMarker.owner_process_id);
+    quorumReplacements = replacements.filter(
+      (_, index) => index !== firstWinnerIndex,
+    );
+    assert.equal(
+      await pathExists(`/proc/${firstWinnerKilled.browserPid}`),
+      false,
+      "first team.resolve replacement owner remained alive",
+    );
+    const secondWinnerIndex = await waitFor(
+      "surviving team.resolve loser self-retry election",
+      async () => {
+        for (const index of firstLoserIndices) {
+          if (await pathExists(candidates[index].ownerMarker)) return { index };
+        }
+        return undefined;
+      },
+    ).then((winner) => winner.index);
+    const secondOwnerMarker = JSON.parse(
+      await readFile(candidates[secondWinnerIndex].ownerMarker, "utf8"),
+    );
+    assert.equal(secondOwnerMarker.batch_id, resolveBatchId);
+    assert.equal(secondOwnerMarker.operation, "resolve-conflict");
+    const secondWinner = replacements[secondWinnerIndex];
+    assert.equal(secondOwnerMarker.owner_process_id, secondWinner.application.pid);
+    const secondLoserIndices = firstLoserIndices.filter(
+      (index) => index !== secondWinnerIndex,
+    );
+    await waitFor("team.resolve retry outcomes from all survivors", async () => {
+      const traces = await Promise.all(
+        firstLoserIndices.map((index) => pathExists(candidates[index].retryTrace)),
+      );
+      return traces.every(Boolean) ? true : undefined;
+    });
+    for (const index of firstLoserIndices) {
+      const trace = parseNdjson(await readFile(candidates[index].retryTrace, "utf8"));
+      assert.equal(trace.length, 1);
+      assert.equal(
+        trace[0].previous_owner_process_id,
+        firstWinner.application.pid,
+      );
+      assert.equal(
+        trace[0].result,
+        index === secondWinnerIndex ? "claimed" : "rejected",
+      );
+    }
+    const secondDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(secondDurableOwner.process_id, secondWinner.application.pid);
+    assert.equal(secondDurableOwner.app_instance, secondOwnerMarker.app_instance);
+    assert.equal(secondDurableOwner.generation, secondOwnerMarker.generation);
+    assert.notEqual(secondDurableOwner.claim_id, firstDurableOwner.claim_id);
+    for (const index of secondLoserIndices) {
+      const loser = replacements[index];
+      const scope = {
+        root: project,
+        app_instance: `${label}-second-loser-${index}`,
+        owner_process_id: loser.application.pid,
+        generation: secondOwnerMarker.generation + index + 20,
+      };
+      const pending = await invokeRpcResult(
+        loser.client,
+        "transaction.receipt.pending",
+        scope,
+      );
+      assert.equal(pending.resolved, false);
+      assert.match(pending.error, /locked by another process|owned by live app/);
+      const ack = await invokeRpcResult(
+        loser.client,
+        "transaction.receipt.ack",
+        {
+          ...scope,
+          batch_id: resolveBatchId,
+          operation: "resolve-conflict",
+          outcome: "succeeded",
+        },
+      );
+      assert.equal(ack.resolved, false);
+      assert.match(ack.error, /locked by another process|owned by live app/);
+    }
+    for (const candidate of candidates) {
+      assert.equal(
+        await pathExists(candidate.envelopeTrace)
+          ? parseNdjson(await readFile(candidate.envelopeTrace, "utf8")).length
+          : 0,
+        0,
+        "team.resolve replacement leaked an envelope before second release",
+      );
+    }
+
+    await writeFile(candidates[secondWinnerIndex].ownerRelease, "release\n", "utf8");
+    await waitFor("team.resolve recovered receipt acknowledgement", async () =>
+      !await pathExists(prepared.activePath) ? true : undefined
+    );
+    const recovered = await waitFor(
+      "team.resolve second owner renderer rebind",
+      async () => {
+        const state = await workspaceState(secondWinner.client);
+        const conflictCount = await secondWinner.client.evaluate(
+          'window.omegat.rpc("team.conflicts", {}).then((value) => value.conflicts.length)',
+          true,
+        );
+        return state.project === project
+            && state.translation === prepared.theirs
+            && state.activeSurfaces === 1
+            && state.key
+            && conflictCount === 0
+          ? { state, conflictCount }
+          : undefined;
+      },
+    );
+    assert.deepEqual(JSON.parse(recovered.state.key), prepared.wantedKey);
+    const finalEntries = await secondWinner.client.evaluate(
+      'window.omegat.rpc("entry.list", {})',
+      true,
+    );
+    const finalWanted = finalEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(prepared.wantedKey)
+    );
+    const finalDecoy = finalEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(prepared.decoyKey)
+    );
+    assert(finalWanted);
+    assert(finalDecoy);
+    assertCompleteEntryKey(finalWanted.key);
+    assertCompleteEntryKey(finalDecoy.key);
+    assert.equal(finalWanted.translation, prepared.theirs);
+    assert.equal(finalDecoy.translation, "");
+    const winningTrace = parseNdjson(
+      await readFile(candidates[secondWinnerIndex].envelopeTrace, "utf8"),
+    );
+    assert.equal(winningTrace.length, 1);
+    assert.equal(winningTrace[0].batch_id, resolveBatchId);
+    assert.equal(winningTrace[0].operation, "resolve-conflict");
+    for (const index of candidates.map((_, index) => index)) {
+      if (index === secondWinnerIndex) continue;
+      assert.equal(
+        await pathExists(candidates[index].envelopeTrace)
+          ? parseNdjson(await readFile(candidates[index].envelopeTrace, "utf8")).length
+          : 0,
+        0,
+        "non-winning team.resolve replacement received a renderer envelope",
+      );
+    }
+    const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.equal(
+      history.filter((row) =>
+        row.batch_id === resolveBatchId
+        && row.status === "completed"
+        && row.payload.phase === "renderer-acknowledged"
+      ).length,
+      1,
+      "team.resolve receipt had duplicate terminal history",
+    );
+    assert.deepEqual(
+      await snapshotStableProjectTree(project),
+      stableTreeAfterResolve,
+      "team.resolve election replayed the committed project mutation",
+    );
+    assert.deepEqual(await readFile(tmxPath), tmxAfterResolve);
+    assert.equal(
+      (await stat(tmxPath, { bigint: true })).mtimeNs,
+      tmxMtimeAfterResolve,
+      "team.resolve election replayed TMX write-back",
+    );
+    assert.deepEqual(
+      await readFile(prepared.fileRemotePath),
+      fileRemoteAfterResolve,
+    );
+    assert.equal(
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs,
+      fileRemoteMtimeAfterResolve,
+      "team.resolve election rewrote the file remote",
+    );
+    assert.equal(
+      await readFile(prepared.fileRemotePath, "utf8"),
+      prepared.fileRemoteContent,
+    );
+    assert.equal(
+      await git([
+        "--git-dir",
+        prepared.gitRemote,
+        "rev-parse",
+        "refs/heads/main",
+      ]),
+      gitHeadAfterResolve,
+      "team.resolve election rewrote the Git HEAD",
+    );
+    resolveReplacementElection = {
+      headKind: "team.resolve",
+      operation: "resolve-conflict",
+      realGitMainRepository: true,
+      fileMapping: true,
+      initialReplacementCount: replacements.length,
+      firstWinner: {
+        browserPid: firstWinnerKilled.browserPid,
+        claimId: firstDurableOwner.claim_id,
+        killedBeforeRendererDelivery: true,
+      },
+      survivingLoserRetryElection: {
+        contenderCount: firstLoserIndices.length,
+        winnerBrowserPid: secondWinner.application.pid,
+        winnerClaimId: secondDurableOwner.claim_id,
+        rejectedLoserCount: secondLoserIndices.length,
+        launchedAdditionalProcesses: 0,
+      },
+      terminalHeadCount: 1,
+      nonWinnerEnvelopeCount: 0,
+      tmxWriteReplayed: false,
+      gitHeadReplayed: false,
+      fileRemoteReplayed: false,
+      completeEntryKey: prepared.wantedKey,
+      decoyEntryKey: prepared.decoyKey,
+      winnerDocument3Surfaces: recovered.state.activeSurfaces,
+    };
+    await Promise.all(
+      replacements
+        .filter((_, index) => index !== firstWinnerIndex)
+        .map((replacement) => terminatePackaged(replacement)),
+    );
+    quorumReplacements = [];
+  }
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
@@ -3186,6 +3809,7 @@ try {
     closeReceiptRecovery,
     selectedHeadCrashRecovery,
     atomicReplacementElectionResults,
+    resolveReplacementElection,
   }));
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());

@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::{Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static OWNER_CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -1014,6 +1014,72 @@ fn process_is_alive(process_id: u32) -> bool {
         let _ = process_id;
         true
     }
+}
+
+fn transaction_owner_retry_wait_checkpoint(
+    props: &ProjectProperties,
+    previous_owner_process_id: u32,
+) -> Result<()> {
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if marker.exists() {
+        return Ok(());
+    }
+    write_json_atomic(
+        &marker,
+        &serde_json::json!({
+            "project_root": normalized(&props.root),
+            "previous_owner_process_id": previous_owner_process_id,
+            "waiting_sidecar_process_id": std::process::id(),
+        }),
+    )
+    .map_err(|error| TeamError::Command(format!("owner retry wait checkpoint: {error}")))
+}
+
+/// Wait for the currently recorded dispatcher owner to exit.
+///
+/// Callers use the returned PID as the boundary for one, and only one,
+/// replacement election retry. A contender that loses that retry must not
+/// silently wait for the new owner as well, because that could turn one
+/// recovery wave into a chain of owners.
+pub fn wait_for_transaction_dispatch_owner_exit(
+    props: &ProjectProperties,
+    timeout: Duration,
+) -> Result<Option<u32>> {
+    let path = renderer_owner_path(props);
+    let deadline = Instant::now() + timeout;
+    while !path.is_file() {
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        // A competing claimant can hold operation.lock while its atomic owner
+        // file is still being published. Observe that claim instead of
+        // treating the lock race as a terminal rejection.
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
+        .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
+    if claim.version != TRANSACTION_ENVELOPE_VERSION
+        || normalized(&claim.project_root) != normalized(&props.root)
+    {
+        return Err(TeamError::Command(format!(
+            "invalid renderer owner claim at {}",
+            path.display()
+        )));
+    }
+    transaction_owner_retry_wait_checkpoint(props, claim.process_id)?;
+    while process_is_alive(claim.process_id) {
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(Some(claim.process_id))
 }
 
 /// Claim the unified product/refresh renderer dispatcher for one live app.

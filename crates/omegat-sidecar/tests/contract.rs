@@ -3494,6 +3494,550 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
     let _ = third_child.kill();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
+    struct Sidecar {
+        child: std::process::Child,
+        input: std::process::ChildStdin,
+        output: BufReader<std::process::ChildStdout>,
+    }
+
+    fn spawn_sidecar(
+        config: &std::path::Path,
+        owner_marker: Option<(&std::path::Path, &std::path::Path)>,
+        wait_marker: Option<&std::path::Path>,
+    ) -> Sidecar {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
+        command.env("OMEGAT_CONFIG_DIR", config);
+        if let Some((marker, release)) = owner_marker {
+            command
+                .env("OMEGAT_TEST_HOLD_AFTER_PRODUCT_OWNER_CLAIM_MARKER", marker)
+                .env(
+                    "OMEGAT_TEST_HOLD_AFTER_PRODUCT_OWNER_CLAIM_RELEASE",
+                    release,
+                );
+        }
+        if let Some(marker) = wait_marker {
+            command.env("OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER", marker);
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        Sidecar {
+            input: child.stdin.take().unwrap(),
+            output: BufReader::new(child.stdout.take().unwrap()),
+            child,
+        }
+    }
+
+    fn wait_for_file(path: &std::path::Path, children: &mut [Sidecar]) {
+        for _ in 0..1_000 {
+            for sidecar in children.iter_mut() {
+                assert!(
+                    sidecar.child.try_wait().unwrap().is_none(),
+                    "replacement exited before checkpoint {}",
+                    path.display()
+                );
+            }
+            if path.is_file() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for {}", path.display());
+    }
+
+    fn send_pending(
+        sidecar: &mut Sidecar,
+        id: i64,
+        root: &std::path::Path,
+        app_instance: &str,
+        generation: u64,
+        owner_retry_timeout_ms: Option<u64>,
+    ) {
+        let mut params = json!({
+            "root": root,
+            "app_instance": app_instance,
+            "generation": generation,
+        });
+        if let Some(timeout) = owner_retry_timeout_ms {
+            params["owner_retry_timeout_ms"] = json!(timeout);
+        }
+        writeln!(
+            sidecar.input,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "transaction.receipt.pending",
+                "params": params,
+            })
+        )
+        .unwrap();
+        sidecar.input.flush().unwrap();
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("resolve-project");
+    let remote = temp.path().join("file-remote");
+    let remote_tmx = remote.join("omegat/project_save.tmx");
+    let remote_marker = remote.join("mapping.marker");
+    let active_path = root.join(".repositories/transactions/active.json");
+    let owner_path = root.join(".repositories/transactions/renderer-owner.json");
+    let history_path = root.join(".repositories/transactions/history.ndjson");
+    let batch_id = "resolve-retry-head";
+
+    let mut setup = spawn_sidecar(&config, None, None);
+    rpc(
+        &mut setup.input,
+        &mut setup.output,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    std::fs::write(root.join("source/a-wanted.txt"), "Repeated resolve source").unwrap();
+    std::fs::write(root.join("source/z-decoy.txt"), "Repeated resolve source").unwrap();
+    rpc(
+        &mut setup.input,
+        &mut setup.output,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    let entries = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        3,
+        "entry.list",
+        json!({}),
+    );
+    let wanted = entries["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"]["file"] == "a-wanted.txt")
+        .unwrap()
+        .clone();
+    let decoy = entries["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"]["file"] == "z-decoy.txt")
+        .unwrap()
+        .clone();
+    let mut key_fields = wanted["key"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    key_fields.sort_unstable();
+    assert_eq!(
+        key_fields,
+        ["file", "id", "next", "path", "prev", "source_text"]
+    );
+    rpc(
+        &mut setup.input,
+        &mut setup.output,
+        4,
+        "entry.set",
+        json!({
+            "index": wanted["index"],
+            "key": wanted["key"],
+            "translation": "resolve base",
+            "revision": wanted["revision"],
+            "default_translation": false,
+        }),
+    );
+    rpc(
+        &mut setup.input,
+        &mut setup.output,
+        5,
+        "project.save",
+        json!({}),
+    );
+    std::fs::create_dir_all(remote_tmx.parent().unwrap()).unwrap();
+    std::fs::copy(root.join("omegat/project_save.tmx"), &remote_tmx).unwrap();
+    std::fs::write(&remote_marker, "file mapping must remain exact").unwrap();
+    let mapped = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        6,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [
+                    {
+                        "local": "/omegat/project_save.tmx",
+                        "repository": "/omegat/project_save.tmx",
+                        "includes": [],
+                        "excludes": [],
+                    },
+                    {
+                        "local": "/team-mapping.marker",
+                        "repository": "/mapping.marker",
+                        "includes": [],
+                        "excludes": [],
+                    },
+                ],
+            }],
+        }),
+    );
+    assert_eq!(mapped["result"]["ok"], true);
+    let initial_sync = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        7,
+        "team.sync",
+        json!({}),
+    );
+    assert_eq!(initial_sync["result"]["action"], "sync");
+
+    let current = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        8,
+        "entry.list",
+        json!({}),
+    );
+    let current_wanted = current["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == wanted["key"])
+        .unwrap();
+    rpc(
+        &mut setup.input,
+        &mut setup.output,
+        9,
+        "entry.set",
+        json!({
+            "index": current_wanted["index"],
+            "key": current_wanted["key"],
+            "translation": "resolve ours",
+            "revision": current_wanted["revision"],
+            "default_translation": false,
+        }),
+    );
+    rpc(
+        &mut setup.input,
+        &mut setup.output,
+        10,
+        "project.save",
+        json!({}),
+    );
+    let remote_tmx_text = std::fs::read_to_string(&remote_tmx).unwrap();
+    assert!(remote_tmx_text.contains("<seg>resolve base</seg>"));
+    std::fs::write(
+        &remote_tmx,
+        remote_tmx_text.replace("<seg>resolve base</seg>", "<seg>resolve theirs</seg>"),
+    )
+    .unwrap();
+    let conflict_sync = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        11,
+        "team.sync",
+        json!({}),
+    );
+    assert_eq!(conflict_sync["error"]["code"], -32005);
+    let conflicts = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        12,
+        "team.conflicts",
+        json!({}),
+    );
+    assert_eq!(
+        conflicts["result"]["conflicts"].as_array().unwrap().len(),
+        1
+    );
+    let conflict = &conflicts["result"]["conflicts"][0];
+    assert_eq!(conflict["entry_key"], wanted["key"]);
+    assert_eq!(conflict["ours"], "resolve ours");
+    assert_eq!(conflict["theirs"], "resolve theirs");
+
+    let resolved = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        13,
+        "team.resolve",
+        json!({
+            "source": "Repeated resolve source",
+            "rebind_key": wanted["key"],
+            "side": "theirs",
+            "transaction_project_root": root,
+            "transaction_generation": 70,
+            "transaction_batch_id": batch_id,
+        }),
+    );
+    assert_eq!(resolved["result"]["conflicts"], json!([]));
+    assert_eq!(resolved["result"]["receipt"]["batch_id"], batch_id);
+    assert_eq!(
+        resolved["result"]["receipt"]["payload"]["operation"],
+        "resolve-conflict"
+    );
+    assert_eq!(resolved["result"]["receipt"]["status"], "sidecar_committed");
+    let tmx_path = root.join("omegat/project_save.tmx");
+    let tmx_after_resolve = std::fs::read(&tmx_path).unwrap();
+    let tmx_mtime_after_resolve = std::fs::metadata(&tmx_path).unwrap().modified().unwrap();
+    let remote_after_resolve = std::fs::read(&remote_marker).unwrap();
+    let remote_mtime_after_resolve = std::fs::metadata(&remote_marker)
+        .unwrap()
+        .modified()
+        .unwrap();
+
+    let old_pending = rpc(
+        &mut setup.input,
+        &mut setup.output,
+        14,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "resolve-old-owner",
+            "generation": 71,
+        }),
+    );
+    assert_eq!(old_pending["result"]["envelopes"][0]["batch_id"], batch_id);
+    let old_owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+    let old_pid = setup.child.id();
+    assert_eq!(old_owner["process_id"], old_pid);
+    setup.child.kill().unwrap();
+    assert!(!setup.child.wait().unwrap().success());
+    assert!(!std::path::Path::new("/proc")
+        .join(old_pid.to_string())
+        .exists());
+
+    let owner_markers = (0..3)
+        .map(|index| temp.path().join(format!("resolve-owner-{index}.json")))
+        .collect::<Vec<_>>();
+    let owner_releases = (0..3)
+        .map(|index| temp.path().join(format!("resolve-owner-{index}.release")))
+        .collect::<Vec<_>>();
+    let wait_markers = (0..3)
+        .map(|index| temp.path().join(format!("resolve-wait-{index}.json")))
+        .collect::<Vec<_>>();
+    let mut replacements = (0..3)
+        .map(|index| {
+            spawn_sidecar(
+                &config,
+                Some((&owner_markers[index], &owner_releases[index])),
+                Some(&wait_markers[index]),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (index, replacement) in replacements.iter_mut().enumerate() {
+        let opened = rpc(
+            &mut replacement.input,
+            &mut replacement.output,
+            1,
+            "project.open",
+            json!({ "root": root }),
+        );
+        assert_eq!(
+            opened["error"],
+            Value::Null,
+            "replacement {index} failed to open"
+        );
+    }
+    for (index, replacement) in replacements.iter_mut().enumerate() {
+        send_pending(
+            replacement,
+            2,
+            &root,
+            &format!("resolve-replacement-{index}"),
+            80 + index as u64,
+            Some(20_000),
+        );
+    }
+    let first_winner_index = {
+        let mut winner = None;
+        for _ in 0..1_000 {
+            for (index, marker) in owner_markers.iter().enumerate() {
+                if marker.is_file() {
+                    winner = Some(index);
+                    break;
+                }
+            }
+            if winner.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        winner.expect("first three-way resolve replacement election had no winner")
+    };
+    wait_for_file(
+        &wait_markers[(first_winner_index + 1) % 3],
+        &mut replacements,
+    );
+    wait_for_file(
+        &wait_markers[(first_winner_index + 2) % 3],
+        &mut replacements,
+    );
+    assert!(!wait_markers[first_winner_index].exists());
+    let first_owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+    let first_winner_pid = replacements[first_winner_index].child.id();
+    assert_eq!(first_owner["process_id"], first_winner_pid);
+    assert_ne!(first_owner["claim_id"], old_owner["claim_id"]);
+    let queue_before_first_kill = std::fs::read(&active_path).unwrap();
+    replacements[first_winner_index].child.kill().unwrap();
+    assert!(!replacements[first_winner_index]
+        .child
+        .wait()
+        .unwrap()
+        .success());
+    assert!(!std::path::Path::new("/proc")
+        .join(first_winner_pid.to_string())
+        .exists());
+    assert_eq!(
+        std::fs::read(&active_path).unwrap(),
+        queue_before_first_kill,
+        "first resolve winner changed the durable queue before delivery"
+    );
+
+    let surviving_indices = (0..3)
+        .filter(|index| *index != first_winner_index)
+        .collect::<Vec<_>>();
+    let second_winner_index = {
+        let mut winner = None;
+        for _ in 0..1_000 {
+            for index in &surviving_indices {
+                if owner_markers[*index].is_file() {
+                    winner = Some(*index);
+                    break;
+                }
+            }
+            if winner.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        winner.expect("surviving resolve loser did not retry the owner election")
+    };
+    let second_loser_index = *surviving_indices
+        .iter()
+        .find(|index| **index != second_winner_index)
+        .unwrap();
+    let second_owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+    assert_eq!(
+        second_owner["process_id"],
+        replacements[second_winner_index].child.id()
+    );
+    assert_ne!(second_owner["claim_id"], first_owner["claim_id"]);
+    let rejected_retry = response_for(&mut replacements[second_loser_index].output, 2);
+    assert_eq!(rejected_retry["error"]["code"], -32005);
+    assert!(rejected_retry["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains(&format!(
+            "replacement retry after owner pid {first_winner_pid} exited was rejected"
+        )));
+
+    std::fs::write(&owner_releases[second_winner_index], b"release\n").unwrap();
+    let recovered = response_for(&mut replacements[second_winner_index].output, 2);
+    assert_eq!(recovered["result"]["envelopes"][0]["batch_id"], batch_id);
+    assert_eq!(
+        recovered["result"]["owner_retry"]["previous_owner_process_id"],
+        first_winner_pid
+    );
+    let second_app = format!("resolve-replacement-{second_winner_index}");
+    let second_generation = 80 + second_winner_index as u64;
+    let ack = rpc(
+        &mut replacements[second_winner_index].input,
+        &mut replacements[second_winner_index].output,
+        3,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": second_app,
+            "generation": second_generation,
+            "batch_id": batch_id,
+            "operation": "resolve-conflict",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(ack["result"]["ack"]["acknowledged"], true);
+    let drained = rpc(
+        &mut replacements[second_winner_index].input,
+        &mut replacements[second_winner_index].output,
+        4,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": second_app,
+            "generation": second_generation,
+        }),
+    );
+    assert_eq!(drained["result"]["envelopes"], json!([]));
+    let final_entries = rpc(
+        &mut replacements[second_winner_index].input,
+        &mut replacements[second_winner_index].output,
+        5,
+        "entry.list",
+        json!({}),
+    );
+    let final_wanted = final_entries["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == wanted["key"])
+        .unwrap();
+    let final_decoy = final_entries["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == decoy["key"])
+        .unwrap();
+    assert_eq!(final_wanted["translation"], "resolve theirs");
+    assert_eq!(final_decoy["translation"], "");
+    assert_eq!(std::fs::read(&tmx_path).unwrap(), tmx_after_resolve);
+    assert_eq!(
+        std::fs::metadata(&tmx_path).unwrap().modified().unwrap(),
+        tmx_mtime_after_resolve
+    );
+    assert_eq!(std::fs::read(&remote_marker).unwrap(), remote_after_resolve);
+    assert_eq!(
+        std::fs::metadata(&remote_marker)
+            .unwrap()
+            .modified()
+            .unwrap(),
+        remote_mtime_after_resolve
+    );
+    let history = std::fs::read_to_string(&history_path).unwrap();
+    assert_eq!(
+        history
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|row| {
+                row["batch_id"] == batch_id
+                    && row["status"] == "completed"
+                    && row["payload"]["phase"] == "renderer-acknowledged"
+            })
+            .count(),
+        1
+    );
+    for (index, replacement) in replacements.iter_mut().enumerate() {
+        if index == first_winner_index {
+            continue;
+        }
+        replacement.child.kill().unwrap();
+        replacement.child.wait().unwrap();
+    }
+}
+
 #[test]
 fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() {
     fn spawn_sidecar(
