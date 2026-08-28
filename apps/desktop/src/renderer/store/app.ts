@@ -802,14 +802,12 @@ export const useApp = create<AppState>((set, get) => ({
       set({ error: String(error) });
       throw error;
     }
-    publishClosedRendererState();
-    if (closed?.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(
-        closed.receipt,
-        "succeeded",
-        true,
-      );
-    }
+    await completeCoordinatorTransaction(
+      closed?.receipt,
+      publishClosedRendererState,
+      "succeeded",
+      true,
+    );
   },
   reloadProject: async () => {
     await get().rebindProjectEntries({ kind: "reload" });
@@ -841,9 +839,7 @@ export const useApp = create<AppState>((set, get) => ({
       const saved = await rpc<{ receipt?: TransactionEnvelope | null } | undefined>(
         "project.save",
       );
-      if (saved?.receipt) {
-        await acknowledgeTransactionEnvelopeOrDefer(saved.receipt);
-      }
+      await completeCoordinatorTransaction(saved?.receipt, () => undefined);
       if (!dockLifecycle.isCurrent(lifecycle)) return false;
     }
 
@@ -905,11 +901,10 @@ export const useApp = create<AppState>((set, get) => ({
       stats,
       refreshedProps,
     );
-    set(rebound.patch);
-    if (rebound.index >= 0) await get().select(rebound.index, false);
-    if (productReceipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(productReceipt);
-    }
+    await completeCoordinatorTransaction(productReceipt, async () => {
+      set(rebound.patch);
+      if (rebound.index >= 0) await get().select(rebound.index, false);
+    });
     if (kind === "reload") get().logLine("reloaded project");
     return true;
   },
@@ -1163,8 +1158,10 @@ export const useApp = create<AppState>((set, get) => ({
       date_from: form.dateFrom || undefined,
       date_to: form.dateTo || undefined,
     });
-    await get().refreshEntriesAfterExternalChange();
-    if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
+    await completeCoordinatorTransaction(
+      r.receipt,
+      () => get().refreshEntriesAfterExternalChange(),
+    );
     get().logLine(`replaced ${r.replaced}`);
     return r.replaced;
   },
@@ -1177,9 +1174,10 @@ export const useApp = create<AppState>((set, get) => ({
       }>(
         "teamSync",
       );
-      set({ teamMessage: `${r.action}: ${r.message}` });
-      await get().refreshEntriesAfterExternalChange(undefined, true);
-      if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
+      await completeCoordinatorTransaction(r.receipt, async () => {
+        set({ teamMessage: `${r.action}: ${r.message}` });
+        await get().refreshEntriesAfterExternalChange(undefined, true);
+      });
     } catch (e) {
       if (isAbortError(e)) {
         set({ teamMessage: "sync cancelled" });
@@ -1215,9 +1213,10 @@ export const useApp = create<AppState>((set, get) => ({
         "teamCommit",
         { which },
       );
-      set({ teamMessage: `${r.action}: ${r.message}` });
-      get().logLine(`commit ${which}`);
-      if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
+      await completeCoordinatorTransaction(r.receipt, () => {
+        set({ teamMessage: `${r.action}: ${r.message}` });
+        get().logLine(`commit ${which}`);
+      });
     } catch (error) {
       if (!isAbortError(error)) throw error;
       set({ teamMessage: `commit ${which} cancelled` });
@@ -1254,20 +1253,21 @@ export const useApp = create<AppState>((set, get) => ({
       set({ teamMessage: `resolve cancelled${src ? ` (${src})` : ""}` });
       return;
     }
-    await get().refreshEntriesAfterExternalChange(
-      rebindKey ? [rebindKey] : undefined,
-      true,
-    );
-    const current = get();
-    set({
-      teamConflicts: bindTeamConflictEntries(
-        r.conflicts ?? [],
-        current.entries,
-        current.index,
-      ),
-      teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
+    await completeCoordinatorTransaction(r.receipt, async () => {
+      await get().refreshEntriesAfterExternalChange(
+        rebindKey ? [rebindKey] : undefined,
+        true,
+      );
+      const current = get();
+      set({
+        teamConflicts: bindTeamConflictEntries(
+          r.conflicts ?? [],
+          current.entries,
+          current.index,
+        ),
+        teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
+      });
     });
-    if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
     await get().patchPrefs({ team_conflict_resolution: side });
   },
   resolveEditConflict: async (side, translation) => {
@@ -1313,50 +1313,46 @@ export const useApp = create<AppState>((set, get) => ({
       "spell.learn",
       { word },
     );
-    IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
-    await get().select(get().index, false);
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(result.receipt, async () => {
+      IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
+      await get().select(get().index, false);
+    });
   },
   ignoreWord: async (word) => {
     const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
       "spell.ignore",
       { word },
     );
-    IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
-    await get().select(get().index, false);
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(result.receipt, async () => {
+      IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
+      await get().select(get().index, false);
+    });
   },
   addGlossary: async (source, target, comment = "") => {
     const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
       "glossary.add",
       { source, target, comment },
     );
-    await get().select(get().index, false);
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(
+      result.receipt,
+      () => get().select(get().index, false),
+    );
   },
   importWiki: async (source) => {
     const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
       "wiki.import",
       { source },
     );
-    await get().refreshEntriesAfterExternalChange();
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(
+      result.receipt,
+      () => get().refreshEntriesAfterExternalChange(),
+    );
   },
   exportTmx: async (dest, level) => {
     const result = await rpc<{
       receipt?: TransactionEnvelope | null;
     }>("tmx.export", { dest, level });
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(result.receipt, () => undefined);
     get().logLine(`exported ${level} TMX ${dest}`);
   },
   refreshEntriesAfterExternalChange: async (
@@ -1490,10 +1486,10 @@ export const useApp = create<AppState>((set, get) => ({
       copied: number;
       receipt?: TransactionEnvelope | null;
     }>("import", { files: paths });
-    await get().refreshEntriesAfterExternalChange();
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(
+      result.receipt,
+      () => get().refreshEntriesAfterExternalChange(),
+    );
     get().logLine(`imported ${paths.length} file(s)`);
   },
   clearRecent: () => {
@@ -1524,9 +1520,7 @@ export const useApp = create<AppState>((set, get) => ({
     } catch {
       /* ignore */
     }
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(result.receipt, () => undefined);
   },
   gotoMatchSource: async () => {
     const m = get().matches[get().selectedMatch];
@@ -1583,21 +1577,20 @@ export const useApp = create<AppState>((set, get) => ({
           // discard an otherwise successful editor commit.
         }
       }
-      set({
-        entries: next,
-        document3: { ...get().document3, dirty: false },
-        editConflict: null,
-        error: null,
-        ...(leaveIssues.length > 0
-          ? {
-              issues: leaveIssues,
-              windows: { ...get().windows, issues: true },
-            }
-          : {}),
+      await completeCoordinatorTransaction(result.receipt, () => {
+        set({
+          entries: next,
+          document3: { ...get().document3, dirty: false },
+          editConflict: null,
+          error: null,
+          ...(leaveIssues.length > 0
+            ? {
+                issues: leaveIssues,
+                windows: { ...get().windows, issues: true },
+              }
+            : {}),
+        });
       });
-      if (result.receipt) {
-        await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-      }
       return result.entry;
     } catch (error) {
       if (!isOptimisticLock(error)) throw error;
@@ -1644,13 +1637,12 @@ export const useApp = create<AppState>((set, get) => ({
     }>("project.save");
     const root = get().props?.root ?? "";
     const d = get().document3;
-    set({
-      document3: { ...d, dirty: false },
-      status: t("save"),
+    await completeCoordinatorTransaction(saved.receipt, () => {
+      set({
+        document3: { ...d, dirty: false },
+        status: t("save"),
+      });
     });
-    if (saved.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(saved.receipt);
-    }
     get().logLine(`saved TMX ${root}/omegat/project_save.tmx`);
     get().logLine(`Document3 range ${d.translationStart}-${d.translationEnd}`);
   },
@@ -1666,10 +1658,9 @@ export const useApp = create<AppState>((set, get) => ({
       set({ status: "compile cancelled" });
       return;
     }
-    set({ stats: await rpc<StatsDto>("stats.get") });
-    if (result.receipt) {
-      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
-    }
+    await completeCoordinatorTransaction(result.receipt, async () => {
+      set({ stats: await rpc<StatsDto>("stats.get") });
+    });
     const target = file ?? get().props?.target_dir ?? "";
     get().logLine(`compiled target ${target}`);
     const d = get().document3;
@@ -1838,6 +1829,39 @@ async function acknowledgeTransactionEnvelopeOrDefer(
   }
 }
 
+/**
+ * One renderer-side completion boundary for every coordinator receipt.
+ *
+ * Product state is published first. Only then may the receipt be acknowledged
+ * and become eligible for history compaction. If publication throws, the
+ * durable receipt remains recoverable for this or a replacement renderer.
+ */
+async function completeCoordinatorTransaction<T>(
+  receipt: TransactionEnvelope | null | undefined,
+  publish: () => T | Promise<T>,
+  outcome: TransactionOutcome = "succeeded",
+  allowClosedProject = false,
+  deferAcknowledgementFailure = true,
+): Promise<T> {
+  const published = await publish();
+  if (receipt) {
+    if (deferAcknowledgementFailure) {
+      await acknowledgeTransactionEnvelopeOrDefer(
+        receipt,
+        outcome,
+        allowClosedProject,
+      );
+    } else if (!await acknowledgeTransactionEnvelope(
+      receipt,
+      outcome,
+      allowClosedProject,
+    )) {
+      throw new Error("renderer transaction scope changed before acknowledgement");
+    }
+  }
+  return published;
+}
+
 function publishClosedRendererState() {
   const { locale, theme, version } = useApp.getState();
   useApp.setState({
@@ -1946,9 +1970,12 @@ export function connectTransactionEnvelopeEvents(): () => void {
             blocked = "retry";
             return;
           }
-          await window.omegat?.acknowledgeTransactionReceipt?.(
+          await completeCoordinatorTransaction(
             batch.envelope,
+            () => undefined,
             outcome,
+            false,
+            false,
           );
           pending.shift();
           if (outcome === "succeeded") {
@@ -2042,9 +2069,9 @@ export function connectTransactionEnvelopeEvents(): () => void {
       void (async () => {
         if (payload.operation === "project.close") {
           detachedScope = { root, generation };
-          publishClosedRendererState();
-          await acknowledgeTransactionEnvelopeOrDefer(
+          await completeCoordinatorTransaction(
             envelope,
+            publishClosedRendererState,
             "succeeded",
             true,
           );
@@ -2054,8 +2081,9 @@ export function connectTransactionEnvelopeEvents(): () => void {
           // Product work behind a recovered close receipt is already durable.
           // Its renderer publication is the continued closed state: never
           // reopen or bind its EntryKey into the welcome screen.
-          await acknowledgeTransactionEnvelopeOrDefer(
+          await completeCoordinatorTransaction(
             envelope,
+            () => undefined,
             "succeeded",
             true,
           );
@@ -2065,7 +2093,7 @@ export function connectTransactionEnvelopeEvents(): () => void {
         // Publish its complete-key state before ack; never replay the write.
         const rebound = await useApp.getState().refreshEntriesAfterExternalChange();
         if (!rebound) return;
-        await acknowledgeTransactionEnvelopeOrDefer(envelope);
+        await completeCoordinatorTransaction(envelope, () => undefined);
       })().catch((error) => {
         const current = useApp.getState();
         if (
@@ -2086,19 +2114,21 @@ export function connectTransactionEnvelopeEvents(): () => void {
       if (productInFlight.has(identity)) return;
       productInFlight.add(identity);
       void (async () => {
-        if (status === "pending") {
-          await rpc("project.external-refresh", {
-            transaction_project_root: root,
-            transaction_generation: generation,
-            transaction_batch_id: id,
-          });
-        }
-        // Refreshing a project after its close receipt must not republish that
-        // project's entries. The observable renderer result remains a closed
-        // workspace until the user explicitly opens a project again.
-        publishClosedRendererState();
-        await acknowledgeTransactionEnvelopeOrDefer(
+        await completeCoordinatorTransaction(
           envelope,
+          async () => {
+            if (status === "pending") {
+              await rpc("project.external-refresh", {
+                transaction_project_root: root,
+                transaction_generation: generation,
+                transaction_batch_id: id,
+              });
+            }
+            // Refreshing a project after its close receipt must not republish
+            // that project's entries. The observable renderer result remains
+            // closed until the user explicitly opens a project again.
+            publishClosedRendererState();
+          },
           "succeeded",
           true,
         );

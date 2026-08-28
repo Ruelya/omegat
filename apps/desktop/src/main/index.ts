@@ -1033,6 +1033,8 @@ app.whenReady().then(() => {
           operation: envelope.payload.operation,
           outcome,
           result: "acknowledged",
+          browser_pid: process.pid,
+          sidecar_pid: sidecar?.pid ?? null,
         })}\n`);
       }
       if (detachedMatches) {

@@ -623,23 +623,14 @@ impl SyncTransaction {
         self.refresh.is_some()
     }
 
-    fn ensure_slot_available(props: &ProjectProperties) -> Result<()> {
-        if let Some(transaction) = Self::load_active_operation(props)? {
-            return Err(TeamError::Conflict(format!(
-                "team transaction {} is still in progress",
-                transaction.0.batch_id
-            )));
-        }
-        Ok(())
-    }
-
     fn begin(
         props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
         operation: &str,
         generation: u64,
         batch_id: Option<&str>,
     ) -> Result<(Self, SyncSnapshot)> {
-        Self::ensure_slot_available(props)?;
+        Self::ensure_slot_available_in(props, workflow)?;
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let generated_id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
         let id = batch_id
@@ -668,12 +659,13 @@ impl SyncTransaction {
                 external_products: Vec::new(),
             },
         ));
-        transaction.persist(props)?;
+        transaction.persist_in(props, workflow)?;
         Ok((transaction, snapshot))
     }
 
     fn begin_local_cancellable(
         props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
         operation: &str,
         cancellation: &CancellationToken,
         checkpoint: &'static str,
@@ -681,7 +673,7 @@ impl SyncTransaction {
         batch_id: Option<&str>,
         external_products: &[PathBuf],
     ) -> Result<(Self, SyncSnapshot)> {
-        Self::ensure_slot_available(props)?;
+        Self::ensure_slot_available_in(props, workflow)?;
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let generated_id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
         let id = batch_id
@@ -709,7 +701,7 @@ impl SyncTransaction {
                 external_products: Vec::new(),
             },
         ));
-        transaction.persist(props)?;
+        transaction.persist_in(props, workflow)?;
         let snapshot = match SyncSnapshot::capture_cancellable(
             props,
             snapshot_path,
@@ -720,33 +712,42 @@ impl SyncTransaction {
         ) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                transaction.finish_for_error(props, "rolled-back", &error)?;
+                transaction.finish_for_error_in(props, workflow, "rolled-back", &error)?;
                 return Err(error);
             }
         };
         transaction.prep_existed = snapshot.prep_existed;
         transaction.external_products = snapshot.external_products.clone();
         transaction.phase = "captured".into();
-        transaction.persist(props)?;
+        transaction.persist_in(props, workflow)?;
         Ok((transaction, snapshot))
     }
 
-    fn persist(&mut self, props: &ProjectProperties) -> Result<()> {
+    fn persist_in(
+        &mut self,
+        props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+    ) -> Result<()> {
         self.0.touch();
-        self.persist_current(props)
+        self.persist_current_in(props, workflow)
     }
 
-    fn persist_preserving_dispatch_order(&mut self, props: &ProjectProperties) -> Result<()> {
-        self.persist_current(props)
+    fn persist_preserving_dispatch_order_in(
+        &mut self,
+        props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+    ) -> Result<()> {
+        self.persist_current_in(props, workflow)
     }
 
-    fn persist_current(&mut self, props: &ProjectProperties) -> Result<()> {
+    fn persist_current_in(
+        &mut self,
+        props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+    ) -> Result<()> {
         self.0
             .validate_for_root(&props.root)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
-        let dir = transaction_dir(props);
-        std::fs::create_dir_all(&dir)?;
-        let mut workflow = open_product_workflow(props)?;
         workflow
             .upsert(self.clone())
             .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
@@ -762,19 +763,21 @@ impl SyncTransaction {
     fn finish(
         mut self,
         props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
         phase: &str,
         status: TransactionStatus,
         error_code: Option<i32>,
     ) -> Result<()> {
         self.phase = phase.into();
         self.0.transition(status, error_code);
-        self.persist(props)?;
-        self.remove_from_journal(props)
+        self.persist_in(props, workflow)?;
+        self.remove_from_journal_in(workflow)
     }
 
     fn publish_product_commit(
         &mut self,
         props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
         phase: &str,
         await_renderer_ack: bool,
     ) -> Result<()> {
@@ -795,7 +798,7 @@ impl SyncTransaction {
                 manifest_items,
             )
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
-        self.persist(props)?;
+        self.persist_in(props, workflow)?;
         #[cfg(test)]
         if CRASH_AFTER_PRODUCT_COMMIT.swap(0, Ordering::SeqCst) == 1 {
             std::process::abort();
@@ -863,25 +866,27 @@ impl SyncTransaction {
         Ok(())
     }
 
-    fn cleanup(self, props: &ProjectProperties) -> Result<()> {
-        self.remove_from_journal(props)
+    fn cleanup_in(self, workflow: &mut DurableTransactionWorkflow<SyncTransaction>) -> Result<()> {
+        self.remove_from_journal_in(workflow)
     }
 
-    fn finish_for_error(
+    fn finish_for_error_in(
         self,
         props: &ProjectProperties,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
         phase: &str,
         error: &TeamError,
     ) -> Result<()> {
         if matches!(error, TeamError::Cancelled) {
             self.finish(
                 props,
+                workflow,
                 phase,
                 TransactionStatus::RequestCancelled,
                 Some(REQUEST_CANCELLED_CODE),
             )
         } else {
-            self.finish(props, phase, TransactionStatus::Cancelled, None)
+            self.finish(props, workflow, phase, TransactionStatus::Cancelled, None)
         }
     }
 
@@ -955,8 +960,24 @@ impl SyncTransaction {
         Ok(())
     }
 
-    fn load_active_operation(props: &ProjectProperties) -> Result<Option<Self>> {
-        let journal = load_product_journal(props)?;
+    fn ensure_slot_available_in(
+        props: &ProjectProperties,
+        workflow: &DurableTransactionWorkflow<SyncTransaction>,
+    ) -> Result<()> {
+        if let Some(transaction) = Self::load_active_operation_in(props, workflow)? {
+            return Err(TeamError::Conflict(format!(
+                "team transaction {} is still in progress",
+                transaction.0.batch_id
+            )));
+        }
+        Ok(())
+    }
+
+    fn load_active_operation_in(
+        props: &ProjectProperties,
+        workflow: &DurableTransactionWorkflow<SyncTransaction>,
+    ) -> Result<Option<Self>> {
+        let journal = product_journal_in(props, workflow)?;
         let mut pending = journal.batches.into_iter().filter(|transaction| {
             !transaction.is_refresh()
                 && matches!(
@@ -973,20 +994,16 @@ impl SyncTransaction {
         Ok(transaction)
     }
 
-    fn load_dispatch_head(props: &ProjectProperties) -> Result<Option<Self>> {
-        Ok(open_product_workflow(props)?.dispatch_head(|transaction| {
-            transaction.0.status == TransactionStatus::SidecarCommitted
-                || (transaction.is_refresh() && transaction.0.status == TransactionStatus::Pending)
-        }))
-    }
-
-    fn remove_from_journal(self, props: &ProjectProperties) -> Result<()> {
-        let mut journal = load_product_journal(props)?;
-        let before = journal.batches.len();
-        journal
+    fn remove_from_journal_in(
+        self,
+        workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+    ) -> Result<()> {
+        let before = workflow.queue().batches.len();
+        workflow
+            .queue_mut()
             .batches
             .retain(|transaction| transaction.0.batch_id != self.0.batch_id);
-        if journal.batches.len() == before {
+        if workflow.queue().batches.len() == before {
             return Err(TeamError::Command(format!(
                 "product transaction {} disappeared from journal",
                 self.0.batch_id
@@ -995,21 +1012,33 @@ impl SyncTransaction {
         if !self.snapshot.as_os_str().is_empty() {
             remove_path(&self.snapshot)?;
         }
-        if journal.batches.is_empty() {
-            clear_product_journal(props)?;
-        } else {
-            write_product_journal(props, &mut journal)?;
-        }
-        Ok(())
+        workflow
+            .persist_or_clear_queue()
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
     }
 }
 
-fn load_product_journal(props: &ProjectProperties) -> Result<ProductTransactionJournal> {
-    let journal = open_product_workflow(props)?.into_queue();
+fn product_journal_in(
+    props: &ProjectProperties,
+    workflow: &DurableTransactionWorkflow<SyncTransaction>,
+) -> Result<ProductTransactionJournal> {
+    let journal = workflow.queue().clone();
     for transaction in &journal.batches {
         transaction.validate_loaded(props)?;
     }
     Ok(journal)
+}
+
+fn write_product_journal_in(
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+    journal: &mut ProductTransactionJournal,
+) -> Result<()> {
+    *workflow.queue_mut() = journal.clone();
+    workflow
+        .persist_or_clear_queue()
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    *journal = workflow.queue().clone();
+    Ok(())
 }
 
 fn relocate_scoped_path(path: &mut PathBuf, old_root: &Path, new_root: &Path) {
@@ -1115,25 +1144,6 @@ fn decode_legacy_product_journal(
         updated_unix_ms: transaction.0.updated_unix_ms,
         batches: vec![transaction],
     }))
-}
-
-fn write_product_journal(
-    props: &ProjectProperties,
-    journal: &mut ProductTransactionJournal,
-) -> Result<()> {
-    let mut workflow = open_product_workflow(props)?;
-    *workflow.queue_mut() = journal.clone();
-    workflow
-        .persist_queue()
-        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
-    *journal = workflow.into_queue();
-    Ok(())
-}
-
-fn clear_product_journal(props: &ProjectProperties) -> Result<()> {
-    open_product_workflow(props)?
-        .clear_queue()
-        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
 }
 
 fn sync_parent(path: &Path) -> Result<()> {
@@ -1380,33 +1390,15 @@ fn legacy_product_history(props: &ProjectProperties) -> Result<Vec<SyncTransacti
         .collect()
 }
 
+#[cfg(test)]
 fn open_product_history(props: &ProjectProperties) -> Result<SegmentedHistory<SyncTransaction>> {
     Ok(open_product_workflow(props)?.into_history())
 }
 
-fn append_product_history(props: &ProjectProperties, transaction: SyncTransaction) -> Result<()> {
-    let mut workflow = open_product_workflow(props)?;
-    let mut checkpoint = product_history_checkpoint;
-    workflow
-        .append_history(transaction, &mut checkpoint)
-        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
-    Ok(())
-}
-
-fn product_history_for_batch(
-    props: &ProjectProperties,
-    batch_id: &str,
-) -> Result<Vec<SyncTransaction>> {
-    open_product_workflow(props)?
-        .history_records(batch_id)
-        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
-}
-
-fn archive_terminal_product_transactions(
-    props: &ProjectProperties,
+fn archive_terminal_product_transactions_in(
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
     terminal: &[SyncTransaction],
 ) -> Result<()> {
-    let mut workflow = open_product_workflow(props)?;
     let mut checkpoint = product_history_checkpoint;
     for transaction in terminal {
         workflow
@@ -1622,11 +1614,6 @@ fn compact_terminal_product_transactions_in(
         )
         .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     Ok(())
-}
-
-fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
-    let mut workflow = open_product_workflow(props)?;
-    compact_terminal_product_transactions_in(props, &mut workflow)
 }
 
 fn decode_legacy_renderer_owner(
@@ -2027,13 +2014,21 @@ fn rollback_repositories(
 /// Recover a persisted multi-repository transaction left by a terminated
 /// process before allowing another team operation to mutate the project.
 pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
-        recover_interrupted_sync_locked(props)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
+        recover_interrupted_sync_locked(props, coordinator.workflow_mut())
     })
 }
 
 fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool> {
-    let journal = load_product_journal(props)?;
+    let mut workflow = open_product_workflow(props)?;
+    recover_pending_cancellation_in(props, &mut workflow)
+}
+
+fn recover_pending_cancellation_in(
+    props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+) -> Result<bool> {
+    let journal = product_journal_in(props, workflow)?;
     let mut cancelling = journal
         .batches
         .into_iter()
@@ -2048,9 +2043,14 @@ fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool
     }
     let mut transaction = transaction;
     validate_pending_resolve_cancellation(props, &transaction)?;
-    rollback_pending_resolve_cancellation(props, &mut transaction)?;
-    persist_terminal_resolve_cancellation(props, &mut transaction, "renderer-cancelled-recovered")?;
-    compact_terminal_product_transactions(props)?;
+    rollback_pending_resolve_cancellation(props, workflow, &mut transaction)?;
+    persist_terminal_resolve_cancellation(
+        props,
+        workflow,
+        &mut transaction,
+        "renderer-cancelled-recovered",
+    )?;
+    compact_terminal_product_transactions_in(props, workflow)?;
     Ok(true)
 }
 
@@ -2072,6 +2072,7 @@ fn validate_pending_resolve_cancellation(
 
 fn rollback_pending_resolve_cancellation(
     props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
     transaction: &mut SyncTransaction,
 ) -> Result<()> {
     match transaction.phase.as_str() {
@@ -2088,7 +2089,7 @@ fn rollback_pending_resolve_cancellation(
             // A second cancel or restart that takes over this exact intent can
             // therefore finish it without opening a second rollback pass.
             transaction.phase = "renderer-rollback-durable".into();
-            transaction.persist_preserving_dispatch_order(props)
+            transaction.persist_preserving_dispatch_order_in(props, workflow)
         }
         "renderer-rollback-durable" => Ok(()),
         phase => Err(TeamError::Command(format!(
@@ -2100,6 +2101,7 @@ fn rollback_pending_resolve_cancellation(
 
 fn persist_terminal_resolve_cancellation(
     props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
     transaction: &mut SyncTransaction,
     phase: &str,
 ) -> Result<()> {
@@ -2108,12 +2110,15 @@ fn persist_terminal_resolve_cancellation(
         TransactionStatus::RequestCancelled,
         Some(REQUEST_CANCELLED_CODE),
     );
-    transaction.persist(props)
+    transaction.persist_in(props, workflow)
 }
 
-fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
-    let recovered_cancellation = recover_pending_cancellation_locked(props)?;
-    let journal = load_product_journal(props)?;
+fn recover_interrupted_sync_locked(
+    props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
+) -> Result<bool> {
+    let recovered_cancellation = recover_pending_cancellation_in(props, workflow)?;
+    let journal = product_journal_in(props, workflow)?;
     // A committed receipt is renderer-owned work. Leave any terminal prefix in
     // place until transaction.receipt.pending has durably claimed a dispatcher;
     // compaction then runs under that same project lock and owner claim.
@@ -2122,15 +2127,16 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         .iter()
         .any(|transaction| transaction.0.status == TransactionStatus::SidecarCommitted)
     {
-        compact_terminal_product_transactions(props)?;
+        compact_terminal_product_transactions_in(props, workflow)?;
     }
-    let Some(mut transaction) = SyncTransaction::load_active_operation(props)? else {
+    let Some(mut transaction) = SyncTransaction::load_active_operation_in(props, workflow)? else {
         return Ok(recovered_cancellation);
     };
     transaction.validate_repository_shape(props)?;
     if transaction.phase == "capturing" {
         transaction.finish(
             props,
+            workflow,
             "recovered-capture",
             TransactionStatus::Cancelled,
             None,
@@ -2165,7 +2171,7 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
     }
     transaction.published.sort_unstable();
     transaction.published.dedup();
-    transaction.persist(props)?;
+    transaction.persist_in(props, workflow)?;
     let mut failures = rollback_repositories(
         props,
         &snapshot,
@@ -2182,11 +2188,17 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         failures.push(format!("project: {error}"));
     }
     if failures.is_empty() {
-        transaction.finish(props, "recovered", TransactionStatus::Cancelled, None)?;
+        transaction.finish(
+            props,
+            workflow,
+            "recovered",
+            TransactionStatus::Cancelled,
+            None,
+        )?;
         return Ok(true);
     }
     transaction.phase = "recovery-failed".into();
-    let _ = transaction.persist(props);
+    let _ = transaction.persist_in(props, workflow);
     Err(TeamError::Command(format!(
         "team transaction recovery failed: {}",
         failures.join(" | ")
@@ -2230,9 +2242,10 @@ pub fn commit_product_transaction_with_paths_cancellable<T>(
     mutation: impl FnOnce(&CancellationToken) -> Result<T>,
 ) -> Result<T> {
     check_cancelled(cancellation)?;
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, move |_| {
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, move |coordinator| {
         commit_product_transaction_with_paths_cancellable_locked(
             props,
+            coordinator.workflow_mut(),
             operation,
             cancellation,
             checkpoint,
@@ -2247,6 +2260,7 @@ pub fn commit_product_transaction_with_paths_cancellable<T>(
 #[allow(clippy::too_many_arguments)]
 fn commit_product_transaction_with_paths_cancellable_locked<T>(
     props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
     operation: &str,
     cancellation: &CancellationToken,
     checkpoint: &'static str,
@@ -2256,10 +2270,11 @@ fn commit_product_transaction_with_paths_cancellable_locked<T>(
     mutation: impl FnOnce(&CancellationToken) -> Result<T>,
 ) -> Result<T> {
     check_cancelled(cancellation)?;
-    recover_interrupted_sync_locked(props)?;
+    recover_interrupted_sync_locked(props, workflow)?;
     check_cancelled(cancellation)?;
     let (mut journal, snapshot) = SyncTransaction::begin_local_cancellable(
         props,
+        workflow,
         operation,
         cancellation,
         checkpoint,
@@ -2268,39 +2283,39 @@ fn commit_product_transaction_with_paths_cancellable_locked<T>(
         external_products,
     )?;
     journal.phase = "mutating".into();
-    journal.persist(props)?;
+    journal.persist_in(props, workflow)?;
     let result = mutation(cancellation);
     match result {
         Ok(value) => {
             if let Err(error) = check_cancelled(cancellation) {
                 snapshot.restore_project_and_prep_durable(props)?;
-                journal.finish_for_error(props, "rolled-back", &error)?;
+                journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
                 return Err(error);
             }
             product_transaction_checkpoint(operation, "before_atomic_publish")?;
             let await_renderer_ack = generation != 0 && batch_id.is_some();
             if let Err(error) =
-                journal.publish_product_commit(props, "committed", await_renderer_ack)
+                journal.publish_product_commit(props, workflow, "committed", await_renderer_ack)
             {
                 snapshot.restore_project_and_prep_durable(props)?;
-                journal.finish_for_error(props, "rolled-back", &error)?;
+                journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
                 return Err(error);
             }
             product_transaction_checkpoint(operation, "after_atomic_publish")?;
             if !await_renderer_ack {
-                journal.cleanup(props)?;
+                journal.cleanup_in(workflow)?;
             }
             Ok(value)
         }
         Err(error) => {
             if let Err(rollback_error) = snapshot.restore_project_and_prep_durable(props) {
                 journal.phase = "rollback-failed".into();
-                let _ = journal.persist(props);
+                let _ = journal.persist_in(props, workflow);
                 return Err(TeamError::Command(format!(
                     "{error}; project rollback failed: {rollback_error}"
                 )));
             }
-            journal.finish_for_error(props, "rolled-back", &error)?;
+            journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
             Err(error)
         }
     }
@@ -2356,19 +2371,26 @@ pub fn sync_cancellable_scoped(
     batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
-        sync_cancellable_scoped_locked(props, cancellation, generation, batch_id)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
+        sync_cancellable_scoped_locked(
+            props,
+            coordinator.workflow_mut(),
+            cancellation,
+            generation,
+            batch_id,
+        )
     })
 }
 
 fn sync_cancellable_scoped_locked(
     props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
     cancellation: &CancellationToken,
     generation: u64,
     batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
-    let recovered = recover_interrupted_sync_locked(props)?;
+    let recovered = recover_interrupted_sync_locked(props, workflow)?;
     check_cancelled(cancellation)?;
     if !team_enabled() {
         return Ok(SyncReport {
@@ -2392,7 +2414,8 @@ fn sync_cancellable_scoped_locked(
         return Ok(report);
     }
 
-    let (mut journal, snapshot) = SyncTransaction::begin(props, "sync", generation, batch_id)?;
+    let (mut journal, snapshot) =
+        SyncTransaction::begin(props, workflow, "sync", generation, batch_id)?;
     let await_renderer_ack = generation != 0 && batch_id.is_some();
     let mut observed = vec![None; props.repositories.len()];
     let mut rollback_versions = vec![None; props.repositories.len()];
@@ -2402,7 +2425,7 @@ fn sync_cancellable_scoped_locked(
     let transaction = (|| -> Result<()> {
         check_cancelled(cancellation)?;
         journal.phase = "preparing".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         std::fs::create_dir_all(prep_dir(props))?;
         for repo in &props.repositories {
             check_cancelled(cancellation)?;
@@ -2429,9 +2452,9 @@ fn sync_cancellable_scoped_locked(
         }
         journal.rollback_versions.clone_from(&rollback_versions);
         journal.phase = "prepared".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         journal.phase = "copying-remote".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         for (repo, deleted) in props.repositories.iter().zip(&deleted) {
             check_cancelled(cancellation)?;
             copy_mapped_cancellable(props, repo, CopyDir::RepoToProject, cancellation)?;
@@ -2439,7 +2462,7 @@ fn sync_cancellable_scoped_locked(
             check_cancelled(cancellation)?;
         }
         journal.phase = "rebasing".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         check_cancelled(cancellation)?;
         let conflicts = rebase_all(props)?;
         check_cancelled(cancellation)?;
@@ -2454,19 +2477,19 @@ fn sync_cancellable_scoped_locked(
             ));
         }
         journal.phase = "staging".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         for repo in &props.repositories {
             check_cancelled(cancellation)?;
             copy_mapped_cancellable(props, repo, CopyDir::ProjectToRepo, cancellation)?;
             check_cancelled(cancellation)?;
         }
         journal.phase = "publishing".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         for index in 0..props.repositories.len() {
             check_cancelled(cancellation)?;
             commit_started.push(index);
             journal.commit_started.clone_from(&commit_started);
-            journal.persist(props)?;
+            journal.persist_in(props, workflow)?;
             commit_repository(props, index, &[observed[index].clone()], "OmegaT team sync")?;
             #[cfg(test)]
             if CRASH_AFTER_PUBLISH_REPOSITORY
@@ -2477,11 +2500,11 @@ fn sync_cancellable_scoped_locked(
             }
             published.push(index);
             journal.published.clone_from(&published);
-            journal.persist(props)?;
+            journal.persist_in(props, workflow)?;
             check_cancelled(cancellation)?;
         }
         journal.phase = "saving-bases".into();
-        journal.persist(props)?;
+        journal.persist_in(props, workflow)?;
         check_cancelled(cancellation)?;
         save_bases(props)?;
         save_conflicts(props, &[])?;
@@ -2507,11 +2530,11 @@ fn sync_cancellable_scoped_locked(
             }
         }
         if rollback_failures.is_empty() {
-            journal.finish_for_error(props, "rolled-back", &error)?;
+            journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
             return Err(error);
         }
         journal.phase = "rollback-failed".into();
-        let _ = journal.persist(props);
+        let _ = journal.persist_in(props, workflow);
         return Err(TeamError::Command(format!(
             "{error}; rollback failed: {}",
             rollback_failures.join(" | ")
@@ -2519,7 +2542,9 @@ fn sync_cancellable_scoped_locked(
     }
 
     let publish_result = product_transaction_checkpoint("team.sync", "before_atomic_publish")
-        .and_then(|_| journal.publish_product_commit(props, "committed", await_renderer_ack));
+        .and_then(|_| {
+            journal.publish_product_commit(props, workflow, "committed", await_renderer_ack)
+        });
     if let Err(error) = publish_result {
         let mut rollback_failures = rollback_repositories(
             props,
@@ -2532,11 +2557,11 @@ fn sync_cancellable_scoped_locked(
             rollback_failures.push(format!("project: {rollback_error}"));
         }
         if rollback_failures.is_empty() {
-            journal.finish_for_error(props, "rolled-back", &error)?;
+            journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
             return Err(error);
         }
         journal.phase = "rollback-failed".into();
-        let _ = journal.persist(props);
+        let _ = journal.persist_in(props, workflow);
         return Err(TeamError::Command(format!(
             "{error}; rollback failed: {}",
             rollback_failures.join(" | ")
@@ -2544,7 +2569,7 @@ fn sync_cancellable_scoped_locked(
     }
     product_transaction_checkpoint("team.sync", "after_atomic_publish")?;
     if !await_renderer_ack {
-        journal.cleanup(props)?;
+        journal.cleanup_in(workflow)?;
     }
     for repo in &props.repositories {
         report
@@ -2579,9 +2604,10 @@ pub fn commit_project_files_cancellable_scoped(
     batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
         commit_project_files_cancellable_scoped_locked(
             props,
+            coordinator.workflow_mut(),
             which,
             cancellation,
             generation,
@@ -2592,13 +2618,14 @@ pub fn commit_project_files_cancellable_scoped(
 
 fn commit_project_files_cancellable_scoped_locked(
     props: &ProjectProperties,
+    workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
     which: &str,
     cancellation: &CancellationToken,
     generation: u64,
     batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
-    let recovered = recover_interrupted_sync_locked(props)?;
+    let recovered = recover_interrupted_sync_locked(props, workflow)?;
     check_cancelled(cancellation)?;
     let label = match which {
         "source" | "target" => which,
@@ -2619,8 +2646,13 @@ fn commit_project_files_cancellable_scoped_locked(
     let root_git = props.root.join(".git").exists();
     if !props.repositories.is_empty() || root_git {
         let await_renderer_ack = generation != 0 && batch_id.is_some();
-        let (mut journal, snapshot) =
-            SyncTransaction::begin(props, &format!("commit-{label}"), generation, batch_id)?;
+        let (mut journal, snapshot) = SyncTransaction::begin(
+            props,
+            workflow,
+            &format!("commit-{label}"),
+            generation,
+            batch_id,
+        )?;
         let mut rollback_versions = vec![None; props.repositories.len()];
         let mut root_git_rollback = None;
         let mut published = Vec::new();
@@ -2628,7 +2660,7 @@ fn commit_project_files_cancellable_scoped_locked(
         let transaction = (|| -> Result<()> {
             check_cancelled(cancellation)?;
             journal.phase = "observing".into();
-            journal.persist(props)?;
+            journal.persist_in(props, workflow)?;
             for (index, repo) in props.repositories.iter().enumerate() {
                 check_cancelled(cancellation)?;
                 if repo.repo_type == "git" {
@@ -2642,7 +2674,7 @@ fn commit_project_files_cancellable_scoped_locked(
             journal.rollback_versions.clone_from(&rollback_versions);
             journal.root_git_rollback.clone_from(&root_git_rollback);
             journal.phase = "staging".into();
-            journal.persist(props)?;
+            journal.persist_in(props, workflow)?;
             for repo in &props.repositories {
                 check_cancelled(cancellation)?;
                 copy_mapped_cancellable(props, repo, CopyDir::ProjectToRepo, cancellation)?;
@@ -2652,12 +2684,12 @@ fn commit_project_files_cancellable_scoped_locked(
                 check_cancelled(cancellation)?;
             }
             journal.phase = "publishing".into();
-            journal.persist(props)?;
+            journal.persist_in(props, workflow)?;
             for index in 0..props.repositories.len() {
                 check_cancelled(cancellation)?;
                 commit_started.push(index);
                 journal.commit_started.clone_from(&commit_started);
-                journal.persist(props)?;
+                journal.persist_in(props, workflow)?;
                 commit_repository(
                     props,
                     index,
@@ -2666,7 +2698,7 @@ fn commit_project_files_cancellable_scoped_locked(
                 )?;
                 published.push(index);
                 journal.published.clone_from(&published);
-                journal.persist(props)?;
+                journal.persist_in(props, workflow)?;
                 check_cancelled(cancellation)?;
             }
             if root_git {
@@ -2695,18 +2727,20 @@ fn commit_project_files_cancellable_scoped_locked(
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
             if rollback_failures.is_empty() {
-                journal.finish_for_error(props, "rolled-back", &error)?;
+                journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
                 return Err(error);
             }
             journal.phase = "rollback-failed".into();
-            let _ = journal.persist(props);
+            let _ = journal.persist_in(props, workflow);
             return Err(TeamError::Command(format!(
                 "{error}; rollback failed: {}",
                 rollback_failures.join(" | ")
             )));
         }
         let publish_result = product_transaction_checkpoint("team.commit", "before_atomic_publish")
-            .and_then(|_| journal.publish_product_commit(props, "committed", await_renderer_ack));
+            .and_then(|_| {
+                journal.publish_product_commit(props, workflow, "committed", await_renderer_ack)
+            });
         if let Err(error) = publish_result {
             let mut rollback_failures = rollback_repositories(
                 props,
@@ -2724,11 +2758,11 @@ fn commit_project_files_cancellable_scoped_locked(
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
             if rollback_failures.is_empty() {
-                journal.finish_for_error(props, "rolled-back", &error)?;
+                journal.finish_for_error_in(props, workflow, "rolled-back", &error)?;
                 return Err(error);
             }
             journal.phase = "rollback-failed".into();
-            let _ = journal.persist(props);
+            let _ = journal.persist_in(props, workflow);
             return Err(TeamError::Command(format!(
                 "{error}; rollback failed: {}",
                 rollback_failures.join(" | ")
@@ -2736,7 +2770,7 @@ fn commit_project_files_cancellable_scoped_locked(
         }
         product_transaction_checkpoint("team.commit", "after_atomic_publish")?;
         if !await_renderer_ack {
-            journal.cleanup(props)?;
+            journal.cleanup_in(workflow)?;
         }
     }
     Ok(SyncReport {
@@ -2833,9 +2867,10 @@ pub fn migrate_refresh_transactions(
     if active.is_empty() && history.is_empty() {
         return Ok(());
     }
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
-        recover_interrupted_sync_locked(props)?;
-        let mut journal = load_product_journal(props)?;
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
+        let workflow = coordinator.workflow_mut();
+        recover_interrupted_sync_locked(props, workflow)?;
+        let mut journal = product_journal_in(props, workflow)?;
         for envelope in active {
             let transaction = refresh_transaction(props, envelope)?;
             if let Some(existing) = journal
@@ -2860,14 +2895,14 @@ pub fn migrate_refresh_transactions(
                 .then_with(|| left.0.batch_id.cmp(&right.0.batch_id))
                 .then_with(|| left.operation.cmp(&right.operation))
         });
-        write_product_journal(props, &mut journal)?;
+        write_product_journal_in(workflow, &mut journal)?;
 
         let terminal = history
             .into_iter()
             .map(|envelope| refresh_transaction(props, envelope))
             .collect::<Result<Vec<_>>>()?;
         if !terminal.is_empty() {
-            archive_terminal_product_transactions(props, &terminal)?;
+            archive_terminal_product_transactions_in(workflow, &terminal)?;
         }
         Ok(())
     })
@@ -2895,9 +2930,10 @@ pub fn enqueue_refresh_transaction(
                 .into(),
         ));
     }
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
-        recover_interrupted_sync_locked(props)?;
-        let journal = load_product_journal(props)?;
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
+        let workflow = coordinator.workflow_mut();
+        recover_interrupted_sync_locked(props, workflow)?;
+        let journal = product_journal_in(props, workflow)?;
         if let Some(existing) = journal.batches.into_iter().find(|transaction| {
             transaction.is_refresh()
                 && transaction.0.status == TransactionStatus::Pending
@@ -2917,7 +2953,7 @@ pub fn enqueue_refresh_transaction(
                 }
             }
             refresh.sources.sort();
-            existing.persist_preserving_dispatch_order(props)?;
+            existing.persist_preserving_dispatch_order_in(props, workflow)?;
             return refresh_envelope(&existing);
         }
 
@@ -2934,7 +2970,7 @@ pub fn enqueue_refresh_transaction(
             },
         );
         let mut transaction = refresh_transaction(props, envelope)?;
-        transaction.persist_preserving_dispatch_order(props)?;
+        transaction.persist_preserving_dispatch_order_in(props, workflow)?;
         refresh_envelope(&transaction)
     })
 }
@@ -2946,8 +2982,12 @@ pub fn checkpoint_refresh_transaction(
     batch_id: &str,
     committed_result: &serde_json::Value,
 ) -> Result<TransactionRendererReceipt> {
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
-        let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
+        let workflow = coordinator.workflow_mut();
+        let Some(mut transaction) = workflow.dispatch_head(|transaction| {
+            transaction.0.status == TransactionStatus::SidecarCommitted
+                || (transaction.is_refresh() && transaction.0.status == TransactionStatus::Pending)
+        }) else {
             return Err(TeamError::Conflict(format!(
                 "refresh batch {batch_id} is no longer pending"
             )));
@@ -2980,7 +3020,7 @@ pub fn checkpoint_refresh_transaction(
             .map_err(|error| TeamError::Command(format!("refresh transaction: {error}")))?;
         transaction.0.updated_unix_ms = dispatch_unix_ms;
         transaction.phase = "refresh-committed".into();
-        transaction.persist_preserving_dispatch_order(props)?;
+        transaction.persist_preserving_dispatch_order_in(props, workflow)?;
         refresh_envelope(&transaction)
     })
 }
@@ -3003,8 +3043,9 @@ pub fn cancel_refresh_transaction(
 
 /// Drop only refresh rows at a same-process project-generation boundary.
 pub fn discard_refresh_transactions(props: &ProjectProperties) -> Result<()> {
-    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
-        let mut journal = load_product_journal(props)?;
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |coordinator| {
+        let workflow = coordinator.workflow_mut();
+        let mut journal = product_journal_in(props, workflow)?;
         let mut changed = false;
         for transaction in &mut journal.batches {
             if !transaction.is_refresh() || !transaction.0.status.is_recoverable() {
@@ -3023,9 +3064,9 @@ pub fn discard_refresh_transactions(props: &ProjectProperties) -> Result<()> {
             changed = true;
         }
         if changed {
-            write_product_journal(props, &mut journal)?;
+            write_product_journal_in(workflow, &mut journal)?;
         }
-        compact_terminal_product_transactions(props)
+        compact_terminal_product_transactions_in(props, workflow)
     })
 }
 
@@ -3469,9 +3510,7 @@ pub fn cancel_transaction_receipt(
         coordinator
             .workflow_mut()
             .append_history(transaction.clone(), &mut product_history_checkpoint)
-            .map_err(|error| {
-                TeamError::Command(format!("team transaction workflow: {error}"))
-            })?;
+            .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
         resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
         return compact_terminal_product_transactions_in(props, coordinator.workflow_mut());
     }

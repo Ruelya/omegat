@@ -1863,6 +1863,201 @@ mod tests {
     }
 
     #[test]
+    fn every_writer_disconnect_duplicate_rpc_move_reopen_and_ack_race_is_exactly_once() {
+        assert_eq!(all_writers().count(), 26);
+        let ack_boundaries = [
+            "after_terminal_queue_publish",
+            "after_terminal_history_publish",
+            "after_ack_queue_compaction",
+        ];
+        for (sequence, operation) in all_writers().enumerate() {
+            let temp = tempfile::tempdir().unwrap();
+            let original_scope = temp.path().join(format!("scope-{sequence}-before-move"));
+            std::fs::create_dir_all(&original_scope).unwrap();
+            let layout = DurableTransactionLayout::default();
+            let transaction_id = format!("{operation}-duplicate-rpc");
+            let product = original_scope.join("product-write-count");
+            let product_writes = std::cell::Cell::new(0_u64);
+
+            // The first RPC publishes pending intent before applying the product,
+            // then publishes the receipt in the same coordinator-owned workflow.
+            execute_model(&original_scope, &layout, |coordinator| {
+                let mut pending = record(&original_scope, &transaction_id, "pending", 0);
+                pending.value = serde_json::json!({
+                    "operation": operation,
+                    "generation": 1,
+                });
+                coordinator.workflow_mut().upsert(pending.clone())?;
+                coordinator.workflow_mut().persist_queue()?;
+                product_writes.set(product_writes.get() + 1);
+                std::fs::write(&product, product_writes.get().to_string())
+                    .map_err(|error| error.to_string())?;
+                pending.phase = "committed".into();
+                coordinator.workflow_mut().upsert(pending)?;
+                coordinator.workflow_mut().persist_queue()
+            });
+
+            // Renderer disconnect: no acknowledgement is issued in this process.
+            // Move the whole project/config scope while its receipt is pending.
+            let reopened_scope = temp.path().join(format!("scope-{sequence}-after-move"));
+            std::fs::rename(&original_scope, &reopened_scope).unwrap();
+            let moved_product = reopened_scope.join("product-write-count");
+
+            // A duplicate RPC after move/reopen must adopt the existing receipt,
+            // never execute the product body again, and may only restamp renderer
+            // generation metadata in the active row.
+            execute_model(&reopened_scope, &layout, |coordinator| {
+                let Some(mut receipt) = coordinator.workflow().receipt(&transaction_id, |row| {
+                    row.transaction_phase().is_dispatchable()
+                }) else {
+                    product_writes.set(product_writes.get() + 1);
+                    std::fs::write(&moved_product, product_writes.get().to_string())
+                        .map_err(|error| error.to_string())?;
+                    return Err(format!(
+                        "duplicate {operation} RPC would have replayed its product"
+                    ));
+                };
+                assert_eq!(receipt.scope, normalized(&reopened_scope));
+                assert_eq!(std::fs::read(&moved_product).unwrap(), b"1");
+                receipt.value["generation"] = Value::from(2_u64);
+                coordinator.workflow_mut().upsert(receipt)?;
+                coordinator.workflow_mut().persist_queue()
+            });
+
+            let stopped_at = ack_boundaries[sequence % ack_boundaries.len()];
+            // Alternate the winner so both close/cancel orders are exercised.
+            // project.close is index 2 and therefore takes the cancellation
+            // branch while adjacent writers prove an acknowledgement can win.
+            let cancellation_wins = sequence % 2 == 0;
+            let winner_phase = if cancellation_wins {
+                "cancelled"
+            } else {
+                "acknowledged"
+            };
+            let loser_phase = if cancellation_wins {
+                "acknowledged"
+            } else {
+                "cancelled"
+            };
+            let mut winner = record(&reopened_scope, &transaction_id, winner_phase, 0);
+            winner.value = serde_json::json!({
+                "operation": operation,
+                "generation": 2,
+                "outcome": winner_phase,
+            });
+            let first_ack: Result<(), DurableCoordinatorExecutionError<String>> =
+                DurableTransactionCoordinator::<Record>::execute(
+                    &reopened_scope.join("transactions"),
+                    &reopened_scope,
+                    layout.clone(),
+                    options(),
+                    DurableCoordinatorLockMode::Wait,
+                    |coordinator| {
+                        coordinator
+                            .workflow_mut()
+                            .acknowledge_head(
+                                &transaction_id,
+                                winner.clone(),
+                                |row| row.transaction_phase().is_dispatchable(),
+                                &mut |_| Ok(()),
+                                &mut |point| {
+                                    if point == stopped_at {
+                                        Err(format!("renderer-disconnected:{point}"))
+                                    } else {
+                                        Ok(())
+                                    }
+                                },
+                            )
+                            .map(|_| ())
+                    },
+                );
+            assert_eq!(
+                first_ack.unwrap_err().to_string(),
+                format!("renderer-disconnected:{stopped_at}")
+            );
+
+            // The replacement renderer repeats the winning completion and the
+            // losing close/cancel outcome. Exactly one terminal survives.
+            execute_model(&reopened_scope, &layout, |coordinator| {
+                let completion = coordinator.workflow_mut().acknowledge_head(
+                    &transaction_id,
+                    winner.clone(),
+                    |row| row.transaction_phase().is_dispatchable(),
+                    &mut |_| Ok(()),
+                    &mut |_| Ok(()),
+                )?;
+                assert!(matches!(
+                    completion,
+                    DurableAcknowledgement::Published(_)
+                        | DurableAcknowledgement::AlreadyPublished(_)
+                ));
+
+                let mut loser = winner.clone();
+                loser.phase = loser_phase.into();
+                loser.value["outcome"] = Value::String(loser_phase.into());
+                assert_eq!(
+                    coordinator
+                        .workflow_mut()
+                        .acknowledge_head(
+                            &transaction_id,
+                            loser,
+                            |row| row.transaction_phase().is_dispatchable(),
+                            &mut |_| Ok(()),
+                            &mut |_| Ok(()),
+                        )
+                        .unwrap_err(),
+                    format!("durable transaction acknowledgement disagrees for {transaction_id}")
+                );
+                assert!(coordinator.workflow().queue().batches.is_empty());
+                assert_eq!(
+                    coordinator.workflow().history_records(&transaction_id)?,
+                    vec![winner.clone()]
+                );
+
+                // Force immutable generations and predecessor GC after the
+                // receipt has left the active queue. Sparse lookup must retain
+                // the one winning terminal throughout compaction.
+                for gc_sequence in 0..12 {
+                    let mut filler = record(
+                        &reopened_scope,
+                        &format!("{transaction_id}-gc-{gc_sequence}"),
+                        "acknowledged",
+                        gc_sequence,
+                    );
+                    filler.value = serde_json::json!({
+                        "operation": operation,
+                        "gc_sequence": gc_sequence,
+                    });
+                    coordinator
+                        .workflow_mut()
+                        .append_terminal(filler, &mut |_| Ok(()))?;
+                }
+                assert!(coordinator.workflow().history_status().generation > 0);
+                Ok(())
+            });
+
+            let reopened: DurableTransactionWorkflow<Record> = DurableTransactionWorkflow::open(
+                &reopened_scope.join("transactions"),
+                &reopened_scope,
+                layout,
+                options(),
+            )
+            .unwrap();
+            assert!(reopened.queue().batches.is_empty());
+            assert_eq!(
+                reopened.history_records(&transaction_id).unwrap(),
+                vec![winner]
+            );
+            assert_eq!(product_writes.get(), 1, "{operation} product call count");
+            assert_eq!(
+                std::fs::read(&moved_product).unwrap(),
+                b"1",
+                "{operation} replayed its product write"
+            );
+        }
+    }
+
+    #[test]
     fn every_writer_resumes_every_history_migration_crash_boundary() {
         const POINTS: &[&str] = &[
             "after_recent_append",

@@ -453,6 +453,10 @@ async function runMixedQueueTakeovers(display, workDir, config) {
   const firstRelease = join(workDir, "prepared-owner-first.release");
   const secondMarker = join(workDir, "prepared-owner-second.marker");
   const secondRelease = join(workDir, "prepared-owner-second.release");
+  const selectedHeadMarker = join(
+    workDir,
+    "prepared-close-selected-before-renderer.marker",
+  );
   await mkdir(join(remote, "target"), { recursive: true });
   await writeFile(join(remote, "target", "team.txt"), "remote-before", "utf8");
 
@@ -598,15 +602,19 @@ async function runMixedQueueTakeovers(display, workDir, config) {
         : undefined
     );
     assert.equal(firstClaim.batch_id, "prepared-close");
-    const firstKilled = await killPackaged(first);
-    first = undefined;
 
+    // Start the replacement while the first owner is still alive. Its
+    // transaction.receipt.pending call must remain a real packaged waiter,
+    // survive the first death, and become the next durable owner.
     second = await launchPackagedRenderer(display, config, rootA, {
       ...limits,
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "project.close",
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: secondMarker,
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: secondRelease,
     });
+    const secondWasPreExistingWaiter = second.application.pid;
+    const firstKilled = await killPackaged(first);
+    first = undefined;
     const secondClaim = await waitFor("second prepared owner claim", async () =>
       await pathExists(secondMarker)
         ? JSON.parse(await readFile(secondMarker, "utf8"))
@@ -614,6 +622,19 @@ async function runMixedQueueTakeovers(display, workDir, config) {
     );
     assert.equal(secondClaim.batch_id, "prepared-close");
     assert.notEqual(secondClaim.owner_process_id, firstClaim.owner_process_id);
+
+    // Start the detached replacement before killing the second owner as well.
+    // After takeover it kills only its sidecar after durable FIFO-head
+    // selection and before renderer delivery. The same Electron must restart
+    // the sidecar and receive that exact close receipt.
+    third = await launchPackagedRenderer(display, config, null, {
+      ...limits,
+      OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_FOR: "project.close",
+      OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_MARKER:
+        selectedHeadMarker,
+      OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceA,
+    });
+    const thirdWasPreExistingWaiter = third.application.pid;
     const secondKilled = await killPackaged(second);
     second = undefined;
 
@@ -621,10 +642,6 @@ async function runMixedQueueTakeovers(display, workDir, config) {
     // Starting with OMEGAT_PROJECT would attach a watcher before the close is
     // delivered, so renderer unwatch would follow the ordinary close path and
     // cancel the queued refresh instead of draining the detached FIFO tail.
-    third = await launchPackagedRenderer(display, config, null, {
-      ...limits,
-      OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceA,
-    });
     await waitFor("prepared cross-root FIFO drain", async () => {
       if (
         await pathExists(projectPaths(rootA).active)
@@ -635,8 +652,23 @@ async function runMixedQueueTakeovers(display, workDir, config) {
         .filter((row) => row.result === "acknowledged");
       return rows.length === 6 ? true : undefined;
     });
+    const selectedHeadRestart = JSON.parse(
+      await readFile(selectedHeadMarker, "utf8"),
+    );
+    assert.equal(selectedHeadRestart.batch_id, "prepared-close");
+    assert.equal(selectedHeadRestart.operation, "project.close");
     const acknowledged = parseNdjson(await readFile(traceA, "utf8"))
       .filter((row) => row.result === "acknowledged");
+    const restartedCloseAck = acknowledged.find((row) =>
+      row.batch_id === "prepared-close"
+    );
+    assert(restartedCloseAck, "restarted sidecar did not acknowledge close");
+    assert.equal(restartedCloseAck.browser_pid, third.application.pid);
+    assert.notEqual(
+      restartedCloseAck.sidecar_pid,
+      selectedHeadRestart.sidecar_pid,
+      "selected-head receipt was not completed by a replacement sidecar",
+    );
     const expectedB = [
       ["prepared-save-b", "project.save"],
       [refreshB.batch.batch_id, "project.external-refresh"],
@@ -746,6 +778,15 @@ async function runMixedQueueTakeovers(display, workDir, config) {
       crossRootDispatchOrder: acknowledged.map((row) => row.batch_id),
       configOrder,
       consecutiveOwnerTakeovers: [firstKilled, secondKilled],
+      preExistingWaiterBrowserPids: [
+        secondWasPreExistingWaiter,
+        thirdWasPreExistingWaiter,
+      ],
+      selectedHeadSidecarRestart: {
+        ...selectedHeadRestart,
+        replacement_browser_pid: restartedCloseAck.browser_pid,
+        replacement_sidecar_pid: restartedCloseAck.sidecar_pid,
+      },
       projectMoveRebasedMutableMetadata: true,
       immutableProjectSegmentsRetained: Object.keys(immutableBefore).length,
       globalConfigProjectIsolation: true,

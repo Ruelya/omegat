@@ -49,6 +49,30 @@ const rows = [
         report.mixedQueues.consecutiveOwnerTakeovers.length,
         2,
       );
+      assert.equal(
+        report.mixedQueues.preExistingWaiterBrowserPids.length,
+        2,
+      );
+      assert.equal(
+        new Set(report.mixedQueues.preExistingWaiterBrowserPids).size,
+        2,
+      );
+      assert.equal(
+        report.mixedQueues.selectedHeadSidecarRestart.operation,
+        "project.close",
+      );
+      assert.equal(
+        report.mixedQueues.selectedHeadSidecarRestart.batch_id,
+        "prepared-close",
+      );
+      assert.notEqual(
+        report.mixedQueues.selectedHeadSidecarRestart.sidecar_pid,
+        report.mixedQueues.selectedHeadSidecarRestart.replacement_sidecar_pid,
+      );
+      assert.equal(
+        report.mixedQueues.selectedHeadSidecarRestart.replacement_browser_pid,
+        report.mixedQueues.preExistingWaiterBrowserPids[1],
+      );
       assert(report.mixedQueues.crossRootDispatchOrder.length >= 3);
       for (const file of ["active.recovery.json", "active.json"]) {
         for (const point of [
@@ -66,6 +90,9 @@ const rows = [
       }
       return {
         ownerSigkills: report.mixedQueues.consecutiveOwnerTakeovers.length,
+        preExistingWaiters:
+          report.mixedQueues.preExistingWaiterBrowserPids.length,
+        closeSelectedHeadSidecarRestart: true,
         crossRootDispatchOrder:
           report.mixedQueues.crossRootDispatchOrder,
         projectRootMoved: true,
