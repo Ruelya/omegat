@@ -1000,14 +1000,6 @@ impl SyncTransaction {
         }))
     }
 
-    fn load_receipt(props: &ProjectProperties, batch_id: &str) -> Result<Option<Self>> {
-        Ok(
-            open_product_workflow(props)?.receipt(batch_id, |transaction| {
-                transaction.0.status == TransactionStatus::SidecarCommitted
-            }),
-        )
-    }
-
     fn remove_from_journal(self, props: &ProjectProperties) -> Result<()> {
         let mut journal = load_product_journal(props)?;
         let before = journal.batches.len();
@@ -3119,8 +3111,14 @@ pub fn transaction_receipt(
             "transaction receipt requires generation and batch id".into(),
         ));
     }
-    let _lock = acquire_project_transaction_lock(props)?;
-    let Some(transaction) = SyncTransaction::load_receipt(props, batch_id)? else {
+    // A product commit and its direct RPC receipt are separate calls into this
+    // crate. A replacement dispatcher may acquire the operation lock between
+    // them, so receipt lookup must wait for that short critical section rather
+    // than report a false write failure after the product is already durable.
+    let coordinator = open_product_coordinator(props, DurableCoordinatorLockMode::Wait)?;
+    let Some(transaction) = coordinator.workflow().receipt(batch_id, |transaction| {
+        transaction.0.status == TransactionStatus::SidecarCommitted
+    }) else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
