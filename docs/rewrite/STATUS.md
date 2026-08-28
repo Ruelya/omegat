@@ -58,8 +58,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **31 passed** plus sidecar journal/watcher unit
-**7 passed** and plugin filter **1 passed**, and desktop **24 files / 175 tests
+**4 passed**, sidecar contract **32 passed** plus sidecar journal/watcher unit
+**5 passed** and plugin filter **1 passed**, and desktop **24 files / 177 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The raw NDJSON contract and real Linux packaged matrix also pass the
@@ -771,15 +771,19 @@ without replaying writes, and an unknown batch/operation is rejected. The real
 Linux save/close, cross-project, and two-repository Git+file packaged recovery
 runs exercise this shared dispatcher, including idempotent duplicate team
 acknowledgements and zero post-receipt write replay.
-The receipt query now merges the team/product `active.json` head with every
-refresh-journal candidate by its preserved durable timestamp and exposes exactly
-one global head. Renderer adoption re-stamps generation without changing that
-ordering key, direct enqueue/reply publication consults the same query, and an
-ack for a later candidate is rejected until the head is terminal. A sidecar
-contract creates an older refresh ahead of a team receipt, then two refresh
-tails ahead of a save receipt; it observes refresh → team → refresh → refresh →
-save with one envelope per turn, exact backend-specific payloads, one
-generation, and no starvation.
+Product/team and refresh work now persist in the same version-2
+`.repositories/transactions/active.json` FIFO and `history.ndjson`; the
+dispatcher no longer merges two durable backends only at query time. Former
+version-2 refresh queues and histories migrate under the project transaction
+lock, preserve their original durable order, and are removed only after the
+shared queue/history are fsynced. Exact-batch retries make an interrupted
+migration idempotent, while unknown payload fields and future envelope versions
+leave the legacy input untouched. Enqueue, selected-head adoption, committed
+result publication, cancellation, acknowledgement, history archival, and both
+compaction fault boundaries now all use that shared journal. A sidecar contract
+creates an older refresh ahead of a team receipt, then two refresh tails ahead
+of a save receipt; it observes refresh → team → refresh → refresh → save with
+one envelope per turn, exact payloads, one generation, and no starvation.
 The product/team transaction store is now a version-2 FIFO journal whose
 `batches` retain multiple envelopes in durable insertion order; a version-1
 single-envelope `active.json` is read as its first row and migrated on the next
@@ -791,6 +795,21 @@ lock with canonical root, Electron app instance, process ID, renderer
 generation, and claim ID. On Linux, another replacement cannot read or
 acknowledge either backend's head while that owner PID is live; it can take over
 only after the owner exits.
+`project.reload`, `project.compile`, `project.import`, `project.update`,
+`team.mapping`, and `align.write` now use the same local product transaction
+state machine as save/close/editor writes. Their project and external product
+paths are snapshotted before mutation: compile covers target plus exported TM
+directories, import covers its source destination, property changes cover old
+and newly configured project paths, and align write covers its destination.
+Cancellation or a pre-receipt failure restores both the in-memory session and
+durable paths; a successful mutation publishes one `sidecar_committed` manifest
+receipt before returning. Electron scopes and serializes these calls, assigns
+direct receipts to the initiating renderer action, and acknowledges only after
+the operation-specific state is published. The real Linux product-compaction
+matrix queues all six operations between an entry receipt and team/save/refresh
+tails, kills two successive elected owners before delivery, then drains the
+exact FIFO once. Stable project bytes, TMX and align-output bytes/mtimes, and the
+file remote prove receipt recovery did not replay a committed write.
 A Linux packaged owner-takeover matrix now SIGKILLs the entire Electron process
 group after its durable close-head claim but before
 `transaction:envelope` delivery. A single replacement Electron process adopts

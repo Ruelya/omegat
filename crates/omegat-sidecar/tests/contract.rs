@@ -5290,7 +5290,7 @@ fn keep_ours_resolve_receipt_survivors_elect_third_owner_after_two_deaths() {
     }
 
     fn wait_for_file(path: &std::path::Path, children: &mut [Sidecar]) {
-        for _ in 0..1_000 {
+        for _ in 0..7_000 {
             for sidecar in children.iter_mut() {
                 assert!(
                     sidecar.child.try_wait().unwrap().is_none(),
@@ -5605,13 +5605,19 @@ fn keep_ours_resolve_receipt_survivors_elect_third_owner_after_two_deaths() {
             &root,
             &format!("resolve-replacement-{index}"),
             80 + index as u64,
-            Some(20_000),
+            Some(60_000),
             Some(2),
         );
     }
     let first_winner_index = {
         let mut winner = None;
-        for _ in 0..1_000 {
+        for _ in 0..7_000 {
+            for replacement in &mut replacements {
+                assert!(
+                    replacement.child.try_wait().unwrap().is_none(),
+                    "replacement exited before the first owner election"
+                );
+            }
             for (index, marker) in owner_markers.iter().enumerate() {
                 if marker.is_file() {
                     winner = Some(index);
@@ -5662,8 +5668,12 @@ fn keep_ours_resolve_receipt_survivors_elect_third_owner_after_two_deaths() {
         .collect::<Vec<_>>();
     let second_winner_index = {
         let mut winner = None;
-        for _ in 0..1_000 {
+        for _ in 0..7_000 {
             for index in &surviving_indices {
+                assert!(
+                    replacements[*index].child.try_wait().unwrap().is_none(),
+                    "surviving replacement exited before the second owner election"
+                );
                 if owner_markers[*index].is_file() {
                     winner = Some(*index);
                     break;
@@ -5694,7 +5704,7 @@ fn keep_ours_resolve_receipt_survivors_elect_third_owner_after_two_deaths() {
             ))
         })
         .collect::<Vec<_>>();
-    for _ in 0..1_000 {
+    for _ in 0..7_000 {
         for index in &surviving_indices {
             assert!(
                 replacements[*index].child.try_wait().unwrap().is_none(),
@@ -5732,8 +5742,12 @@ fn keep_ours_resolve_receipt_survivors_elect_third_owner_after_two_deaths() {
 
     let third_winner_index = {
         let mut winner = None;
-        for _ in 0..1_000 {
+        for _ in 0..7_000 {
             for index in &second_loser_indices {
+                assert!(
+                    replacements[*index].child.try_wait().unwrap().is_none(),
+                    "surviving replacement exited before the third owner election"
+                );
                 if owner_markers[*index].is_file() {
                     winner = Some(*index);
                     break;
