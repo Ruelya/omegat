@@ -897,14 +897,27 @@ after restored-product fsync, and after the terminal queue rename. A resolve
 receipt may also be cancelled while save, close, and team-sync receipts remain
 ahead of it: those heads still drain in their original order, while the resolve
 tail is never selected.
-A real Linux packaged race parks cancellation immediately after its intent
-rename, while the UI still says `cancelling`, then externally SIGKILLs the
-Electron owner and sidecar together. Three replacement Electron processes
-observe the restored conflict/TMX, but none receives the cancelled resolve
-envelope; one durable owner file remains, and an idempotent receipt request
-still returns protocol **-32800**. Exact Git HEAD, file-remote bytes/mtime,
+A real Linux packaged matrix now parks cancellation separately after the intent
+queue rename, after the durable rollback fsync, and after the terminal queue
+rename. At every boundary the UI still says `cancelling` until protocol
+**-32800**, then the Electron owner and sidecar are externally SIGKILLed
+together. Three replacement Electron processes observe the restored
+conflict/TMX, but none receives the cancelled resolve envelope and exactly one
+durable dispatcher owner remains. The rollback-fsync case sends a second
+packaged cancellation call against the existing `cancellation_pending` row:
+it owns the sole terminal transition, reuses the persisted
+`renderer-rollback-durable` checkpoint, and neither opens a second rollback nor
+writes a second terminal row. The terminal-rename case then SIGKILLs two more
+packaged process groups at `after_archive_fsync` and `after_queue_rename`;
+restart sees one archived request-cancelled row and an empty compacted queue.
+A separate packaged FIFO-tail case keeps real `team.sync` → save → close
+receipts ahead of resolve, kills after the tail's cancellation intent, and
+proves one replacement delivers those three heads in order while every process
+delivers zero resolve envelopes. Exact Git HEAD, file-remote bytes/mtime,
 complete six-field wanted and decoy keys, and the single `Document3` surface
-remain unchanged. This is Linux-only evidence; Windows and macOS were not run.
+remain unchanged. These assertions run through
+`npm run test:e2e:compaction-dual-recovery:linux`; this is Linux-only evidence,
+and Windows and macOS were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and

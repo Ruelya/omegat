@@ -945,6 +945,7 @@ async function prepareResolveElectionProject(
   project,
   remote,
   label,
+  { fifoHeads = false } = {},
 ) {
   const gitRemote = join(remote, "main.git");
   const gitSeed = join(remote, "main-seed");
@@ -1027,7 +1028,24 @@ async function prepareResolveElectionProject(
       }],
     }],
   });
-  await session.request("team.sync", {});
+  const fifoGeneration = 141;
+  const fifoHeadBatchIds = fifoHeads
+    ? {
+        sync: `${label}-fifo-sync-head`,
+        save: `${label}-fifo-save-head`,
+        close: `${label}-fifo-close-head`,
+      }
+    : null;
+  const synced = await session.request("team.sync", fifoHeads
+    ? {
+        transaction_project_root: project,
+        transaction_generation: fifoGeneration,
+        transaction_batch_id: fifoHeadBatchIds.sync,
+      }
+    : {});
+  if (fifoHeads) {
+    assert.equal(synced.receipt.payload.operation, "sync");
+  }
 
   const syncedEntries = await session.request("entry.list", {});
   const syncedWanted = syncedEntries.find((entry) =>
@@ -1069,6 +1087,21 @@ async function prepareResolveElectionProject(
   assert.deepEqual(conflictResult.conflicts[0].entry_key, wanted.key);
   assert.equal(conflictResult.conflicts[0].ours, ours);
   assert.equal(conflictResult.conflicts[0].theirs, theirs);
+  if (fifoHeads) {
+    const saved = await session.request("project.save", {
+      transaction_project_root: project,
+      transaction_generation: fifoGeneration,
+      transaction_batch_id: fifoHeadBatchIds.save,
+    });
+    assert.equal(saved.receipt.payload.operation, "project.save");
+    const closed = await session.request("project.close", {
+      transaction_project_root: project,
+      transaction_generation: fifoGeneration,
+      transaction_batch_id: fifoHeadBatchIds.close,
+    });
+    assert.equal(closed.receipt.payload.operation, "project.close");
+    await session.request("project.open", { root: project });
+  }
   await session.close();
 
   return {
@@ -1086,6 +1119,14 @@ async function prepareResolveElectionProject(
     ]),
     fileRemotePath,
     fileRemoteContent,
+    fifoGeneration,
+    fifoHeads: fifoHeadBatchIds
+      ? [
+          { batchId: fifoHeadBatchIds.sync, operation: "sync" },
+          { batchId: fifoHeadBatchIds.save, operation: "project.save" },
+          { batchId: fifoHeadBatchIds.close, operation: "project.close" },
+        ]
+      : [],
     activePath: join(project, ".repositories", "transactions", "active.json"),
     ownerPath: join(
       project,
@@ -1375,6 +1416,9 @@ const atomicReplacementElectionResults = [];
 const resolveReplacementElections = [];
 const resolveCancellationResults = [];
 const resolveOwnerDeathCancellationResults = [];
+const resolveTerminalCompactionResults = [];
+const duplicateResolveCancellationResults = [];
+const fifoTailCancellationResults = [];
 let launchedA;
 let launchedB;
 let quorumReplacements = [];
@@ -3381,8 +3425,13 @@ try {
     }
   }
 
-  {
-    const label = "atomic-team-resolve-cancel-owner-death";
+  for (const cancellationPoint of [
+    "after_intent_queue_rename",
+    "after_rollback_fsync",
+    "after_terminal_queue_rename",
+  ]) {
+    const label =
+      `atomic-team-resolve-cancel-${cancellationPoint.replaceAll("_", "-")}`;
     const config = join(workDir, `${label}-config`);
     const project = join(workDir, `${label}-project`);
     const remote = join(workDir, `${label}-remote`);
@@ -3405,7 +3454,7 @@ try {
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "resolve-conflict",
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: ownerMarkerPath,
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: ownerReleasePath,
-      OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: "after_intent_queue_rename",
+      OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: cancellationPoint,
       OMEGAT_TEST_RESOLVE_CANCELLATION_TRIGGER: cancellationTriggerPath,
       OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER: cancellationMarkerPath,
       OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: oldEnvelopeTracePath,
@@ -3511,9 +3560,21 @@ try {
       row.batch_id === oldOwner.batch_id
     );
     assert(cancellingResolve);
-    assert.equal(cancellingResolve.status, "cancellation_pending");
+    assert.equal(
+      cancellingResolve.status,
+      cancellationPoint === "after_terminal_queue_rename"
+        ? "request_cancelled"
+        : "cancellation_pending",
+    );
     assert.equal(cancellingResolve.error_code, -32800);
-    assert.equal(cancellingResolve.payload.phase, "renderer-cancelling");
+    assert.equal(
+      cancellingResolve.payload.phase,
+      cancellationPoint === "after_terminal_queue_rename"
+        ? "renderer-cancelled"
+        : cancellationPoint === "after_rollback_fsync"
+          ? "renderer-rollback-durable"
+          : "renderer-cancelling",
+    );
     const durableOldOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
     assert.equal(durableOldOwner.process_id, launchedA.application.pid);
 
@@ -3521,6 +3582,111 @@ try {
     launchedA = undefined;
     assert.equal(killed.browserPid, oldOwner.owner_process_id);
     assert.equal(await pathExists(`/proc/${killed.browserPid}`), false);
+
+    if (cancellationPoint === "after_rollback_fsync") {
+      launchedB = await launchPackagedRenderer(xvfb.display, config, null);
+      const secondCancellation = await invokeRpcResult(
+        launchedB.client,
+        "transaction.receipt.ack",
+        {
+          root: project,
+          app_instance: `${label}-second-cancel`,
+          owner_process_id: launchedB.application.pid,
+          generation: oldOwner.generation,
+          batch_id: oldOwner.batch_id,
+          operation: "resolve-conflict",
+          outcome: "cancelled",
+        },
+      );
+      assert.equal(secondCancellation.resolved, false);
+      assert.match(secondCancellation.error, /request cancelled/);
+      const takeoverHistory = parseNdjson(
+        await readFile(prepared.historyPath, "utf8"),
+      );
+      assert.equal(
+        takeoverHistory.filter((row) =>
+          row.batch_id === oldOwner.batch_id
+          && row.status === "cancellation_pending"
+          && row.payload.phase === "renderer-rollback-durable"
+        ).length,
+        1,
+        "second cancellation opened a second durable rollback",
+      );
+      assert.equal(
+        takeoverHistory.filter((row) =>
+          row.batch_id === oldOwner.batch_id
+          && row.status === "request_cancelled"
+          && row.payload.phase === "renderer-cancelled-takeover"
+        ).length,
+        1,
+        "second cancellation did not publish the sole terminal",
+      );
+      duplicateResolveCancellationResults.push({
+        cancellationBoundary: cancellationPoint,
+        firstCallerKilled: true,
+        secondPackagedCallerPid: launchedB.application.pid,
+        protocolErrorCode: -32800,
+        durableRollbackCount: 1,
+        terminalCount: 1,
+      });
+      await terminatePackaged(launchedB);
+      launchedB = undefined;
+    }
+
+    if (cancellationPoint === "after_terminal_queue_rename") {
+      const archiveMarker = join(workDir, `${label}-archive.marker`);
+      launchedB = await launchPackagedRenderer(xvfb.display, config, project, {
+        OMEGAT_TEST_PRODUCT_COMPACTION_POINT: "after_archive_fsync",
+        OMEGAT_TEST_PRODUCT_COMPACTION_MARKER: archiveMarker,
+      });
+      await waitFor("cancelled terminal archive fsync", () =>
+        pathExists(archiveMarker)
+      );
+      const archiveQueue = JSON.parse(await readFile(prepared.activePath, "utf8"));
+      assert.deepEqual(
+        productJournalBatches(archiveQueue).map((row) => [
+          row.batch_id,
+          row.status,
+        ]),
+        [[oldOwner.batch_id, "request_cancelled"]],
+      );
+      const archiveKilled = await killPackaged(launchedB);
+      launchedB = undefined;
+
+      const queueMarker = join(workDir, `${label}-queue.marker`);
+      launchedB = await launchPackagedRenderer(xvfb.display, config, project, {
+        OMEGAT_TEST_PRODUCT_COMPACTION_POINT: "after_queue_rename",
+        OMEGAT_TEST_PRODUCT_COMPACTION_MARKER: queueMarker,
+      });
+      await waitFor("cancelled terminal compacted queue rename", () =>
+        pathExists(queueMarker)
+      );
+      const compactedQueue = JSON.parse(
+        await readFile(prepared.activePath, "utf8"),
+      );
+      assert.deepEqual(productJournalBatches(compactedQueue), []);
+      const queueKilled = await killPackaged(launchedB);
+      launchedB = undefined;
+      const compactedHistory = parseNdjson(
+        await readFile(prepared.historyPath, "utf8"),
+      );
+      assert.equal(
+        compactedHistory.filter((row) =>
+          row.batch_id === oldOwner.batch_id
+          && row.status === "request_cancelled"
+          && row.error_code === -32800
+        ).length,
+        1,
+        "cancelled terminal was archived more than once",
+      );
+      resolveTerminalCompactionResults.push({
+        cancellationBoundary: cancellationPoint,
+        archiveBoundaryKilledPid: archiveKilled.sidecarPid,
+        queueRenameBoundaryKilledPid: queueKilled.sidecarPid,
+        terminalArchiveCount: 1,
+        compactedQueueLength: 0,
+      });
+    }
 
     const replacements = await Promise.all(
       replacementTracePaths.map((tracePath) =>
@@ -3682,7 +3848,7 @@ try {
     );
     resolveOwnerDeathCancellationResults.push({
       resolution: "keep-theirs",
-      cancellationBoundary: "after_intent_queue_rename",
+      cancellationBoundary: cancellationPoint,
       oldOwnerKilledWhileUiPhase: cancellingUi.phase,
       oldOwnerBrowserPid: killed.browserPid,
       oldOwnerSidecarPid: killed.sidecarPid,
@@ -3699,6 +3865,237 @@ try {
     });
     await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
     quorumReplacements = [];
+  }
+
+  {
+    const label = "atomic-team-resolve-fifo-tail-cancel";
+    const config = join(workDir, `${label}-config`);
+    const project = join(workDir, `${label}-project`);
+    const remote = join(workDir, `${label}-remote`);
+    const dispatchMarker = join(workDir, `${label}-dispatch.marker`);
+    const dispatchRelease = join(workDir, `${label}-dispatch.release`);
+    const cancellationMarker = join(workDir, `${label}-cancel.marker`);
+    const resolveBatchId = `${label}-resolve-tail`;
+    const prepared = await prepareResolveElectionProject(
+      config,
+      project,
+      remote,
+      label,
+      { fifoHeads: true },
+    );
+    const tmxPath = join(project, "omegat", "project_save.tmx");
+    const conflictsPath = join(
+      project,
+      ".repositories",
+      "prep",
+      "conflicts.json",
+    );
+    const tmxBefore = await readFile(tmxPath);
+    const conflictsBefore = await readFile(conflictsPath);
+    const remoteBefore = await readFile(prepared.fileRemotePath);
+    const remoteMtimeBefore =
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs;
+    const gitHeadBefore = await git([
+      "--git-dir",
+      prepared.gitRemote,
+      "rev-parse",
+      "refs/heads/main",
+    ]);
+
+    const setup = new SidecarSession(config);
+    await setup.request("project.open", { root: project });
+    const resolved = await setup.request("team.resolve", {
+      source: prepared.source,
+      rebind_key: prepared.wantedKey,
+      side: "theirs",
+      transaction_project_root: project,
+      transaction_generation: prepared.fifoGeneration,
+      transaction_batch_id: resolveBatchId,
+    });
+    assert.equal(resolved.receipt.payload.operation, "resolve-conflict");
+    assert.equal(resolved.receipt.batch_id, resolveBatchId);
+    await setup.close();
+
+    launchedA = await launchPackaged(xvfb.display, config, project, {
+      OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_MARKER: dispatchMarker,
+      OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_RELEASE: dispatchRelease,
+      OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: "after_intent_queue_rename",
+      OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER: cancellationMarker,
+    });
+    await waitFor("FIFO tail startup dispatch hold", () =>
+      pathExists(dispatchMarker)
+    );
+    assert.equal(launchedA.workspace.translation, prepared.theirs);
+    assert.equal(launchedA.workspace.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(launchedA.workspace.key), prepared.wantedKey);
+    const cancellationRequest = invokeRpcResult(
+      launchedA.client,
+      "transaction.receipt.ack",
+      {
+        root: project,
+        app_instance: `${label}-first-cancel`,
+        owner_process_id: launchedA.application.pid,
+        generation: prepared.fifoGeneration,
+        batch_id: resolveBatchId,
+        operation: "resolve-conflict",
+        outcome: "cancelled",
+      },
+    );
+    void cancellationRequest;
+    await waitFor("FIFO tail durable cancellation intent", () =>
+      pathExists(cancellationMarker)
+    );
+    const parkedQueue = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    assert.deepEqual(
+      productJournalBatches(parkedQueue).map((row) => [
+        row.batch_id,
+        row.status,
+      ]),
+      [
+        ...prepared.fifoHeads.map(({ batchId }) => [
+          batchId,
+          "sidecar_committed",
+        ]),
+        [resolveBatchId, "cancellation_pending"],
+      ],
+    );
+    assert.equal(
+      await pathExists(prepared.ownerPath),
+      false,
+      "FIFO tail cancellation selected a dispatcher owner before recovery",
+    );
+    const killed = await killPackaged(launchedA);
+    launchedA = undefined;
+
+    const traces = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${label}-replacement-${index}.ndjson`),
+    );
+    const replacements = await Promise.all(
+      traces.map((trace) =>
+        launchPackagedRenderer(xvfb.display, config, project, {
+          OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: trace,
+        })
+      ),
+    );
+    quorumReplacements = replacements;
+    await waitFor("FIFO heads drained after cancelled resolve tail", async () =>
+      !await pathExists(prepared.activePath) ? true : undefined
+    );
+    const durableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    const winnerIndex = replacements.findIndex((replacement) =>
+      replacement.application.pid === durableOwner.process_id
+    );
+    assert.notEqual(winnerIndex, -1);
+    const deliveredByProcess = await Promise.all(
+      traces.map(async (trace) =>
+        await pathExists(trace) ? parseNdjson(await readFile(trace, "utf8")) : []
+      ),
+    );
+    assert.equal(
+      deliveredByProcess.filter((rows) => rows.length > 0).length,
+      1,
+      "more than one replacement delivered a FIFO head",
+    );
+    const winnerTrace = deliveredByProcess[winnerIndex];
+    assert.deepEqual(
+      winnerTrace.map((row) => [row.batch_id, row.operation]),
+      prepared.fifoHeads.map(({ batchId, operation }) => [batchId, operation]),
+    );
+    assert.equal(
+      deliveredByProcess.flat().filter((row) => row.batch_id === resolveBatchId)
+        .length,
+      0,
+      "cancelled resolve FIFO tail reached a renderer",
+    );
+    for (const [index, replacement] of replacements.entries()) {
+      if (index === winnerIndex) continue;
+      const pending = await invokeRpcResult(
+        replacement.client,
+        "transaction.receipt.pending",
+        {
+          root: project,
+          app_instance: `${label}-loser-${index}`,
+          owner_process_id: replacement.application.pid,
+          generation: prepared.fifoGeneration + index + 20,
+        },
+      );
+      assert.equal(pending.resolved, false);
+      assert.match(pending.error, /locked by another process|owned by live app/);
+    }
+    assert.deepEqual(await readFile(tmxPath), tmxBefore);
+    assert.deepEqual(await readFile(conflictsPath), conflictsBefore);
+    assert.deepEqual(await readFile(prepared.fileRemotePath), remoteBefore);
+    assert.equal(
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs,
+      remoteMtimeBefore,
+    );
+    assert.equal(
+      await git([
+        "--git-dir",
+        prepared.gitRemote,
+        "rev-parse",
+        "refs/heads/main",
+      ]),
+      gitHeadBefore,
+    );
+    const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.equal(
+      history.filter((row) =>
+        row.batch_id === resolveBatchId
+        && row.status === "request_cancelled"
+        && row.error_code === -32800
+      ).length,
+      1,
+    );
+    for (const { batchId } of prepared.fifoHeads) {
+      assert.equal(
+        history.filter((row) =>
+          row.batch_id === batchId
+          && row.status === "completed"
+          && row.payload.phase === "renderer-acknowledged"
+        ).length,
+        1,
+      );
+    }
+    fifoTailCancellationResults.push({
+      cancellationBoundary: "after_intent_queue_rename",
+      firstPackagedCallerKilledPid: killed.browserPid,
+      replacementProcessCount: replacements.length,
+      soleOwnerPid: durableOwner.process_id,
+      deliveredFifo: prepared.fifoHeads.map(({ operation }) => operation),
+      laterResolveEnvelopeCount: 0,
+      protocolErrorCode: -32800,
+      projectRollback: true,
+      gitHeadWrite: false,
+      fileRemoteWrite: false,
+      completeEntryKey: prepared.wantedKey,
+      decoyEntryKey: prepared.decoyKey,
+    });
+    await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [];
+
+    launchedA = await launchPackaged(xvfb.display, config, project);
+    const reopened = await workspaceState(launchedA.client);
+    assert.equal(reopened.translation, prepared.ours);
+    assert.equal(reopened.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(reopened.key), prepared.wantedKey);
+    const reopenedEntries = await launchedA.client.evaluate(
+      'window.omegat.rpc("entry.list", {})',
+      true,
+    );
+    const wanted = reopenedEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(prepared.wantedKey)
+    );
+    const decoy = reopenedEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(prepared.decoyKey)
+    );
+    assert(wanted);
+    assert(decoy);
+    assert.equal(wanted.translation, prepared.ours);
+    assert.equal(decoy.translation, "");
+    await terminatePackaged(launchedA);
+    launchedA = undefined;
   }
 
   for (const resolveSide of ["theirs", "ours"]) {
@@ -4429,6 +4826,9 @@ try {
     resolveReplacementElections,
     resolveCancellationResults,
     resolveOwnerDeathCancellationResults,
+    resolveTerminalCompactionResults,
+    duplicateResolveCancellationResults,
+    fifoTailCancellationResults,
   }));
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());

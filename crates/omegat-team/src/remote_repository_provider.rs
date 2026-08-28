@@ -1438,7 +1438,24 @@ fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool
             "product transaction journal contains multiple pending cancellations".into(),
         ));
     }
+    let mut transaction = transaction;
+    validate_pending_resolve_cancellation(props, &transaction)?;
+    rollback_pending_resolve_cancellation(props, &mut transaction)?;
+    persist_terminal_resolve_cancellation(
+        props,
+        &mut transaction,
+        "renderer-cancelled-recovered",
+    )?;
+    transaction.cleanup(props)?;
+    Ok(true)
+}
+
+fn validate_pending_resolve_cancellation(
+    props: &ProjectProperties,
+    transaction: &SyncTransaction,
+) -> Result<()> {
     if transaction.operation != "resolve-conflict"
+        || transaction.0.status != TransactionStatus::CancellationPending
         || transaction.0.error_code != Some(REQUEST_CANCELLED_CODE)
     {
         return Err(TeamError::Command(format!(
@@ -1446,21 +1463,47 @@ fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool
             transaction.0.batch_id
         )));
     }
-    transaction.validate_repository_shape(props)?;
-    let snapshot = SyncSnapshot::open(
-        props,
-        transaction.snapshot.clone(),
-        transaction.prep_existed,
-        transaction.file_remotes.clone(),
-    )?;
-    snapshot.restore_project_and_prep_durable(props)?;
-    transaction.finish(
-        props,
-        "renderer-cancelled-recovered",
+    transaction.validate_repository_shape(props)
+}
+
+fn rollback_pending_resolve_cancellation(
+    props: &ProjectProperties,
+    transaction: &mut SyncTransaction,
+) -> Result<()> {
+    match transaction.phase.as_str() {
+        "renderer-cancelling" => {
+            let snapshot = SyncSnapshot::open(
+                props,
+                transaction.snapshot.clone(),
+                transaction.prep_existed,
+                transaction.file_remotes.clone(),
+            )?;
+            snapshot.restore_project_and_prep_durable(props)?;
+            // Persist the completed rollback before any terminal transition.
+            // A second cancel or restart that takes over this exact intent can
+            // therefore finish it without opening a second rollback pass.
+            transaction.phase = "renderer-rollback-durable".into();
+            transaction.persist_preserving_dispatch_order(props)
+        }
+        "renderer-rollback-durable" => Ok(()),
+        phase => Err(TeamError::Command(format!(
+            "pending cancellation {} has invalid phase {phase}",
+            transaction.0.batch_id
+        ))),
+    }
+}
+
+fn persist_terminal_resolve_cancellation(
+    props: &ProjectProperties,
+    transaction: &mut SyncTransaction,
+    phase: &str,
+) -> Result<()> {
+    transaction.phase = phase.into();
+    transaction.0.transition(
         TransactionStatus::RequestCancelled,
         Some(REQUEST_CANCELLED_CODE),
-    )?;
-    Ok(true)
+    );
+    transaction.persist(props)
 }
 
 fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
@@ -2229,7 +2272,11 @@ pub fn cancel_transaction_receipt(
         ));
     }
     let _lock = acquire_project_transaction_lock(props)?;
-    let Some(mut transaction) = SyncTransaction::load_receipt(props, batch_id)? else {
+    let Some(mut transaction) = load_product_journal(props)?
+        .batches
+        .into_iter()
+        .find(|transaction| transaction.0.batch_id == batch_id)
+    else {
         let path = transaction_dir(props).join("history.ndjson");
         if let Ok(history) = std::fs::read_to_string(path) {
             for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
@@ -2261,6 +2308,29 @@ pub fn cancel_transaction_receipt(
             "renderer receipt does not match cancelled resolve {batch_id}"
         )));
     }
+    if transaction.0.status == TransactionStatus::CancellationPending {
+        validate_pending_resolve_cancellation(props, &transaction)?;
+        rollback_pending_resolve_cancellation(props, &mut transaction)?;
+        resolve_cancellation_checkpoint("after_rollback_fsync")?;
+        persist_terminal_resolve_cancellation(
+            props,
+            &mut transaction,
+            "renderer-cancelled-takeover",
+        )?;
+        resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
+        return transaction.cleanup(props);
+    }
+    if transaction.0.status == TransactionStatus::RequestCancelled
+        && transaction.0.error_code == Some(REQUEST_CANCELLED_CODE)
+    {
+        return transaction.cleanup(props);
+    }
+    if transaction.0.status != TransactionStatus::SidecarCommitted {
+        return Err(TeamError::Conflict(format!(
+            "resolve receipt {batch_id} is not cancellable from {:?}",
+            transaction.0.status
+        )));
+    }
     if !transaction.published.is_empty() || !transaction.commit_started.is_empty() {
         return Err(TeamError::Conflict(format!(
             "resolve receipt {batch_id} published repository work"
@@ -2288,21 +2358,10 @@ pub fn cancel_transaction_receipt(
     transaction.persist_preserving_dispatch_order(props)?;
     resolve_cancellation_checkpoint("after_intent_queue_rename")?;
 
-    let snapshot = SyncSnapshot::open(
-        props,
-        transaction.snapshot.clone(),
-        transaction.prep_existed,
-        transaction.file_remotes.clone(),
-    )?;
-    snapshot.restore_project_and_prep_durable(props)?;
+    rollback_pending_resolve_cancellation(props, &mut transaction)?;
     resolve_cancellation_checkpoint("after_rollback_fsync")?;
 
-    transaction.phase = "renderer-cancelled".into();
-    transaction.0.transition(
-        TransactionStatus::RequestCancelled,
-        Some(REQUEST_CANCELLED_CODE),
-    );
-    transaction.persist(props)?;
+    persist_terminal_resolve_cancellation(props, &mut transaction, "renderer-cancelled")?;
     resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
     transaction.cleanup(props)
 }

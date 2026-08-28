@@ -3668,10 +3668,34 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
 
         let (mut replacement, mut replacement_in, mut replacement_out) =
             spawn_sidecar(&config, None);
+        if point != "after_terminal_queue_rename" {
+            // This is a second user cancellation, not project-open recovery.
+            // It takes over the exact durable intent left by the dead first
+            // caller and must not create another rollback owner or terminal.
+            let second_cancel = rpc(
+                &mut replacement_in,
+                &mut replacement_out,
+                6,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": format!("second-cancel-{point}"),
+                    "owner_process_id": replacement.id(),
+                    "generation": generation,
+                    "batch_id": batch_id,
+                    "operation": "resolve-conflict",
+                    "outcome": "cancelled",
+                }),
+            );
+            assert_eq!(
+                second_cancel["error"],
+                json!({"code": -32800, "message": "request cancelled"})
+            );
+        }
         let opened = rpc(
             &mut replacement_in,
             &mut replacement_out,
-            6,
+            7,
             "project.open",
             json!({ "root": root }),
         );
@@ -3683,7 +3707,7 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
         let no_resolve_winner = rpc(
             &mut replacement_in,
             &mut replacement_out,
-            7,
+            8,
             "transaction.receipt.pending",
             json!({
                 "root": root,
@@ -3701,7 +3725,7 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
         let cancellation_ack = rpc(
             &mut replacement_in,
             &mut replacement_out,
-            8,
+            9,
             "transaction.receipt.ack",
             json!({
                 "root": root,
@@ -3731,10 +3755,38 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
             1,
             "cancellation recovery duplicated its terminal row at {point}"
         );
+        assert_eq!(
+            history
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|row| {
+                    row["batch_id"] == batch_id
+                        && row["status"] == "cancellation_pending"
+                        && row["payload"]["phase"] == "renderer-rollback-durable"
+                })
+                .count(),
+            1,
+            "second cancellation opened another durable rollback at {point}"
+        );
+        if point != "after_terminal_queue_rename" {
+            assert_eq!(
+                history
+                    .lines()
+                    .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                    .filter(|row| {
+                        row["batch_id"] == batch_id
+                            && row["status"] == "request_cancelled"
+                            && row["payload"]["phase"] == "renderer-cancelled-takeover"
+                    })
+                    .count(),
+                1,
+                "second cancellation did not own the sole terminal at {point}"
+            );
+        }
         let responsive = rpc(
             &mut replacement_in,
             &mut replacement_out,
-            9,
+            10,
             "sys.version",
             json!({}),
         );
