@@ -1061,6 +1061,10 @@ async function prepareDiskFaultProject(workDir, label) {
     revision: entry.revision,
     default_translation: true,
   });
+  const preferences = await session.request("prefs.get", {});
+  preferences.first_time_wizard_done = true;
+  preferences.script_dir = join(config, "scripts");
+  await session.request("prefs.set", preferences);
   await session.close();
   return {
     config,
