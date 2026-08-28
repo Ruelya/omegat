@@ -78,6 +78,16 @@ pub(crate) fn acquire_project_transaction_lock(
     })
 }
 
+fn acquire_claimed_dispatch_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
+    let dir = transaction_dir(props);
+    let lock = DurableFifoLock::acquire(&dir, &product_fifo_layout().lock_file)
+        .map_err(TeamError::Command)?;
+    Ok(ProjectTransactionLock {
+        _lock: lock,
+        waited: true,
+    })
+}
+
 fn wait_for_project_transaction_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
     let dir = transaction_dir(props);
     let (lock, waited) = match DurableFifoLock::try_acquire(&dir, &product_fifo_layout().lock_file)
@@ -3015,12 +3025,53 @@ pub fn pending_transaction_receipt_for_owner(
         ));
     }
     claim_transaction_dispatch(props, app_instance, process_id, generation)?;
+    pending_transaction_receipt_for_claimed_owner(
+        props,
+        generation,
+        app_instance,
+        process_id,
+    )
+}
+
+/// Return the durable FIFO head after the caller has completed owner election.
+///
+/// The sidecar uses this continuation after its cancellable multi-round claim.
+/// It must not claim a second time: another contender can briefly hold
+/// `operation.lock` between those calls even though the durable owner is
+/// unchanged. Waiting for that short critical section and revalidating the
+/// exact claim keeps the winner from abandoning a live owner record without
+/// ever receiving its envelope.
+pub fn pending_transaction_receipt_for_claimed_owner(
+    props: &ProjectProperties,
+    generation: u64,
+    app_instance: &str,
+    process_id: u32,
+) -> Result<Option<TransactionRendererReceipt>> {
+    if generation == 0 || app_instance.is_empty() || process_id == 0 {
+        return Err(TeamError::Command(
+            "claimed renderer receipt requires app instance, process id, and generation".into(),
+        ));
+    }
     // This durable boundary deliberately sits after atomic owner publication
     // and before queue compaction/head lookup. A killed claimant therefore
     // cannot leak a half-returned envelope, and a later process must run the
     // same owner election before it can observe the FIFO head.
     product_owner_claim_checkpoint(props, app_instance, process_id, generation)?;
-    let _lock = acquire_project_transaction_lock(props)?;
+    let _lock = acquire_claimed_dispatch_lock(props)?;
+    let Some(owner) = load_renderer_owner_claim(props)? else {
+        return Err(TeamError::Conflict(
+            "transaction dispatcher owner disappeared before head lookup".into(),
+        ));
+    };
+    if owner.app_instance != app_instance
+        || owner.process_id != process_id
+        || owner.generation != generation
+    {
+        return Err(TeamError::Conflict(format!(
+            "transaction dispatcher owner changed before head lookup to {} (pid {}, generation {})",
+            owner.app_instance, owner.process_id, owner.generation
+        )));
+    }
     compact_terminal_product_transactions(props)?;
     let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
         return Ok(None);

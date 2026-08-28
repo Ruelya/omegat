@@ -2231,7 +2231,7 @@ fn pending_transaction_envelopes(
         owner_retry_attempts,
         cancellation,
     )?;
-    let receipt = omegat_team::pending_transaction_receipt_for_owner(
+    let receipt = omegat_team::pending_transaction_receipt_for_claimed_owner(
         props,
         generation,
         app_instance,
