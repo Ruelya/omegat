@@ -592,6 +592,20 @@ async function runConfigRelocation(display, workDir) {
     storageEnv(),
   );
   try {
+    const relocatedPreferences = await invokeRpcResult(
+      recovery.client,
+      "prefs.get",
+      {},
+    );
+    assert.equal(
+      relocatedPreferences.resolved,
+      true,
+      relocatedPreferences.error,
+    );
+    assert.equal(relocatedPreferences.value.config_dir, config);
+    const state = await inspectV2(paths, seeded.expectedIds, 2);
+    assert.equal(state.dedupe.config_dir, config);
+    assert.equal(state.manifest.config_dir, config);
     const retry = await invokeRpcResult(recovery.client, "prefs.patch", {
       theme: "legacy-theme-0",
       config_transaction_retry_batch_id: "v2-seed-0",
@@ -600,9 +614,6 @@ async function runConfigRelocation(display, workDir) {
       resolved: true,
       value: { legacy_result: 0 },
     });
-    const state = await inspectV2(paths, seeded.expectedIds, 2);
-    assert.equal(state.dedupe.config_dir, config);
-    assert.equal(state.manifest.config_dir, config);
     for (const [file, bytes] of Object.entries(immutable)) {
       assert.deepEqual(await readFile(join(paths.archive, file)), bytes);
     }
