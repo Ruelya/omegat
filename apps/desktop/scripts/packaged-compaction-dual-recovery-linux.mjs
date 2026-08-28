@@ -1374,6 +1374,7 @@ const receiptAckMatrix = [];
 const atomicReplacementElectionResults = [];
 const resolveReplacementElections = [];
 const resolveCancellationResults = [];
+const resolveOwnerDeathCancellationResults = [];
 let launchedA;
 let launchedB;
 let quorumReplacements = [];
@@ -3380,6 +3381,285 @@ try {
     }
   }
 
+  {
+    const label = "atomic-team-resolve-cancel-owner-death";
+    const config = join(workDir, `${label}-config`);
+    const project = join(workDir, `${label}-project`);
+    const remote = join(workDir, `${label}-remote`);
+    const ownerMarkerPath = join(workDir, `${label}-owner.json`);
+    const ownerReleasePath = join(workDir, `${label}-owner.release`);
+    const cancellationTriggerPath = join(workDir, `${label}-cancel.trigger`);
+    const cancellationMarkerPath = join(workDir, `${label}-cancel.marker`);
+    const oldEnvelopeTracePath = join(workDir, `${label}-old-envelope.ndjson`);
+    const replacementTracePaths = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${label}-replacement-${index}.ndjson`),
+    );
+    const prepared = await prepareResolveElectionProject(
+      config,
+      project,
+      remote,
+      label,
+    );
+    launchedA = await launchPackaged(xvfb.display, config, project, {
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "resolve-conflict",
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: ownerMarkerPath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: ownerReleasePath,
+      OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: "after_intent_queue_rename",
+      OMEGAT_TEST_RESOLVE_CANCELLATION_TRIGGER: cancellationTriggerPath,
+      OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER: cancellationMarkerPath,
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: oldEnvelopeTracePath,
+    });
+    await waitFor("owner-death cancellation visible conflict", async () =>
+      launchedA.client.evaluate(`(() => {
+        document.querySelector('[data-operation-action="team-window"]')?.click();
+        const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+          .find((candidate) =>
+            candidate.getAttribute("data-team-conflict-key")
+              === ${JSON.stringify(JSON.stringify(prepared.wantedKey))}
+          );
+        return row ? true : undefined;
+      })()`)
+    );
+    const before = await workspaceState(launchedA.client);
+    assert.equal(before.project, project);
+    assert.equal(before.translation, prepared.ours);
+    assert.equal(before.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(before.key), prepared.wantedKey);
+    const tmxPath = join(project, "omegat", "project_save.tmx");
+    const conflictsPath = join(
+      project,
+      ".repositories",
+      "prep",
+      "conflicts.json",
+    );
+    const tmxBefore = await readFile(tmxPath);
+    const conflictsBefore = await readFile(conflictsPath);
+    const remoteBefore = await readFile(prepared.fileRemotePath);
+    const remoteMtimeBefore =
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs;
+    const gitHeadBefore = await git([
+      "--git-dir",
+      prepared.gitRemote,
+      "rev-parse",
+      "refs/heads/main",
+    ]);
+
+    await launchedA.client.evaluate(`(() => {
+      window.__omegatResolveDeathTrace = [];
+      window.__omegatStopResolveDeathTrace?.();
+      window.__omegatStopResolveDeathTrace = window.omegat.onRpcOperation((event) => {
+        if (event.method === "team.resolve") {
+          window.__omegatResolveDeathTrace.push(event);
+        }
+      });
+    })()`);
+    assert.equal(
+      await clickTeamResolve(launchedA.client, prepared.wantedKey, "theirs"),
+      true,
+    );
+    const oldOwner = await waitFor(
+      "team.resolve owner before simultaneous cancellation and death",
+      async () =>
+        await pathExists(ownerMarkerPath)
+          ? JSON.parse(await readFile(ownerMarkerPath, "utf8"))
+          : undefined,
+    );
+    assert.equal(oldOwner.operation, "resolve-conflict");
+    assert.equal(oldOwner.owner_process_id, launchedA.application.pid);
+    assert.equal(
+      await pathExists(oldEnvelopeTracePath)
+        ? parseNdjson(await readFile(oldEnvelopeTracePath, "utf8")).length
+        : 0,
+      0,
+      "resolve envelope escaped before the cancellation/death window",
+    );
+    await writeFile(cancellationTriggerPath, "cancel\n", "utf8");
+    assert.equal(
+      await launchedA.client.evaluate(`(() => {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+        button.click();
+        return true;
+      })()`),
+      true,
+    );
+    await waitFor("durable resolve cancellation intent", () =>
+      pathExists(cancellationMarkerPath)
+    );
+    const cancellingUi = await launchedA.client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      return {
+        operation: app?.dataset.operation ?? "",
+        phase: app?.dataset.operationPhase ?? "",
+        requestId: app?.dataset.operationRequestId ?? "",
+        trace: window.__omegatResolveDeathTrace,
+      };
+    })()`);
+    assert.equal(cancellingUi.operation, "teamResolve");
+    assert.equal(cancellingUi.phase, "cancelling");
+    const cancellingPhases = cancellingUi.trace
+      .filter((event) => event.requestId === cancellingUi.requestId)
+      .map((event) => event.phase);
+    assert.equal(cancellingPhases[0], "started");
+    assert.equal(cancellingPhases.at(-1), "cancelling");
+    assert.equal(cancellingPhases.includes("cancelled"), false);
+    assert.equal(cancellingPhases.includes("succeeded"), false);
+
+    const cancellingJournal = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    const cancellingResolve = productJournalBatches(cancellingJournal).find((row) =>
+      row.batch_id === oldOwner.batch_id
+    );
+    assert(cancellingResolve);
+    assert.equal(cancellingResolve.status, "cancellation_pending");
+    assert.equal(cancellingResolve.error_code, -32800);
+    assert.equal(cancellingResolve.payload.phase, "renderer-cancelling");
+    const durableOldOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(durableOldOwner.process_id, launchedA.application.pid);
+
+    const killed = await killPackaged(launchedA);
+    launchedA = undefined;
+    assert.equal(killed.browserPid, oldOwner.owner_process_id);
+    assert.equal(await pathExists(`/proc/${killed.browserPid}`), false);
+
+    launchedA = await launchPackaged(
+      xvfb.display,
+      config,
+      project,
+      { OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: replacementTracePaths[0] },
+    );
+    await waitFor("cancelled resolve rollback recovered", async () =>
+      !await pathExists(prepared.activePath) ? true : undefined
+    );
+    const firstReplacementOwner = JSON.parse(
+      await readFile(prepared.ownerPath, "utf8"),
+    );
+    assert.equal(firstReplacementOwner.process_id, launchedA.application.pid);
+    assert.notEqual(firstReplacementOwner.claim_id, durableOldOwner.claim_id);
+    const replacements = [launchedA];
+    launchedA = undefined;
+    for (let index = 1; index < replacementTracePaths.length; index += 1) {
+      replacements.push(await launchPackaged(
+        xvfb.display,
+        config,
+        project,
+        { OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: replacementTracePaths[index] },
+      ));
+    }
+    quorumReplacements = replacements;
+
+    for (const [index, replacement] of replacements.entries()) {
+      const state = await workspaceState(replacement.client);
+      assert.equal(state.project, project);
+      assert.equal(state.translation, prepared.ours);
+      assert.equal(state.activeSurfaces, 1);
+      assert.deepEqual(JSON.parse(state.key), prepared.wantedKey);
+      const entries = await replacement.client.evaluate(
+        'window.omegat.rpc("entry.list", {})',
+        true,
+      );
+      const wanted = entries.find((entry) =>
+        JSON.stringify(entry.key) === JSON.stringify(prepared.wantedKey)
+      );
+      const decoy = entries.find((entry) =>
+        JSON.stringify(entry.key) === JSON.stringify(prepared.decoyKey)
+      );
+      assert(wanted);
+      assert(decoy);
+      assertCompleteEntryKey(wanted.key);
+      assertCompleteEntryKey(decoy.key);
+      assert.equal(wanted.translation, prepared.ours);
+      assert.equal(decoy.translation, "");
+      assert.equal(
+        await pathExists(replacementTracePaths[index])
+          ? parseNdjson(await readFile(replacementTracePaths[index], "utf8")).length
+          : 0,
+        0,
+        "a replacement delivered the cancelled resolve receipt",
+      );
+    }
+    for (const [index, replacement] of replacements.slice(1).entries()) {
+      const rejected = await invokeRpcResult(
+        replacement.client,
+        "transaction.receipt.pending",
+        {
+          root: project,
+          app_instance: `${label}-loser-${index}`,
+          owner_process_id: replacement.application.pid,
+          generation: oldOwner.generation + index + 20,
+        },
+      );
+      assert.equal(rejected.resolved, false);
+      assert.match(rejected.error, /locked by another process|owned by live app/);
+    }
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      firstReplacementOwner,
+      "a losing process replaced the sole post-cancellation owner",
+    );
+    const protocolCancellation = await invokeRpcResult(
+      replacements[0].client,
+      "transaction.receipt.ack",
+      {
+        root: project,
+        app_instance: `${label}-recovery`,
+        owner_process_id: replacements[0].application.pid,
+        generation: oldOwner.generation,
+        batch_id: oldOwner.batch_id,
+        operation: "resolve-conflict",
+        outcome: "cancelled",
+      },
+    );
+    assert.equal(protocolCancellation.resolved, false);
+    assert.match(protocolCancellation.error, /request cancelled/);
+
+    assert.deepEqual(await readFile(tmxPath), tmxBefore);
+    assert.deepEqual(await readFile(conflictsPath), conflictsBefore);
+    assert.deepEqual(await readFile(prepared.fileRemotePath), remoteBefore);
+    assert.equal(
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs,
+      remoteMtimeBefore,
+    );
+    assert.equal(
+      await git([
+        "--git-dir",
+        prepared.gitRemote,
+        "rev-parse",
+        "refs/heads/main",
+      ]),
+      gitHeadBefore,
+    );
+    const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.equal(
+      history.filter((row) =>
+        row.batch_id === oldOwner.batch_id
+        && row.status === "request_cancelled"
+        && row.error_code === -32800
+        && row.payload.phase === "renderer-cancelled-recovered"
+      ).length,
+      1,
+    );
+    resolveOwnerDeathCancellationResults.push({
+      resolution: "keep-theirs",
+      cancellationBoundary: "after_intent_queue_rename",
+      oldOwnerKilledWhileUiPhase: cancellingUi.phase,
+      oldOwnerBrowserPid: killed.browserPid,
+      oldOwnerSidecarPid: killed.sidecarPid,
+      laterResolveEnvelopeCount: 0,
+      replacementProcessCount: replacements.length,
+      soleDurableOwnerPid: firstReplacementOwner.process_id,
+      protocolErrorCode: -32800,
+      projectRollback: true,
+      fileRemoteWrite: false,
+      gitHeadWrite: false,
+      completeEntryKey: prepared.wantedKey,
+      decoyEntryKey: prepared.decoyKey,
+      document3Surfaces: replacements[0].workspace.activeSurfaces,
+    });
+    await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [];
+  }
+
   for (const resolveSide of ["theirs", "ours"]) {
     const label = `atomic-team-resolve-${resolveSide}`;
     const selectedTranslation = prepared => prepared[resolveSide];
@@ -4107,6 +4387,7 @@ try {
     atomicReplacementElectionResults,
     resolveReplacementElections,
     resolveCancellationResults,
+    resolveOwnerDeathCancellationResults,
   }));
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());

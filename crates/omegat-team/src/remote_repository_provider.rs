@@ -284,6 +284,11 @@ impl SyncSnapshot {
         Ok(())
     }
 
+    fn restore_project_and_prep_durable(&self, props: &ProjectProperties) -> Result<()> {
+        self.restore_project_and_prep(props)?;
+        sync_restored_project_and_prep(props)
+    }
+
     fn restore_file_remote(&self, repository_index: usize) -> Result<()> {
         let Some(snapshot) = self
             .file_remotes
@@ -326,6 +331,32 @@ fn sync_snapshot_tree(root: &Path) -> Result<()> {
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for directory in directories {
         std::fs::File::open(directory)?.sync_all()?;
+    }
+    Ok(())
+}
+
+fn sync_restored_project_and_prep(props: &ProjectProperties) -> Result<()> {
+    for entry in std::fs::read_dir(&props.root)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == ".repositories" || name == ".git" || name == ".svn" {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            sync_snapshot_tree(&entry.path())?;
+        } else if file_type.is_file() {
+            File::open(entry.path())?.sync_all()?;
+        }
+    }
+    File::open(&props.root)?.sync_all()?;
+
+    let prep = prep_dir(props);
+    if prep.is_dir() {
+        sync_snapshot_tree(&prep)?;
+    }
+    if let Some(repositories) = prep.parent() {
+        File::open(repositories)?.sync_all()?;
     }
     Ok(())
 }
@@ -717,10 +748,12 @@ impl SyncTransaction {
 
     fn load_active_operation(props: &ProjectProperties) -> Result<Option<Self>> {
         let journal = load_product_journal(props)?;
-        let mut pending = journal
-            .batches
-            .into_iter()
-            .filter(|transaction| transaction.0.status == TransactionStatus::Pending);
+        let mut pending = journal.batches.into_iter().filter(|transaction| {
+            matches!(
+                transaction.0.status,
+                TransactionStatus::Pending | TransactionStatus::CancellationPending
+            )
+        });
         let transaction = pending.next();
         if pending.next().is_some() {
             return Err(TeamError::Command(
@@ -879,6 +912,39 @@ fn product_compaction_checkpoint(point: &str) -> Result<()> {
         return Ok(());
     }
     let Some(marker) = std::env::var_os("OMEGAT_TEST_PRODUCT_COMPACTION_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(TeamError::Io(error)),
+    };
+    writeln!(file, "{point}")?;
+    file.sync_all()?;
+    sync_parent(&marker)?;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
+    if std::env::var("OMEGAT_TEST_RESOLVE_CANCELLATION_POINT").as_deref() != Ok(point) {
+        return Ok(());
+    }
+    if let Some(trigger) = std::env::var_os("OMEGAT_TEST_RESOLVE_CANCELLATION_TRIGGER") {
+        if !PathBuf::from(trigger).is_file() {
+            return Ok(());
+        }
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER") else {
         return Ok(());
     };
     let marker = PathBuf::from(marker);
@@ -1136,6 +1202,7 @@ pub fn claim_transaction_dispatch(
         ));
     }
     let _lock = acquire_project_transaction_lock(props)?;
+    recover_pending_cancellation_locked(props)?;
     let path = renderer_owner_path(props);
     if path.is_file() {
         let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
@@ -1357,7 +1424,47 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
     recover_interrupted_sync_locked(props)
 }
 
+fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool> {
+    let journal = load_product_journal(props)?;
+    let mut cancelling = journal
+        .batches
+        .into_iter()
+        .filter(|transaction| transaction.0.status == TransactionStatus::CancellationPending);
+    let Some(transaction) = cancelling.next() else {
+        return Ok(false);
+    };
+    if cancelling.next().is_some() {
+        return Err(TeamError::Command(
+            "product transaction journal contains multiple pending cancellations".into(),
+        ));
+    }
+    if transaction.operation != "resolve-conflict"
+        || transaction.0.error_code != Some(REQUEST_CANCELLED_CODE)
+    {
+        return Err(TeamError::Command(format!(
+            "invalid pending cancellation {}",
+            transaction.0.batch_id
+        )));
+    }
+    transaction.validate_repository_shape(props)?;
+    let snapshot = SyncSnapshot::open(
+        props,
+        transaction.snapshot.clone(),
+        transaction.prep_existed,
+        transaction.file_remotes.clone(),
+    )?;
+    snapshot.restore_project_and_prep_durable(props)?;
+    transaction.finish(
+        props,
+        "renderer-cancelled-recovered",
+        TransactionStatus::RequestCancelled,
+        Some(REQUEST_CANCELLED_CODE),
+    )?;
+    Ok(true)
+}
+
 fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
+    let recovered_cancellation = recover_pending_cancellation_locked(props)?;
     let journal = load_product_journal(props)?;
     // A committed receipt is renderer-owned work. Leave any terminal prefix in
     // place until transaction.receipt.pending has durably claimed a dispatcher;
@@ -1370,7 +1477,7 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         compact_terminal_product_transactions(props)?;
     }
     let Some(mut transaction) = SyncTransaction::load_active_operation(props)? else {
-        return Ok(false);
+        return Ok(recovered_cancellation);
     };
     transaction.validate_repository_shape(props)?;
     if transaction.phase == "capturing" {
@@ -2122,7 +2229,7 @@ pub fn cancel_transaction_receipt(
         ));
     }
     let _lock = acquire_project_transaction_lock(props)?;
-    let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? else {
+    let Some(mut transaction) = SyncTransaction::load_receipt(props, batch_id)? else {
         let path = transaction_dir(props).join("history.ndjson");
         if let Ok(history) = std::fs::read_to_string(path) {
             for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
@@ -2169,19 +2276,34 @@ pub fn cancel_transaction_receipt(
             "resolve receipt {batch_id} product changed before cancellation"
         )));
     }
+    let dispatch_order = transaction.0.updated_unix_ms;
+    transaction.phase = "renderer-cancelling".into();
+    transaction.0.transition(
+        TransactionStatus::CancellationPending,
+        Some(REQUEST_CANCELLED_CODE),
+    );
+    // Cancelling a FIFO tail must not change the durable order of any older
+    // receipt. The row becomes undispatchable in the same atomic queue rename.
+    transaction.0.updated_unix_ms = dispatch_order;
+    transaction.persist_preserving_dispatch_order(props)?;
+    resolve_cancellation_checkpoint("after_intent_queue_rename")?;
+
     let snapshot = SyncSnapshot::open(
         props,
         transaction.snapshot.clone(),
         transaction.prep_existed,
         transaction.file_remotes.clone(),
     )?;
-    snapshot.restore_project_and_prep(props)?;
+    snapshot.restore_project_and_prep_durable(props)?;
+    resolve_cancellation_checkpoint("after_rollback_fsync")?;
+
     transaction.phase = "renderer-cancelled".into();
     transaction.0.transition(
         TransactionStatus::RequestCancelled,
         Some(REQUEST_CANCELLED_CODE),
     );
     transaction.persist(props)?;
+    resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
     transaction.cleanup(props)
 }
 

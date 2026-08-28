@@ -2,6 +2,7 @@
 
 export type TransactionStatus =
   | "pending"
+  | "cancellation_pending"
   | "sidecar_committed"
   | "completed"
   | "cancelled"

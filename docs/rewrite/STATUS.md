@@ -888,6 +888,23 @@ waiting on a live owner, verifies that the durable claim does not change, then
 cancels the committed head after claim and confirms one request-cancelled
 history row with no later delivery. These are real Linux assertions; Windows
 and macOS owner-liveness/package behavior were not run.
+Cancellation now first atomically replaces the committed resolve receipt with
+an undispatchable `cancellation_pending` intent that preserves its original
+global FIFO key. Only then does it durably restore TMX and conflict state and
+publish `request_cancelled` with **-32800**. Restart recovery compensates that
+intent idempotently, including process death after the intent queue rename,
+after restored-product fsync, and after the terminal queue rename. A resolve
+receipt may also be cancelled while save, close, and team-sync receipts remain
+ahead of it: those heads still drain in their original order, while the resolve
+tail is never selected.
+A real Linux packaged race parks cancellation immediately after its intent
+rename, while the UI still says `cancelling`, then externally SIGKILLs the
+Electron owner and sidecar together. Three replacement Electron processes
+observe the restored conflict/TMX, but none receives the cancelled resolve
+envelope; one durable owner file remains, and an idempotent receipt request
+still returns protocol **-32800**. Exact Git HEAD, file-remote bytes/mtime,
+complete six-field wanted and decoy keys, and the single `Document3` surface
+remain unchanged. This is Linux-only evidence; Windows and macOS were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and

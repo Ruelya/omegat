@@ -18,6 +18,7 @@ static ATOMIC_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[serde(rename_all = "snake_case")]
 pub enum TransactionStatus {
     Pending,
+    CancellationPending,
     SidecarCommitted,
     Completed,
     Cancelled,
@@ -26,7 +27,10 @@ pub enum TransactionStatus {
 
 impl TransactionStatus {
     pub fn is_recoverable(self) -> bool {
-        matches!(self, Self::Pending | Self::SidecarCommitted)
+        matches!(
+            self,
+            Self::Pending | Self::CancellationPending | Self::SidecarCommitted
+        )
     }
 }
 
@@ -95,10 +99,12 @@ impl<T> TransactionEnvelope<T> {
                 root.display()
             ));
         }
-        if self.status == TransactionStatus::RequestCancelled
-            && self.error_code != Some(REQUEST_CANCELLED_CODE)
+        if matches!(
+            self.status,
+            TransactionStatus::CancellationPending | TransactionStatus::RequestCancelled
+        ) && self.error_code != Some(REQUEST_CANCELLED_CODE)
         {
-            return Err("request-cancelled transaction envelope must carry -32800".into());
+            return Err("cancelling transaction envelope must carry -32800".into());
         }
         if self.status == TransactionStatus::SidecarCommitted && self.commit.is_none() {
             return Err("sidecar-committed transaction envelope has no product receipt".into());
@@ -106,6 +112,7 @@ impl<T> TransactionEnvelope<T> {
         if matches!(
             self.status,
             TransactionStatus::Pending
+                | TransactionStatus::CancellationPending
                 | TransactionStatus::Cancelled
                 | TransactionStatus::RequestCancelled
         ) && self.commit.is_some()
@@ -129,6 +136,7 @@ impl<T> TransactionEnvelope<T> {
         if matches!(
             status,
             TransactionStatus::Pending
+                | TransactionStatus::CancellationPending
                 | TransactionStatus::Cancelled
                 | TransactionStatus::RequestCancelled
         ) {

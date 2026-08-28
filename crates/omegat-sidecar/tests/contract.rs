@@ -3216,6 +3216,535 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
 }
 
 #[test]
+fn resolve_receipt_can_be_cancelled_at_the_global_fifo_tail() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("resolve-fifo-tail");
+    let remote = temp.path().join("resolve-fifo-remote");
+    std::fs::create_dir_all(remote.join("target")).unwrap();
+    std::fs::write(remote.join("target/team.txt"), "remote-before").unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        2,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [{
+                    "local": "/target/team.txt",
+                    "repository": "/target/team.txt",
+                    "includes": [],
+                    "excludes": [],
+                }],
+            }],
+        }),
+    );
+    rpc(&mut stdin, &mut stdout, 3, "team.sync", json!({}));
+    std::fs::write(root.join("source/source.txt"), "fifo conflict").unwrap();
+    rpc(&mut stdin, &mut stdout, 4, "project.reload", json!({}));
+
+    let generation = 71;
+    let heads = [
+        ("fifo-save-head", "project.save"),
+        ("fifo-close-head", "project.close"),
+        ("fifo-sync-head", "sync"),
+    ];
+    let saved = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "project.save",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": generation,
+            "transaction_batch_id": heads[0].0,
+        }),
+    );
+    assert_eq!(
+        saved["result"]["receipt"]["payload"]["operation"],
+        heads[0].1
+    );
+    let closed = rpc(
+        &mut stdin,
+        &mut stdout,
+        6,
+        "project.close",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": generation,
+            "transaction_batch_id": heads[1].0,
+        }),
+    );
+    assert_eq!(
+        closed["result"]["receipt"]["payload"]["operation"],
+        heads[1].1
+    );
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "project.open",
+        json!({ "root": root }),
+    );
+    let synced = rpc(
+        &mut stdin,
+        &mut stdout,
+        8,
+        "team.sync",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": generation,
+            "transaction_batch_id": heads[2].0,
+        }),
+    );
+    assert_eq!(
+        synced["result"]["receipt"]["payload"]["operation"],
+        heads[2].1
+    );
+
+    let save_tmx = root.join("omegat/project_save.tmx");
+    let ours_tmx = r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>fifo conflict</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu></body></tmx>"#;
+    std::fs::write(&save_tmx, ours_tmx).unwrap();
+    let prep = root.join(".repositories/prep");
+    std::fs::create_dir_all(&prep).unwrap();
+    let conflicts_path = prep.join("conflicts.json");
+    std::fs::write(
+        &conflicts_path,
+        serde_json::to_vec_pretty(&json!([{
+            "kind": "tmx",
+            "source": "fifo conflict",
+            "ours": "ours",
+            "theirs": "theirs",
+            "message": "TMX conflict on fifo conflict",
+        }]))
+        .unwrap(),
+    )
+    .unwrap();
+    rpc(&mut stdin, &mut stdout, 9, "project.reload", json!({}));
+    let tmx_before_resolve = std::fs::read(&save_tmx).unwrap();
+    let conflicts_before_resolve = std::fs::read(&conflicts_path).unwrap();
+    let resolve_batch = "fifo-resolve-tail";
+    let resolved = rpc(
+        &mut stdin,
+        &mut stdout,
+        10,
+        "team.resolve",
+        json!({
+            "source": "fifo conflict",
+            "side": "theirs",
+            "transaction_project_root": root,
+            "transaction_generation": generation,
+            "transaction_batch_id": resolve_batch,
+        }),
+    );
+    assert_eq!(
+        resolved["result"]["receipt"]["payload"]["operation"],
+        "resolve-conflict"
+    );
+
+    let selected = rpc(
+        &mut stdin,
+        &mut stdout,
+        11,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "fifo-owner",
+            "generation": generation,
+        }),
+    );
+    assert_eq!(selected["result"]["envelopes"][0]["batch_id"], heads[0].0);
+    let owner_before_cancel =
+        std::fs::read(root.join(".repositories/transactions/renderer-owner.json")).unwrap();
+    let cancelled = rpc(
+        &mut stdin,
+        &mut stdout,
+        12,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "fifo-owner",
+            "generation": generation,
+            "batch_id": resolve_batch,
+            "operation": "resolve-conflict",
+            "outcome": "cancelled",
+        }),
+    );
+    assert_eq!(
+        cancelled["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before_resolve);
+    assert_eq!(
+        std::fs::read(&conflicts_path).unwrap(),
+        conflicts_before_resolve
+    );
+    assert_eq!(
+        std::fs::read(root.join(".repositories/transactions/renderer-owner.json")).unwrap(),
+        owner_before_cancel
+    );
+    let queue: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/active.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        queue["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["batch_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        heads.iter().map(|head| head.0).collect::<Vec<_>>()
+    );
+
+    for (offset, (batch_id, operation)) in heads.into_iter().enumerate() {
+        let pending = rpc(
+            &mut stdin,
+            &mut stdout,
+            20 + offset as i64 * 2,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": "fifo-owner",
+                "generation": generation,
+            }),
+        );
+        assert_eq!(pending["result"]["envelopes"][0]["batch_id"], batch_id);
+        assert_ne!(
+            pending["result"]["envelopes"][0]["batch_id"], resolve_batch,
+            "cancelled resolve tail was selected for delivery"
+        );
+        let ack = rpc(
+            &mut stdin,
+            &mut stdout,
+            21 + offset as i64 * 2,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": "fifo-owner",
+                "generation": generation,
+                "batch_id": batch_id,
+                "operation": operation,
+                "outcome": "succeeded",
+            }),
+        );
+        assert_eq!(ack["result"]["ack"]["acknowledged"], true);
+    }
+    let drained = rpc(
+        &mut stdin,
+        &mut stdout,
+        30,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "fifo-owner",
+            "generation": generation,
+        }),
+    );
+    assert_eq!(drained["result"]["envelopes"], json!([]));
+    let history =
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson")).unwrap();
+    assert_eq!(
+        history
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|row| {
+                row["batch_id"] == resolve_batch
+                    && row["status"] == "request_cancelled"
+                    && row["error_code"] == -32800
+            })
+            .count(),
+        1
+    );
+    let _ = child.kill();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+        checkpoint: Option<(&str, &std::path::Path)>,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
+        command.env("OMEGAT_CONFIG_DIR", config);
+        if let Some((point, marker)) = checkpoint {
+            command
+                .env("OMEGAT_TEST_RESOLVE_CANCELLATION_POINT", point)
+                .env("OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER", marker);
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        (child, input, output)
+    }
+
+    for point in [
+        "after_intent_queue_rename",
+        "after_rollback_fsync",
+        "after_terminal_queue_rename",
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let root = temp.path().join(format!("cancel-owner-death-{point}"));
+        let marker = temp.path().join(format!("{point}.marker"));
+        let save_tmx = root.join("omegat/project_save.tmx");
+        let prep = root.join(".repositories/prep");
+        let conflicts_path = prep.join("conflicts.json");
+        let active_path = root.join(".repositories/transactions/active.json");
+        let owner_path = root.join(".repositories/transactions/renderer-owner.json");
+        let history_path = root.join(".repositories/transactions/history.ndjson");
+        let batch_id = format!("cancel-owner-death-{point}");
+        let generation = 81;
+
+        let (mut interrupted, mut interrupted_in, mut interrupted_out) =
+            spawn_sidecar(&config, Some((point, &marker)));
+        rpc(
+            &mut interrupted_in,
+            &mut interrupted_out,
+            1,
+            "project.create",
+            json!({
+                "root": root,
+                "source_lang": "en",
+                "target_lang": "fr",
+                "sentence_seg": false,
+            }),
+        );
+        std::fs::write(root.join("source/source.txt"), "owner death conflict").unwrap();
+        let ours_tmx = r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>owner death conflict</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu></body></tmx>"#;
+        std::fs::write(&save_tmx, ours_tmx).unwrap();
+        std::fs::create_dir_all(&prep).unwrap();
+        let conflicts = serde_json::to_vec_pretty(&json!([{
+            "kind": "tmx",
+            "source": "owner death conflict",
+            "ours": "ours",
+            "theirs": "theirs",
+            "message": "TMX conflict on owner death conflict",
+        }]))
+        .unwrap();
+        std::fs::write(&conflicts_path, &conflicts).unwrap();
+        rpc(
+            &mut interrupted_in,
+            &mut interrupted_out,
+            2,
+            "project.reload",
+            json!({}),
+        );
+        let tmx_before = std::fs::read(&save_tmx).unwrap();
+        let conflicts_before = std::fs::read(&conflicts_path).unwrap();
+        let committed = rpc(
+            &mut interrupted_in,
+            &mut interrupted_out,
+            3,
+            "team.resolve",
+            json!({
+                "source": "owner death conflict",
+                "side": "theirs",
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": batch_id,
+            }),
+        );
+        assert_eq!(
+            committed["result"]["receipt"]["payload"]["operation"],
+            "resolve-conflict"
+        );
+        assert_ne!(std::fs::read(&save_tmx).unwrap(), tmx_before);
+
+        let mut durable_owner = Command::new("sleep").arg("60").spawn().unwrap();
+        let owner_pid = durable_owner.id();
+        let selected = rpc(
+            &mut interrupted_in,
+            &mut interrupted_out,
+            4,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": format!("old-owner-{point}"),
+                "owner_process_id": owner_pid,
+                "generation": generation,
+            }),
+        );
+        assert_eq!(selected["result"]["envelopes"][0]["batch_id"], batch_id);
+        let old_claim: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        assert_eq!(old_claim["process_id"], owner_pid);
+
+        writeln!(
+            interrupted_in,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "transaction.receipt.ack",
+                "params": {
+                    "root": root,
+                    "app_instance": format!("old-owner-{point}"),
+                    "owner_process_id": owner_pid,
+                    "generation": generation,
+                    "batch_id": batch_id,
+                    "operation": "resolve-conflict",
+                    "outcome": "cancelled",
+                },
+            })
+        )
+        .unwrap();
+        interrupted_in.flush().unwrap();
+        for _ in 0..1_000 {
+            assert!(
+                interrupted.try_wait().unwrap().is_none(),
+                "cancelling sidecar exited before {point}"
+            );
+            if marker.is_file() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(marker.is_file(), "cancellation did not reach {point}");
+        let parked: Value = serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
+        let parked_row = parked["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["batch_id"] == batch_id)
+            .unwrap();
+        assert_eq!(
+            parked_row["status"],
+            if point == "after_terminal_queue_rename" {
+                "request_cancelled"
+            } else {
+                "cancellation_pending"
+            }
+        );
+        if point == "after_intent_queue_rename" {
+            assert_ne!(std::fs::read(&save_tmx).unwrap(), tmx_before);
+        } else {
+            assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before);
+            assert_eq!(std::fs::read(&conflicts_path).unwrap(), conflicts_before);
+        }
+
+        // The user cancellation has crossed its atomic intent rename. Kill the
+        // durable Electron owner and its cancelling sidecar in the same window.
+        durable_owner.kill().unwrap();
+        interrupted.kill().unwrap();
+        durable_owner.wait().unwrap();
+        interrupted.wait().unwrap();
+        assert!(!std::path::Path::new("/proc")
+            .join(owner_pid.to_string())
+            .exists());
+
+        let (mut replacement, mut replacement_in, mut replacement_out) =
+            spawn_sidecar(&config, None);
+        let opened = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            6,
+            "project.open",
+            json!({ "root": root }),
+        );
+        assert_eq!(opened["result"]["root"], root.to_string_lossy().as_ref());
+        assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before);
+        assert_eq!(std::fs::read(&conflicts_path).unwrap(), conflicts_before);
+        assert!(!active_path.exists());
+
+        let no_resolve_winner = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            7,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": format!("replacement-{point}"),
+                "owner_process_id": replacement.id(),
+                "generation": generation + 1,
+            }),
+        );
+        assert_eq!(no_resolve_winner["result"]["envelopes"], json!([]));
+        let new_claim: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        assert_eq!(new_claim["process_id"], replacement.id());
+        assert_ne!(new_claim["claim_id"], old_claim["claim_id"]);
+
+        let cancellation_ack = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            8,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": format!("replacement-{point}"),
+                "owner_process_id": replacement.id(),
+                "generation": generation,
+                "batch_id": batch_id,
+                "operation": "resolve-conflict",
+                "outcome": "cancelled",
+            }),
+        );
+        assert_eq!(
+            cancellation_ack["error"],
+            json!({"code": -32800, "message": "request cancelled"})
+        );
+        let history = std::fs::read_to_string(&history_path).unwrap();
+        assert_eq!(
+            history
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|row| {
+                    row["batch_id"] == batch_id
+                        && row["status"] == "request_cancelled"
+                        && row["error_code"] == -32800
+                })
+                .count(),
+            1,
+            "cancellation recovery duplicated its terminal row at {point}"
+        );
+        let responsive = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            9,
+            "sys.version",
+            json!({}),
+        );
+        assert_eq!(responsive["result"]["version"], "6.2.0");
+        replacement.kill().unwrap();
+        replacement.wait().unwrap();
+    }
+}
+
+#[test]
 fn project_open_recovers_only_its_interrupted_resolution_generation() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("recover-team-resolve");
