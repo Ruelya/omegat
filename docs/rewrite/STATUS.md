@@ -917,6 +917,16 @@ its first sidecar owner only after the second caller has entered the lock wait;
 that same waiting process takes over, the killed logical caller retries the
 same idempotency key, both logical calls end at **-32800**, and the sidecar
 remains responsive with no resolve envelope or second rollback pass.
+The FIFO-tail intent and rollback rows now also keep two packaged cancellation
+callers blocked on the original owner's OS lock before that owner is killed.
+At `after_intent_queue_rename`, the one already-waiting loser selected by kernel
+lock release performs the sole real TMX/conflict rollback and publishes the
+terminal; at `after_rollback_fsync`, the selected loser publishes only the
+terminal without rewriting the already durable rollback. Both callers receive
+**-32800**, exactly one takeover marker, rollback-durable row, and terminal
+exist, and neither caller emits a resolve envelope. The raw NDJSON contract
+runs both unfinished boundaries against the same nonempty sync → save → close
+prefix and independently proves the same takeover split and protocol result.
 The terminal-rename case also SIGKILLs packaged process groups at
 `after_archive_fsync` and `after_queue_rename`; restart sees one archived
 request-cancelled row and an empty compacted queue.
@@ -926,7 +936,9 @@ at each of `after_intent_queue_rename`, `after_rollback_fsync`,
 `after_terminal_queue_rename`, `after_archive_fsync`, and
 `after_queue_rename`. In every row exactly one replacement delivers those three
 heads in order, losing pending/ack calls are rejected, and every process
-delivers zero resolve envelopes. Exact Git HEAD, file-remote bytes/mtime,
+delivers zero resolve envelopes. In the first two rows, the cancellation
+takeover completes before replacement dispatch, so FIFO recovery cannot hide a
+missing or duplicate product rollback. Exact Git HEAD, file-remote bytes/mtime,
 complete six-field wanted and decoy keys, and the single `Document3` surface
 remain unchanged. These assertions run through
 `npm run test:e2e:compaction-dual-recovery:linux`; this is Linux-only evidence,

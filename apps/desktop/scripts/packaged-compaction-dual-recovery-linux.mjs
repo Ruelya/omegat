@@ -4226,8 +4226,203 @@ try {
       false,
       "FIFO tail cancellation selected a dispatcher owner before recovery",
     );
-    const killed = await killPackaged(launchedA);
-    launchedA = undefined;
+    const parkedTmx = await readFile(tmxPath);
+    const parkedConflicts = await readFile(conflictsPath);
+    if (killBoundary === "after_intent_queue_rename") {
+      assert.notDeepEqual(
+        parkedTmx,
+        tmxBefore,
+        "intent boundary performed the product rollback before owner death",
+      );
+      assert.notDeepEqual(
+        parkedConflicts,
+        conflictsBefore,
+        "intent boundary restored conflicts before owner death",
+      );
+    } else if (killBoundary === "after_rollback_fsync") {
+      assert.deepEqual(parkedTmx, tmxBefore);
+      assert.deepEqual(parkedConflicts, conflictsBefore);
+    }
+
+    let killed;
+    let waitingCancellationTakeover = null;
+    if ([
+      "after_intent_queue_rename",
+      "after_rollback_fsync",
+    ].includes(killBoundary)) {
+      const waiterTraces = Array.from(
+        { length: 2 },
+        (_, index) => join(workDir, `${label}-waiting-cancel-${index}.ndjson`),
+      );
+      const waiterMarkers = waiterTraces.map((_, index) =>
+        join(workDir, `${label}-waiting-cancel-${index}-wait.json`)
+      );
+      const takeoverMarkers = waiterTraces.map((_, index) =>
+        join(workDir, `${label}-waiting-cancel-${index}-takeover.json`)
+      );
+      const waitingCallers = await Promise.all(
+        waiterTraces.map((trace, index) =>
+          launchPackagedRenderer(xvfb.display, config, null, {
+            OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER: waiterMarkers[index],
+            OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER:
+              takeoverMarkers[index],
+            OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: trace,
+          })
+        ),
+      );
+      quorumReplacements = waitingCallers;
+      const waiterSidecarPids = await Promise.all(
+        waitingCallers.map(async (caller) => {
+          const processes = await descendants(caller.application.pid);
+          const child = processes.find(({ command }) =>
+            command.includes("omegat-sidecar")
+          );
+          assert(child, `waiting packaged sidecar not found: ${JSON.stringify(processes)}`);
+          return child.pid;
+        }),
+      );
+      const traceKeys = waitingCallers.map(
+        (_, index) => `${label}-waiting-cancel-${index}`,
+      );
+      const requestIds = waitingCallers.map(
+        (_, index) => `${label}-waiting-request-${index}`,
+      );
+      const starts = await Promise.all(
+        waitingCallers.map((caller, index) =>
+          startTracedRpc(
+            caller.client,
+            traceKeys[index],
+            "transaction.receipt.ack",
+            {
+              root: project,
+              app_instance: traceKeys[index],
+              owner_process_id: caller.application.pid,
+              generation: prepared.fifoGeneration,
+              batch_id: resolveBatchId,
+              operation: "resolve-conflict",
+              outcome: "cancelled",
+            },
+            requestIds[index],
+          )
+        ),
+      );
+      assert.deepEqual(starts, [true, true]);
+      await Promise.all(waitingCallers.map((caller, index) =>
+        waitFor(`FIFO cancellation loser ${index} waiting on owner lock`, () =>
+          pathExists(waiterMarkers[index])
+        )
+      ));
+      for (const [index, waiterMarker] of waiterMarkers.entries()) {
+        const waiting = JSON.parse(await readFile(waiterMarker, "utf8"));
+        assert.equal(waiting.point, "waiting-for-owner-lock");
+        assert.equal(waiting.sidecar_process_id, waiterSidecarPids[index]);
+        assert.equal(await pathExists(takeoverMarkers[index]), false);
+      }
+
+      killed = await killPackaged(launchedA);
+      launchedA = undefined;
+      await waitFor(
+        `${killBoundary} waiting FIFO loser cancellation takeover`,
+        async () => {
+          const present = [];
+          for (const [index, marker] of takeoverMarkers.entries()) {
+            if (await pathExists(marker)) present.push(index);
+          }
+          return present.length > 0 ? present : undefined;
+        },
+      );
+      const waiterResults = await waitFor(
+        `${killBoundary} waiting FIFO cancellation results`,
+        async () => {
+          const states = await Promise.all(waitingCallers.map(
+            (caller, index) => tracedRpcState(caller.client, traceKeys[index]),
+          ));
+          return states.every((state) => state?.settled) ? states : undefined;
+        },
+      );
+      for (const state of waiterResults) {
+        assert.equal(state.started, true);
+        assert.equal(state.resolved, false);
+        assert.equal(
+          state.error,
+          "Error: Error invoking remote method 'rpc': AbortError: request cancelled",
+        );
+        assert.equal(state.errorCode, -32800);
+      }
+      const takeoverIndices = [];
+      for (const [index, marker] of takeoverMarkers.entries()) {
+        if (await pathExists(marker)) takeoverIndices.push(index);
+      }
+      assert.equal(
+        takeoverIndices.length,
+        1,
+        "OS lock release selected more than one waiting FIFO cancellation owner",
+      );
+      const takeover = JSON.parse(
+        await readFile(takeoverMarkers[takeoverIndices[0]], "utf8"),
+      );
+      assert.equal(takeover.point, "took-over-pending-cancellation");
+      assert.equal(
+        takeover.sidecar_process_id,
+        waiterSidecarPids[takeoverIndices[0]],
+      );
+      for (const trace of waiterTraces) {
+        assert.equal(
+          await pathExists(trace)
+            ? parseNdjson(await readFile(trace, "utf8")).length
+            : 0,
+          0,
+          "waiting cancellation caller delivered the resolve FIFO tail",
+        );
+      }
+      assert.deepEqual(await readFile(tmxPath), tmxBefore);
+      assert.deepEqual(await readFile(conflictsPath), conflictsBefore);
+      const cancelledQueue = JSON.parse(
+        await readFile(prepared.activePath, "utf8"),
+      );
+      const cancelledResolve = productJournalBatches(cancelledQueue).find(
+        (row) => row.batch_id === resolveBatchId,
+      );
+      assert(cancelledResolve);
+      assert.equal(cancelledResolve.status, "request_cancelled");
+      assert.equal(cancelledResolve.error_code, -32800);
+      assert.equal(
+        cancelledResolve.payload.phase,
+        "renderer-cancelled-takeover",
+      );
+      const takeoverHistory = parseNdjson(
+        await readFile(prepared.historyPath, "utf8"),
+      );
+      assert.equal(
+        takeoverHistory.filter((row) =>
+          row.batch_id === resolveBatchId
+          && row.status === "cancellation_pending"
+          && row.payload.phase === "renderer-rollback-durable"
+        ).length,
+        1,
+        `${killBoundary} did not leave exactly one durable rollback`,
+      );
+      waitingCancellationTakeover = {
+        waitingCallerBrowserPids:
+          waitingCallers.map((caller) => caller.application.pid),
+        waitingCallerSidecarPids: waiterSidecarPids,
+        takeoverOwnerSidecarPid: takeover.sidecar_process_id,
+        takeoverPerformedProductRollback:
+          killBoundary === "after_intent_queue_rename",
+        takeoverSkippedDurableRollback:
+          killBoundary === "after_rollback_fsync",
+        protocolErrorCodes: waiterResults.map((state) => state.errorCode),
+        durableRollbackCount: 1,
+        resolveEnvelopeCount: 0,
+      };
+      await Promise.all(
+        waitingCallers.map((caller) => terminatePackaged(caller)),
+      );
+      quorumReplacements = [];
+    } else {
+      killed = await killPackaged(launchedA);
+      launchedA = undefined;
+    }
     let compactionKilled = null;
     if (compactionBoundary) {
       launchedB = await launchPackagedRenderer(xvfb.display, config, project, {
@@ -4408,6 +4603,7 @@ try {
       fileRemoteWrite: false,
       completeEntryKey: prepared.wantedKey,
       decoyEntryKey: prepared.decoyKey,
+      waitingCancellationTakeover,
     });
     await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
     quorumReplacements = [];

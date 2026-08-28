@@ -3798,10 +3798,10 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn waiting_raw_cancel_caller_takes_over_after_owner_sigkill() {
+fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
     fn spawn_sidecar(
         config: &std::path::Path,
-        checkpoint: Option<&std::path::Path>,
+        checkpoint: Option<(&str, &std::path::Path)>,
         wait_marker: Option<&std::path::Path>,
         takeover_marker: Option<&std::path::Path>,
     ) -> (
@@ -3811,12 +3811,9 @@ fn waiting_raw_cancel_caller_takes_over_after_owner_sigkill() {
     ) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
         command.env("OMEGAT_CONFIG_DIR", config);
-        if let Some(owner_marker) = checkpoint {
+        if let Some((point, owner_marker)) = checkpoint {
             command
-                .env(
-                    "OMEGAT_TEST_RESOLVE_CANCELLATION_POINT",
-                    "after_rollback_fsync",
-                )
+                .env("OMEGAT_TEST_RESOLVE_CANCELLATION_POINT", point)
                 .env("OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER", owner_marker);
         }
         if let Some(wait_marker) = wait_marker {
@@ -3854,210 +3851,351 @@ fn waiting_raw_cancel_caller_takes_over_after_owner_sigkill() {
         panic!("timed out waiting for {}", path.display());
     }
 
-    let temp = tempfile::tempdir().unwrap();
-    let config = temp.path().join("config");
-    let root = temp.path().join("raw-cancel-owner-takeover");
-    let owner_marker = temp.path().join("cancel-owner.json");
-    let wait_marker = temp.path().join("cancel-waiter.json");
-    let takeover_marker = temp.path().join("cancel-takeover.json");
-    let save_tmx = root.join("omegat/project_save.tmx");
-    let prep = root.join(".repositories/prep");
-    let conflicts_path = prep.join("conflicts.json");
-    let active_path = root.join(".repositories/transactions/active.json");
-    let history_path = root.join(".repositories/transactions/history.ndjson");
-    let batch_id = "raw-cancel-owner-takeover";
-    let generation = 93;
+    for point in ["after_intent_queue_rename", "after_rollback_fsync"] {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let root = temp.path().join("raw-cancel-owner-takeover");
+        let remote = temp.path().join("raw-cancel-owner-remote");
+        let owner_marker = temp.path().join("cancel-owner.json");
+        let wait_marker = temp.path().join("cancel-waiter.json");
+        let takeover_marker = temp.path().join("cancel-takeover.json");
+        let save_tmx = root.join("omegat/project_save.tmx");
+        let prep = root.join(".repositories/prep");
+        let conflicts_path = prep.join("conflicts.json");
+        let active_path = root.join(".repositories/transactions/active.json");
+        let history_path = root.join(".repositories/transactions/history.ndjson");
+        let batch_id = "raw-cancel-owner-takeover";
+        let generation = 93;
+        let fifo_heads = [
+            ("raw-cancel-fifo-sync", "sync"),
+            ("raw-cancel-fifo-save", "project.save"),
+            ("raw-cancel-fifo-close", "project.close"),
+        ];
 
-    let (mut owner, mut owner_in, mut owner_out) =
-        spawn_sidecar(&config, Some(&owner_marker), None, None);
-    rpc(
-        &mut owner_in,
-        &mut owner_out,
-        1,
-        "project.create",
-        json!({
-            "root": root,
-            "source_lang": "en",
-            "target_lang": "fr",
-            "sentence_seg": false,
-        }),
-    );
-    std::fs::write(root.join("source/wanted.txt"), "raw owner conflict").unwrap();
-    std::fs::write(root.join("source/decoy.txt"), "raw owner decoy").unwrap();
-    let original_tmx = r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>raw owner conflict</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu></body></tmx>"#;
-    std::fs::write(&save_tmx, original_tmx).unwrap();
-    std::fs::create_dir_all(&prep).unwrap();
-    let original_conflicts = serde_json::to_vec_pretty(&json!([{
-        "kind": "tmx",
-        "source": "raw owner conflict",
-        "ours": "ours",
-        "theirs": "theirs",
-        "message": "raw owner conflict",
-    }]))
-    .unwrap();
-    std::fs::write(&conflicts_path, &original_conflicts).unwrap();
-    rpc(
-        &mut owner_in,
-        &mut owner_out,
-        2,
-        "project.reload",
-        json!({}),
-    );
-    let committed = rpc(
-        &mut owner_in,
-        &mut owner_out,
-        3,
-        "team.resolve",
-        json!({
-            "source": "raw owner conflict",
-            "side": "theirs",
-            "transaction_project_root": root,
-            "transaction_generation": generation,
-            "transaction_batch_id": batch_id,
-        }),
-    );
-    assert_eq!(
-        committed["result"]["receipt"]["payload"]["operation"],
-        "resolve-conflict"
-    );
-    assert_ne!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
-
-    writeln!(
-        owner_in,
-        "{}",
-        json!({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "transaction.receipt.ack",
-            "params": {
+        let (mut owner, mut owner_in, mut owner_out) =
+            spawn_sidecar(&config, Some((point, &owner_marker)), None, None);
+        rpc(
+            &mut owner_in,
+            &mut owner_out,
+            1,
+            "project.create",
+            json!({
                 "root": root,
-                "app_instance": "raw-cancel-owner",
-                "owner_process_id": owner.id(),
-                "generation": generation,
-                "batch_id": batch_id,
-                "operation": "resolve-conflict",
-                "outcome": "cancelled",
-            },
-        })
-    )
-    .unwrap();
-    owner_in.flush().unwrap();
-    wait_for_file(&owner_marker, &mut owner);
-
-    let (mut waiter, mut waiter_in, mut waiter_out) =
-        spawn_sidecar(&config, None, Some(&wait_marker), Some(&takeover_marker));
-    let waiter_pid = waiter.id();
-    let waiter_root = root.clone();
-    let waiter_call = std::thread::spawn(move || {
-        let response = rpc(
-            &mut waiter_in,
-            &mut waiter_out,
+                "source_lang": "en",
+                "target_lang": "fr",
+                "sentence_seg": false,
+            }),
+        );
+        std::fs::create_dir_all(remote.join("target")).unwrap();
+        std::fs::write(remote.join("target/team.txt"), "raw owner remote").unwrap();
+        rpc(
+            &mut owner_in,
+            &mut owner_out,
+            2,
+            "team.mapping",
+            json!({
+                "repositories": [{
+                    "repo_type": "file",
+                    "url": remote,
+                    "branch": null,
+                    "mappings": [{
+                        "local": "/target/team.txt",
+                        "repository": "/target/team.txt",
+                        "includes": [],
+                        "excludes": [],
+                    }],
+                }],
+            }),
+        );
+        let synced = rpc(
+            &mut owner_in,
+            &mut owner_out,
+            3,
+            "team.sync",
+            json!({
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": fifo_heads[0].0,
+            }),
+        );
+        assert_eq!(
+            synced["result"]["receipt"]["payload"]["operation"],
+            fifo_heads[0].1
+        );
+        std::fs::write(root.join("source/wanted.txt"), "raw owner conflict").unwrap();
+        std::fs::write(root.join("source/decoy.txt"), "raw owner decoy").unwrap();
+        let original_tmx = r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>raw owner conflict</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu></body></tmx>"#;
+        std::fs::write(&save_tmx, original_tmx).unwrap();
+        std::fs::create_dir_all(&prep).unwrap();
+        let original_conflicts = serde_json::to_vec_pretty(&json!([{
+            "kind": "tmx",
+            "source": "raw owner conflict",
+            "ours": "ours",
+            "theirs": "theirs",
+            "message": "raw owner conflict",
+        }]))
+        .unwrap();
+        std::fs::write(&conflicts_path, &original_conflicts).unwrap();
+        rpc(
+            &mut owner_in,
+            &mut owner_out,
+            4,
+            "project.reload",
+            json!({}),
+        );
+        let saved = rpc(
+            &mut owner_in,
+            &mut owner_out,
             5,
+            "project.save",
+            json!({
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": fifo_heads[1].0,
+            }),
+        );
+        assert_eq!(
+            saved["result"]["receipt"]["payload"]["operation"],
+            fifo_heads[1].1
+        );
+        let closed = rpc(
+            &mut owner_in,
+            &mut owner_out,
+            6,
+            "project.close",
+            json!({
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": fifo_heads[2].0,
+            }),
+        );
+        assert_eq!(
+            closed["result"]["receipt"]["payload"]["operation"],
+            fifo_heads[2].1
+        );
+        rpc(
+            &mut owner_in,
+            &mut owner_out,
+            7,
+            "project.open",
+            json!({ "root": root }),
+        );
+        let committed = rpc(
+            &mut owner_in,
+            &mut owner_out,
+            8,
+            "team.resolve",
+            json!({
+                "source": "raw owner conflict",
+                "side": "theirs",
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": batch_id,
+            }),
+        );
+        assert_eq!(
+            committed["result"]["receipt"]["payload"]["operation"],
+            "resolve-conflict"
+        );
+        assert_ne!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
+
+        writeln!(
+            owner_in,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 9,
+                "method": "transaction.receipt.ack",
+                "params": {
+                    "root": root,
+                    "app_instance": "raw-cancel-owner",
+                    "owner_process_id": owner.id(),
+                    "generation": generation,
+                    "batch_id": batch_id,
+                    "operation": "resolve-conflict",
+                    "outcome": "cancelled",
+                },
+            })
+        )
+        .unwrap();
+        owner_in.flush().unwrap();
+        wait_for_file(&owner_marker, &mut owner);
+        if point == "after_intent_queue_rename" {
+            assert_ne!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
+            assert_ne!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
+        } else {
+            assert_eq!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
+            assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
+        }
+
+        let (mut waiter, mut waiter_in, mut waiter_out) =
+            spawn_sidecar(&config, None, Some(&wait_marker), Some(&takeover_marker));
+        let waiter_pid = waiter.id();
+        let waiter_root = root.clone();
+        let waiter_call = std::thread::spawn(move || {
+            let response = rpc(
+                &mut waiter_in,
+                &mut waiter_out,
+                5,
+                "transaction.receipt.ack",
+                json!({
+                    "root": waiter_root,
+                    "app_instance": "raw-cancel-waiter",
+                    "owner_process_id": waiter_pid,
+                    "generation": generation,
+                    "batch_id": batch_id,
+                    "operation": "resolve-conflict",
+                    "outcome": "cancelled",
+                }),
+            );
+            (response, waiter_in, waiter_out)
+        });
+        wait_for_file(&wait_marker, &mut waiter);
+        let waiting: Value = serde_json::from_slice(&std::fs::read(&wait_marker).unwrap()).unwrap();
+        assert_eq!(waiting["point"], "waiting-for-owner-lock");
+        assert_eq!(waiting["sidecar_process_id"], waiter_pid);
+        assert!(!takeover_marker.exists());
+
+        // SIGKILL releases operation.lock in the kernel. The already-blocked raw
+        // caller, rather than a newly launched recovery process, must acquire it.
+        owner.kill().unwrap();
+        owner.wait().unwrap();
+        let (waiter_response, mut waiter_in, mut waiter_out) = waiter_call.join().unwrap();
+        assert_eq!(
+            waiter_response["error"],
+            json!({"code": -32800, "message": "request cancelled"})
+        );
+        let takeover: Value =
+            serde_json::from_slice(&std::fs::read(&takeover_marker).unwrap()).unwrap();
+        assert_eq!(takeover["point"], "took-over-pending-cancellation");
+        assert_eq!(takeover["sidecar_process_id"], waiter_pid);
+        assert_eq!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
+        assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
+        let remaining_queue: Value =
+            serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
+        assert_eq!(
+            remaining_queue["batches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["batch_id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            fifo_heads
+                .iter()
+                .map(|(batch_id, _)| *batch_id)
+                .collect::<Vec<_>>()
+        );
+
+        // Retry the killed logical caller with the same idempotency key. Both
+        // logical callers therefore settle at the protocol boundary as -32800.
+        let (mut owner_retry, mut retry_in, mut retry_out) =
+            spawn_sidecar(&config, None, None, None);
+        let owner_retry_response = rpc(
+            &mut retry_in,
+            &mut retry_out,
+            6,
             "transaction.receipt.ack",
             json!({
-                "root": waiter_root,
-                "app_instance": "raw-cancel-waiter",
-                "owner_process_id": waiter_pid,
+                "root": root,
+                "app_instance": "raw-cancel-owner",
+                "owner_process_id": owner_retry.id(),
                 "generation": generation,
                 "batch_id": batch_id,
                 "operation": "resolve-conflict",
                 "outcome": "cancelled",
             }),
         );
-        (response, waiter_in, waiter_out)
-    });
-    wait_for_file(&wait_marker, &mut waiter);
-    let waiting: Value = serde_json::from_slice(&std::fs::read(&wait_marker).unwrap()).unwrap();
-    assert_eq!(waiting["point"], "waiting-for-owner-lock");
-    assert_eq!(waiting["sidecar_process_id"], waiter_pid);
-    assert!(!takeover_marker.exists());
+        assert_eq!(
+            owner_retry_response["error"],
+            json!({"code": -32800, "message": "request cancelled"})
+        );
 
-    // SIGKILL releases operation.lock in the kernel. The already-blocked raw
-    // caller, rather than a newly launched recovery process, must acquire it.
-    owner.kill().unwrap();
-    owner.wait().unwrap();
-    let (waiter_response, mut waiter_in, mut waiter_out) = waiter_call.join().unwrap();
-    assert_eq!(
-        waiter_response["error"],
-        json!({"code": -32800, "message": "request cancelled"})
-    );
-    let takeover: Value =
-        serde_json::from_slice(&std::fs::read(&takeover_marker).unwrap()).unwrap();
-    assert_eq!(takeover["point"], "took-over-pending-cancellation");
-    assert_eq!(takeover["sidecar_process_id"], waiter_pid);
-    assert_eq!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
-    assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
-    assert!(!active_path.exists());
-
-    // Retry the killed logical caller with the same idempotency key. Both
-    // logical callers therefore settle at the protocol boundary as -32800.
-    let (mut owner_retry, mut retry_in, mut retry_out) = spawn_sidecar(&config, None, None, None);
-    let owner_retry_response = rpc(
-        &mut retry_in,
-        &mut retry_out,
-        6,
-        "transaction.receipt.ack",
-        json!({
-            "root": root,
-            "app_instance": "raw-cancel-owner",
-            "owner_process_id": owner_retry.id(),
-            "generation": generation,
-            "batch_id": batch_id,
-            "operation": "resolve-conflict",
-            "outcome": "cancelled",
-        }),
-    );
-    assert_eq!(
-        owner_retry_response["error"],
-        json!({"code": -32800, "message": "request cancelled"})
-    );
-
-    let history = std::fs::read_to_string(&history_path).unwrap();
-    let rows = history
-        .lines()
-        .map(|line| serde_json::from_str::<Value>(line).unwrap())
-        .filter(|row| row["batch_id"] == batch_id)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        rows.iter()
-            .filter(|row| {
-                row["status"] == "cancellation_pending"
-                    && row["payload"]["phase"] == "renderer-rollback-durable"
-            })
-            .count(),
-        1,
-        "owner death opened more than one durable rollback checkpoint"
-    );
-    assert_eq!(
-        rows.iter()
-            .filter(|row| {
-                row["status"] == "request_cancelled"
-                    && row["error_code"] == -32800
-                    && row["payload"]["phase"] == "renderer-cancelled-takeover"
-            })
-            .count(),
-        1,
-        "owner death published more than one terminal cancellation"
-    );
-    let no_resolve_envelope = rpc(
-        &mut retry_in,
-        &mut retry_out,
-        7,
-        "transaction.receipt.pending",
-        json!({
-            "root": root,
-            "app_instance": "raw-cancel-owner",
-            "owner_process_id": owner_retry.id(),
-            "generation": generation + 1,
-        }),
-    );
-    assert_eq!(no_resolve_envelope["result"]["envelopes"], json!([]));
-    let responsive = rpc(&mut waiter_in, &mut waiter_out, 8, "sys.version", json!({}));
-    assert_eq!(responsive["result"]["version"], "6.2.0");
-    waiter.kill().unwrap();
-    waiter.wait().unwrap();
-    owner_retry.kill().unwrap();
-    owner_retry.wait().unwrap();
+        for (offset, (head_batch_id, operation)) in fifo_heads.iter().enumerate() {
+            let pending = rpc(
+                &mut retry_in,
+                &mut retry_out,
+                20 + offset as i64 * 2,
+                "transaction.receipt.pending",
+                json!({
+                    "root": root,
+                    "app_instance": "raw-fifo-owner",
+                    "owner_process_id": owner_retry.id(),
+                    "generation": generation,
+                }),
+            );
+            assert_eq!(
+                pending["result"]["envelopes"][0]["batch_id"],
+                *head_batch_id
+            );
+            assert_ne!(
+                pending["result"]["envelopes"][0]["batch_id"], batch_id,
+                "cancelled resolve tail escaped into the FIFO prefix"
+            );
+            let acknowledged = rpc(
+                &mut retry_in,
+                &mut retry_out,
+                21 + offset as i64 * 2,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": "raw-fifo-owner",
+                    "owner_process_id": owner_retry.id(),
+                    "generation": generation,
+                    "batch_id": head_batch_id,
+                    "operation": operation,
+                    "outcome": "succeeded",
+                }),
+            );
+            assert_eq!(acknowledged["result"]["ack"]["acknowledged"], true);
+        }
+        let history = std::fs::read_to_string(&history_path).unwrap();
+        let rows = history
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|row| row["batch_id"] == batch_id)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.iter()
+                .filter(|row| {
+                    row["status"] == "cancellation_pending"
+                        && row["payload"]["phase"] == "renderer-rollback-durable"
+                })
+                .count(),
+            1,
+            "owner death opened more than one durable rollback checkpoint"
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| {
+                    row["status"] == "request_cancelled"
+                        && row["error_code"] == -32800
+                        && row["payload"]["phase"] == "renderer-cancelled-takeover"
+                })
+                .count(),
+            1,
+            "owner death published more than one terminal cancellation"
+        );
+        let no_resolve_envelope = rpc(
+            &mut retry_in,
+            &mut retry_out,
+            30,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": "raw-cancel-owner",
+                "owner_process_id": owner_retry.id(),
+                "generation": generation + 1,
+            }),
+        );
+        assert_eq!(no_resolve_envelope["result"]["envelopes"], json!([]));
+        assert!(!active_path.exists());
+        let responsive = rpc(&mut waiter_in, &mut waiter_out, 8, "sys.version", json!({}));
+        assert_eq!(responsive["result"]["version"], "6.2.0");
+        waiter.kill().unwrap();
+        waiter.wait().unwrap();
+        owner_retry.kill().unwrap();
+        owner_retry.wait().unwrap();
+    }
 }
 
 #[test]
