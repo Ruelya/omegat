@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **20 passed** plus sidecar journal/watcher unit
+**4 passed**, sidecar contract **21 passed** plus sidecar journal/watcher unit
 **4 passed** and plugin filter **1 passed**, and desktop **24 files / 173 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
@@ -664,6 +664,11 @@ failure leaves the original queue authoritative; the second leaves the compacted
 queue authoritative. In both cases the next process receives the exact
 unacknowledged receipt and pending tail, while only the acknowledged terminal
 record can disappear.
+A separate contract keeps two replacement sidecars alive concurrently: project
+A recovers an `entry.set` receipt while project B recovers an external-refresh
+receipt from the other durable queue. Each response is re-stamped only to its
+own replacement generation; asking A's sidecar for B's root is rejected without
+consuming A, and both receipts remain independently acknowledgeable.
 Editor `entry.set`, explicit document save, and project-close TMX flush now use
 the same version-1 snapshot/receipt/recovery state machine as team writes.
 Every editor commit is keyed by the full six-field `EntryKey`; the TMX,
