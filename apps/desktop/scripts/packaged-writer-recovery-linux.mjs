@@ -1295,6 +1295,12 @@ async function runConfigOwnerDeath(display, workDir) {
       '[data-window-id="prefs"] [data-setting="locale"]',
       "fr",
     );
+    await openPrefsPage(contender.client, "fonts");
+    await setControl(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form label input',
+      "Shared Config Font",
+    );
     await savePrefsDraft(owner.client);
     const claim = await waitFor("shared config owner checkpoint", async () =>
       await pathExists(marker)
@@ -1307,15 +1313,11 @@ async function runConfigOwnerDeath(display, workDir) {
     assert.equal(pending.batches.length, 1);
     assert.equal(pending.batches[0].payload.locale, "fr");
 
+    // Queue the contender while the first sidecar still owns the OS lock.
+    // Its renderer stays live, but the write cannot overtake the durable head.
+    await savePrefsDraft(contender.client);
     const killedOwner = await killPackaged(owner);
     owner = undefined;
-    await openPrefsPage(contender.client, "fonts");
-    await setControl(
-      contender.client,
-      '[data-window-id="prefs"] .prefs-grid > .form label input',
-      "Shared Config Font",
-    );
-    await savePrefsDraft(contender.client);
     const mergeStarted = Date.now();
     const merged = await waitFor("owner-death field merge", async () => {
       const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
@@ -1389,6 +1391,16 @@ async function runConfigLostAck(display, workDir) {
       '[data-window-id="prefs"] .prefs-grid > .form label input',
       "lost-ack-rules.srx",
     );
+    await openPrefsPage(contender.client, "filters");
+    await waitForSelector(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
+    );
+    await setControl(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
+      "lost-ack-filter",
+    );
     await savePrefsDraft(owner.client);
     const lostAck = await waitFor("shared config lost acknowledgement", async () =>
       await pathExists(marker)
@@ -1401,20 +1413,11 @@ async function runConfigLostAck(display, workDir) {
       1,
     );
     assert.equal(historyAtKill.at(-1).status, "completed");
+    // This request blocks behind the owner whose response is deliberately
+    // withheld, proving the second field cannot bypass the lost-ack head.
+    await savePrefsDraft(contender.client);
     const killedLostAckOwner = await killPackaged(owner);
     owner = undefined;
-
-    await openPrefsPage(contender.client, "filters");
-    await waitForSelector(
-      contender.client,
-      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
-    );
-    await setControl(
-      contender.client,
-      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
-      "lost-ack-filter",
-    );
-    await savePrefsDraft(contender.client);
     const merged = await waitFor("lost-ack field merge", async () => {
       const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
       const filterValue = Object.values(prefs.filter_options ?? {})
