@@ -1768,7 +1768,8 @@ mod tests {
                 );
                 assert_eq!(first.err().unwrap(), format!("crash:{point}"));
 
-                let recovered = DurableTransactionWorkflow::open_with_legacy(
+                let recovered: DurableTransactionWorkflow<Record> =
+                    DurableTransactionWorkflow::open_with_legacy(
                     &directory,
                     &scope,
                     layout,
@@ -1777,7 +1778,7 @@ mod tests {
                     || panic!("durable migration seed did not suppress legacy rediscovery"),
                     &mut |_, _| Ok(()),
                 )
-                .unwrap();
+                    .unwrap();
                 for expected in legacy {
                     assert_eq!(
                         recovered
