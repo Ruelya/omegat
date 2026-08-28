@@ -34,6 +34,7 @@ let stoppingSidecar = false;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 const appInstance = randomUUID();
 let nextId = 1;
+let testDroppedTransactionAck = false;
 const watchedProjectWriteMethods = new Set([
   "entry.set",
   "project.save",
@@ -54,8 +55,15 @@ const projectFileWatcher = new ProjectFileWatcher((event) => {
   void persistExternalProjectChange(event);
 });
 
-if (process.env.OMEGAT_CONFIG_DIR) {
-  app.setPath("userData", process.env.OMEGAT_CONFIG_DIR);
+if (process.env.OMEGAT_CONFIG_DIR?.trim()) {
+  // OmegaT configuration is intentionally shared across application
+  // instances. Chromium profiles are not: sharing userData makes Chromium's
+  // ProcessSingleton abort the second Electron process before OmegaT can
+  // isolate either project's durable transaction queue.
+  app.setPath(
+    "userData",
+    join(process.env.OMEGAT_CONFIG_DIR, "electron-instances", appInstance),
+  );
 }
 
 function sidecarName(): string {
@@ -122,6 +130,16 @@ function publishTransactionEnvelope(
     || !["pending", "sidecar_committed"].includes(envelope.status)
     || typeof envelope.payload?.operation !== "string"
   ) return;
+  const trace = process.env.OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE;
+  if (trace) {
+    appendFileSync(trace, `${JSON.stringify({
+      batch_id: envelope.batch_id,
+      operation: envelope.payload.operation,
+      project_root: envelope.project_root,
+      generation: envelope.generation,
+      status: envelope.status,
+    })}\n`);
+  }
   BrowserWindow.getAllWindows().forEach((window) => {
     window.webContents.send("transaction:envelope", envelope);
   });
@@ -484,6 +502,16 @@ app.whenReady().then(() => {
         )
       ) {
         throw new Error("transaction receipt is not scoped to the watched project");
+      }
+      if (
+        !testDroppedTransactionAck
+        && process.env.OMEGAT_TEST_DROP_TRANSACTION_ACK_ONCE
+          === envelope.payload.operation
+      ) {
+        testDroppedTransactionAck = true;
+        throw new Error(
+          `injected lost transaction acknowledgement for ${envelope.batch_id}`,
+        );
       }
       const result = await rpc("transaction.receipt.ack", {
         root: envelope.project_root,

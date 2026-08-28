@@ -754,10 +754,9 @@ fn concurrent_project_recoveries_isolate_product_and_refresh_receipts() {
     let temp = tempfile::tempdir().unwrap();
     let root_a = temp.path().join("project-a");
     let root_b = temp.path().join("project-b");
-    let config_a = temp.path().join("config-a");
-    let config_b = temp.path().join("config-b");
-    let (mut first_a, mut first_a_in, mut first_a_out) = spawn_sidecar(&config_a);
-    let (mut first_b, mut first_b_in, mut first_b_out) = spawn_sidecar(&config_b);
+    let shared_config = temp.path().join("shared-config");
+    let (mut first_a, mut first_a_in, mut first_a_out) = spawn_sidecar(&shared_config);
+    let (mut first_b, mut first_b_in, mut first_b_out) = spawn_sidecar(&shared_config);
 
     let entry_a = create_project(
         &mut first_a_in,
@@ -833,8 +832,8 @@ fn concurrent_project_recoveries_isolate_product_and_refresh_receipts() {
     first_a.wait().unwrap();
     first_b.wait().unwrap();
 
-    let (mut recovered_a, mut recovered_a_in, mut recovered_a_out) = spawn_sidecar(&config_a);
-    let (mut recovered_b, mut recovered_b_in, mut recovered_b_out) = spawn_sidecar(&config_b);
+    let (mut recovered_a, mut recovered_a_in, mut recovered_a_out) = spawn_sidecar(&shared_config);
+    let (mut recovered_b, mut recovered_b_in, mut recovered_b_out) = spawn_sidecar(&shared_config);
     rpc(
         &mut recovered_a_in,
         &mut recovered_a_out,
@@ -2434,6 +2433,19 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         journal_before_interrupted_compaction,
         "interrupted compaction replaced the source journal"
     );
+    let history_after_archive_fsync = std::fs::read(&history_path).unwrap();
+    let archived_after_first_attempt: Vec<Value> =
+        std::str::from_utf8(&history_after_archive_fsync)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .filter(|row: &Value| row["batch_id"] == "acked-old-before-compaction")
+            .collect();
+    assert_eq!(
+        archived_after_first_attempt.len(),
+        1,
+        "archive-fsync interruption duplicated the terminal batch"
+    );
     let after_interruption: Value =
         serde_json::from_slice(&journal_before_interrupted_compaction).unwrap();
     assert_eq!(after_interruption["batches"][0]["status"], "completed");
@@ -2487,6 +2499,11 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         pending_batch.as_str()
     );
     assert_eq!(queue_after_rename["batches"][1]["status"], "pending");
+    assert_eq!(
+        std::fs::read(&history_path).unwrap(),
+        history_after_archive_fsync,
+        "queue-rename recovery appended the already archived terminal batch again"
+    );
 
     let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&compact_config, None);
     rpc(
@@ -2542,8 +2559,10 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         .collect();
     let old = history
         .iter()
-        .find(|row| row["batch_id"] == "acked-old-before-compaction")
-        .unwrap();
+        .filter(|row| row["batch_id"] == "acked-old-before-compaction")
+        .collect::<Vec<_>>();
+    assert_eq!(old.len(), 1);
+    let old = old[0];
     assert_eq!(old["generation"], 8);
     assert_eq!(old["status"], "completed");
 

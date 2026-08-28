@@ -13,6 +13,7 @@ use omegat_team::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -23,7 +24,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const QUEUE_VERSION: u8 = 2;
 const JOURNAL_FILE: &str = "external-refresh.json";
 const HISTORY_FILE: &str = "external-refresh-history.ndjson";
-const ACTIVE_FILE: &str = "external-refresh-active.json";
+const ACTIVE_DIRECTORY: &str = "external-refresh-active";
+const LEGACY_ACTIVE_FILE: &str = "external-refresh-active.json";
 static BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -87,8 +89,16 @@ fn history_path(root: &Path) -> PathBuf {
         .join(HISTORY_FILE)
 }
 
-fn active_path(config_dir: &Path) -> PathBuf {
-    config_dir.join("transactions").join(ACTIVE_FILE)
+fn active_path(config_dir: &Path, app_instance: &str) -> PathBuf {
+    let owner = format!("{:x}", Sha256::digest(app_instance.as_bytes()));
+    config_dir
+        .join("transactions")
+        .join(ACTIVE_DIRECTORY)
+        .join(format!("{owner}.json"))
+}
+
+fn legacy_active_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("transactions").join(LEGACY_ACTIVE_FILE)
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>, String> {
@@ -134,6 +144,34 @@ fn append_history(root: &Path, envelope: &RefreshEnvelope) -> Result<(), String>
         .ok_or_else(|| format!("refresh history has no parent: {}", path.display()))?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("create refresh history {}: {error}", parent.display()))?;
+    if path.is_file() {
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read refresh history {}: {error}", path.display()))?;
+        for (index, line) in contents
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .enumerate()
+        {
+            let archived: RefreshEnvelope = serde_json::from_str(line).map_err(|error| {
+                format!(
+                    "parse refresh history {} line {}: {error}",
+                    path.display(),
+                    index + 1
+                )
+            })?;
+            if archived.batch_id != envelope.batch_id {
+                continue;
+            }
+            if archived == *envelope {
+                return Ok(());
+            }
+            return Err(format!(
+                "refresh history {} already contains a different terminal record for {}",
+                path.display(),
+                envelope.batch_id
+            ));
+        }
+    }
     let mut history = OpenOptions::new()
         .create(true)
         .append(true)
@@ -255,7 +293,7 @@ fn load_journal(root: &Path) -> Result<Option<RefreshJournal>, String> {
 
 fn write_active(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
     write_json(
-        &active_path(config_dir),
+        &active_path(config_dir, app_instance),
         &ActiveProject {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(root),
@@ -263,6 +301,21 @@ fn write_active(config_dir: &Path, root: &Path, app_instance: &str) -> Result<()
             updated_unix_ms: unix_ms(),
         },
     )
+}
+
+fn migrate_legacy_active(config_dir: &Path) -> Result<(), String> {
+    let legacy_path = legacy_active_path(config_dir);
+    let Some(active) = read_json::<ActiveProject>(&legacy_path)? else {
+        return Ok(());
+    };
+    if active.version != TRANSACTION_ENVELOPE_VERSION {
+        return Err(format!(
+            "unsupported active refresh journal version {}",
+            active.version
+        ));
+    }
+    write_json(&active_path(config_dir, &active.app_instance), &active)?;
+    remove_file(&legacy_path)
 }
 
 fn cancel_queue(root: &Path) -> Result<(), String> {
@@ -290,17 +343,24 @@ fn cancel_queue(root: &Path) -> Result<(), String> {
 }
 
 fn select_active_project(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
-    if let Some(active) = read_json::<ActiveProject>(&active_path(config_dir))? {
+    migrate_legacy_active(config_dir)?;
+    let owner_path = active_path(config_dir, app_instance);
+    if let Some(active) = read_json::<ActiveProject>(&owner_path)? {
         if active.version != TRANSACTION_ENVELOPE_VERSION {
             return Err(format!(
                 "unsupported active refresh journal version {}",
                 active.version
             ));
         }
+        if active.app_instance != app_instance {
+            return Err(format!("active refresh owner collision for {app_instance}"));
+        }
         if normalized(&active.project_root) != normalized(root) {
             // Opening a different root is a project-generation boundary.  A
-            // batch from the formerly active root must never be replayed when
-            // that project happens to be opened again later.
+            // batch from this same Electron instance's formerly active root
+            // must never be replayed when that project is opened again later.
+            // Other instance owners under the shared config directory remain
+            // independent and must not be cancelled.
             cancel_queue(&active.project_root)?;
         }
     }
@@ -591,11 +651,13 @@ pub fn acknowledge(
 
 pub fn discard(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
     cancel_queue(root)?;
-    if let Some(active) = read_json::<ActiveProject>(&active_path(config_dir))? {
+    migrate_legacy_active(config_dir)?;
+    let owner_path = active_path(config_dir, app_instance);
+    if let Some(active) = read_json::<ActiveProject>(&owner_path)? {
         if normalized(&active.project_root) == normalized(root)
             && active.app_instance == app_instance
         {
-            remove_file(&active_path(config_dir))?;
+            remove_file(&owner_path)?;
         }
     }
     Ok(())
@@ -607,6 +669,100 @@ mod tests {
 
     fn fingerprints(value: &str) -> BTreeMap<String, Option<String>> {
         BTreeMap::from([("/project/source/a.txt".to_string(), Some(value.to_string()))])
+    }
+
+    #[test]
+    fn shared_config_keeps_different_electron_owners_independent() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("shared-config");
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        let first_batch = enqueue(
+            &config,
+            &first,
+            "electron-a",
+            11,
+            vec!["/first/source/a.txt".into()],
+            fingerprints("first"),
+            vec!["native".into()],
+        )
+        .unwrap();
+        let second_batch = enqueue(
+            &config,
+            &second,
+            "electron-b",
+            22,
+            vec!["/second/source/b.txt".into()],
+            fingerprints("second"),
+            vec!["sidecar".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            pending(&config, &first, "electron-a", 11).unwrap()[0]
+                .batch_id
+                .as_str(),
+            first_batch.batch_id.as_str()
+        );
+        assert_eq!(
+            pending(&config, &second, "electron-b", 22).unwrap()[0]
+                .batch_id
+                .as_str(),
+            second_batch.batch_id.as_str()
+        );
+        assert!(journal_path(&first).is_file());
+        assert!(journal_path(&second).is_file());
+        assert_ne!(
+            active_path(&config, "electron-a"),
+            active_path(&config, "electron-b")
+        );
+
+        discard(&config, &second, "electron-b").unwrap();
+        assert_eq!(
+            pending(&config, &first, "electron-a", 11).unwrap()[0]
+                .batch_id
+                .as_str(),
+            first_batch.batch_id.as_str()
+        );
+    }
+
+    #[test]
+    fn terminal_history_append_is_strictly_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut terminal = TransactionEnvelope::pending(
+            &root,
+            3,
+            "terminal-once",
+            RefreshBatch {
+                operation: external_refresh_operation(),
+                paths: vec!["source/a.txt".into()],
+                fingerprints: fingerprints("archived"),
+                sources: vec!["native".into()],
+                committed_result: None,
+            },
+        );
+        terminal.transition(TransactionStatus::Completed, None);
+
+        append_history(&root, &terminal).unwrap();
+        append_history(&root, &terminal).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(history_path(&root))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+
+        let mut conflicting = terminal.clone();
+        conflicting.error_code = Some(1);
+        assert!(append_history(&root, &conflicting)
+            .unwrap_err()
+            .contains("different terminal record"));
     }
 
     #[test]
