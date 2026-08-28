@@ -458,7 +458,9 @@ pub fn enqueue(
             }
         }
         existing.payload.sources.sort();
-        existing.touch();
+        // Coalescing adds provenance to the same durable work item. It must
+        // not move that item behind newer product receipts in the unified
+        // dispatcher.
         let result = existing.clone();
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
@@ -541,12 +543,16 @@ pub fn checkpoint_sidecar_commit(
     }
     let mut journal = load_journal(root)?
         .ok_or_else(|| "refresh journal disappeared before checkpoint".to_string())?;
+    let dispatch_unix_ms = journal.batches[0].updated_unix_ms;
     journal.batches[0].payload.committed_result = Some(committed_result.clone());
     journal.batches[0].commit_product(
         TransactionStatus::SidecarCommitted,
         committed_result,
         committed_result_items(committed_result),
     )?;
+    // updated_unix_ms is also the cross-backend FIFO key. Product commit is a
+    // state transition for the existing head, not a newly enqueued receipt.
+    journal.batches[0].updated_unix_ms = dispatch_unix_ms;
     let checkpoint = journal.batches[0].clone();
     journal.updated_unix_ms = unix_ms();
     write_json(&journal_path(root), &journal)?;

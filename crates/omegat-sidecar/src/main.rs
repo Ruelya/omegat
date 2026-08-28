@@ -1451,6 +1451,11 @@ fn pending_transaction_envelopes(
         refresh_journal::pending(config_dir, &props.root, app_instance, generation)
             .map_err(refresh_journal_err)?
             .into_iter()
+            // The refresh journal owns its internal FIFO. Only its durable
+            // head may compete with the product-receipt head; exposing a tail
+            // here could let a newer row bypass an unacknowledged refresh
+            // after the head transitions to sidecar_committed.
+            .take(1)
             .map(|envelope| {
                 serde_json::to_value(envelope).map_err(|error| {
                     (
@@ -1475,12 +1480,7 @@ fn pending_transaction_envelopes(
                 left.get("batch_id")
                     .and_then(Value::as_str)
                     .unwrap_or("")
-                    .cmp(
-                        right
-                            .get("batch_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or(""),
-                    )
+                    .cmp(right.get("batch_id").and_then(Value::as_str).unwrap_or(""))
             })
             .then_with(|| {
                 left.pointer("/payload/operation")

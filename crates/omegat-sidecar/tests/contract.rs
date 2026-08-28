@@ -1214,8 +1214,8 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
 
     for (id, batch_id, operation) in [
         (14, refresh_one_id.as_str(), "project.external-refresh"),
-        (16, refresh_two_id.as_str(), "project.external-refresh"),
-        (18, "fair-save-receipt", "project.save"),
+        (18, refresh_two_id.as_str(), "project.external-refresh"),
+        (22, "fair-save-receipt", "project.save"),
     ] {
         let head = pending(&mut input, &mut output, id, &root);
         assert_eq!(head["result"]["envelopes"].as_array().unwrap().len(), 1);
@@ -1232,10 +1232,37 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
                 json!({ "operation": "project.save" })
             );
         }
-        let ack = acknowledge(&mut input, &mut output, id + 1, &root, batch_id, operation);
+        let ack_id = if operation == "project.external-refresh" {
+            let committed = rpc(
+                &mut input,
+                &mut output,
+                id + 1,
+                "project.external-refresh",
+                json!({
+                    "transaction_project_root": root,
+                    "transaction_generation": 31,
+                    "transaction_batch_id": batch_id,
+                    "app_instance": "fair-dispatch-electron",
+                }),
+            );
+            assert_eq!(committed["error"], Value::Null);
+            let committed_head = pending(&mut input, &mut output, id + 2, &root);
+            assert_eq!(
+                committed_head["result"]["envelopes"][0]["batch_id"], batch_id,
+                "sidecar commit moved the refresh FIFO head"
+            );
+            assert_eq!(
+                committed_head["result"]["envelopes"][0]["status"],
+                "sidecar_committed"
+            );
+            id + 3
+        } else {
+            id + 1
+        };
+        let ack = acknowledge(&mut input, &mut output, ack_id, &root, batch_id, operation);
         assert_eq!(ack["result"]["ack"]["acknowledged"], true);
     }
-    let drained = pending(&mut input, &mut output, 20, &root);
+    let drained = pending(&mut input, &mut output, 24, &root);
     assert_eq!(drained["result"]["envelopes"], json!([]));
     assert!(!root.join(".repositories/transactions/active.json").exists());
     assert!(!root
