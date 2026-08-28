@@ -444,6 +444,17 @@ async function assertSnapshots(expected, label) {
   }
 }
 
+async function assertSnapshotBytes(expected, label) {
+  for (const [path, snapshot] of Object.entries(expected)) {
+    const current = await snapshotFile(path);
+    assert.equal(current.exists, snapshot.exists, `${label}: ${path} existence`);
+    if (snapshot.exists) {
+      assert.equal(current.bytes, snapshot.bytes, `${label}: ${path} bytes`);
+      assert.equal(current.size, snapshot.size, `${label}: ${path} size`);
+    }
+  }
+}
+
 function parseNdjson(raw) {
   return raw.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
@@ -630,10 +641,13 @@ async function runWriterSigkillMatrix(display, workDir) {
           !await pathExists(prepared.activePath)
         );
         const committed = point === "after_atomic_publish";
-        await assertSnapshots(
-          committed ? committedSnapshot : baseline,
-          `${label} recovery replay`,
-        );
+        if (committed) {
+          await assertSnapshots(committedSnapshot, `${label} committed replay`);
+        } else {
+          // Snapshot restoration necessarily rewrites a rolled-back file; only
+          // committed receipt recovery must preserve its nanosecond mtime.
+          await assertSnapshotBytes(baseline, `${label} rollback`);
+        }
         await verifyWriterResult(
           launched.client,
           operation,
@@ -653,7 +667,8 @@ async function runWriterSigkillMatrix(display, workDir) {
           point,
           batchId: envelope.batch_id,
           killed,
-          bytesAndMtimeStable: true,
+          bytesStable: true,
+          committedMtimeStable: committed,
         });
       } finally {
         await terminatePackaged(launched);
