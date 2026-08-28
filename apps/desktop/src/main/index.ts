@@ -3,7 +3,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fsyncSync,
+  openSync,
   realpathSync,
   statSync,
   writeFileSync,
@@ -144,6 +147,57 @@ function publishTransactionEnvelope(
   });
 }
 
+function durableTestMarker(path: string, value: unknown) {
+  writeFileSync(path, `${JSON.stringify(value)}\n`, {
+    encoding: "utf8",
+    flag: "wx",
+  });
+  const marker = openSync(path, "r");
+  try {
+    fsyncSync(marker);
+  } finally {
+    closeSync(marker);
+  }
+  const parent = openSync(dirname(path), "r");
+  try {
+    fsyncSync(parent);
+  } finally {
+    closeSync(parent);
+  }
+}
+
+function killSidecarAfterSelectedTransactionHead(
+  envelopes: TransactionEnvelope[],
+): boolean {
+  const operation =
+    process.env.OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_FOR;
+  const markerPath =
+    process.env.OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_MARKER;
+  const envelope = envelopes[0];
+  const child = sidecar;
+  if (
+    !operation
+    || !markerPath
+    || !envelope
+    || envelope.payload.operation !== operation
+    || existsSync(markerPath)
+    || !child?.pid
+  ) {
+    return false;
+  }
+  // The pending query has selected the durable global FIFO head, but the
+  // renderer has not seen (and therefore cannot acknowledge) it yet. Kill only
+  // the stateful sidecar; its replacement must select this exact head again.
+  durableTestMarker(markerPath, {
+    batch_id: envelope.batch_id,
+    operation,
+    sidecar_pid: child.pid,
+    signal: "SIGKILL",
+  });
+  child.kill("SIGKILL");
+  return true;
+}
+
 async function publishPendingTransactionEnvelopes(
   client: SidecarRpcClient,
   root: string,
@@ -155,6 +209,7 @@ async function publishPendingTransactionEnvelopes(
     app_instance: appInstance,
   }) as { envelopes?: TransactionEnvelope[] };
   const envelopes = Array.isArray(result.envelopes) ? result.envelopes : [];
+  if (killSidecarAfterSelectedTransactionHead(envelopes)) return 0;
   envelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)
   );
@@ -506,6 +561,15 @@ app.whenReady().then(() => {
         process.env.OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR
           === envelope.payload.operation
       ) {
+        const trace = process.env.OMEGAT_TEST_TRANSACTION_ACK_TRACE;
+        if (trace) {
+          appendFileSync(trace, `${JSON.stringify({
+            batch_id: envelope.batch_id,
+            operation: envelope.payload.operation,
+            outcome,
+            result: "dropped",
+          })}\n`);
+        }
         throw new Error(
           `injected lost transaction acknowledgement for ${envelope.batch_id}`,
         );
@@ -518,6 +582,15 @@ app.whenReady().then(() => {
         outcome,
         app_instance: appInstance,
       });
+      const trace = process.env.OMEGAT_TEST_TRANSACTION_ACK_TRACE;
+      if (trace) {
+        appendFileSync(trace, `${JSON.stringify({
+          batch_id: envelope.batch_id,
+          operation: envelope.payload.operation,
+          outcome,
+          result: "acknowledged",
+        })}\n`);
+      }
       if (
         active
         && normalizedProjectRoot(active.root)

@@ -9,6 +9,7 @@ import {
   open,
   readFile,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -370,6 +371,34 @@ function parseNdjson(raw) {
   return raw.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
 
+async function waitForDroppedAck(path, batchId, operation) {
+  return waitFor(`dropped ${operation} acknowledgement`, async () => {
+    if (!await pathExists(path)) return undefined;
+    const rows = parseNdjson(await readFile(path, "utf8"));
+    return rows.find((row) =>
+      row.batch_id === batchId
+      && row.operation === operation
+      && row.result === "dropped"
+    );
+  });
+}
+
+function assertOrderedDispatch(trace, batchIds, label) {
+  const positions = batchIds.map((batchId) =>
+    trace.findIndex((row) => row.batch_id === batchId)
+  );
+  assert(
+    positions.every((position) => position >= 0),
+    `${label} omitted a receipt: ${JSON.stringify(trace)}`,
+  );
+  assert(
+    positions.every((position, index) =>
+      index === 0 || positions[index - 1] < position
+    ),
+    `${label} violated FIFO: ${JSON.stringify(trace)}`,
+  );
+}
+
 function assertCompleteEntryKey(key) {
   assert.deepEqual(
     Object.keys(key).sort(),
@@ -488,11 +517,17 @@ async function prepareProductProject(configDir, project, label) {
   };
 }
 
-async function prepareMixedReceiptProject(configDir, project, remote) {
+async function prepareMixedReceiptProject(
+  configDir,
+  project,
+  remote,
+  label,
+  { refreshBeforeTeam = false } = {},
+) {
   await mkdir(join(remote, "source"), { recursive: true });
   await writeFile(
     join(remote, "source", "shared.txt"),
-    "team receipt initial source",
+    `${label} initial source`,
     "utf8",
   );
   const session = new SidecarSession(configDir);
@@ -518,14 +553,27 @@ async function prepareMixedReceiptProject(configDir, project, remote) {
   await session.request("team.sync", {});
   await session.request("project.reload", {});
   const sourcePath = join(project, "source", "shared.txt");
-  const source = "team receipt committed source";
+  const source = `${label} committed source`;
   await writeFile(sourcePath, source, "utf8");
   await session.request("project.reload", {});
   const entries = await session.request("entry.list", {});
   assert.equal(entries.length, 1);
   assertCompleteEntryKey(entries[0].key);
 
-  const teamBatchId = "mixed-team-receipt";
+  let acknowledgedBeforeBatchId = null;
+  if (refreshBeforeTeam) {
+    const beforeTeam = await session.request("project.refresh.enqueue", {
+      root: project,
+      app_instance: `${label}-setup`,
+      generation: 91,
+      paths: [sourcePath],
+      fingerprints: { [sourcePath]: `${label}-before-team` },
+      sources: ["native"],
+    });
+    acknowledgedBeforeBatchId = beforeTeam.batch.batch_id;
+    await sleep(5);
+  }
+  const teamBatchId = `${label}-team-receipt`;
   const team = await session.request("team.commit", {
     which: "source",
     transaction_project_root: project,
@@ -536,19 +584,19 @@ async function prepareMixedReceiptProject(configDir, project, remote) {
   await sleep(5);
   const refreshOne = await session.request("project.refresh.enqueue", {
     root: project,
-    app_instance: "mixed-setup",
+    app_instance: `${label}-setup`,
     generation: 91,
     paths: [sourcePath],
-    fingerprints: { [sourcePath]: "mixed-refresh-one" },
+    fingerprints: { [sourcePath]: `${label}-refresh-one` },
     sources: ["native"],
   });
   await sleep(5);
   const refreshTwo = await session.request("project.refresh.enqueue", {
     root: project,
-    app_instance: "mixed-setup",
+    app_instance: `${label}-setup`,
     generation: 91,
     paths: [sourcePath],
-    fingerprints: { [sourcePath]: "mixed-refresh-two" },
+    fingerprints: { [sourcePath]: `${label}-refresh-two` },
     sources: ["sidecar"],
   });
   await session.close();
@@ -556,6 +604,7 @@ async function prepareMixedReceiptProject(configDir, project, remote) {
   return {
     source,
     key: entries[0].key,
+    acknowledgedBeforeBatchId,
     teamBatchId,
     refreshOneBatchId: refreshOne.batch.batch_id,
     refreshTwoBatchId: refreshTwo.batch.batch_id,
@@ -590,9 +639,11 @@ await Promise.all([access(executable), access(sidecar)]);
 const workDir = await mkdtemp(join(tmpdir(), "omegat-compaction-dual-e2e-"));
 const xvfb = await startXvfb();
 const results = [];
+const receiptAckMatrix = [];
 let launchedA;
 let launchedB;
 let mixedReceiptRecovery;
+let selectedHeadCrashRecovery;
 
 try {
   for (const point of ["after_archive_fsync", "after_queue_rename"]) {
@@ -766,22 +817,34 @@ try {
   const mixedProject = join(workDir, "mixed-receipt-project");
   const mixedRemote = join(workDir, "mixed-receipt-remote");
   const firstTracePath = join(workDir, "mixed-first-envelope-trace.ndjson");
+  const firstAckTracePath = join(workDir, "mixed-first-ack-trace.ndjson");
   const restartTracePath = join(workDir, "mixed-restart-envelope-trace.ndjson");
   const mixed = await prepareMixedReceiptProject(
     mixedConfig,
     mixedProject,
     mixedRemote,
+    "lost-refresh",
   );
   launchedA = await launchPackaged(xvfb.display, mixedConfig, mixedProject, {
     OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "project.external-refresh",
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: firstTracePath,
+    OMEGAT_TEST_TRANSACTION_ACK_TRACE: firstAckTracePath,
   });
   await waitFor("lost refresh acknowledgement checkpoint", async () => {
     if (await pathExists(mixed.activePath)) return undefined;
     const journal = JSON.parse(await readFile(mixed.refreshJournalPath, "utf8"));
     const head = journal.batches[0];
-    return head?.batch_id === mixed.refreshOneBatchId
-      && head.status === "sidecar_committed"
+    if (
+      head?.batch_id !== mixed.refreshOneBatchId
+      || head.status !== "sidecar_committed"
+      || !await pathExists(firstAckTracePath)
+    ) return undefined;
+    const acknowledgements = parseNdjson(await readFile(firstAckTracePath, "utf8"));
+    return acknowledgements.some((row) =>
+        row.batch_id === mixed.refreshOneBatchId
+        && row.operation === "project.external-refresh"
+        && row.result === "dropped"
+      )
       ? journal
       : undefined;
   });
@@ -909,6 +972,375 @@ try {
     alreadyAcknowledgedTeamWasNotReplayed: true,
     completeEntryKey: mixed.key,
   };
+  receiptAckMatrix.push({
+    receiptType: "refresh",
+    lostAckBatchId: mixed.refreshOneBatchId,
+    notReplayed: [mixed.teamBatchId],
+    restartedDispatchOrder: [
+      mixed.refreshOneBatchId,
+      mixed.refreshTwoBatchId,
+      mixed.saveBatchId,
+    ],
+    trailingReceiptsDrained: true,
+  });
+  await terminatePackaged(launchedA);
+  launchedA = undefined;
+
+  const teamConfig = join(workDir, "lost-team-config");
+  const teamProject = join(workDir, "lost-team-project");
+  const teamRemote = join(workDir, "lost-team-remote");
+  const teamFirstTracePath = join(workDir, "lost-team-first-envelope-trace.ndjson");
+  const teamFirstAckTracePath = join(workDir, "lost-team-first-ack-trace.ndjson");
+  const teamRestartTracePath = join(workDir, "lost-team-restart-envelope-trace.ndjson");
+  const lostTeam = await prepareMixedReceiptProject(
+    teamConfig,
+    teamProject,
+    teamRemote,
+    "lost-team",
+    { refreshBeforeTeam: true },
+  );
+  assert(lostTeam.acknowledgedBeforeBatchId);
+  const teamRemotePath = join(teamRemote, "source", "shared.txt");
+  const teamRemoteBefore = await readFile(teamRemotePath, "utf8");
+  const teamRemoteMtimeBefore = (await stat(teamRemotePath, { bigint: true })).mtimeNs;
+  launchedA = await launchPackaged(xvfb.display, teamConfig, teamProject, {
+    OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "commit-source",
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: teamFirstTracePath,
+    OMEGAT_TEST_TRANSACTION_ACK_TRACE: teamFirstAckTracePath,
+  });
+  await waitForDroppedAck(
+    teamFirstAckTracePath,
+    lostTeam.teamBatchId,
+    "commit-source",
+  );
+  const lostTeamActive = JSON.parse(await readFile(lostTeam.activePath, "utf8"));
+  assert.equal(lostTeamActive.batch_id, lostTeam.teamBatchId);
+  assert.equal(lostTeamActive.status, "sidecar_committed");
+  const teamQueueBeforeKill = JSON.parse(
+    await readFile(lostTeam.refreshJournalPath, "utf8"),
+  );
+  assert.deepEqual(
+    teamQueueBeforeKill.batches.map((batch) => [batch.batch_id, batch.status]),
+    [
+      [lostTeam.refreshOneBatchId, "pending"],
+      [lostTeam.refreshTwoBatchId, "pending"],
+    ],
+  );
+  await killPackaged(launchedA);
+  launchedA = undefined;
+
+  launchedA = await launchPackaged(xvfb.display, teamConfig, teamProject, {
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: teamRestartTracePath,
+  });
+  await waitFor("team lost-ack FIFO drained after restart", async () =>
+    !await pathExists(lostTeam.activePath)
+      && !await pathExists(lostTeam.refreshJournalPath)
+      ? true
+      : undefined
+  );
+  const recoveredTeam = await workspaceState(launchedA.client);
+  assert.equal(recoveredTeam.project, teamProject);
+  assert.equal(recoveredTeam.source, lostTeam.source);
+  assert.equal(recoveredTeam.activeSurfaces, 1);
+  assert.deepEqual(JSON.parse(recoveredTeam.key), lostTeam.key);
+  const teamRestartTrace = parseNdjson(
+    await readFile(teamRestartTracePath, "utf8"),
+  );
+  assert.equal(
+    teamRestartTrace.some((row) =>
+      row.batch_id === lostTeam.acknowledgedBeforeBatchId
+    ),
+    false,
+    "restart replayed the refresh acknowledged before the lost team ack",
+  );
+  assertOrderedDispatch(
+    teamRestartTrace,
+    [
+      lostTeam.teamBatchId,
+      lostTeam.refreshOneBatchId,
+      lostTeam.refreshTwoBatchId,
+    ],
+    "lost team acknowledgement restart",
+  );
+  const lostTeamHistory = parseNdjson(
+    await readFile(lostTeam.teamHistoryPath, "utf8"),
+  );
+  assert.equal(
+    lostTeamHistory.filter((row) =>
+      row.batch_id === lostTeam.teamBatchId
+      && row.status === "completed"
+      && row.payload.phase === "renderer-acknowledged"
+    ).length,
+    1,
+    "lost team acknowledgement produced more than one terminal ack",
+  );
+  const lostTeamRefreshHistory = parseNdjson(
+    await readFile(lostTeam.refreshHistoryPath, "utf8"),
+  );
+  for (const batchId of [
+    lostTeam.acknowledgedBeforeBatchId,
+    lostTeam.refreshOneBatchId,
+    lostTeam.refreshTwoBatchId,
+  ]) {
+    assert.equal(
+      lostTeamRefreshHistory.filter((row) =>
+        row.batch_id === batchId && row.status === "completed"
+      ).length,
+      1,
+      `team lost-ack scenario duplicated refresh terminal ${batchId}`,
+    );
+  }
+  assert.equal(await readFile(teamRemotePath, "utf8"), teamRemoteBefore);
+  assert.equal(
+    (await stat(teamRemotePath, { bigint: true })).mtimeNs,
+    teamRemoteMtimeBefore,
+    "recovering the selected team receipt replayed the remote write",
+  );
+  receiptAckMatrix.push({
+    receiptType: "team",
+    lostAckBatchId: lostTeam.teamBatchId,
+    notReplayed: [lostTeam.acknowledgedBeforeBatchId],
+    restartedDispatchOrder: [
+      lostTeam.teamBatchId,
+      lostTeam.refreshOneBatchId,
+      lostTeam.refreshTwoBatchId,
+    ],
+    trailingReceiptsDrained: true,
+  });
+  await terminatePackaged(launchedA);
+  launchedA = undefined;
+
+  const saveConfig = join(workDir, "lost-save-config");
+  const saveProject = join(workDir, "lost-save-project");
+  const saveRemote = join(workDir, "lost-save-remote");
+  const saveFirstTracePath = join(workDir, "lost-save-first-envelope-trace.ndjson");
+  const saveFirstAckTracePath = join(workDir, "lost-save-first-ack-trace.ndjson");
+  const saveRestartTracePath = join(workDir, "lost-save-restart-envelope-trace.ndjson");
+  const lostSave = await prepareMixedReceiptProject(
+    saveConfig,
+    saveProject,
+    saveRemote,
+    "lost-save",
+  );
+  launchedA = await launchPackaged(xvfb.display, saveConfig, saveProject, {
+    OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "project.save",
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: saveFirstTracePath,
+    OMEGAT_TEST_TRANSACTION_ACK_TRACE: saveFirstAckTracePath,
+  });
+  await waitFor("pre-save receipts drained", async () =>
+    !await pathExists(lostSave.activePath)
+      && !await pathExists(lostSave.refreshJournalPath)
+      ? true
+      : undefined
+  );
+  const savedWithLostAck = await launchedA.client.evaluate(
+    'window.omegat.rpc("project.save", {})',
+    true,
+  );
+  assert.equal(savedWithLostAck.receipt.payload.operation, "project.save");
+  lostSave.saveBatchId = savedWithLostAck.receipt.batch_id;
+  await waitForDroppedAck(
+    saveFirstAckTracePath,
+    lostSave.saveBatchId,
+    "project.save",
+  );
+  const lostSaveActive = JSON.parse(await readFile(lostSave.activePath, "utf8"));
+  assert.equal(lostSaveActive.batch_id, lostSave.saveBatchId);
+  assert.equal(lostSaveActive.status, "sidecar_committed");
+
+  await mkdir(join(saveProject, "glossary"), { recursive: true });
+  await writeFile(
+    join(saveProject, "glossary", "tail.txt"),
+    "tail source\ttail target\n",
+    "utf8",
+  );
+  await waitFor("refresh tail behind lost save ack", async () => {
+    if (!await pathExists(lostSave.refreshJournalPath)) return undefined;
+    const journal = JSON.parse(await readFile(lostSave.refreshJournalPath, "utf8"));
+    return journal.batches.some((batch) =>
+        batch.status === "pending"
+        && batch.payload.paths.some((path) => path.includes("glossary"))
+      )
+      ? journal
+      : undefined;
+  });
+  await sleep(300);
+  const saveQueueBeforeKill = JSON.parse(
+    await readFile(lostSave.refreshJournalPath, "utf8"),
+  );
+  const saveTailBatchIds = saveQueueBeforeKill.batches
+    .filter((batch) => ["pending", "sidecar_committed"].includes(batch.status))
+    .map((batch) => batch.batch_id);
+  assert(saveTailBatchIds.length > 0);
+  await killPackaged(launchedA);
+  launchedA = undefined;
+
+  launchedA = await launchPackaged(xvfb.display, saveConfig, saveProject, {
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: saveRestartTracePath,
+  });
+  await waitFor("save lost-ack FIFO drained after restart", async () =>
+    !await pathExists(lostSave.activePath)
+      && !await pathExists(lostSave.refreshJournalPath)
+      ? true
+      : undefined
+  );
+  const recoveredSave = await workspaceState(launchedA.client);
+  assert.equal(recoveredSave.project, saveProject);
+  assert.equal(recoveredSave.source, lostSave.source);
+  assert.equal(recoveredSave.activeSurfaces, 1);
+  assert.deepEqual(JSON.parse(recoveredSave.key), lostSave.key);
+  const saveRestartTrace = parseNdjson(
+    await readFile(saveRestartTracePath, "utf8"),
+  );
+  for (const batchId of [
+    lostSave.teamBatchId,
+    lostSave.refreshOneBatchId,
+    lostSave.refreshTwoBatchId,
+  ]) {
+    assert.equal(
+      saveRestartTrace.some((row) => row.batch_id === batchId),
+      false,
+      `save restart replayed already acknowledged receipt ${batchId}`,
+    );
+  }
+  assertOrderedDispatch(
+    saveRestartTrace,
+    [lostSave.saveBatchId, ...saveTailBatchIds],
+    "lost save acknowledgement restart",
+  );
+  const lostSaveTeamHistory = parseNdjson(
+    await readFile(lostSave.teamHistoryPath, "utf8"),
+  );
+  assert.equal(
+    lostSaveTeamHistory.filter((row) =>
+      row.batch_id === lostSave.saveBatchId
+      && row.status === "completed"
+      && row.payload.phase === "renderer-acknowledged"
+    ).length,
+    1,
+    "lost save acknowledgement produced more than one terminal ack",
+  );
+  const lostSaveRefreshHistory = parseNdjson(
+    await readFile(lostSave.refreshHistoryPath, "utf8"),
+  );
+  for (const batchId of saveTailBatchIds) {
+    assert.equal(
+      lostSaveRefreshHistory.filter((row) =>
+        row.batch_id === batchId && row.status === "completed"
+      ).length,
+      1,
+      `save lost-ack scenario duplicated refresh terminal ${batchId}`,
+    );
+  }
+  receiptAckMatrix.push({
+    receiptType: "save",
+    lostAckBatchId: lostSave.saveBatchId,
+    notReplayed: [
+      lostSave.teamBatchId,
+      lostSave.refreshOneBatchId,
+      lostSave.refreshTwoBatchId,
+    ],
+    restartedDispatchOrder: [lostSave.saveBatchId, ...saveTailBatchIds],
+    trailingReceiptsDrained: true,
+  });
+  await terminatePackaged(launchedA);
+  launchedA = undefined;
+
+  const headConfig = join(workDir, "selected-head-crash-config");
+  const headProject = join(workDir, "selected-head-crash-project");
+  const headRemote = join(workDir, "selected-head-crash-remote");
+  const headMarkerPath = join(workDir, "selected-head-sidecar-kill.json");
+  const headTracePath = join(workDir, "selected-head-envelope-trace.ndjson");
+  const headAckTracePath = join(workDir, "selected-head-ack-trace.ndjson");
+  const selectedHead = await prepareMixedReceiptProject(
+    headConfig,
+    headProject,
+    headRemote,
+    "selected-head",
+  );
+  const headRemotePath = join(headRemote, "source", "shared.txt");
+  const headRemoteBefore = await readFile(headRemotePath, "utf8");
+  const headRemoteMtimeBefore = (await stat(headRemotePath, { bigint: true })).mtimeNs;
+  launchedA = await launchPackaged(xvfb.display, headConfig, headProject, {
+    OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_FOR: "commit-source",
+    OMEGAT_TEST_KILL_SIDECAR_AFTER_TRANSACTION_HEAD_MARKER: headMarkerPath,
+    OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: headTracePath,
+    OMEGAT_TEST_TRANSACTION_ACK_TRACE: headAckTracePath,
+  });
+  const selectedMarker = await waitFor("selected-head sidecar SIGKILL", async () =>
+    await pathExists(headMarkerPath)
+      ? JSON.parse(await readFile(headMarkerPath, "utf8"))
+      : undefined
+  );
+  assert.equal(selectedMarker.batch_id, selectedHead.teamBatchId);
+  assert.equal(selectedMarker.operation, "commit-source");
+  assert.equal(selectedMarker.signal, "SIGKILL");
+  await waitFor("selected-head recovery FIFO drained", async () =>
+    !await pathExists(selectedHead.activePath)
+      && !await pathExists(selectedHead.refreshJournalPath)
+      ? true
+      : undefined
+  );
+  const replacementSidecar = await waitFor(
+    "replacement sidecar after selected-head kill",
+    async () => {
+      const processes = await descendants(launchedA.application.pid);
+      return processes.find(({ command, pid }) =>
+        command.includes("omegat-sidecar") && pid !== selectedMarker.sidecar_pid
+      );
+    },
+  );
+  assert.notEqual(replacementSidecar.pid, selectedMarker.sidecar_pid);
+  const headTrace = parseNdjson(await readFile(headTracePath, "utf8"));
+  assert.equal(
+    headTrace[0]?.batch_id,
+    selectedHead.teamBatchId,
+    "replacement sidecar skipped the head selected before SIGKILL",
+  );
+  assertOrderedDispatch(
+    headTrace,
+    [
+      selectedHead.teamBatchId,
+      selectedHead.refreshOneBatchId,
+      selectedHead.refreshTwoBatchId,
+    ],
+    "selected-head sidecar recovery",
+  );
+  const recoveredHead = await workspaceState(launchedA.client);
+  assert.equal(recoveredHead.project, headProject);
+  assert.equal(recoveredHead.source, selectedHead.source);
+  assert.equal(recoveredHead.activeSurfaces, 1);
+  assert.deepEqual(JSON.parse(recoveredHead.key), selectedHead.key);
+  assert.equal(await readFile(headRemotePath, "utf8"), headRemoteBefore);
+  assert.equal(
+    (await stat(headRemotePath, { bigint: true })).mtimeNs,
+    headRemoteMtimeBefore,
+    "sidecar head recovery replayed the selected team write",
+  );
+  const selectedHeadHistory = parseNdjson(
+    await readFile(selectedHead.teamHistoryPath, "utf8"),
+  );
+  assert.equal(
+    selectedHeadHistory.filter((row) =>
+      row.batch_id === selectedHead.teamBatchId
+      && row.status === "completed"
+      && row.payload.phase === "renderer-acknowledged"
+    ).length,
+    1,
+    "selected-head recovery duplicated the terminal team receipt",
+  );
+  selectedHeadCrashRecovery = {
+    selectedBatchId: selectedHead.teamBatchId,
+    killedSidecarPid: selectedMarker.sidecar_pid,
+    replacementSidecarPid: replacementSidecar.pid,
+    recoveredDispatchOrder: [
+      selectedHead.teamBatchId,
+      selectedHead.refreshOneBatchId,
+      selectedHead.refreshTwoBatchId,
+    ],
+    productWriteReplayed: false,
+    completeEntryKey: selectedHead.key,
+  };
   await terminatePackaged(launchedA);
   launchedA = undefined;
 
@@ -919,6 +1351,8 @@ try {
     sharedConfigDirectory: true,
     scenarios: results,
     mixedReceiptRecovery,
+    receiptAckMatrix,
+    selectedHeadCrashRecovery,
   }));
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());

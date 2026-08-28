@@ -1274,6 +1274,269 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
 }
 
 #[test]
+fn selected_global_head_survives_sidecar_kill_before_renderer_ack() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        (child, input, output)
+    }
+
+    fn pending(
+        input: &mut impl Write,
+        output: &mut impl BufRead,
+        id: i64,
+        root: &std::path::Path,
+        app_instance: &str,
+        generation: u64,
+    ) -> Value {
+        rpc(
+            input,
+            output,
+            id,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": app_instance,
+                "generation": generation,
+            }),
+        )
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("project");
+    let remote = temp.path().join("remote");
+    std::fs::create_dir_all(remote.join("source")).unwrap();
+    std::fs::write(remote.join("source/shared.txt"), "remote initial").unwrap();
+
+    let (mut first, mut first_in, mut first_out) = spawn_sidecar(&config);
+    let created = rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    assert_eq!(created["error"], Value::Null);
+    let mapped = rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [{
+                    "local": "/source/shared.txt",
+                    "repository": "/source/shared.txt",
+                    "includes": [],
+                    "excludes": [],
+                }],
+            }],
+        }),
+    );
+    assert_eq!(mapped["result"]["ok"], true);
+    let synced = rpc(&mut first_in, &mut first_out, 3, "team.sync", json!({}));
+    assert_eq!(synced["result"]["action"], "sync");
+    std::fs::write(root.join("source/shared.txt"), "committed exactly once").unwrap();
+    let committed = rpc(
+        &mut first_in,
+        &mut first_out,
+        4,
+        "team.commit",
+        json!({
+            "which": "source",
+            "transaction_project_root": root,
+            "transaction_generation": 41,
+            "transaction_batch_id": "selected-team-head",
+        }),
+    );
+    assert_eq!(committed["error"], Value::Null);
+    assert_eq!(
+        committed["result"]["receipt"]["payload"]["operation"],
+        "commit-source"
+    );
+    std::thread::sleep(Duration::from_millis(5));
+    let refresh = rpc(
+        &mut first_in,
+        &mut first_out,
+        5,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "electron-before-head-kill",
+            "generation": 41,
+            "paths": [root.join("source/shared.txt")],
+            "fingerprints": { "source/shared.txt": "tail-after-selected-head" },
+            "sources": ["native"],
+        }),
+    );
+    let refresh_id = refresh["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let remote_after_commit = file_snapshot(&remote);
+
+    let selected = pending(
+        &mut first_in,
+        &mut first_out,
+        6,
+        &root,
+        "electron-before-head-kill",
+        41,
+    );
+    assert_eq!(selected["result"]["envelopes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        selected["result"]["envelopes"][0]["batch_id"],
+        "selected-team-head"
+    );
+    assert_eq!(
+        selected["result"]["envelopes"][0]["status"],
+        "sidecar_committed"
+    );
+    // This is the main-process boundary: the global head response has been
+    // received, but no renderer acknowledgement is sent before SIGKILL.
+    first.kill().unwrap();
+    first.wait().unwrap();
+
+    let (mut second, mut second_in, mut second_out) = spawn_sidecar(&config);
+    let opened = rpc(
+        &mut second_in,
+        &mut second_out,
+        7,
+        "project.open",
+        json!({ "root": root }),
+    );
+    assert_eq!(opened["error"], Value::Null);
+    let recovered = pending(
+        &mut second_in,
+        &mut second_out,
+        8,
+        &root,
+        "electron-after-head-kill",
+        42,
+    );
+    assert_eq!(
+        recovered["result"]["envelopes"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        recovered["result"]["envelopes"][0]["batch_id"],
+        "selected-team-head"
+    );
+    assert_eq!(recovered["result"]["envelopes"][0]["generation"], 42);
+    assert_eq!(file_snapshot(&remote), remote_after_commit);
+
+    let still_head = pending(
+        &mut second_in,
+        &mut second_out,
+        9,
+        &root,
+        "electron-after-head-kill",
+        42,
+    );
+    assert_eq!(
+        still_head["result"]["envelopes"][0]["batch_id"],
+        "selected-team-head"
+    );
+    let refresh_journal: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/external-refresh.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(refresh_journal["batches"][0]["batch_id"], refresh_id);
+    assert_eq!(refresh_journal["batches"][0]["status"], "pending");
+    assert_eq!(refresh_journal["batches"][0].get("commit"), None);
+
+    let team_ack = rpc(
+        &mut second_in,
+        &mut second_out,
+        10,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-head-kill",
+            "generation": 42,
+            "batch_id": "selected-team-head",
+            "operation": "commit-source",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(team_ack["result"]["ack"]["acknowledged"], true);
+    let tail = pending(
+        &mut second_in,
+        &mut second_out,
+        11,
+        &root,
+        "electron-after-head-kill",
+        42,
+    );
+    assert_eq!(tail["result"]["envelopes"][0]["batch_id"], refresh_id);
+    assert_eq!(tail["result"]["envelopes"][0]["status"], "pending");
+    assert_eq!(file_snapshot(&remote), remote_after_commit);
+    let tail_ack = rpc(
+        &mut second_in,
+        &mut second_out,
+        12,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-head-kill",
+            "generation": 42,
+            "batch_id": refresh_id,
+            "operation": "project.external-refresh",
+            "outcome": "coalesced",
+        }),
+    );
+    assert_eq!(tail_ack["result"]["ack"]["acknowledged"], true);
+    let drained = pending(
+        &mut second_in,
+        &mut second_out,
+        13,
+        &root,
+        "electron-after-head-kill",
+        42,
+    );
+    assert_eq!(drained["result"]["envelopes"], json!([]));
+
+    let history =
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson")).unwrap();
+    let renderer_acknowledged = history
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| {
+            row["batch_id"] == "selected-team-head"
+                && row["status"] == "completed"
+                && row["payload"]["phase"] == "renderer-acknowledged"
+        })
+        .count();
+    assert_eq!(renderer_acknowledged, 1);
+    assert_eq!(file_snapshot(&remote), remote_after_commit);
+
+    let _ = second.kill();
+    second.wait().unwrap();
+}
+
+#[test]
 fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())
