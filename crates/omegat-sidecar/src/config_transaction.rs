@@ -1306,7 +1306,7 @@ fn insert_unarchived(
     envelope: ConfigTransactionEnvelope,
 ) -> Result<(), String> {
     if let Some(existing) = find_archived_terminal(config_dir, manifest, &envelope.batch_id)? {
-        if existing != &envelope {
+        if existing != envelope {
             return Err(terminal_disagreement(&envelope.batch_id));
         }
         return Ok(());
