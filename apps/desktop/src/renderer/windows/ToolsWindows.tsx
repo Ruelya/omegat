@@ -805,7 +805,13 @@ export function TeamWindow() {
             </button>
           </>
         )}
-        <button type="button" onClick={() => useApp.getState().openWindow("mapping")}>{t("accessRoot")}</button>
+        <button
+          type="button"
+          data-action="open-repository-mapping"
+          onClick={() => useApp.getState().openWindow("mapping")}
+        >
+          {t("accessRoot")}
+        </button>
         <button type="button" onClick={() => useApp.getState().openWindow("team", false)}>{t("cancel")}</button>
       </div>
     </Modal>
@@ -841,21 +847,21 @@ export function MappingWindow() {
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={i}>
+              <tr key={i} data-repository-row={i}>
                 <td>
-                  <select value={r.repo_type} onChange={(e) => update(i, { repo_type: e.target.value })}>
+                  <select data-setting="repo_type" value={r.repo_type} onChange={(e) => update(i, { repo_type: e.target.value })}>
                     <option value="git">git</option>
                     <option value="svn">svn</option>
                     <option value="http">http</option>
                     <option value="file">file</option>
                   </select>
                 </td>
-                <td><input value={r.url} onChange={(e) => update(i, { url: e.target.value })} /></td>
-                <td><input value={r.branch} onChange={(e) => update(i, { branch: e.target.value })} /></td>
-                <td><input value={r.local} onChange={(e) => update(i, { local: e.target.value })} /></td>
-                <td><input value={r.repository} onChange={(e) => update(i, { repository: e.target.value })} /></td>
-                <td><input value={r.includes} onChange={(e) => update(i, { includes: e.target.value })} /></td>
-                <td><input value={r.excludes} onChange={(e) => update(i, { excludes: e.target.value })} /></td>
+                <td><input data-setting="url" value={r.url} onChange={(e) => update(i, { url: e.target.value })} /></td>
+                <td><input data-setting="branch" value={r.branch} onChange={(e) => update(i, { branch: e.target.value })} /></td>
+                <td><input data-setting="local" value={r.local} onChange={(e) => update(i, { local: e.target.value })} /></td>
+                <td><input data-setting="repository" value={r.repository} onChange={(e) => update(i, { repository: e.target.value })} /></td>
+                <td><input data-setting="includes" value={r.includes} onChange={(e) => update(i, { includes: e.target.value })} /></td>
+                <td><input data-setting="excludes" value={r.excludes} onChange={(e) => update(i, { excludes: e.target.value })} /></td>
               </tr>
             ))}
           </tbody>
@@ -884,6 +890,7 @@ export function MappingWindow() {
           <button
             type="button"
             className="primary"
+            data-action="save-repositories"
             onClick={async () => {
               const repositories = repositoriesFromEditorRows(rows);
               const result = (await callerManagedProductRpc("team.mapping", {
@@ -919,6 +926,7 @@ export function FiltersWindow() {
         <div key={f.id} className="hit">
           <button
             type="button"
+            data-filter-open={f.id}
             onClick={async () => {
               const o = (await window.omegat?.rpc("filters.options", { id: f.id })) as FilterOptionsDto;
               setOpts({
@@ -942,6 +950,8 @@ export function FiltersWindow() {
             <label key={k}>
               {k}
               <input
+                data-filter-id={opts.id}
+                data-filter-option={k}
                 value={v}
                 onChange={(e) => {
                   setOpts({
@@ -955,6 +965,7 @@ export function FiltersWindow() {
           <button
             type="button"
             className="primary"
+            data-action="save-filter-options"
             onClick={async () => {
               const prefs = useApp.getState().prefs;
               if (!prefs) return;
@@ -1048,7 +1059,7 @@ export function SegmentationWindow() {
       <div className="form">
         <label>
           SRX path
-          <input value={path} onChange={(e) => setPath(e.target.value)} />
+          <input data-setting="srx_path" value={path} onChange={(e) => setPath(e.target.value)} />
         </label>
         <table className="stats">
           <thead>
@@ -1057,7 +1068,7 @@ export function SegmentationWindow() {
           <tbody>
             {rules.map((r, i) => (
               <tr key={i}>
-                <td><input value={r.lang} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, lang: e.target.value } : x))} /></td>
+                <td><input data-setting="srx_lang" value={r.lang} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, lang: e.target.value } : x))} /></td>
                 <td><input type="checkbox" checked={r.brk} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, brk: e.target.checked } : x))} /></td>
                 <td><input value={r.before} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, before: e.target.value } : x))} /></td>
                 <td><input value={r.after} onChange={(e) => setRules(rules.map((x, j) => j === i ? { ...x, after: e.target.value } : x))} /></td>
@@ -1069,6 +1080,7 @@ export function SegmentationWindow() {
         <button
           type="button"
           className="primary"
+          data-action="save-segmentation"
           onClick={async () => {
             await patch({ srx_path: path, srx_xml: rulesToSrx(rules) });
             if (useApp.getState().props?.root) {
@@ -1120,8 +1132,8 @@ export function ProjectEditWindow() {
   return (
     <Modal id="project-edit" title={t("properties")} wide>
       <div className="form">
-        <label>{t("sourceLang")}<input value={draft.source_lang} onChange={(e) => setText("source_lang", e.target.value)} /></label>
-        <label>{t("targetLang")}<input value={draft.target_lang} onChange={(e) => setText("target_lang", e.target.value)} /></label>
+        <label>{t("sourceLang")}<input data-setting="source_lang" value={draft.source_lang} onChange={(e) => setText("source_lang", e.target.value)} /></label>
+        <label>{t("targetLang")}<input data-setting="target_lang" value={draft.target_lang} onChange={(e) => setText("target_lang", e.target.value)} /></label>
         <label>Source tokenizer<input value={draft.source_tok} onChange={(e) => setText("source_tok", e.target.value)} /></label>
         <label>Target tokenizer<input value={draft.target_tok} onChange={(e) => setText("target_tok", e.target.value)} /></label>
         <label>Source folder<input value={draft.source_dir} onChange={(e) => setText("source_dir", e.target.value)} /></label>
@@ -1141,6 +1153,7 @@ export function ProjectEditWindow() {
           <button
             type="button"
             className="primary"
+            data-action="save-project-properties"
             onClick={async () => {
               if (props?.root) {
                 const result = (await callerManagedProductRpc("project.update", {
@@ -1321,8 +1334,16 @@ export function ScriptsWindow() {
         type="button"
         className="primary"
         onClick={async () => {
-          const r = (await window.omegat?.rpc("script.run", { source: src })) as { result?: string };
+          const r = (await callerManagedProductRpc("script.run", {
+            source: src,
+            index: useApp.getState().index,
+          })) as {
+            result?: string;
+            receipt?: TransactionEnvelope | null;
+          };
           setOut(String(r?.result ?? ""));
+          await useApp.getState().refreshEntriesAfterExternalChange();
+          await acknowledgeProductReceipt(r.receipt);
         }}
       >
         {t("run")}

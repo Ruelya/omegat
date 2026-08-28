@@ -503,4 +503,76 @@ mod tests {
         assert!(history.contains(&batch.batch_id));
         assert!(history.contains(&REQUEST_CANCELLED_CODE.to_string()));
     }
+
+    #[test]
+    fn interrupted_legacy_migration_is_idempotent_across_project_and_config_scopes() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let root = temp.path().join("project");
+        let props = project(&root);
+        let payload = TransactionRendererPayload {
+            operation: "project.external-refresh".into(),
+            paths: vec!["source/a.txt".into()],
+            fingerprints: fingerprints("legacy"),
+            sources: vec!["native".into()],
+            committed_result: None,
+        };
+        let pending = TransactionEnvelope::pending(&root, 7, "legacy-pending", payload.clone());
+        let mut completed = TransactionEnvelope::pending(&root, 6, "legacy-completed", payload);
+        completed.transition(TransactionStatus::Completed, None);
+        let journal = LegacyRefreshJournal {
+            version: LEGACY_QUEUE_VERSION,
+            project_root: root.clone(),
+            app_instance: "legacy-electron".into(),
+            generation: 7,
+            batches: vec![pending.clone()],
+            updated_unix_ms: 1,
+        };
+        write_json(&legacy_journal_path(&root), &journal).unwrap();
+        std::fs::write(
+            legacy_history_path(&root),
+            format!("{}\n", serde_json::to_string(&completed).unwrap()),
+        )
+        .unwrap();
+        let active_owner = ActiveProject {
+            version: TRANSACTION_ENVELOPE_VERSION,
+            project_root: root.clone(),
+            app_instance: "legacy-electron".into(),
+            generation: 7,
+            updated_unix_ms: 2,
+        };
+        write_json(&legacy_active_path(&config), &active_owner).unwrap();
+
+        // Simulate process death after each destination became durable but
+        // before its legacy source was unlinked.
+        omegat_team::migrate_refresh_transactions(&props, vec![pending], vec![completed]).unwrap();
+        write_json(&active_path(&config, "legacy-electron"), &active_owner).unwrap();
+        assert!(legacy_journal_path(&root).is_file());
+        assert!(legacy_history_path(&root).is_file());
+        assert!(legacy_active_path(&config).is_file());
+
+        migrate_legacy_journal(&root).unwrap();
+        migrate_legacy_active(&config).unwrap();
+        assert!(!legacy_journal_path(&root).exists());
+        assert!(!legacy_history_path(&root).exists());
+        assert!(!legacy_active_path(&config).exists());
+        assert!(active_path(&config, "legacy-electron").is_file());
+
+        let active: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(transaction_dir(&root).join("active.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(active["batches"].as_array().unwrap().len(), 1);
+        assert_eq!(active["batches"][0]["batch_id"], "legacy-pending");
+        let history =
+            std::fs::read_to_string(transaction_dir(&root).join("history.ndjson")).unwrap();
+        assert_eq!(
+            history
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|row| row["batch_id"] == "legacy-completed")
+                .count(),
+            1
+        );
+    }
 }

@@ -48,6 +48,9 @@ pub struct ProjectSession {
 pub struct ProjectSessionCheckpoint {
     entries: Vec<Entry>,
     tmx: ProjectTmx,
+    external_tm: Vec<(TmxEntry, String)>,
+    glossary: Vec<GlossaryEntry>,
+    spell: SpellChecker,
     last_index: usize,
     dirty: bool,
 }
@@ -460,6 +463,9 @@ impl ProjectSession {
         ProjectSessionCheckpoint {
             entries: self.entries.clone(),
             tmx: self.tmx.clone(),
+            external_tm: self.external_tm.clone(),
+            glossary: self.glossary.clone(),
+            spell: self.spell.clone(),
             last_index: self.last_index,
             dirty: self.dirty,
         }
@@ -468,6 +474,9 @@ impl ProjectSession {
     pub fn restore_checkpoint(&mut self, checkpoint: ProjectSessionCheckpoint) {
         self.entries = checkpoint.entries;
         self.tmx = checkpoint.tmx;
+        self.external_tm = checkpoint.external_tm;
+        self.glossary = checkpoint.glossary;
+        self.spell = checkpoint.spell;
         self.last_index = checkpoint.last_index;
         self.dirty = checkpoint.dirty;
     }

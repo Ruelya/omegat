@@ -31,7 +31,12 @@ export function PrefsWindow() {
         <div className="prefs-grid">
           <nav className="list">
             {PREF_PAGES.map((p) => (
-              <div key={p.id} className={`row ${page === p.id ? "active" : ""}`} onClick={() => setPage(p.id)}>
+              <div
+                key={p.id}
+                className={`row ${page === p.id ? "active" : ""}`}
+                data-pref-page={p.id}
+                onClick={() => setPage(p.id)}
+              >
                 {t(p.title)}
               </div>
             ))}

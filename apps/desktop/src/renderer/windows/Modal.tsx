@@ -16,7 +16,11 @@ export function Modal({
   const close = () => useApp.getState().openWindow(id, false);
   return (
     <div className="modal-bg" onClick={close}>
-      <div className={`modal ${wide ? "wide" : ""}`} onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`modal ${wide ? "wide" : ""}`}
+        data-window-id={id}
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2>{title}</h2>
         {children}
       </div>

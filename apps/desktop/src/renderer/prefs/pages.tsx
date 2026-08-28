@@ -522,7 +522,16 @@ export function FiltersPage({ prefs, patch }: PrefPageProps) {
   const filters = app.filters;
   return (
     <>
-      <button type="button" onClick={() => void app.loadFilters()}>{t("filters")}</button>
+      <button
+        type="button"
+        data-action="open-filter-editor"
+        onClick={() => {
+          void app.loadFilters();
+          app.openWindow("filters");
+        }}
+      >
+        {t("filters")}
+      </button>
       {filters.map((f) => (
         <div key={f.id} className="hit">
           <strong>{f.name}</strong>
@@ -556,7 +565,11 @@ export function SegmentationPage({ prefs, setPref }: PrefPageProps) {
         SRX path
         <input value={prefs.srx_path} onChange={(e) => setPref("srx_path", e.target.value)} />
       </label>
-      <button type="button" onClick={() => useApp.getState().openWindow("segmentation")}>
+      <button
+        type="button"
+        data-action="open-segmentation-editor"
+        onClick={() => useApp.getState().openWindow("segmentation")}
+      >
         SegmentationCustomizer
       </button>
     </>

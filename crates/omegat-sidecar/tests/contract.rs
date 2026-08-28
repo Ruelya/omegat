@@ -508,6 +508,360 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
 }
 
 #[test]
+fn remaining_project_writes_publish_and_ack_exact_receipts() {
+    fn scoped(root: &std::path::Path, batch: &str, mut params: Value) -> Value {
+        let object = params.as_object_mut().unwrap();
+        object.insert("transaction_project_root".into(), json!(root));
+        object.insert("transaction_generation".into(), json!(81));
+        object.insert("transaction_batch_id".into(), json!(batch));
+        params
+    }
+
+    fn assert_and_ack(
+        stdin: &mut impl Write,
+        stdout: &mut impl BufRead,
+        id: i64,
+        root: &std::path::Path,
+        batch: &str,
+        operation: &str,
+        response: &Value,
+    ) {
+        assert_eq!(response["result"]["receipt"]["batch_id"], batch);
+        assert_eq!(
+            response["result"]["receipt"]["payload"]["operation"],
+            operation
+        );
+        assert_eq!(response["result"]["receipt"]["status"], "sidecar_committed");
+        let acknowledged = rpc(
+            stdin,
+            stdout,
+            id,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": "remaining-writes-contract",
+                "generation": 81,
+                "batch_id": batch,
+                "operation": operation,
+                "outcome": "succeeded",
+            }),
+        );
+        assert_eq!(acknowledged["result"]["ack"]["acknowledged"], true);
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("project");
+    let wiki_source = temp.path().join("wiki.txt");
+    let exported_tmx = temp.path().join("exported.tmx");
+    std::fs::write(&wiki_source, "Imported wiki text").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .env("OMEGAT_CONFIG_DIR", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    std::fs::write(root.join("source/source.txt"), "Receipt source").unwrap();
+    rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
+    let entry = rpc(&mut stdin, &mut stdout, 3, "entry.get", json!({"index": 0}));
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.set",
+        json!({
+            "index": 0,
+            "key": entry["result"]["key"],
+            "translation": "alpha",
+            "note": "",
+            "revision": entry["result"]["revision"],
+            "default_translation": true,
+        }),
+    );
+
+    let glossary = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "glossary.add",
+        scoped(
+            &root,
+            "glossary-receipt",
+            json!({"source": "cat", "target": "chat", "comment": "term"}),
+        ),
+    );
+    assert_and_ack(
+        &mut stdin,
+        &mut stdout,
+        6,
+        &root,
+        "glossary-receipt",
+        "glossary.add",
+        &glossary,
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("glossary/glossary.txt")).unwrap(),
+        "cat\tchat\tterm\n"
+    );
+
+    let replaced = rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "search.replace",
+        scoped(
+            &root,
+            "replace-receipt",
+            json!({
+                "query": "alpha",
+                "replace": "beta",
+                "source": false,
+                "translation": true,
+            }),
+        ),
+    );
+    assert_eq!(replaced["result"]["replaced"], 1);
+    assert_eq!(
+        rpc(&mut stdin, &mut stdout, 8, "entry.get", json!({"index": 0}),)["result"]["translation"],
+        "beta"
+    );
+    assert_and_ack(
+        &mut stdin,
+        &mut stdout,
+        9,
+        &root,
+        "replace-receipt",
+        "search.replace",
+        &replaced,
+    );
+
+    for (request_id, ack_id, method, batch, word) in [
+        (10, 11, "spell.ignore", "ignore-receipt", "ignoredword"),
+        (12, 13, "spell.learn", "learn-receipt", "learnedword"),
+    ] {
+        let response = rpc(
+            &mut stdin,
+            &mut stdout,
+            request_id,
+            method,
+            scoped(&root, batch, json!({"word": word})),
+        );
+        assert_and_ack(
+            &mut stdin,
+            &mut stdout,
+            ack_id,
+            &root,
+            batch,
+            method,
+            &response,
+        );
+    }
+    assert!(root.join("omegat/ignored_words.txt").is_file());
+    assert!(root.join("omegat/learned_words.txt").is_file());
+
+    let exported = rpc(
+        &mut stdin,
+        &mut stdout,
+        14,
+        "tmx.export",
+        scoped(
+            &root,
+            "tmx-export-receipt",
+            json!({"dest": exported_tmx, "level": "level2"}),
+        ),
+    );
+    assert_and_ack(
+        &mut stdin,
+        &mut stdout,
+        15,
+        &root,
+        "tmx-export-receipt",
+        "tmx.export",
+        &exported,
+    );
+    assert_eq!(
+        std::fs::read_to_string(&exported_tmx).unwrap(),
+        exported["result"]["xml"].as_str().unwrap()
+    );
+
+    let wiki = rpc(
+        &mut stdin,
+        &mut stdout,
+        16,
+        "wiki.import",
+        scoped(&root, "wiki-import-receipt", json!({"source": wiki_source})),
+    );
+    assert_eq!(wiki["result"]["files"], 1);
+    assert_and_ack(
+        &mut stdin,
+        &mut stdout,
+        17,
+        &root,
+        "wiki-import-receipt",
+        "wiki.import",
+        &wiki,
+    );
+    assert!(root.join("source/wiki.txt").is_file());
+
+    let script = rpc(
+        &mut stdin,
+        &mut stdout,
+        18,
+        "script.run",
+        scoped(
+            &root,
+            "script-run-receipt",
+            json!({
+                "index": 0,
+                "source": "editor.setTranslation('Script durable'); project.save(); glossary.addEntry('dog','chien','script');",
+            }),
+        ),
+    );
+    assert_eq!(script["result"]["saved"], true);
+    assert_and_ack(
+        &mut stdin,
+        &mut stdout,
+        19,
+        &root,
+        "script-run-receipt",
+        "script.run",
+        &script,
+    );
+    let saved =
+        omegat_core::tmx::ProjectTmx::load(&root.join("omegat/project_save.tmx"), "en", "fr")
+            .unwrap();
+    assert_eq!(
+        saved
+            .get_default_translation("Receipt source")
+            .unwrap()
+            .translation,
+        "Script durable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("glossary/glossary.txt")).unwrap(),
+        "cat\tchat\tterm\ndog\tchien\tscript\n"
+    );
+
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+    let history =
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson")).unwrap();
+    for batch in [
+        "glossary-receipt",
+        "replace-receipt",
+        "ignore-receipt",
+        "learn-receipt",
+        "tmx-export-receipt",
+        "wiki-import-receipt",
+        "script-run-receipt",
+    ] {
+        assert_eq!(
+            history
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter(|row| row["batch_id"] == batch && row["status"] == "completed")
+                .count(),
+            1,
+            "{batch}"
+        );
+    }
+    let _ = child.kill();
+}
+
+#[test]
+fn global_prefs_and_spell_install_stay_outside_project_journal() {
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("project");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .env("OMEGAT_CONFIG_DIR", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    let mut preferences = rpc(&mut stdin, &mut stdout, 2, "prefs.get", json!({}))["result"].clone();
+    preferences["filter_options"]["text"] = json!({"preserve_spaces": "global"});
+    preferences["srx_path"] = json!("global-rules.srx");
+    let saved = rpc(&mut stdin, &mut stdout, 3, "prefs.set", preferences);
+    assert_eq!(
+        saved["result"]["filter_options"]["text"]["preserve_spaces"],
+        "global"
+    );
+    assert_eq!(saved["result"]["srx_path"], "global-rules.srx");
+    assert!(config.join("omegat.prefs.json").is_file());
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+
+    let installed = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "spell.install",
+        json!({"lang": "en"}),
+    );
+    assert_eq!(installed["result"]["ok"], true);
+    assert!(config.join("spell/hunspell/en.aff").is_file());
+    assert!(config.join("spell/hunspell/en.dic").is_file());
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+
+    std::fs::remove_dir_all(config.join("spell/hunspell")).unwrap();
+    std::fs::write(config.join("spell/hunspell"), "not a directory").unwrap();
+    let failed_spell = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "spell.install",
+        json!({"lang": "en"}),
+    );
+    assert_eq!(failed_spell["error"]["code"], -32003);
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+
+    let persisted = rpc(&mut stdin, &mut stdout, 6, "prefs.get", json!({}))["result"].clone();
+    std::fs::remove_file(config.join("omegat.prefs.json")).unwrap();
+    std::fs::create_dir(config.join("omegat.prefs.json")).unwrap();
+    let mut rejected = persisted.clone();
+    rejected["theme"] = json!("dark");
+    let failed = rpc(&mut stdin, &mut stdout, 7, "prefs.set", rejected);
+    assert_eq!(failed["error"]["code"], -32003);
+    let after = rpc(&mut stdin, &mut stdout, 8, "prefs.get", json!({}));
+    assert_eq!(after["result"]["theme"], persisted["theme"]);
+    assert_eq!(
+        after["result"]["filter_options"]["text"]["preserve_spaces"],
+        "global"
+    );
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+    let _ = child.kill();
+}
+
+#[test]
 fn close_receipt_is_discovered_and_acknowledged_without_an_open_project() {
     fn spawn_sidecar(
         config: &std::path::Path,

@@ -255,17 +255,23 @@ impl App {
             }
             "prefs.get" => Ok(serde_json::to_value(&self.prefs).unwrap()),
             "prefs.set" => {
-                if let Ok(mut p) = serde_json::from_value::<Preferences>(params) {
-                    if p.config_dir.as_os_str().is_empty() {
-                        p.config_dir = self.prefs.config_dir.clone();
-                    }
-                    p.normalize();
-                    if let Some(s) = self.session.as_mut() {
-                        s.prefs = p.clone();
-                    }
-                    self.prefs = p;
-                    let _ = self.prefs.save();
+                let mut preferences =
+                    serde_json::from_value::<Preferences>(params).map_err(invalid)?;
+                if preferences.config_dir.as_os_str().is_empty() {
+                    preferences.config_dir = self.prefs.config_dir.clone();
                 }
+                // A renderer cannot redirect shared preferences to a different
+                // persistence scope. Project transactions deliberately never
+                // snapshot this config-scoped file.
+                preferences.config_dir = self.prefs.config_dir.clone();
+                preferences.normalize();
+                preferences
+                    .save()
+                    .map_err(|error| (error_code::IO, error.to_string()))?;
+                if let Some(session) = self.session.as_mut() {
+                    session.prefs = preferences.clone();
+                }
+                self.prefs = preferences;
                 Ok(serde_json::to_value(&self.prefs).unwrap())
             }
             "project.create" => {
@@ -516,19 +522,56 @@ impl App {
                 Ok(serde_json::to_value(self.session()?.glossary_for(index)).unwrap())
             }
             "glossary.add" => {
-                let s = self.session_mut()?;
-                let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
-                let comment = params.get("comment").and_then(|v| v.as_str()).unwrap_or("");
-                omegat_core::glossary::append_entry(
-                    &s.props.glossary_file,
-                    source,
-                    target,
-                    comment,
-                )
-                .map_err(|e| (error_code::IO, e.to_string()))?;
-                s.glossary = omegat_core::glossary::load_glossary(&s.props.glossary_file);
-                Ok(json!({"ok": true}))
+                let source = params
+                    .get("source")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let target = params
+                    .get("target")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let comment = params
+                    .get("comment")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let glossary_file = props.glossary_file.clone();
+                let result = omegat_team::commit_product_transaction_with_paths_cancellable(
+                    &props,
+                    "glossary.add",
+                    cancellation,
+                    "glossary.add.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    std::slice::from_ref(&glossary_file),
+                    |token| {
+                        if token.is_cancelled() {
+                            return Err(omegat_team::TeamError::Cancelled);
+                        }
+                        omegat_core::glossary::append_entry(
+                            &glossary_file,
+                            &source,
+                            &target,
+                            &comment,
+                        )
+                        .map_err(omegat_team::TeamError::Io)?;
+                        session.glossary = omegat_core::glossary::load_glossary(&glossary_file);
+                        Ok(())
+                    },
+                );
+                if let Err(error) = result {
+                    session.restore_checkpoint(checkpoint);
+                    return Err(product_transaction_err(error));
+                }
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"ok": true, "receipt": receipt}))
             }
             "search.run" => {
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
@@ -539,15 +582,74 @@ impl App {
                 Ok(serde_json::to_value(hits).unwrap())
             }
             "search.replace" => {
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
-                let n = self.session_mut()?.search_replace(&p);
-                Ok(json!({"replaced": n}))
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let result = omegat_team::commit_product_transaction_cancellable(
+                    &props,
+                    "search.replace",
+                    cancellation,
+                    "search.replace.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    |token| {
+                        if token.is_cancelled() {
+                            return Err(omegat_team::TeamError::Cancelled);
+                        }
+                        let replaced = session.search_replace(&p);
+                        if replaced > 0 {
+                            session.save().map_err(core_product_err)?;
+                        }
+                        Ok(replaced)
+                    },
+                );
+                let replaced = match result {
+                    Ok(replaced) => replaced,
+                    Err(error) => {
+                        session.restore_checkpoint(checkpoint);
+                        return Err(product_transaction_err(error));
+                    }
+                };
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"replaced": replaced, "receipt": receipt}))
             }
             "spell.ignore" => {
-                let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
-                let s = self.session_mut()?;
-                s.spell.ignore(word, &s.props.root);
-                Ok(json!({"ok": true}))
+                let word = params
+                    .get("word")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let result = omegat_team::commit_product_transaction_cancellable(
+                    &props,
+                    "spell.ignore",
+                    cancellation,
+                    "spell.ignore.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    |token| {
+                        if token.is_cancelled() {
+                            return Err(omegat_team::TeamError::Cancelled);
+                        }
+                        session
+                            .spell
+                            .ignore(&word, &props.root)
+                            .map_err(omegat_team::TeamError::Io)
+                    },
+                );
+                if let Err(error) = result {
+                    session.restore_checkpoint(checkpoint);
+                    return Err(product_transaction_err(error));
+                }
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"ok": true, "receipt": receipt}))
             }
             "spell.check" => {
                 let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -558,15 +660,41 @@ impl App {
                     .get("level")
                     .and_then(|v| v.as_str())
                     .unwrap_or("omegat");
-                let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
-                let s = self.session()?;
-                let xml = s
-                    .tmx
-                    .to_xml_level(&s.props.source_lang, &s.props.target_lang, level);
-                if !dest.is_empty() {
-                    std::fs::write(dest, &xml).map_err(|e| (error_code::IO, e.to_string()))?;
+                let dest = params
+                    .get("dest")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let session = self.session()?;
+                let xml = session.tmx.to_xml_level(
+                    &session.props.source_lang,
+                    &session.props.target_lang,
+                    level,
+                );
+                if dest.is_empty() {
+                    return Ok(json!({"xml": xml, "level": level, "receipt": null}));
                 }
-                Ok(json!({"xml": xml, "level": level}))
+                let props = session.props.clone();
+                let (generation, batch_id) = transaction_scope(&params, &props.root)?;
+                let destination = std::path::PathBuf::from(&dest);
+                omegat_team::commit_product_transaction_with_paths_cancellable(
+                    &props,
+                    "tmx.export",
+                    cancellation,
+                    "tmx.export.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    std::slice::from_ref(&destination),
+                    |token| {
+                        if token.is_cancelled() {
+                            return Err(omegat_team::TeamError::Cancelled);
+                        }
+                        std::fs::write(&destination, &xml).map_err(omegat_team::TeamError::Io)
+                    },
+                )
+                .map_err(product_transaction_err)?;
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"xml": xml, "level": level, "receipt": receipt}))
             }
             "languagetool.check" => {
                 let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
@@ -681,11 +809,46 @@ impl App {
                 }))
             }
             "wiki.import" => {
-                let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
-                let dest = &self.session()?.props.source_dir;
-                let n = omegat_core::wiki::import_wiki(std::path::Path::new(src), dest)
-                    .map_err(core_err)?;
-                Ok(json!({"files": n}))
+                let source = params
+                    .get("source")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let destination = props.source_dir.clone();
+                let result = omegat_team::commit_product_transaction_with_paths_cancellable(
+                    &props,
+                    "wiki.import",
+                    cancellation,
+                    "wiki.import.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    std::slice::from_ref(&destination),
+                    |token| {
+                        let imported = omegat_core::wiki::import_wiki(
+                            std::path::Path::new(&source),
+                            &destination,
+                        )
+                        .map_err(core_product_err)?;
+                        session
+                            .reload_cancellable(token)
+                            .map_err(core_product_err)?;
+                        Ok(imported)
+                    },
+                );
+                let files = match result {
+                    Ok(files) => files,
+                    Err(error) => {
+                        session.restore_checkpoint(checkpoint);
+                        return Err(product_transaction_err(error));
+                    }
+                };
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"files": files, "receipt": receipt}))
             }
             "med.open" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -720,34 +883,41 @@ impl App {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 {
+                    let mut preferences = self.prefs.clone();
                     if let Some(algo) = params.get("algo").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_algorithm = algo.to_string();
+                        preferences.aligner_algorithm = algo.to_string();
                     }
                     if let Some(calc) = params.get("calculator").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_calculator = calc.to_string();
+                        preferences.aligner_calculator = calc.to_string();
                     }
                     if let Some(counter) = params.get("counter").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_counter = counter.to_string();
+                        preferences.aligner_counter = counter.to_string();
                     }
                     if let Some(seg) = params.get("segment").and_then(|v| v.as_bool()) {
-                        self.prefs.aligner_segment = seg;
+                        preferences.aligner_segment = seg;
                     }
                     if let Some(rt) = params.get("remove_tags").and_then(|v| v.as_bool()) {
-                        self.prefs.aligner_remove_tags = rt;
+                        preferences.aligner_remove_tags = rt;
                     }
                     if let Some(sl) = params.get("source_lang").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_source_lang = sl.to_string();
+                        preferences.aligner_source_lang = sl.to_string();
                     }
                     if let Some(tl) = params.get("target_lang").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_target_lang = tl.to_string();
+                        preferences.aligner_target_lang = tl.to_string();
                     }
                     if let Some(d) = params.get("source_dir").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_last_source_dir = d.to_string();
+                        preferences.aligner_last_source_dir = d.to_string();
                     }
                     if let Some(d) = params.get("target_dir").and_then(|v| v.as_str()) {
-                        self.prefs.aligner_last_target_dir = d.to_string();
+                        preferences.aligner_last_target_dir = d.to_string();
                     }
-                    let _ = self.prefs.save();
+                    preferences
+                        .save()
+                        .map_err(|error| (error_code::IO, error.to_string()))?;
+                    if let Some(session) = self.session.as_mut() {
+                        session.prefs = preferences.clone();
+                    }
+                    self.prefs = preferences;
                 }
                 Ok(json!({
                     "modes":["heapwise","parsewise","id"],
@@ -814,11 +984,20 @@ impl App {
                     let path = root.join(format!("slot{slot:02}.js"));
                     std::fs::read_to_string(path).unwrap_or_else(|_| "null".into())
                 };
-                self.dispatch(
-                    "script.run",
-                    json!({ "source": src, "index": index }),
-                    cancellation,
-                )
+                let mut run_params = json!({ "source": src, "index": index });
+                for key in [
+                    "transaction_project_root",
+                    "transaction_generation",
+                    "transaction_batch_id",
+                ] {
+                    if let Some(value) = params.get(key) {
+                        run_params
+                            .as_object_mut()
+                            .expect("script run params are an object")
+                            .insert(key.into(), value.clone());
+                    }
+                }
+                self.dispatch("script.run", run_params, cancellation)
             }
             "project.import" => {
                 let files = params
@@ -947,14 +1126,44 @@ impl App {
             "spell.install" => {
                 let lang = params.get("lang").and_then(|v| v.as_str()).unwrap_or("en");
                 let dest = self.prefs.config_dir.join("spell").join("hunspell");
-                let ok = omegat_core::spell::ensure_lang(lang, &dest);
+                let ok = omegat_core::spell::install_lang(lang, &dest)
+                    .map_err(|error| (error_code::IO, error.to_string()))?;
                 Ok(json!({"ok": ok, "lang": lang, "dest": dest.display().to_string()}))
             }
             "spell.learn" => {
-                let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
-                let s = self.session_mut()?;
-                s.spell.learn(word, &s.props.root);
-                Ok(json!({"ok": true}))
+                let word = params
+                    .get("word")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let root = self.session()?.props.root.clone();
+                let (generation, batch_id) = transaction_scope(&params, &root)?;
+                let session = self.session_mut()?;
+                let checkpoint = session.checkpoint();
+                let props = session.props.clone();
+                let result = omegat_team::commit_product_transaction_cancellable(
+                    &props,
+                    "spell.learn",
+                    cancellation,
+                    "spell.learn.snapshot",
+                    generation,
+                    batch_id.as_deref(),
+                    |token| {
+                        if token.is_cancelled() {
+                            return Err(omegat_team::TeamError::Cancelled);
+                        }
+                        session
+                            .spell
+                            .learn(&word, &props.root)
+                            .map_err(omegat_team::TeamError::Io)
+                    },
+                );
+                if let Err(error) = result {
+                    session.restore_checkpoint(checkpoint);
+                    return Err(product_transaction_err(error));
+                }
+                let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                Ok(json!({"ok": true, "receipt": receipt}))
             }
             "team.sync" => {
                 let (transaction_generation, transaction_batch_id) =
@@ -1056,34 +1265,50 @@ impl App {
                 };
                 let out = omegat_script::run_source_state(src, &mut state)
                     .map_err(|e| (error_code::INTERNAL_ERROR, e.to_string()))?;
-                if let Ok(s) = self.session_mut() {
-                    if let Some(e) = s.entries.get(index) {
-                        if state.translation != e.translation {
-                            let _ = s.set_entry(&SetEntryParams {
-                                index,
-                                key: Some(e.key()),
-                                translation: state.translation.clone(),
-                                note: Some(state.note.clone()),
-                                revision: e.revision,
-                                default_translation: true,
-                            });
+                let mut receipt = None;
+                if self.session.is_some() {
+                    let has_durable_product =
+                        state.saved || state.compiled || !state.glossary_adds.is_empty();
+                    if has_durable_product {
+                        let root = self.session()?.props.root.clone();
+                        let (generation, batch_id) = transaction_scope(&params, &root)?;
+                        let session = self.session_mut()?;
+                        let checkpoint = session.checkpoint();
+                        let props = session.props.clone();
+                        let mut external_products = Vec::new();
+                        if state.compiled {
+                            external_products.push(props.target_dir.clone());
+                            external_products.push(props.export_tm_dir.clone());
                         }
-                    }
-                    if state.saved {
-                        let _ = s.save();
-                    }
-                    if state.compiled {
-                        let _ = s.compile(None);
-                    }
-                    for [src, tgt, cmt] in &state.glossary_adds {
-                        let _ = omegat_core::glossary::append_entry(
-                            &s.props.glossary_file,
-                            src,
-                            tgt,
-                            cmt,
+                        if !state.glossary_adds.is_empty() {
+                            external_products.push(props.glossary_file.clone());
+                        }
+                        external_products.sort();
+                        external_products.dedup();
+                        let result = omegat_team::commit_product_transaction_with_paths_cancellable(
+                            &props,
+                            "script.run",
+                            cancellation,
+                            "script.run.snapshot",
+                            generation,
+                            batch_id.as_deref(),
+                            &external_products,
+                            |token| {
+                                if token.is_cancelled() {
+                                    return Err(omegat_team::TeamError::Cancelled);
+                                }
+                                apply_script_state(session, index, &state)
+                            },
                         );
+                        if let Err(error) = result {
+                            session.restore_checkpoint(checkpoint);
+                            return Err(product_transaction_err(error));
+                        }
+                        receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
+                    } else {
+                        apply_script_state(self.session_mut()?, index, &state)
+                            .map_err(product_transaction_err)?;
                     }
-                    s.glossary = omegat_core::glossary::load_glossary(&s.props.glossary_file);
                 }
                 Ok(json!({
                     "result": out,
@@ -1091,7 +1316,8 @@ impl App {
                     "saved": state.saved,
                     "compiled": state.compiled,
                     "console": state.console,
-                    "jumped": state.jumped
+                    "jumped": state.jumped,
+                    "receipt": receipt,
                 }))
             }
             "align.run" => {
@@ -1614,6 +1840,41 @@ fn scoped_product_receipt(
         batch_id.expect("scoped product transaction has a batch id"),
     )
     .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))
+}
+
+fn apply_script_state(
+    session: &mut ProjectSession,
+    index: usize,
+    state: &omegat_script::ScriptState,
+) -> omegat_team::Result<()> {
+    if let Some(entry) = session.entries.get(index).cloned() {
+        if state.translation != entry.translation || state.note != entry.note {
+            session
+                .set_entry(&SetEntryParams {
+                    index,
+                    key: Some(entry.key()),
+                    translation: state.translation.clone(),
+                    note: Some(state.note.clone()),
+                    revision: entry.revision,
+                    default_translation: true,
+                })
+                .map_err(core_product_err)?;
+        }
+    }
+    if state.saved {
+        session.save().map_err(core_product_err)?;
+    }
+    if state.compiled {
+        session.compile(None).map_err(core_product_err)?;
+    }
+    for [source, target, comment] in &state.glossary_adds {
+        omegat_core::glossary::append_entry(&session.props.glossary_file, source, target, comment)
+            .map_err(omegat_team::TeamError::Io)?;
+    }
+    if !state.glossary_adds.is_empty() {
+        session.glossary = omegat_core::glossary::load_glossary(&session.props.glossary_file);
+    }
+    Ok(())
 }
 
 fn project_update_product_paths(

@@ -1597,6 +1597,128 @@ mod tests {
     }
 
     #[test]
+    fn shared_journal_repairs_corrupt_active_from_same_value_recovery_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let product = props.source_dir.join("durable.txt");
+
+        commit_product_transaction_cancellable(
+            &props,
+            "glossary.add",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.corrupt-active",
+            41,
+            Some("corrupt-active-receipt"),
+            |_| {
+                std::fs::write(&product, "committed")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let transactions = props.root.join(".repositories/transactions");
+        let active = transactions.join("active.json");
+        let previous = transactions.join(".active.previous.json");
+        let recovery_copy = std::fs::read(&previous).unwrap();
+        assert_eq!(std::fs::read(&active).unwrap(), recovery_copy);
+        std::fs::write(&active, b"{corrupt").unwrap();
+
+        let receipt = pending_transaction_receipt(&props, 42).unwrap().unwrap();
+        assert_eq!(receipt.batch_id, "corrupt-active-receipt");
+        assert_eq!(receipt.payload.operation, "glossary.add");
+        assert_eq!(
+            std::fs::read(&active).unwrap(),
+            std::fs::read(&previous).unwrap()
+        );
+        assert_eq!(std::fs::read_to_string(&product).unwrap(), "committed");
+
+        acknowledge_transaction_receipt(&props, 42, "corrupt-active-receipt", "glossary.add")
+            .unwrap();
+        assert!(!active.exists());
+        assert!(!previous.exists());
+    }
+
+    #[test]
+    fn shared_journal_rejects_two_corrupt_copies_without_mutating_product() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let product = props.source_dir.join("durable.txt");
+
+        commit_product_transaction_cancellable(
+            &props,
+            "search.replace",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.corrupt-both",
+            43,
+            Some("corrupt-both-receipt"),
+            |_| {
+                std::fs::write(&product, "committed")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let transactions = props.root.join(".repositories/transactions");
+        let active = transactions.join("active.json");
+        let previous = transactions.join(".active.previous.json");
+        std::fs::write(&active, b"{corrupt-active").unwrap();
+        std::fs::write(&previous, b"{corrupt-previous").unwrap();
+
+        let error = pending_transaction_receipt(&props, 44).unwrap_err();
+        let TeamError::Command(message) = error else {
+            panic!("expected invalid shared-journal command error");
+        };
+        assert!(message.starts_with("shared transaction journal and recovery copy are invalid"));
+        assert_eq!(std::fs::read_to_string(&product).unwrap(), "committed");
+        assert_eq!(std::fs::read(&active).unwrap(), b"{corrupt-active");
+        assert_eq!(std::fs::read(&previous).unwrap(), b"{corrupt-previous");
+    }
+
+    #[test]
+    fn journal_publish_failure_leaves_recoverable_pending_copy_before_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let product = props.source_dir.join("unchanged.txt");
+        std::fs::write(&product, "before").unwrap();
+        let transactions = props.root.join(".repositories/transactions");
+        std::fs::create_dir_all(transactions.join("active.json")).unwrap();
+        let mut mutation_ran = false;
+
+        let result: Result<()> = commit_product_transaction_cancellable(
+            &props,
+            "search.replace",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.publish-failure",
+            0,
+            None,
+            |_| {
+                mutation_ran = true;
+                std::fs::write(&product, "after")?;
+                Ok(())
+            },
+        );
+        assert!(matches!(result, Err(TeamError::Command(_))));
+        assert!(!mutation_ran);
+        assert_eq!(std::fs::read_to_string(&product).unwrap(), "before");
+        assert!(transactions.join(".active.previous.json").is_file());
+
+        std::fs::remove_dir(transactions.join("active.json")).unwrap();
+        assert!(recover_interrupted_sync(&props).unwrap());
+        assert_eq!(std::fs::read_to_string(&product).unwrap(), "before");
+        assert!(!transactions.join("active.json").exists());
+        assert!(!transactions.join(".active.previous.json").exists());
+    }
+
+    #[test]
     fn cancelled_local_product_restores_external_files_and_directories() {
         let dir = tempfile::tempdir().unwrap();
         let props =

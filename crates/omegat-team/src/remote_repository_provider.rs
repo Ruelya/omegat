@@ -1050,17 +1050,45 @@ fn load_product_journal(props: &ProjectProperties) -> Result<ProductTransactionJ
     let dir = transaction_dir(props);
     let active = dir.join("active.json");
     let previous = dir.join(".active.previous.json");
-    let path = if active.is_file() {
-        active
-    } else if previous.is_file() {
-        previous
-    } else {
-        return Ok(ProductTransactionJournal {
-            version: PRODUCT_JOURNAL_VERSION,
-            project_root: normalized(&props.root),
-            batches: Vec::new(),
-        });
-    };
+    if active.is_file() {
+        match read_product_journal(props, &active) {
+            Ok(journal) => return Ok(journal),
+            Err(active_error) if previous.is_file() => {
+                let journal = read_product_journal(props, &previous).map_err(|previous_error| {
+                    TeamError::Command(format!(
+                        "shared transaction journal and recovery copy are invalid: \
+                         active=({active_error}); previous=({previous_error})"
+                    ))
+                })?;
+                // Every normal publish writes this exact value to the recovery
+                // copy first, then atomically replaces active.json. Repairing a
+                // corrupt active file from it therefore never advances beyond
+                // a publication boundary that active.json did not cross.
+                write_json_atomic(&active, &journal).map_err(|error| {
+                    TeamError::Command(format!(
+                        "repair shared transaction journal {}: {error}",
+                        active.display()
+                    ))
+                })?;
+                return Ok(journal);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if previous.is_file() {
+        return read_product_journal(props, &previous);
+    }
+    Ok(ProductTransactionJournal {
+        version: PRODUCT_JOURNAL_VERSION,
+        project_root: normalized(&props.root),
+        batches: Vec::new(),
+    })
+}
+
+fn read_product_journal(
+    props: &ProjectProperties,
+    path: &Path,
+) -> Result<ProductTransactionJournal> {
     let bytes = std::fs::read(&path)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?;
@@ -1102,7 +1130,13 @@ fn write_product_journal(
     props: &ProjectProperties,
     journal: &ProductTransactionJournal,
 ) -> Result<()> {
-    write_json_atomic(&transaction_dir(props).join("active.json"), journal)
+    let dir = transaction_dir(props);
+    // The recovery copy is the same candidate value, not the prior generation.
+    // A process death before active.json is replaced keeps the old active
+    // publication authoritative; after replacement either file can repair
+    // media/parser corruption without reviving an older transaction state.
+    write_json_atomic(&dir.join(".active.previous.json"), journal)
+        .and_then(|_| write_json_atomic(&dir.join("active.json"), journal))
         .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
 }
 

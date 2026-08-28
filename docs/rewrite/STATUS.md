@@ -812,6 +812,31 @@ matrix queues all six operations between an entry receipt and team/save/refresh
 tails, kills two successive elected owners before delivery, then drains the
 exact FIFO once. Stable project bytes, TMX and align-output bytes/mtimes, and the
 file remote prove receipt recovery did not replay a committed write.
+The remaining project-root writers now join that same boundary:
+`glossary.add`, `search.replace`, project `spell.ignore` / `spell.learn`,
+destination-bearing `tmx.export`, `wiki.import`, and durable `script.run` /
+`script.slot`. Their in-memory TM, external-TM, glossary, and spell state is
+checkpointed with the entry list; project and external output paths are restored
+on cancellation or pre-receipt failure. Each scoped success returns the exact
+shared-journal receipt, and Electron suppresses watcher echoes, serializes the
+caller-managed reply, refreshes affected renderer state, and acknowledges only
+after publication. Global `prefs.set`, aligner preferences, and
+`spell.install` remain config-scoped: write failures are surfaced without
+changing the live preferences, and these calls do not create a project journal.
+The shared journal keeps an atomically written same-value recovery copy. A
+corrupt `active.json` is repaired only from a valid copy; two corrupt copies are
+rejected without product mutation, while a failed active publish leaves a
+recoverable pending copy before mutation begins. Legacy refresh queue, history,
+and config active-owner migration is idempotent when interrupted after the new
+destinations become durable but before old files are unlinked.
+A new real Linux `linux-unpacked` matrix drives project properties, repository
+mapping, file-filter options, and segmentation settings exclusively through
+visible controls. It externally SIGKILLs Electron at both sides of each relevant
+product receipt and then performs one clean project close/reopen. Project
+properties and mapping follow project rollback/commit, while the config-scoped
+filter and SRX preferences remain durable even when the following
+`project.reload` receipt rolls back. Windows and macOS package behavior are not
+claimed by this matrix.
 Electron serializes all receipt-bearing RPCs and excludes active caller-managed
 receipts from the recovery channel. Recovery delivery is identity-deduplicated
 for one renderer lifecycle, but the delivery set is cleared when the renderer

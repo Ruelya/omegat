@@ -203,7 +203,7 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Str
     let temporary = parent.join(format!(".{filename}.{}.{sequence}.tmp", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| format!("serialize transaction state: {error}"))?;
-    {
+    let write_result = {
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -221,7 +221,11 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Str
                     "write transaction temporary {}: {error}",
                     temporary.display()
                 )
-            })?;
+            })
+    };
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error);
     }
     if let Err(error) = std::fs::rename(&temporary, path) {
         let _ = std::fs::remove_file(&temporary);

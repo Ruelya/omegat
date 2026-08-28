@@ -19,6 +19,7 @@
     "test:e2e:long-cancel:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-long-operation-cancel-linux.mjs",
     "test:e2e:cross-project-transactions:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-cross-project-transaction-restart-linux.mjs",
     "test:e2e:save-close-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-save-close-recovery-linux.mjs",
+    "test:e2e:config-receipt-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-config-receipt-recovery-linux.mjs",
     "test:e2e:team-rename-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-team-rename-recovery-linux.mjs",
     "test:e2e:compaction-dual-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-compaction-dual-recovery-linux.mjs",
     "pack": "electron-builder --dir",

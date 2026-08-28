@@ -31,14 +31,14 @@ struct AffRule {
     condition: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AffixTable {
     kind: FlagKind,
     prefixes: HashMap<String, Vec<AffRule>>,
     suffixes: HashMap<String, Vec<AffRule>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SpellChecker {
     pub backend: SpellBackend,
     pub learned: HashSet<String>,
@@ -177,14 +177,16 @@ impl SpellChecker {
         tokens
     }
 
-    pub fn learn(&mut self, word: &str, project_root: &Path) {
+    pub fn learn(&mut self, word: &str, project_root: &Path) -> std::io::Result<()> {
+        append_word(&project_root.join("omegat").join("learned_words.txt"), word)?;
         self.learned.insert(word.to_lowercase());
-        let _ = append_word(&project_root.join("omegat").join("learned_words.txt"), word);
+        Ok(())
     }
 
-    pub fn ignore(&mut self, word: &str, project_root: &Path) {
+    pub fn ignore(&mut self, word: &str, project_root: &Path) -> std::io::Result<()> {
+        append_word(&project_root.join("omegat").join("ignored_words.txt"), word)?;
         self.ignored.insert(word.to_lowercase());
-        let _ = append_word(&project_root.join("omegat").join("ignored_words.txt"), word);
+        Ok(())
     }
 }
 
@@ -469,21 +471,29 @@ fn condition_matches(word: &str, cond: &str, at_end: bool) -> bool {
 
 /// Copy Hunspell files from `reference/java/language-modules` into `dest` when present.
 pub fn ensure_lang(lang: &str, dest: &Path) -> bool {
+    install_lang(lang, dest).unwrap_or(false)
+}
+
+/// Fallible config-scoped variant used by the RPC boundary.
+///
+/// A missing bundled language is a normal `false`; a destination write failure
+/// is an error and must not be reported as a successful install.
+pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
     let tag = lang.replace('_', "-").to_lowercase();
     let stem = tag.split('-').next().unwrap_or(&tag);
-    std::fs::create_dir_all(dest).ok();
+    std::fs::create_dir_all(dest)?;
     if dest.join(format!("{stem}.aff")).exists() && dest.join(format!("{stem}.dic")).exists() {
-        return true;
+        return Ok(true);
     }
     let Some((aff, dic)) = reference_dict_paths(stem).or_else(|| resources_dict_paths(stem)) else {
-        return false;
+        return Ok(false);
     };
     if !aff.exists() || !dic.exists() {
-        return false;
+        return Ok(false);
     }
-    let _ = std::fs::copy(&aff, dest.join(format!("{stem}.aff")));
-    let _ = std::fs::copy(&dic, dest.join(format!("{stem}.dic")));
-    dest.join(format!("{stem}.aff")).exists()
+    std::fs::copy(&aff, dest.join(format!("{stem}.aff")))?;
+    std::fs::copy(&dic, dest.join(format!("{stem}.dic")))?;
+    Ok(dest.join(format!("{stem}.aff")).exists() && dest.join(format!("{stem}.dic")).exists())
 }
 
 /// Java `SpellCheckerManager.getCurrentSpellChecker`: empty plugin list → dummy.
@@ -646,8 +656,8 @@ mod tests {
     fn learn_and_ignore() {
         let dir = tempdir().unwrap();
         let mut s = SpellChecker::load(dir.path(), dir.path());
-        s.learn("OmegaT", dir.path());
-        s.ignore("Ctrl", dir.path());
+        s.learn("OmegaT", dir.path()).unwrap();
+        s.ignore("Ctrl", dir.path()).unwrap();
         assert!(s.is_correct("OmegaT"));
         assert!(s.is_correct("Ctrl"));
     }

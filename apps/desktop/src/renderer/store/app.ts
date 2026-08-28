@@ -1133,7 +1133,10 @@ export const useApp = create<AppState>((set, get) => ({
   },
   replaceAll: async () => {
     const form = get().searchForm;
-    const r = await rpc<{ replaced: number }>("search.replace", {
+    const r = await rpc<{
+      replaced: number;
+      receipt?: TransactionEnvelope | null;
+    }>("search.replace", {
       query: form.query,
       replace: form.replace,
       regex: form.searchType === "regex",
@@ -1150,6 +1153,7 @@ export const useApp = create<AppState>((set, get) => ({
       date_to: form.dateTo || undefined,
     });
     await get().refreshEntriesAfterExternalChange();
+    if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
     get().logLine(`replaced ${r.replaced}`);
     return r.replaced;
   },
@@ -1294,22 +1298,46 @@ export const useApp = create<AppState>((set, get) => ({
     });
   },
   learnWord: async (word) => {
-    await rpc("spell.learn", { word });
+    const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
+      "spell.learn",
+      { word },
+    );
     IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
     await get().select(get().index, false);
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
   },
   ignoreWord: async (word) => {
-    await rpc("spell.ignore", { word });
+    const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
+      "spell.ignore",
+      { word },
+    );
     IEditor.remarkOneMarker("org.omegat.core.spellchecker.SpellCheckerMarker");
     await get().select(get().index, false);
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
   },
   addGlossary: async (source, target, comment = "") => {
-    await rpc("glossary.add", { source, target, comment });
+    const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
+      "glossary.add",
+      { source, target, comment },
+    );
     await get().select(get().index, false);
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
   },
   importWiki: async (source) => {
-    await rpc("wiki.import", { source });
-    await get().reloadProject();
+    const result = await rpc<{ receipt?: TransactionEnvelope | null }>(
+      "wiki.import",
+      { source },
+    );
+    await get().refreshEntriesAfterExternalChange();
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
   },
   refreshEntriesAfterExternalChange: async (
     changedKeys,
@@ -1464,16 +1492,20 @@ export const useApp = create<AppState>((set, get) => ({
   },
   runScriptSlot: async (slot) => {
     const src = get().prefs?.script_slots[slot - 1];
+    let result: { receipt?: TransactionEnvelope | null };
     if (src) {
-      await rpc("script.run", { source: src, index: get().index });
+      result = await rpc("script.run", { source: src, index: get().index });
     } else {
-      await rpc("script.slot", { slot, index: get().index });
+      result = await rpc("script.slot", { slot, index: get().index });
     }
     get().logLine(`ran script slot ${slot}`);
     try {
       await get().refreshEntriesAfterExternalChange();
     } catch {
       /* ignore */
+    }
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
     }
   },
   gotoMatchSource: async () => {

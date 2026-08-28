@@ -81,9 +81,13 @@ const watchedProjectWriteMethods = new Set([
   "team.commit",
   "team.resolve",
   "glossary.add",
+  "search.replace",
   "spell.ignore",
   "spell.learn",
+  "tmx.export",
   "wiki.import",
+  "script.run",
+  "script.slot",
   "align.run",
   "align.write",
 ]);
