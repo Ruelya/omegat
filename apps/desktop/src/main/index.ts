@@ -69,6 +69,7 @@ let detachedTransactionScope: DetachedTransactionScope | null = null;
 const watchedProjectWriteMethods = new Set([
   "entry.set",
   "project.open",
+  "project.recovery.detach",
   "project.save",
   "project.reload",
   "project.compile",

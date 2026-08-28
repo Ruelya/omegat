@@ -2435,6 +2435,7 @@ fn writes_watched_project_input(method: &str) -> bool {
         method,
         "entry.set"
             | "project.open"
+            | "project.recovery.detach"
             | "project.save"
             | "project.reload"
             | "project.compile"
