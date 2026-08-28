@@ -958,16 +958,23 @@ fn shared_config_fifo_merges_stale_sidecars_and_isolates_project_journals() {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
+    let catalog_operation = |method| {
+        WRITER_CATALOG
+            .iter()
+            .find(|writer| writer.method == method)
+            .unwrap()
+            .journal_operation
+    };
     assert_eq!(
         history
             .iter()
             .map(|row| row["operation"].as_str().unwrap())
             .collect::<Vec<_>>(),
         vec![
-            "prefs.patch",
-            "prefs.patch",
-            "aligner.configure",
-            "spell.install"
+            catalog_operation("prefs.set"),
+            catalog_operation("prefs.set"),
+            catalog_operation("aligner.configure"),
+            catalog_operation("spell.install"),
         ]
     );
     assert!(history.iter().all(|row| row["status"] == "completed"));
