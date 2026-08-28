@@ -419,6 +419,8 @@ const project = join(workDir, "project");
 const remote = join(workDir, "file-remote");
 const active = join(project, ".repositories", "transactions", "active.json");
 const prefsPath = join(configDir, "omegat.prefs.json");
+const segmentationBefore = join(workDir, "global-before.srx");
+const segmentationAfter = join(workDir, "global-after.srx");
 const xvfb = await startXvfb();
 const evidence = [];
 let launched;
@@ -453,6 +455,14 @@ async function runFault(operation, point, markerName, drive, verify) {
 
 try {
   await mkdir(remote, { recursive: true });
+  const segmentationRules = await readFile(
+    resolve(desktopDir, "..", "..", "fixtures", "srx", "defaultRules.srx"),
+    "utf8",
+  );
+  await Promise.all([
+    writeFile(segmentationBefore, segmentationRules, "utf8"),
+    writeFile(segmentationAfter, segmentationRules, "utf8"),
+  ]);
   await rpcOnce(configDir, "project.create", {
     root: project,
     source_lang: "en",
@@ -610,8 +620,8 @@ try {
   }
 
   for (const [point, value] of [
-    ["before_atomic_publish", "global-before.srx"],
-    ["after_atomic_publish", "global-after.srx"],
+    ["before_atomic_publish", segmentationBefore],
+    ["after_atomic_publish", segmentationAfter],
   ]) {
     await runFault(
       "project.reload",
@@ -698,7 +708,7 @@ try {
         await client.evaluate(
           'document.querySelector(\'[data-window-id="segmentation"] [data-setting="srx_path"]\')?.value',
         ),
-        "global-after.srx",
+          segmentationAfter,
       );
     },
   );
