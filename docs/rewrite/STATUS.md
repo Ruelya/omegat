@@ -57,9 +57,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
-**86 passed**, team **37 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **17 passed** plus sidecar journal/watcher unit
-**4 passed** and plugin filter **1 passed**, and desktop **23 files / 168 tests
+**86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **20 passed** plus sidecar journal/watcher unit
+**4 passed** and plugin filter **1 passed**, and desktop **24 files / 173 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E, including atomic refresh receipt
@@ -658,6 +658,12 @@ and pending tail, then proves stale-generation and cross-project queues cannot
 be revived. The same product RPC rejects a version-1 envelope with an unknown
 payload field and a future version-2 envelope without modifying or archiving
 either invalid journal.
+The compaction fault matrix now terminates separate sidecar processes after the
+terminal archive fsync and after the compacted queue's atomic rename. The first
+failure leaves the original queue authoritative; the second leaves the compacted
+queue authoritative. In both cases the next process receives the exact
+unacknowledged receipt and pending tail, while only the acknowledged terminal
+record can disappear.
 Editor `entry.set`, explicit document save, and project-close TMX flush now use
 the same version-1 snapshot/receipt/recovery state machine as team writes.
 Every editor commit is keyed by the full six-field `EntryKey`; the TMX,
@@ -681,6 +687,20 @@ fingerprint is cancelled without entering B and A's conflict journal remains
 untouched. After a second packaged SIGKILL, reopening A recovers only A's
 snapshot and complete-key conflict, while the stale fingerprint stays terminal.
 This is Linux-only evidence.
+Save, close, external refresh, `team.sync`, `team.commit`, and `team.resolve`
+now expose the same renderer receipt fields and use only
+`transaction.receipt.pending` / `transaction.receipt.ack` over NDJSON.
+Electron routes direct replies and restart recovery through one
+`transaction:envelope` dispatcher and one preload acknowledgement API, scoped
+by canonical project root, renderer generation, batch ID, and payload operation.
+The renderer acknowledges only after the operation-specific state publication:
+complete six-field rebind for committed product/refresh work and closed state
+for project close. A lost acknowledgement therefore republishes the same
+envelope after restart; a duplicate acknowledgement consults durable history
+without replaying writes, and an unknown batch/operation is rejected. The real
+Linux save/close, cross-project, and two-repository Git+file packaged recovery
+runs exercise this shared dispatcher, including idempotent duplicate team
+acknowledgements and zero post-receipt write replay.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
