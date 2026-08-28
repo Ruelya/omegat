@@ -1257,6 +1257,14 @@ async function prepareSharedConfigProjects(workDir, label) {
       "shared-config",
       "dedupe.recovery.json",
     ),
+    manifestPath: join(config, "transactions", "shared-config", "manifest.json"),
+    manifestRecoveryPath: join(
+      config,
+      "transactions",
+      "shared-config",
+      "manifest.recovery.json",
+    ),
+    archivePath: join(config, "transactions", "shared-config", "archive"),
   };
 }
 
@@ -1685,11 +1693,32 @@ async function readAndAssertConfigIndex(prepared, expectedOrder, historyLimit) {
   ]);
   assert.deepEqual(dedupeBytes, recoveryBytes);
   const dedupe = JSON.parse(dedupeBytes.toString("utf8"));
-  assert.deepEqual(dedupe.order, expectedOrder);
-  assert.deepEqual(Object.keys(dedupe.batches).sort(), [...expectedOrder].sort());
+  assert.equal(dedupe.version, 2);
+  const [manifestBytes, manifestRecoveryBytes] = await Promise.all([
+    readFile(prepared.manifestPath),
+    readFile(prepared.manifestRecoveryPath),
+  ]);
+  assert.deepEqual(manifestBytes, manifestRecoveryBytes);
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  assert.equal(manifest.version, 2);
+  const archived = [];
+  for (const descriptor of manifest.segments) {
+    const segment = JSON.parse(
+      await readFile(join(prepared.archivePath, descriptor.file), "utf8"),
+    );
+    assert.equal(segment.version, 2);
+    assert.equal(segment.batches.length, descriptor.batch_count);
+    archived.push(...segment.batches);
+  }
+  const all = [
+    ...archived,
+    ...dedupe.order.map((batchId) => dedupe.batches[batchId]),
+  ];
+  assert.deepEqual(all.map((row) => row.batch_id), expectedOrder);
+  const allById = Object.fromEntries(all.map((row) => [row.batch_id, row]));
   for (const batchId of expectedOrder) {
-    assert.equal(dedupe.batches[batchId].batch_id, batchId);
-    assert.equal(dedupe.batches[batchId].status, "completed");
+    assert.equal(allById[batchId].batch_id, batchId);
+    assert.equal(allById[batchId].status, "completed");
   }
   const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
   assert.deepEqual(
@@ -1706,7 +1735,7 @@ async function readAndAssertConfigIndex(prepared, expectedOrder, historyLimit) {
     [prepared.firstProject, prepared.secondProject],
     "config journal recovery",
   );
-  return { dedupe, history, transactionFiles };
+  return { dedupe, manifest, all, allById, history, transactionFiles };
 }
 
 async function runConfigJournalTerminationMatrix(display, workDir) {
@@ -1833,6 +1862,8 @@ async function runConfigCompactionOwnerTakeover(display, workDir) {
   const secondMarker = join(workDir, "config-compaction-second.marker");
   const commonEnv = {
     OMEGAT_TEST_CONFIG_HISTORY_LIMIT: String(historyLimit),
+    OMEGAT_TEST_CONFIG_DEDUPE_HOT_LIMIT: String(historyLimit),
+    OMEGAT_TEST_CONFIG_ARCHIVE_SEGMENT_LIMIT: "1",
   };
   let owner;
   let contender;
@@ -1949,11 +1980,11 @@ async function runConfigCompactionOwnerTakeover(display, workDir) {
       historyLimit,
     );
     assert.equal(
-      finalState.dedupe.batches[firstClaim.batch_id].owner_process_id,
+      finalState.allById[firstClaim.batch_id].owner_process_id,
       firstKilled.browserPid,
     );
     assert.equal(
-      finalState.dedupe.batches[secondClaim.batch_id].owner_process_id,
+      finalState.allById[secondClaim.batch_id].owner_process_id,
       secondKilled.browserPid,
     );
 
@@ -1994,7 +2025,7 @@ async function runConfigCompactionOwnerTakeover(display, workDir) {
       expectedOrder,
       historyLimit,
     );
-    assert.equal(afterRetries.dedupe.order.length, expectedOrder.length);
+    assert.equal(afterRetries.all.length, expectedOrder.length);
     assert.equal(product.locale, "fr");
     assert.equal(product.font_ui, "Compaction Handoff Font");
     return {

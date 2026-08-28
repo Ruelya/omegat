@@ -12,16 +12,20 @@ use fs2::FileExt;
 use omegat_core::prefs::Preferences;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const CONFIG_TRANSACTION_VERSION: u8 = 1;
+const CONFIG_TRANSACTION_VERSION: u8 = 2;
+const LEGACY_CONFIG_TRANSACTION_VERSION: u8 = 1;
 const TRANSACTION_DIRECTORY: &str = "shared-config";
 const CONFIG_HISTORY_LIMIT: usize = 64;
+const CONFIG_DEDUPE_HOT_LIMIT: usize = 64;
+const CONFIG_ARCHIVE_SEGMENT_LIMIT: usize = 64;
 static BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -97,9 +101,57 @@ impl ConfigTransactionDedupe {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigArchiveDescriptor {
+    id: u64,
+    file: String,
+    sha256: String,
+    batch_count: usize,
+    first_batch_id: String,
+    last_batch_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigArchiveManifest {
+    version: u8,
+    config_dir: PathBuf,
+    #[serde(default)]
+    revision: u64,
+    #[serde(default)]
+    next_segment_id: u64,
+    segments: Vec<ConfigArchiveDescriptor>,
+    updated_unix_ms: u128,
+}
+
+impl ConfigArchiveManifest {
+    fn empty(config_dir: &Path) -> Self {
+        Self {
+            version: CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(config_dir),
+            revision: 0,
+            next_segment_id: 1,
+            segments: Vec::new(),
+            updated_unix_ms: unix_ms(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigArchiveSegment {
+    version: u8,
+    config_dir: PathBuf,
+    id: u64,
+    batches: Vec<ConfigTransactionEnvelope>,
+}
+
 struct ConfigTransactionHistory {
     recent: Vec<ConfigTransactionEnvelope>,
     dedupe: ConfigTransactionDedupe,
+    manifest: ConfigArchiveManifest,
+    archived: Vec<ConfigTransactionEnvelope>,
 }
 
 struct ConfigTransactionLock {
@@ -139,6 +191,18 @@ fn dedupe_path(config_dir: &Path) -> PathBuf {
 
 fn dedupe_recovery_path(config_dir: &Path) -> PathBuf {
     transaction_dir(config_dir).join("dedupe.recovery.json")
+}
+
+fn manifest_path(config_dir: &Path) -> PathBuf {
+    transaction_dir(config_dir).join("manifest.json")
+}
+
+fn manifest_recovery_path(config_dir: &Path) -> PathBuf {
+    transaction_dir(config_dir).join("manifest.recovery.json")
+}
+
+fn archive_dir(config_dir: &Path) -> PathBuf {
+    transaction_dir(config_dir).join("archive")
 }
 
 fn sync_parent(path: &Path) -> Result<(), String> {
@@ -184,6 +248,9 @@ fn cleanup_interrupted_candidates(config_dir: &Path) -> Result<(), String> {
         ".history.ndjson.",
         ".dedupe.json.",
         ".dedupe.recovery.json.",
+        ".manifest.json.",
+        ".manifest.recovery.json.",
+        ".archive-segment.",
     ];
     let mut removed = false;
     for entry in std::fs::read_dir(&directory).map_err(|error| {
@@ -229,8 +296,13 @@ fn cleanup_interrupted_candidates(config_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn valid_envelope(envelope: &ConfigTransactionEnvelope, config_dir: &Path, pending: bool) -> bool {
-    envelope.version == CONFIG_TRANSACTION_VERSION
+fn valid_envelope_version(
+    envelope: &ConfigTransactionEnvelope,
+    config_dir: &Path,
+    pending: bool,
+    version: u8,
+) -> bool {
+    envelope.version == version
         && normalized(&envelope.config_dir) == normalized(config_dir)
         && !envelope.batch_id.is_empty()
         && !envelope.operation.is_empty()
@@ -250,13 +322,24 @@ fn valid_envelope(envelope: &ConfigTransactionEnvelope, config_dir: &Path, pendi
         }
 }
 
+fn valid_envelope(envelope: &ConfigTransactionEnvelope, config_dir: &Path, pending: bool) -> bool {
+    valid_envelope_version(envelope, config_dir, pending, CONFIG_TRANSACTION_VERSION)
+}
+
+fn migrate_envelope(mut envelope: ConfigTransactionEnvelope) -> ConfigTransactionEnvelope {
+    envelope.version = CONFIG_TRANSACTION_VERSION;
+    envelope
+}
+
 fn read_journal_replica(
     path: &Path,
     config_dir: &Path,
-) -> Result<(bool, Option<ConfigTransactionJournal>), String> {
+) -> Result<(bool, Option<ConfigTransactionJournal>, bool), String> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, None)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((false, None, false));
+        }
         Err(error) => {
             return Err(format!(
                 "read config transaction journal replica {}: {error}",
@@ -264,17 +347,27 @@ fn read_journal_replica(
             ))
         }
     };
-    let journal = serde_json::from_slice::<ConfigTransactionJournal>(&bytes)
+    let Some(mut journal) = serde_json::from_slice::<ConfigTransactionJournal>(&bytes)
         .ok()
         .filter(|journal| {
-            journal.version == CONFIG_TRANSACTION_VERSION
-                && normalized(&journal.config_dir) == normalized(config_dir)
+            matches!(
+                journal.version,
+                CONFIG_TRANSACTION_VERSION | LEGACY_CONFIG_TRANSACTION_VERSION
+            ) && normalized(&journal.config_dir) == normalized(config_dir)
                 && journal
                     .batches
                     .iter()
-                    .all(|batch| valid_envelope(batch, config_dir, true))
-        });
-    Ok((true, journal))
+                    .all(|batch| valid_envelope_version(batch, config_dir, true, journal.version))
+        })
+    else {
+        return Ok((true, None, false));
+    };
+    let migrated = journal.version == LEGACY_CONFIG_TRANSACTION_VERSION;
+    if migrated {
+        journal.version = CONFIG_TRANSACTION_VERSION;
+        journal.batches = journal.batches.into_iter().map(migrate_envelope).collect();
+    }
+    Ok((true, Some(journal), migrated))
 }
 
 fn remove_durable(path: &Path) -> Result<(), String> {
@@ -326,10 +419,10 @@ fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
     ];
     let mut valid = replicas
         .iter()
-        .filter_map(|(_, (_, journal))| journal.as_ref())
+        .filter_map(|(_, (_, journal, _))| journal.as_ref())
         .collect::<Vec<_>>();
     if valid.is_empty() {
-        if replicas.iter().any(|(_, (exists, _))| *exists) {
+        if replicas.iter().any(|(_, (exists, _, _))| *exists) {
             return Err(format!(
                 "both config transaction journal replicas are invalid in {}",
                 transaction_dir(config_dir).display()
@@ -348,7 +441,10 @@ fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
             selected.revision
         ));
     }
-    let repair = replicas.iter().any(|(_, (_, journal))| {
+    let repair = replicas.iter().any(|(_, (_, journal, migrated))| {
+        if *migrated {
+            return true;
+        }
         journal
             .as_ref()
             .map(|journal| journal != &selected)
@@ -369,13 +465,42 @@ fn persist_journal(
     write_journal_replicas(config_dir, journal)
 }
 
+#[derive(Clone)]
+enum ConfigDedupeReplica {
+    Current(ConfigTransactionDedupe),
+    Legacy(ConfigTransactionDedupe),
+}
+
+struct ConfigDedupeSources {
+    current: ConfigTransactionDedupe,
+    legacy: Option<ConfigTransactionDedupe>,
+    needs_publish: bool,
+}
+
+fn valid_dedupe(index: &ConfigTransactionDedupe, config_dir: &Path) -> bool {
+    matches!(
+        index.version,
+        CONFIG_TRANSACTION_VERSION | LEGACY_CONFIG_TRANSACTION_VERSION
+    ) && normalized(&index.config_dir) == normalized(config_dir)
+        && index.batches.iter().all(|(batch_id, batch)| {
+            batch_id == &batch.batch_id
+                && valid_envelope_version(batch, config_dir, false, index.version)
+        })
+        && index.order.len() == index.batches.len()
+        && index
+            .order
+            .iter()
+            .all(|batch_id| index.batches.contains_key(batch_id))
+        && index.order.iter().collect::<BTreeSet<_>>().len() == index.order.len()
+}
+
 fn read_dedupe_replica(
     path: &Path,
     config_dir: &Path,
-) -> Result<(bool, Option<ConfigTransactionDedupe>), String> {
+) -> Result<(bool, Option<ConfigDedupeReplica>), String> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, None)),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok((false, None)),
         Err(error) => {
             return Err(format!(
                 "read config transaction dedupe replica {}: {error}",
@@ -385,23 +510,13 @@ fn read_dedupe_replica(
     };
     let index = serde_json::from_slice::<ConfigTransactionDedupe>(&bytes)
         .ok()
-        .filter(|index| {
-            index.version == CONFIG_TRANSACTION_VERSION
-                && normalized(&index.config_dir) == normalized(config_dir)
-                && index.batches.iter().all(|(batch_id, batch)| {
-                    batch_id == &batch.batch_id && valid_envelope(batch, config_dir, false)
-                })
-                && index.order.len() == index.batches.len()
-                && index
-                    .order
-                    .iter()
-                    .all(|batch_id| index.batches.contains_key(batch_id))
-                && index
-                    .order
-                    .iter()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len()
-                    == index.order.len()
+        .filter(|index| valid_dedupe(index, config_dir))
+        .map(|index| {
+            if index.version == CONFIG_TRANSACTION_VERSION {
+                ConfigDedupeReplica::Current(index)
+            } else {
+                ConfigDedupeReplica::Legacy(index)
+            }
         });
     Ok((true, index))
 }
@@ -423,57 +538,453 @@ fn write_dedupe_replicas(
     Ok(())
 }
 
-fn read_dedupe(config_dir: &Path) -> Result<ConfigTransactionDedupe, String> {
-    let replicas = [
-        (
-            dedupe_path(config_dir),
-            read_dedupe_replica(&dedupe_path(config_dir), config_dir)?,
-        ),
-        (
-            dedupe_recovery_path(config_dir),
-            read_dedupe_replica(&dedupe_recovery_path(config_dir), config_dir)?,
-        ),
-    ];
-    let mut valid = replicas
-        .iter()
-        .filter_map(|(_, (_, index))| index.as_ref())
-        .collect::<Vec<_>>();
-    if valid.is_empty() {
-        if replicas.iter().any(|(_, (exists, _))| *exists) {
-            return Err(format!(
-                "both config transaction dedupe replicas are invalid in {}",
-                transaction_dir(config_dir).display()
-            ));
-        }
-        return Ok(ConfigTransactionDedupe::empty(config_dir));
-    }
-    valid.sort_by_key(|index| index.revision);
-    let selected = (*valid.last().expect("non-empty dedupe replicas")).clone();
-    if valid
-        .iter()
-        .any(|index| index.revision == selected.revision && **index != selected)
-    {
-        return Err(format!(
-            "config transaction dedupe replicas disagree at revision {}",
-            selected.revision
-        ));
-    }
-    let repair = replicas.iter().any(|(_, (_, index))| {
-        index
-            .as_ref()
-            .map(|index| index != &selected)
-            .unwrap_or(true)
-    });
-    if repair {
-        write_dedupe_replicas(config_dir, &selected)?;
-    }
-    Ok(selected)
-}
-
 fn persist_dedupe(config_dir: &Path, dedupe: &mut ConfigTransactionDedupe) -> Result<(), String> {
+    dedupe.version = CONFIG_TRANSACTION_VERSION;
+    dedupe.config_dir = normalized(config_dir);
     dedupe.revision = dedupe.revision.saturating_add(1);
     dedupe.updated_unix_ms = unix_ms();
     write_dedupe_replicas(config_dir, dedupe)
+}
+
+fn select_dedupe(
+    mut candidates: Vec<ConfigTransactionDedupe>,
+    label: &str,
+) -> Result<Option<ConfigTransactionDedupe>, String> {
+    candidates.sort_by_key(|index| index.revision);
+    let Some(selected) = candidates.last().cloned() else {
+        return Ok(None);
+    };
+    if candidates
+        .iter()
+        .any(|index| index.revision == selected.revision && index != &selected)
+    {
+        return Err(format!(
+            "config transaction {label} dedupe replicas disagree at revision {}",
+            selected.revision
+        ));
+    }
+    Ok(Some(selected))
+}
+
+fn read_dedupe_sources(config_dir: &Path) -> Result<ConfigDedupeSources, String> {
+    let replicas = [
+        read_dedupe_replica(&dedupe_path(config_dir), config_dir)?,
+        read_dedupe_replica(&dedupe_recovery_path(config_dir), config_dir)?,
+    ];
+    let mut current = Vec::new();
+    let mut legacy = Vec::new();
+    for (_, replica) in &replicas {
+        match replica {
+            Some(ConfigDedupeReplica::Current(index)) => current.push(index.clone()),
+            Some(ConfigDedupeReplica::Legacy(index)) => legacy.push(index.clone()),
+            None => {}
+        }
+    }
+    if current.is_empty() && legacy.is_empty() && replicas.iter().any(|(exists, _)| *exists) {
+        return Err(format!(
+            "both config transaction dedupe replicas are invalid in {}",
+            transaction_dir(config_dir).display()
+        ));
+    }
+    let selected_current = select_dedupe(current, "v2")?;
+    let selected_legacy = select_dedupe(legacy, "v1")?;
+    let needs_publish = replicas.iter().any(|(_, replica)| match replica {
+        Some(ConfigDedupeReplica::Current(index)) => {
+            selected_current.as_ref() != Some(index) || selected_legacy.is_some()
+        }
+        Some(ConfigDedupeReplica::Legacy(_)) | None => true,
+    });
+    Ok(ConfigDedupeSources {
+        current: selected_current.unwrap_or_else(|| ConfigTransactionDedupe::empty(config_dir)),
+        legacy: selected_legacy,
+        needs_publish,
+    })
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn write_manifest_replicas(
+    config_dir: &Path,
+    manifest: &ConfigArchiveManifest,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(manifest)
+        .map_err(|error| format!("serialize config transaction archive manifest: {error}"))?;
+    for path in [
+        manifest_recovery_path(config_dir),
+        manifest_path(config_dir),
+    ] {
+        omegat_core::durable_file::replace(&path, &bytes).map_err(|error| {
+            format!(
+                "publish config transaction archive manifest replica {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn persist_manifest(config_dir: &Path, manifest: &mut ConfigArchiveManifest) -> Result<(), String> {
+    manifest.version = CONFIG_TRANSACTION_VERSION;
+    manifest.config_dir = normalized(config_dir);
+    manifest.revision = manifest.revision.saturating_add(1);
+    manifest.updated_unix_ms = unix_ms();
+    write_manifest_replicas(config_dir, manifest)
+}
+
+fn read_manifest_replica(
+    path: &Path,
+    config_dir: &Path,
+) -> Result<(bool, Option<ConfigArchiveManifest>), String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok((false, None)),
+        Err(error) => {
+            return Err(format!(
+                "read config transaction archive manifest replica {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let manifest = serde_json::from_slice::<ConfigArchiveManifest>(&bytes)
+        .ok()
+        .filter(|manifest| {
+            manifest.version == CONFIG_TRANSACTION_VERSION
+                && normalized(&manifest.config_dir) == normalized(config_dir)
+                && manifest.next_segment_id > 0
+                && manifest
+                    .segments
+                    .iter()
+                    .map(|segment| segment.id)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == manifest.segments.len()
+                && manifest
+                    .segments
+                    .iter()
+                    .map(|segment| segment.file.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == manifest.segments.len()
+        });
+    Ok((true, manifest))
+}
+
+fn archive_descriptor(
+    config_dir: &Path,
+    file: String,
+    bytes: &[u8],
+) -> Result<(ConfigArchiveDescriptor, ConfigArchiveSegment), String> {
+    if Path::new(&file).file_name().and_then(|name| name.to_str()) != Some(file.as_str())
+        || !file.starts_with("segment-")
+        || !file.ends_with(".json")
+    {
+        return Err(format!("unsafe config archive segment name {file}"));
+    }
+    let segment: ConfigArchiveSegment = serde_json::from_slice(bytes)
+        .map_err(|error| format!("parse config archive segment {file}: {error}"))?;
+    if segment.version != CONFIG_TRANSACTION_VERSION
+        || normalized(&segment.config_dir) != normalized(config_dir)
+        || segment.id == 0
+        || segment.batches.is_empty()
+        || segment
+            .batches
+            .iter()
+            .any(|batch| !valid_envelope(batch, config_dir, false))
+        || segment
+            .batches
+            .iter()
+            .map(|batch| batch.batch_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len()
+            != segment.batches.len()
+    {
+        return Err(format!("invalid config archive segment {file}"));
+    }
+    let digest = sha256(bytes);
+    let expected_name = format!("segment-{:020}-{digest}.json", segment.id);
+    if file != expected_name {
+        return Err(format!(
+            "config archive segment filename digest mismatch: {file}"
+        ));
+    }
+    let descriptor = ConfigArchiveDescriptor {
+        id: segment.id,
+        file,
+        sha256: digest,
+        batch_count: segment.batches.len(),
+        first_batch_id: segment
+            .batches
+            .first()
+            .expect("non-empty archive")
+            .batch_id
+            .clone(),
+        last_batch_id: segment
+            .batches
+            .last()
+            .expect("non-empty archive")
+            .batch_id
+            .clone(),
+    };
+    Ok((descriptor, segment))
+}
+
+fn read_archive_descriptor(
+    config_dir: &Path,
+    expected: &ConfigArchiveDescriptor,
+) -> Result<ConfigArchiveSegment, String> {
+    let path = archive_dir(config_dir).join(&expected.file);
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("read config archive segment {}: {error}", path.display()))?;
+    let (actual, segment) = archive_descriptor(config_dir, expected.file.clone(), &bytes)?;
+    if &actual != expected {
+        return Err(format!(
+            "config archive manifest descriptor disagrees with {}",
+            path.display()
+        ));
+    }
+    Ok(segment)
+}
+
+fn discover_archive_segments(
+    config_dir: &Path,
+) -> Result<Vec<(ConfigArchiveDescriptor, ConfigArchiveSegment)>, String> {
+    let directory = archive_dir(config_dir);
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "read config archive directory {}: {error}",
+                directory.display()
+            ))
+        }
+    };
+    let mut discovered = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read config archive directory entry {}: {error}",
+                directory.display()
+            )
+        })?;
+        if !entry
+            .file_type()
+            .map_err(|error| format!("inspect config archive entry: {error}"))?
+            .is_file()
+        {
+            continue;
+        }
+        let file = entry.file_name().to_string_lossy().into_owned();
+        if !file.starts_with("segment-") || !file.ends_with(".json") {
+            continue;
+        }
+        let bytes = std::fs::read(entry.path()).map_err(|error| {
+            format!(
+                "read discovered config archive segment {}: {error}",
+                entry.path().display()
+            )
+        })?;
+        discovered.push(archive_descriptor(config_dir, file, &bytes)?);
+    }
+    discovered.sort_by_key(|(descriptor, _)| descriptor.id);
+    if discovered
+        .iter()
+        .map(|(descriptor, _)| descriptor.id)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != discovered.len()
+    {
+        return Err("duplicate config archive segment id".into());
+    }
+    Ok(discovered)
+}
+
+fn read_manifest(config_dir: &Path) -> Result<ConfigArchiveManifest, String> {
+    let replicas = [
+        read_manifest_replica(&manifest_path(config_dir), config_dir)?,
+        read_manifest_replica(&manifest_recovery_path(config_dir), config_dir)?,
+    ];
+    let mut valid = replicas
+        .iter()
+        .filter_map(|(_, manifest)| manifest.as_ref())
+        .collect::<Vec<_>>();
+    if valid.is_empty() && replicas.iter().any(|(exists, _)| *exists) {
+        return Err(format!(
+            "both config transaction archive manifest replicas are invalid in {}",
+            transaction_dir(config_dir).display()
+        ));
+    }
+    valid.sort_by_key(|manifest| manifest.revision);
+    let mut manifest = valid
+        .last()
+        .map(|manifest| (*manifest).clone())
+        .unwrap_or_else(|| ConfigArchiveManifest::empty(config_dir));
+    if valid
+        .iter()
+        .any(|candidate| candidate.revision == manifest.revision && **candidate != manifest)
+    {
+        return Err(format!(
+            "config transaction archive manifest replicas disagree at revision {}",
+            manifest.revision
+        ));
+    }
+
+    for descriptor in &manifest.segments {
+        read_archive_descriptor(config_dir, descriptor)?;
+    }
+    let discovered = discover_archive_segments(config_dir)?;
+    let mut changed = valid.is_empty()
+        || replicas.iter().any(|(_, candidate)| {
+            candidate
+                .as_ref()
+                .map(|candidate| candidate != &manifest)
+                .unwrap_or(true)
+        });
+    for (descriptor, _) in discovered {
+        match manifest
+            .segments
+            .iter()
+            .find(|candidate| candidate.id == descriptor.id)
+        {
+            Some(existing) if existing == &descriptor => {}
+            Some(_) => {
+                return Err(format!(
+                    "conflicting immutable config archive segment {}",
+                    descriptor.id
+                ))
+            }
+            None => {
+                manifest.segments.push(descriptor);
+                changed = true;
+            }
+        }
+    }
+    manifest.segments.sort_by_key(|descriptor| descriptor.id);
+    manifest.next_segment_id = manifest
+        .segments
+        .last()
+        .map(|descriptor| descriptor.id.saturating_add(1))
+        .unwrap_or(1);
+    if changed {
+        persist_manifest(config_dir, &mut manifest)?;
+    }
+    Ok(manifest)
+}
+
+fn publish_archive_segment(
+    config_dir: &Path,
+    manifest: &mut ConfigArchiveManifest,
+    batches: &[ConfigTransactionEnvelope],
+) -> Result<ConfigArchiveDescriptor, String> {
+    let id = manifest.next_segment_id.max(1);
+    let segment = ConfigArchiveSegment {
+        version: CONFIG_TRANSACTION_VERSION,
+        config_dir: normalized(config_dir),
+        id,
+        batches: batches.to_vec(),
+    };
+    let bytes = serde_json::to_vec_pretty(&segment)
+        .map_err(|error| format!("serialize config archive segment: {error}"))?;
+    let digest = sha256(&bytes);
+    let file = format!("segment-{id:020}-{digest}.json");
+    let directory = archive_dir(config_dir);
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "create config archive directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    sync_parent(&directory)?;
+    let destination = directory.join(&file);
+    if destination.exists() {
+        let existing = std::fs::read(&destination).map_err(|error| {
+            format!(
+                "read existing config archive segment {}: {error}",
+                destination.display()
+            )
+        })?;
+        if existing != bytes {
+            return Err(format!(
+                "immutable config archive segment already exists with different bytes: {}",
+                destination.display()
+            ));
+        }
+    } else {
+        let sequence = BATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary = transaction_dir(config_dir).join(format!(
+            ".archive-segment.{}.{sequence}.tmp",
+            std::process::id()
+        ));
+        let write_result = (|| -> Result<(), String> {
+            let mut candidate = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary)
+                .map_err(|error| {
+                    format!(
+                        "create config archive candidate {}: {error}",
+                        temporary.display()
+                    )
+                })?;
+            candidate.write_all(&bytes).map_err(|error| {
+                format!(
+                    "write config archive candidate {}: {error}",
+                    temporary.display()
+                )
+            })?;
+            checkpoint(
+                &batches[0].operation,
+                "after_archive_candidate_write",
+                &batches[0],
+            )?;
+            candidate.sync_all().map_err(|error| {
+                format!(
+                    "sync config archive candidate {}: {error}",
+                    temporary.display()
+                )
+            })?;
+            checkpoint(
+                &batches[0].operation,
+                "after_archive_candidate_fsync",
+                &batches[0],
+            )?;
+            std::fs::rename(&temporary, &destination).map_err(|error| {
+                format!(
+                    "publish immutable config archive segment {}: {error}",
+                    destination.display()
+                )
+            })?;
+            checkpoint(&batches[0].operation, "after_archive_rename", &batches[0])?;
+            File::open(&directory)
+                .and_then(|archive| archive.sync_all())
+                .map_err(|error| {
+                    format!(
+                        "sync config archive directory {}: {error}",
+                        directory.display()
+                    )
+                })?;
+            checkpoint(
+                &batches[0].operation,
+                "after_archive_parent_fsync",
+                &batches[0],
+            )
+        })();
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error);
+        }
+    }
+    let (descriptor, _) = archive_descriptor(config_dir, file, &bytes)?;
+    manifest.segments.push(descriptor.clone());
+    manifest.segments.sort_by_key(|candidate| candidate.id);
+    manifest.next_segment_id = id.saturating_add(1);
+    persist_manifest(config_dir, manifest)?;
+    Ok(descriptor)
 }
 
 fn persist_history(config_dir: &Path, history: &[ConfigTransactionEnvelope]) -> Result<(), String> {
@@ -492,20 +1003,170 @@ fn persist_history(config_dir: &Path, history: &[ConfigTransactionEnvelope]) -> 
     })
 }
 
-fn history_limit() -> usize {
-    std::env::var("OMEGAT_TEST_CONFIG_HISTORY_LIMIT")
+fn configured_limit(name: &str, default: usize) -> usize {
+    std::env::var(name)
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(CONFIG_HISTORY_LIMIT)
+        .unwrap_or(default)
+}
+
+fn history_limit() -> usize {
+    configured_limit("OMEGAT_TEST_CONFIG_HISTORY_LIMIT", CONFIG_HISTORY_LIMIT)
+}
+
+fn dedupe_hot_limit() -> usize {
+    configured_limit(
+        "OMEGAT_TEST_CONFIG_DEDUPE_HOT_LIMIT",
+        CONFIG_DEDUPE_HOT_LIMIT,
+    )
+}
+
+fn archive_segment_limit() -> usize {
+    configured_limit(
+        "OMEGAT_TEST_CONFIG_ARCHIVE_SEGMENT_LIMIT",
+        CONFIG_ARCHIVE_SEGMENT_LIMIT,
+    )
+}
+
+fn terminal_disagreement(batch_id: &str) -> String {
+    format!("config transaction terminal result disagrees for batch {batch_id}")
+}
+
+fn insert_unarchived(
+    archived: &BTreeMap<String, ConfigTransactionEnvelope>,
+    batches: &mut BTreeMap<String, ConfigTransactionEnvelope>,
+    order: &mut Vec<String>,
+    envelope: ConfigTransactionEnvelope,
+) -> Result<(), String> {
+    if let Some(existing) = archived.get(&envelope.batch_id) {
+        if existing != &envelope {
+            return Err(terminal_disagreement(&envelope.batch_id));
+        }
+        return Ok(());
+    }
+    match batches.get(&envelope.batch_id) {
+        Some(existing) if existing == &envelope => Ok(()),
+        Some(_) => Err(terminal_disagreement(&envelope.batch_id)),
+        None => {
+            order.push(envelope.batch_id.clone());
+            batches.insert(envelope.batch_id.clone(), envelope);
+            Ok(())
+        }
+    }
+}
+
+fn canonical_recent(history: &ConfigTransactionHistory) -> Vec<ConfigTransactionEnvelope> {
+    history
+        .archived
+        .iter()
+        .chain(history.dedupe.order.iter().map(|batch_id| {
+            history
+                .dedupe
+                .batches
+                .get(batch_id)
+                .expect("validated hot dedupe order")
+        }))
+        .rev()
+        .take(history_limit())
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+
+fn compact_history_storage(
+    config_dir: &Path,
+    history: &mut ConfigTransactionHistory,
+    emit_checkpoints: bool,
+) -> Result<bool, String> {
+    let archive_count = history
+        .dedupe
+        .order
+        .len()
+        .saturating_sub(dedupe_hot_limit());
+    let history_needs_compaction = history.recent.len() > history_limit();
+    if archive_count == 0 && !history_needs_compaction {
+        return Ok(false);
+    }
+    let checkpoint_envelope = history
+        .dedupe
+        .order
+        .last()
+        .and_then(|batch_id| history.dedupe.batches.get(batch_id))
+        .cloned()
+        .or_else(|| history.recent.last().cloned());
+    if emit_checkpoints {
+        if let Some(envelope) = &checkpoint_envelope {
+            checkpoint(&envelope.operation, "before_history_compaction", envelope)?;
+        }
+    }
+
+    if archive_count > 0 {
+        let to_archive = history.dedupe.order[..archive_count]
+            .iter()
+            .map(|batch_id| {
+                history
+                    .dedupe
+                    .batches
+                    .get(batch_id)
+                    .expect("validated hot dedupe order")
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        for chunk in to_archive.chunks(archive_segment_limit()) {
+            publish_archive_segment(config_dir, &mut history.manifest, chunk)?;
+        }
+        for envelope in &to_archive {
+            history.dedupe.batches.remove(&envelope.batch_id);
+        }
+        history.dedupe.order.drain(..archive_count);
+        history.archived.extend(to_archive);
+        persist_dedupe(config_dir, &mut history.dedupe)?;
+    }
+
+    let expected_recent = canonical_recent(history);
+    if history.recent != expected_recent {
+        history.recent = expected_recent;
+        persist_history(config_dir, &history.recent)?;
+    }
+    if emit_checkpoints {
+        if let Some(envelope) = &checkpoint_envelope {
+            checkpoint(&envelope.operation, "after_history_compaction", envelope)?;
+        }
+    }
+    Ok(true)
 }
 
 fn read_history(config_dir: &Path) -> Result<ConfigTransactionHistory, String> {
-    let mut dedupe = read_dedupe(config_dir)?;
+    cleanup_interrupted_candidates(config_dir)?;
+    let manifest = read_manifest(config_dir)?;
+    let mut archived = Vec::new();
+    let mut archived_by_id = BTreeMap::new();
+    for descriptor in &manifest.segments {
+        let segment = read_archive_descriptor(config_dir, descriptor)?;
+        for envelope in segment.batches {
+            match archived_by_id.get(&envelope.batch_id) {
+                Some(existing) if existing == &envelope => {
+                    return Err(format!(
+                        "config transaction batch {} occurs in multiple archive segments",
+                        envelope.batch_id
+                    ))
+                }
+                Some(_) => return Err(terminal_disagreement(&envelope.batch_id)),
+                None => {
+                    archived_by_id.insert(envelope.batch_id.clone(), envelope.clone());
+                    archived.push(envelope);
+                }
+            }
+        }
+    }
+
     let path = history_path(config_dir);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) if error.kind() == ErrorKind::NotFound => Vec::new(),
         Err(error) => {
             return Err(format!(
                 "read config transaction history {}: {error}",
@@ -514,20 +1175,29 @@ fn read_history(config_dir: &Path) -> Result<ConfigTransactionHistory, String> {
         }
     };
     let mut damaged = !bytes.is_empty() && !bytes.ends_with(b"\n");
-    let mut recent = Vec::<ConfigTransactionEnvelope>::new();
-    let mut recent_by_id = BTreeMap::<String, ConfigTransactionEnvelope>::new();
+    let mut disk_recent = Vec::new();
+    let mut disk_recent_by_id = BTreeMap::<String, ConfigTransactionEnvelope>::new();
     for line in bytes.split(|byte| *byte == b'\n').filter(|line| {
         line.iter()
             .any(|byte| !matches!(*byte, b' ' | b'\t' | b'\r'))
     }) {
-        let Some(envelope) = serde_json::from_slice::<ConfigTransactionEnvelope>(line)
+        let Some(mut envelope) = serde_json::from_slice::<ConfigTransactionEnvelope>(line)
             .ok()
-            .filter(|envelope| valid_envelope(envelope, config_dir, false))
+            .filter(|envelope| {
+                matches!(
+                    envelope.version,
+                    CONFIG_TRANSACTION_VERSION | LEGACY_CONFIG_TRANSACTION_VERSION
+                ) && valid_envelope_version(envelope, config_dir, false, envelope.version)
+            })
         else {
             damaged = true;
             continue;
         };
-        if let Some(existing) = recent_by_id.get(&envelope.batch_id) {
+        if envelope.version == LEGACY_CONFIG_TRANSACTION_VERSION {
+            envelope = migrate_envelope(envelope);
+            damaged = true;
+        }
+        if let Some(existing) = disk_recent_by_id.get(&envelope.batch_id) {
             if existing != &envelope {
                 return Err(format!(
                     "conflicting config transaction history rows for batch {}",
@@ -537,57 +1207,66 @@ fn read_history(config_dir: &Path) -> Result<ConfigTransactionHistory, String> {
             damaged = true;
             continue;
         }
-        recent_by_id.insert(envelope.batch_id.clone(), envelope.clone());
-        recent.push(envelope);
+        disk_recent_by_id.insert(envelope.batch_id.clone(), envelope.clone());
+        disk_recent.push(envelope);
     }
 
-    let mut dedupe_changed = false;
-    for envelope in &recent {
-        match dedupe.batches.get(&envelope.batch_id) {
-            Some(existing) if existing == envelope => {}
-            Some(existing) => {
-                validate_identity(existing, &envelope.operation, &envelope.payload)?;
-                return Err(format!(
-                    "config transaction terminal result disagrees for batch {}",
-                    envelope.batch_id
-                ));
-            }
-            None => {
-                dedupe
+    let ConfigDedupeSources {
+        current,
+        legacy,
+        needs_publish,
+    } = read_dedupe_sources(config_dir)?;
+    let mut batches = BTreeMap::new();
+    let mut order = Vec::new();
+    if let Some(legacy) = legacy {
+        for batch_id in &legacy.order {
+            let envelope = migrate_envelope(
+                legacy
                     .batches
-                    .insert(envelope.batch_id.clone(), envelope.clone());
-                dedupe.order.push(envelope.batch_id.clone());
-                dedupe_changed = true;
-            }
+                    .get(batch_id)
+                    .expect("validated legacy dedupe order")
+                    .clone(),
+            );
+            insert_unarchived(&archived_by_id, &mut batches, &mut order, envelope)?;
         }
     }
-    if dedupe_changed {
-        persist_dedupe(config_dir, &mut dedupe)?;
+    for batch_id in &current.order {
+        let envelope = current
+            .batches
+            .get(batch_id)
+            .expect("validated current dedupe order")
+            .clone();
+        insert_unarchived(&archived_by_id, &mut batches, &mut order, envelope)?;
     }
+    for envelope in &disk_recent {
+        insert_unarchived(&archived_by_id, &mut batches, &mut order, envelope.clone())?;
+    }
+    let dedupe_needs_publish =
+        needs_publish || batches != current.batches || order != current.order;
 
-    let limit = history_limit();
-    let expected_recent = dedupe
-        .order
-        .iter()
-        .rev()
-        .take(limit)
-        .rev()
-        .map(|batch_id| {
-            dedupe
-                .batches
-                .get(batch_id)
-                .expect("validated dedupe order")
-                .clone()
-        })
-        .collect::<Vec<_>>();
-    if recent != expected_recent {
-        recent = expected_recent;
-        damaged = true;
+    let mut state = ConfigTransactionHistory {
+        recent: disk_recent,
+        dedupe: ConfigTransactionDedupe {
+            version: CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(config_dir),
+            revision: current.revision,
+            batches,
+            order,
+            updated_unix_ms: current.updated_unix_ms,
+        },
+        manifest,
+        archived,
+    };
+    compact_history_storage(config_dir, &mut state, false)?;
+    if dedupe_needs_publish {
+        persist_dedupe(config_dir, &mut state.dedupe)?;
     }
-    if damaged {
-        persist_history(config_dir, &recent)?;
+    let expected_recent = canonical_recent(&state);
+    if damaged || state.recent != expected_recent {
+        state.recent = expected_recent;
+        persist_history(config_dir, &state.recent)?;
     }
-    Ok(ConfigTransactionHistory { recent, dedupe })
+    Ok(state)
 }
 
 fn checkpoint(
@@ -795,13 +1474,25 @@ fn result_from_terminal(envelope: &ConfigTransactionEnvelope) -> Result<Value, S
     }
 }
 
+fn find_terminal<'a>(
+    history: &'a ConfigTransactionHistory,
+    batch_id: &str,
+) -> Option<&'a ConfigTransactionEnvelope> {
+    history.dedupe.batches.get(batch_id).or_else(|| {
+        history
+            .archived
+            .iter()
+            .find(|envelope| envelope.batch_id == batch_id)
+    })
+}
+
 fn drain_locked(
     config_dir: &Path,
     journal: &mut ConfigTransactionJournal,
     history: &mut ConfigTransactionHistory,
 ) -> Result<(), String> {
     while let Some(pending) = journal.batches.first().cloned() {
-        if let Some(terminal) = history.dedupe.batches.get(&pending.batch_id) {
+        if let Some(terminal) = find_terminal(history, &pending.batch_id) {
             validate_identity(terminal, &pending.operation, &pending.payload)?;
         } else {
             let mut terminal = pending.clone();
@@ -827,14 +1518,7 @@ fn drain_locked(
                 .insert(terminal.batch_id.clone(), terminal.clone());
             history.dedupe.order.push(terminal.batch_id.clone());
             persist_dedupe(config_dir, &mut history.dedupe)?;
-            if history.recent.len() > history_limit() {
-                checkpoint(&pending.operation, "before_history_compaction", &terminal)?;
-                history.recent = history
-                    .recent
-                    .split_off(history.recent.len() - history_limit());
-                persist_history(config_dir, &history.recent)?;
-                checkpoint(&pending.operation, "after_history_compaction", &terminal)?;
-            }
+            compact_history_storage(config_dir, history, true)?;
         }
         journal.batches.remove(0);
         persist_journal(config_dir, journal)?;
@@ -894,7 +1578,7 @@ pub fn execute(
     let _lock = acquire_lock(config_dir)?;
     let mut journal = read_journal(config_dir)?;
     let mut history = read_history(config_dir)?;
-    if let Some(existing) = history.dedupe.batches.get(batch_id) {
+    if let Some(existing) = find_terminal(&history, batch_id) {
         validate_identity(existing, operation, &payload)?;
         return result_from_terminal(existing);
     }
@@ -919,10 +1603,7 @@ pub fn execute(
         checkpoint(operation, "after_enqueue", &envelope)?;
     }
     drain_locked(config_dir, &mut journal, &mut history)?;
-    let terminal = history
-        .dedupe
-        .batches
-        .get(batch_id)
+    let terminal = find_terminal(&history, batch_id)
         .ok_or_else(|| format!("config transaction {batch_id} did not reach history"))?;
     result_from_terminal(terminal)
 }
@@ -1158,11 +1839,17 @@ mod tests {
 
         let state = read_history(&config).unwrap();
         assert_eq!(state.recent.len(), CONFIG_HISTORY_LIMIT);
-        assert_eq!(state.dedupe.batches.len(), CONFIG_HISTORY_LIMIT + 9);
-        assert_eq!(state.dedupe.order.first().unwrap(), "bounded-0");
+        assert_eq!(state.dedupe.batches.len(), CONFIG_DEDUPE_HOT_LIMIT);
+        assert_eq!(state.archived.len(), 9);
+        assert_eq!(state.dedupe.order.first().unwrap(), "bounded-9");
         assert_eq!(
             state.dedupe.order.last().unwrap(),
             &format!("bounded-{}", CONFIG_HISTORY_LIMIT + 8)
+        );
+        assert_eq!(state.manifest.segments.len(), 9);
+        assert_eq!(
+            std::fs::read(manifest_path(&config)).unwrap(),
+            std::fs::read(manifest_recovery_path(&config)).unwrap()
         );
         let product_before_retry = std::fs::read(config.join("omegat.prefs.json")).unwrap();
         assert_eq!(
@@ -1210,7 +1897,8 @@ mod tests {
 
         let repaired = read_history(&config).unwrap();
         assert_eq!(repaired.recent.len(), CONFIG_HISTORY_LIMIT);
-        assert_eq!(repaired.dedupe.batches.len(), CONFIG_HISTORY_LIMIT + 9);
+        assert_eq!(repaired.dedupe.batches.len(), CONFIG_DEDUPE_HOT_LIMIT);
+        assert_eq!(repaired.archived.len(), 9);
         assert_eq!(
             std::fs::read_to_string(history_path)
                 .unwrap()
@@ -1222,13 +1910,9 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
             repaired
-                .dedupe
-                .order
+                .recent
                 .iter()
-                .rev()
-                .take(CONFIG_HISTORY_LIMIT)
-                .rev()
-                .cloned()
+                .map(|row| row.batch_id.clone())
                 .collect::<Vec<_>>()
         );
         assert_eq!(
@@ -1239,5 +1923,183 @@ mod tests {
             .unwrap()
             .filter_map(Result::ok)
             .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    fn completed(
+        config: &Path,
+        batch_id: &str,
+        payload: Value,
+        result: Value,
+    ) -> ConfigTransactionEnvelope {
+        ConfigTransactionEnvelope {
+            version: CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(config),
+            batch_id: batch_id.into(),
+            operation: "prefs.patch".into(),
+            app_instance: "electron-owner".into(),
+            owner_process_id: 808,
+            status: ConfigTransactionStatus::Completed,
+            payload,
+            result: Some(result),
+            error: None,
+            updated_unix_ms: unix_ms(),
+        }
+    }
+
+    fn as_legacy(mut envelope: ConfigTransactionEnvelope) -> ConfigTransactionEnvelope {
+        envelope.version = LEGACY_CONFIG_TRANSACTION_VERSION;
+        envelope
+    }
+
+    #[test]
+    fn migrates_v1_active_and_history_when_the_legacy_index_is_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        std::fs::create_dir_all(transaction_dir(&config)).unwrap();
+        let legacy_terminal = as_legacy(completed(
+            &config,
+            "legacy-terminal",
+            json!({"theme": "legacy"}),
+            json!({"theme": "legacy"}),
+        ));
+        let mut legacy_pending = pending(&config, "legacy-pending", json!({"locale": "fr"}));
+        legacy_pending.version = LEGACY_CONFIG_TRANSACTION_VERSION;
+        let legacy_journal = ConfigTransactionJournal {
+            version: LEGACY_CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(&config),
+            revision: 0,
+            batches: vec![legacy_pending],
+            updated_unix_ms: unix_ms(),
+        };
+        std::fs::write(
+            active_path(&config),
+            serde_json::to_vec_pretty(&legacy_journal).unwrap(),
+        )
+        .unwrap();
+        let mut history_bytes = serde_json::to_vec(&legacy_terminal).unwrap();
+        history_bytes.push(b'\n');
+        std::fs::write(history_path(&config), history_bytes).unwrap();
+
+        recover(&config).unwrap();
+
+        assert_eq!(Preferences::load_or_default(&config).locale, "fr");
+        assert!(!active_path(&config).exists());
+        assert!(!active_recovery_path(&config).exists());
+        let state = read_history(&config).unwrap();
+        assert_eq!(
+            state
+                .recent
+                .iter()
+                .map(|row| (row.version, row.batch_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (CONFIG_TRANSACTION_VERSION, "legacy-terminal"),
+                (CONFIG_TRANSACTION_VERSION, "legacy-pending"),
+            ]
+        );
+        assert_eq!(state.dedupe.version, CONFIG_TRANSACTION_VERSION);
+        assert_eq!(state.manifest.version, CONFIG_TRANSACTION_VERSION);
+        assert_eq!(
+            std::fs::read(dedupe_path(&config)).unwrap(),
+            std::fs::read(dedupe_recovery_path(&config)).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(manifest_path(&config)).unwrap(),
+            std::fs::read(manifest_recovery_path(&config)).unwrap()
+        );
+    }
+
+    #[test]
+    fn interrupted_v1_migration_adopts_immutable_orphan_and_keeps_old_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        std::fs::create_dir_all(transaction_dir(&config)).unwrap();
+        let rows = (0..4)
+            .map(|index| {
+                completed(
+                    &config,
+                    &format!("migration-{index}"),
+                    json!({"theme": format!("theme-{index}")}),
+                    json!({"theme": format!("theme-{index}")}),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let mut interrupted_manifest = ConfigArchiveManifest::empty(&config);
+        publish_archive_segment(&config, &mut interrupted_manifest, &rows[..2]).unwrap();
+        remove_durable(&manifest_path(&config)).unwrap();
+        remove_durable(&manifest_recovery_path(&config)).unwrap();
+        let legacy = ConfigTransactionDedupe {
+            version: LEGACY_CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(&config),
+            revision: 7,
+            batches: rows
+                .iter()
+                .cloned()
+                .map(as_legacy)
+                .map(|row| (row.batch_id.clone(), row))
+                .collect(),
+            order: rows.iter().map(|row| row.batch_id.clone()).collect(),
+            updated_unix_ms: unix_ms(),
+        };
+        let legacy_bytes = serde_json::to_vec_pretty(&legacy).unwrap();
+        std::fs::write(dedupe_path(&config), &legacy_bytes).unwrap();
+        std::fs::write(dedupe_recovery_path(&config), &legacy_bytes).unwrap();
+        let mut recent = Vec::new();
+        for row in rows.iter().cloned().map(as_legacy) {
+            serde_json::to_writer(&mut recent, &row).unwrap();
+            recent.push(b'\n');
+        }
+        std::fs::write(history_path(&config), recent).unwrap();
+
+        let state = read_history(&config).unwrap();
+        assert_eq!(state.archived.len(), 2);
+        assert_eq!(
+            state
+                .dedupe
+                .order
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["migration-2", "migration-3"]
+        );
+        assert_eq!(state.manifest.segments.len(), 1);
+        assert_eq!(
+            execute(
+                &config,
+                "electron-retry",
+                "migration-0",
+                900,
+                "prefs.patch",
+                json!({"theme": "theme-0"}),
+            )
+            .unwrap(),
+            json!({"theme": "theme-0"})
+        );
+        assert!(!config.join("omegat.prefs.json").exists());
+        assert_eq!(discover_archive_segments(&config).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn manifest_and_hot_index_publish_failures_stop_before_product_mutation() {
+        for blocked in ["manifest.recovery.json", "dedupe.recovery.json"] {
+            let temp = tempfile::tempdir().unwrap();
+            let config = temp.path().join("config");
+            std::fs::create_dir_all(transaction_dir(&config).join(blocked)).unwrap();
+            let error = execute(
+                &config,
+                "electron",
+                "blocked",
+                901,
+                "prefs.patch",
+                json!({"locale": "fr"}),
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("archive manifest") || error.contains("dedupe"),
+                "{error}"
+            );
+            assert!(!config.join("omegat.prefs.json").exists());
+        }
     }
 }

@@ -23,6 +23,7 @@
     "test:e2e:team-rename-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-team-rename-recovery-linux.mjs",
     "test:e2e:compaction-dual-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-compaction-dual-recovery-linux.mjs",
     "test:e2e:writer-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-writer-recovery-linux.mjs",
+    "test:e2e:shared-config-v2:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-shared-config-v2.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
