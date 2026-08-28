@@ -1009,6 +1009,450 @@ fn close_team_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     owner.wait().unwrap();
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
+    struct Sidecar {
+        child: std::process::Child,
+        input: std::process::ChildStdin,
+        output: BufReader<std::process::ChildStdout>,
+    }
+
+    fn spawn_sidecar(config: &std::path::Path) -> Sidecar {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        Sidecar {
+            child,
+            input,
+            output,
+        }
+    }
+
+    fn pending(
+        sidecar: &mut Sidecar,
+        id: i64,
+        root: &std::path::Path,
+        app_instance: &str,
+        generation: u64,
+    ) -> Value {
+        rpc(
+            &mut sidecar.input,
+            &mut sidecar.output,
+            id,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": app_instance,
+                "generation": generation,
+            }),
+        )
+    }
+
+    for (kind, operation) in [
+        ("close", "project.close"),
+        ("team", "commit-target"),
+        ("save", "project.save"),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join(format!("{kind}-config"));
+        let root = temp.path().join(format!("{kind}-project"));
+        let remote = temp.path().join(format!("{kind}-remote"));
+        let source_path = root.join("source/source.txt");
+        let head_batch = format!("atomic-{kind}-head");
+        let owner_path = root.join(".repositories/transactions/renderer-owner.json");
+        let active_path = root.join(".repositories/transactions/active.json");
+        let history_path = root.join(".repositories/transactions/history.ndjson");
+        let refresh_path = root.join(".repositories/transactions/external-refresh.json");
+        let refresh_history_path =
+            root.join(".repositories/transactions/external-refresh-history.ndjson");
+
+        let mut setup = spawn_sidecar(&config);
+        rpc(
+            &mut setup.input,
+            &mut setup.output,
+            1,
+            "project.create",
+            json!({
+                "root": root,
+                "source_lang": "en",
+                "target_lang": "fr",
+                "sentence_seg": false,
+            }),
+        );
+        std::fs::write(&source_path, format!("atomic {kind} source")).unwrap();
+        rpc(
+            &mut setup.input,
+            &mut setup.output,
+            2,
+            "project.reload",
+            json!({}),
+        );
+
+        let remote_path = remote.join("target/atomic.txt");
+        if kind == "team" {
+            std::fs::create_dir_all(remote_path.parent().unwrap()).unwrap();
+            std::fs::write(&remote_path, "remote before atomic election").unwrap();
+            let mapped = rpc(
+                &mut setup.input,
+                &mut setup.output,
+                3,
+                "team.mapping",
+                json!({
+                    "repositories": [{
+                        "repo_type": "file",
+                        "url": remote,
+                        "branch": null,
+                        "mappings": [{
+                            "local": "/target/atomic.txt",
+                            "repository": "/target/atomic.txt",
+                            "includes": [],
+                            "excludes": [],
+                        }],
+                    }],
+                }),
+            );
+            assert_eq!(mapped["result"]["ok"], true);
+            let synced = rpc(
+                &mut setup.input,
+                &mut setup.output,
+                4,
+                "team.sync",
+                json!({}),
+            );
+            assert_eq!(synced["result"]["action"], "sync");
+            std::fs::write(
+                root.join("target/atomic.txt"),
+                "remote committed exactly once",
+            )
+            .unwrap();
+        }
+
+        let head = match kind {
+            "close" => rpc(
+                &mut setup.input,
+                &mut setup.output,
+                5,
+                "project.close",
+                json!({
+                    "transaction_project_root": root,
+                    "transaction_generation": 61,
+                    "transaction_batch_id": head_batch,
+                }),
+            ),
+            "team" => rpc(
+                &mut setup.input,
+                &mut setup.output,
+                5,
+                "team.commit",
+                json!({
+                    "which": "target",
+                    "transaction_project_root": root,
+                    "transaction_generation": 61,
+                    "transaction_batch_id": head_batch,
+                }),
+            ),
+            "save" => rpc(
+                &mut setup.input,
+                &mut setup.output,
+                5,
+                "project.save",
+                json!({
+                    "transaction_project_root": root,
+                    "transaction_generation": 61,
+                    "transaction_batch_id": head_batch,
+                }),
+            ),
+            _ => unreachable!(),
+        };
+        assert_eq!(head["result"]["receipt"]["batch_id"], head_batch);
+        assert_eq!(head["result"]["receipt"]["payload"]["operation"], operation);
+        assert_eq!(head["result"]["receipt"]["status"], "sidecar_committed");
+
+        if kind == "close" {
+            let reopened = rpc(
+                &mut setup.input,
+                &mut setup.output,
+                6,
+                "project.open",
+                json!({ "root": root }),
+            );
+            assert_eq!(reopened["error"], Value::Null);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        let refresh = rpc(
+            &mut setup.input,
+            &mut setup.output,
+            7,
+            "project.refresh.enqueue",
+            json!({
+                "root": root,
+                "app_instance": format!("atomic-{kind}-setup"),
+                "generation": 61,
+                "paths": [source_path],
+                "fingerprints": {
+                    format!("source-{kind}"): format!("atomic-{kind}-refresh")
+                },
+                "sources": ["native"],
+            }),
+        );
+        let refresh_batch = refresh["result"]["batch"]["batch_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(refresh["result"]["batch"]["status"], "pending");
+
+        let selected_by_old_owner = pending(
+            &mut setup,
+            8,
+            &root,
+            &format!("atomic-{kind}-old-owner"),
+            62,
+        );
+        assert_eq!(
+            selected_by_old_owner["result"]["envelopes"][0]["batch_id"],
+            head_batch
+        );
+        let old_owner: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        assert_eq!(old_owner["process_id"], setup.child.id());
+        assert_eq!(
+            old_owner["app_instance"],
+            format!("atomic-{kind}-old-owner")
+        );
+
+        let mut live_contender = spawn_sidecar(&config);
+        let rejected_while_old_owner_lived = pending(
+            &mut live_contender,
+            9,
+            &root,
+            &format!("atomic-{kind}-pre-kill-contender"),
+            63,
+        );
+        assert_eq!(rejected_while_old_owner_lived["error"]["code"], -32005);
+        assert_eq!(rejected_while_old_owner_lived["result"], Value::Null);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&owner_path).unwrap()).unwrap(),
+            old_owner,
+            "{kind} pre-kill contender replaced the live owner"
+        );
+        live_contender.child.kill().unwrap();
+        live_contender.child.wait().unwrap();
+
+        let tmx_path = root.join("omegat/project_save.tmx");
+        let tmx_before = std::fs::read(&tmx_path).unwrap();
+        let tmx_mtime_before = std::fs::metadata(&tmx_path).unwrap().modified().unwrap();
+        let remote_before = (kind == "team").then(|| std::fs::read(&remote_path).unwrap());
+        let remote_mtime_before =
+            (kind == "team").then(|| std::fs::metadata(&remote_path).unwrap().modified().unwrap());
+
+        let old_pid = setup.child.id();
+        setup.child.kill().unwrap();
+        assert!(!setup.child.wait().unwrap().success());
+        assert!(
+            !std::path::Path::new("/proc")
+                .join(old_pid.to_string())
+                .exists(),
+            "{kind} old owner PID still existed before replacement race"
+        );
+
+        let replacements = [
+            (
+                spawn_sidecar(&config),
+                format!("atomic-{kind}-replacement-a"),
+                64,
+            ),
+            (
+                spawn_sidecar(&config),
+                format!("atomic-{kind}-replacement-b"),
+                65,
+            ),
+        ];
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let mut racers = Vec::new();
+        for (mut sidecar, app_instance, generation) in replacements {
+            let barrier = barrier.clone();
+            let root = root.clone();
+            racers.push(std::thread::spawn(move || {
+                barrier.wait();
+                let response = pending(&mut sidecar, 10, &root, &app_instance, generation);
+                (sidecar, app_instance, generation, response)
+            }));
+        }
+        barrier.wait();
+        let mut raced = racers
+            .into_iter()
+            .map(|racer| racer.join().unwrap())
+            .collect::<Vec<_>>();
+
+        let winner_index = raced
+            .iter()
+            .position(|(_, _, _, response)| {
+                response
+                    .pointer("/result/envelopes/0/batch_id")
+                    .and_then(Value::as_str)
+                    == Some(head_batch.as_str())
+            })
+            .expect("one replacement must receive the durable product head");
+        assert_eq!(
+            raced
+                .iter()
+                .filter(|(_, _, _, response)| {
+                    response
+                        .pointer("/result/envelopes/0/batch_id")
+                        .and_then(Value::as_str)
+                        == Some(head_batch.as_str())
+                })
+                .count(),
+            1,
+            "{kind} product head was delivered to more than one replacement"
+        );
+        let loser_index = 1 - winner_index;
+        assert_eq!(raced[loser_index].3["error"]["code"], -32005);
+        assert_eq!(raced[loser_index].3["result"], Value::Null);
+
+        let replacement_owner: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        assert_eq!(replacement_owner["app_instance"], raced[winner_index].1);
+        assert_eq!(
+            replacement_owner["process_id"],
+            raced[winner_index].0.child.id()
+        );
+        assert_eq!(replacement_owner["generation"], raced[winner_index].2);
+        assert_ne!(replacement_owner["claim_id"], old_owner["claim_id"]);
+        assert!(replacement_owner["claim_id"]
+            .as_str()
+            .is_some_and(|claim| !claim.is_empty()));
+
+        let (winner, loser) = if winner_index == 0 {
+            let loser = raced.pop().unwrap();
+            let winner = raced.pop().unwrap();
+            (winner, loser)
+        } else {
+            let winner = raced.pop().unwrap();
+            let loser = raced.pop().unwrap();
+            (winner, loser)
+        };
+        let (mut winner, winner_app, winner_generation, _) = winner;
+        let (mut loser, loser_app, loser_generation, _) = loser;
+
+        let loser_ack = rpc(
+            &mut loser.input,
+            &mut loser.output,
+            11,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": loser_app,
+                "generation": loser_generation,
+                "batch_id": head_batch,
+                "operation": operation,
+                "outcome": "succeeded",
+            }),
+        );
+        assert_eq!(loser_ack["error"]["code"], -32005);
+        assert_eq!(loser_ack["result"], Value::Null);
+
+        let winner_ack = rpc(
+            &mut winner.input,
+            &mut winner.output,
+            12,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": winner_app,
+                "generation": winner_generation,
+                "batch_id": head_batch,
+                "operation": operation,
+                "outcome": "succeeded",
+            }),
+        );
+        assert_eq!(winner_ack["result"]["ack"]["acknowledged"], true);
+        let winner_refresh = pending(&mut winner, 13, &root, &winner_app, winner_generation);
+        assert_eq!(
+            winner_refresh["result"]["envelopes"][0]["batch_id"],
+            refresh_batch
+        );
+        assert_eq!(
+            winner_refresh["result"]["envelopes"][0]["payload"]["operation"],
+            "project.external-refresh"
+        );
+        let refresh_ack = rpc(
+            &mut winner.input,
+            &mut winner.output,
+            14,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": winner_app,
+                "generation": winner_generation,
+                "batch_id": refresh_batch,
+                "operation": "project.external-refresh",
+                "outcome": "coalesced",
+            }),
+        );
+        assert_eq!(refresh_ack["result"]["ack"]["acknowledged"], true);
+        assert_eq!(
+            pending(&mut winner, 15, &root, &winner_app, winner_generation,)["result"]["envelopes"],
+            json!([])
+        );
+        assert!(!active_path.exists());
+        assert!(!refresh_path.exists());
+
+        let product_history = std::fs::read_to_string(&history_path).unwrap();
+        assert_eq!(
+            product_history
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|row| {
+                    row["batch_id"] == head_batch
+                        && row["status"] == "completed"
+                        && row["payload"]["phase"] == "renderer-acknowledged"
+                })
+                .count(),
+            1,
+            "{kind} head had duplicate terminal acknowledgements"
+        );
+        let refresh_history = std::fs::read_to_string(&refresh_history_path).unwrap();
+        assert_eq!(
+            refresh_history
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|row| { row["batch_id"] == refresh_batch && row["status"] == "completed" })
+                .count(),
+            1,
+            "{kind} refresh tail had duplicate terminal acknowledgements"
+        );
+        assert_eq!(std::fs::read(&tmx_path).unwrap(), tmx_before);
+        assert_eq!(
+            std::fs::metadata(&tmx_path).unwrap().modified().unwrap(),
+            tmx_mtime_before,
+            "{kind} election replayed the committed TMX write"
+        );
+        if let (Some(remote_before), Some(remote_mtime_before)) =
+            (remote_before, remote_mtime_before)
+        {
+            assert_eq!(std::fs::read(&remote_path).unwrap(), remote_before);
+            assert_eq!(
+                std::fs::metadata(&remote_path).unwrap().modified().unwrap(),
+                remote_mtime_before,
+                "team election replayed the committed remote write"
+            );
+        }
+
+        loser.child.kill().unwrap();
+        loser.child.wait().unwrap();
+        winner.child.kill().unwrap();
+        winner.child.wait().unwrap();
+    }
+}
+
 #[test]
 fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
     fn spawn_sidecar(

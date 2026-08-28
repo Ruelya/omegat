@@ -898,6 +898,153 @@ async function prepareCloseReceiptProject(configDir, project, remote, label) {
   };
 }
 
+async function prepareAtomicElectionProject(
+  configDir,
+  project,
+  remote,
+  label,
+  headKind,
+) {
+  const session = new SidecarSession(configDir);
+  await session.request("project.create", {
+    root: project,
+    source_lang: "en",
+    target_lang: "fr",
+    sentence_seg: false,
+  });
+  let remotePath = null;
+  let remoteContent = null;
+  if (headKind === "team") {
+    remotePath = join(remote, "target", "atomic.txt");
+    await mkdir(dirname(remotePath), { recursive: true });
+    await writeFile(remotePath, `${label} remote before`, "utf8");
+    await session.request("team.mapping", {
+      repositories: [{
+        repo_type: "file",
+        url: remote,
+        branch: null,
+        mappings: [{
+          local: "/target/atomic.txt",
+          repository: "/target/atomic.txt",
+          includes: [],
+          excludes: [],
+        }],
+      }],
+    });
+    await session.request("team.sync", {});
+  }
+
+  const source = `${label} duplicate source`;
+  await writeFile(join(project, "source", "a-wanted.txt"), source, "utf8");
+  await writeFile(join(project, "source", "z-decoy.txt"), source, "utf8");
+  await session.request("project.reload", {});
+  const entries = await session.request("entry.list", {});
+  assert.equal(entries.length, 2);
+  const wanted = entries.find((entry) => entry.key.file === "a-wanted.txt");
+  const decoy = entries.find((entry) => entry.key.file === "z-decoy.txt");
+  assert(wanted);
+  assert(decoy);
+  assertCompleteEntryKey(wanted.key);
+  assertCompleteEntryKey(decoy.key);
+  const translation = `${label} atomic election translation 😀`;
+  const initialBatchId = `${label}-initial-entry`;
+  const initial = await session.request("entry.set", {
+    index: wanted.index,
+    key: wanted.key,
+    translation,
+    note: "atomic replacement election",
+    revision: wanted.revision,
+    default_translation: false,
+    transaction_project_root: project,
+    transaction_generation: 131,
+    transaction_batch_id: initialBatchId,
+  });
+  assert.equal(initial.receipt.payload.operation, "entry.set");
+  await session.request("transaction.receipt.ack", {
+    root: project,
+    app_instance: `${label}-setup`,
+    generation: 131,
+    batch_id: initialBatchId,
+    operation: "entry.set",
+    outcome: "succeeded",
+  });
+  const compacted = await session.request("transaction.receipt.pending", {
+    root: project,
+    app_instance: `${label}-setup`,
+    generation: 131,
+  });
+  assert.deepEqual(compacted.envelopes, []);
+
+  const headBatchId = `${label}-${headKind}-head`;
+  let operation;
+  if (headKind === "team") {
+    remoteContent = `${label} remote committed exactly once`;
+    await writeFile(join(project, "target", "atomic.txt"), remoteContent, "utf8");
+    const head = await session.request("team.commit", {
+      which: "target",
+      transaction_project_root: project,
+      transaction_generation: 131,
+      transaction_batch_id: headBatchId,
+    });
+    operation = "commit-target";
+    assert.equal(head.receipt.payload.operation, operation);
+    assert.equal(await readFile(remotePath, "utf8"), remoteContent);
+  } else if (headKind === "save") {
+    const head = await session.request("project.save", {
+      transaction_project_root: project,
+      transaction_generation: 131,
+      transaction_batch_id: headBatchId,
+    });
+    operation = "project.save";
+    assert.equal(head.receipt.payload.operation, operation);
+  } else {
+    assert.equal(headKind, "close");
+    const head = await session.request("project.close", {
+      transaction_project_root: project,
+      transaction_generation: 131,
+      transaction_batch_id: headBatchId,
+    });
+    operation = "project.close";
+    assert.equal(head.receipt.payload.operation, operation);
+    await session.request("project.open", { root: project });
+  }
+
+  await sleep(10);
+  const refreshPath = join(project, "glossary", `${label}-tail.txt`);
+  await mkdir(dirname(refreshPath), { recursive: true });
+  await writeFile(refreshPath, `${label} source\t${label} target\n`, "utf8");
+  const refresh = await session.request("project.refresh.enqueue", {
+    root: project,
+    app_instance: `${label}-setup`,
+    generation: 131,
+    paths: [refreshPath],
+    fingerprints: { [refreshPath]: `${label}-refresh-tail` },
+    sources: ["native"],
+  });
+  assert.equal(refresh.batch.status, "pending");
+  assert.equal(refresh.batch.payload.operation, "project.external-refresh");
+  await session.close();
+
+  const transactions = join(project, ".repositories", "transactions");
+  return {
+    source,
+    translation,
+    key: wanted.key,
+    decoyKey: decoy.key,
+    initialBatchId,
+    headBatchId,
+    operation,
+    refreshBatchId: refresh.batch.batch_id,
+    activePath: join(transactions, "active.json"),
+    historyPath: join(transactions, "history.ndjson"),
+    ownerPath: join(transactions, "renderer-owner.json"),
+    refreshJournalPath: join(transactions, "external-refresh.json"),
+    refreshHistoryPath: join(transactions, "external-refresh-history.ndjson"),
+    remotePath,
+    remoteContent,
+  };
+}
+
 async function snapshotStableProjectTree(root) {
   const snapshot = {};
   const visit = async (directory, prefix = "") => {
@@ -937,6 +1084,7 @@ const xvfb = await startXvfb();
 const results = [];
 const productCompactionResults = [];
 const receiptAckMatrix = [];
+const atomicReplacementElectionResults = [];
 let launchedA;
 let launchedB;
 let mixedReceiptRecovery;
@@ -2334,6 +2482,358 @@ try {
   await terminatePackaged(launchedA);
   launchedA = undefined;
 
+  for (const headKind of ["close", "team", "save"]) {
+    const label = `atomic-${headKind}`;
+    const config = join(workDir, `${label}-config`);
+    const project = join(workDir, `${label}-project`);
+    const remote = join(workDir, `${label}-remote`);
+    const oldOwnerMarkerPath = join(workDir, `${label}-old-owner.json`);
+    const oldOwnerReleasePath = join(workDir, `${label}-old-owner-release`);
+    const preKillTracePath = join(workDir, `${label}-pre-kill-trace.ndjson`);
+    const electionMarkerPath = join(workDir, `${label}-winner.json`);
+    const electionReleasePath = join(workDir, `${label}-winner-release`);
+    const replacementTracePaths = [
+      join(workDir, `${label}-replacement-a-trace.ndjson`),
+      join(workDir, `${label}-replacement-b-trace.ndjson`),
+    ];
+    const prepared = await prepareAtomicElectionProject(
+      config,
+      project,
+      remote,
+      label,
+      headKind,
+    );
+    const startupProject = headKind === "close" ? null : project;
+
+    launchedA = await launchPackaged(xvfb.display, config, startupProject, {
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: prepared.operation,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: oldOwnerMarkerPath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: oldOwnerReleasePath,
+    });
+    const oldOwnerMarker = await waitFor(`${headKind} old owner claim`, async () =>
+      await pathExists(oldOwnerMarkerPath)
+        ? JSON.parse(await readFile(oldOwnerMarkerPath, "utf8"))
+        : undefined
+    );
+    assert.equal(oldOwnerMarker.batch_id, prepared.headBatchId);
+    assert.equal(oldOwnerMarker.operation, prepared.operation);
+    assert.equal(oldOwnerMarker.owner_process_id, launchedA.application.pid);
+    const oldDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(oldDurableOwner.process_id, launchedA.application.pid);
+    assert.equal(oldDurableOwner.app_instance, oldOwnerMarker.app_instance);
+    assert.equal(oldDurableOwner.generation, oldOwnerMarker.generation);
+    assert.equal(typeof oldDurableOwner.claim_id, "string");
+    assert(oldDurableOwner.claim_id.length > 0);
+
+    launchedB = await launchPackaged(xvfb.display, config, null, {
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: preKillTracePath,
+    });
+    const preKillScope = {
+      root: project,
+      app_instance: `${label}-pre-kill-contender`,
+      owner_process_id: launchedB.application.pid,
+      generation: oldOwnerMarker.generation + 1,
+    };
+    const preKillPending = await invokeRpcResult(
+      launchedB.client,
+      "transaction.receipt.pending",
+      preKillScope,
+    );
+    assert.equal(
+      preKillPending.resolved,
+      false,
+      `${headKind} contender obtained an envelope while the old owner lived`,
+    );
+    assert.match(preKillPending.error, /locked by another process|owned by live app/);
+    const preKillAck = await invokeRpcResult(
+      launchedB.client,
+      "transaction.receipt.ack",
+      {
+        ...preKillScope,
+        batch_id: prepared.headBatchId,
+        operation: prepared.operation,
+        outcome: "succeeded",
+      },
+    );
+    assert.equal(
+      preKillAck.resolved,
+      false,
+      `${headKind} contender acknowledged the old owner's product head`,
+    );
+    assert.match(preKillAck.error, /locked by another process|owned by live app/);
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      oldDurableOwner,
+      `${headKind} pre-kill contender changed the durable owner`,
+    );
+    assert.equal(
+      await pathExists(preKillTracePath)
+        ? parseNdjson(await readFile(preKillTracePath, "utf8")).length
+        : 0,
+      0,
+      `${headKind} pre-kill contender received a renderer envelope`,
+    );
+    await terminatePackaged(launchedB);
+    launchedB = undefined;
+
+    const stableTreeBeforeElection = await snapshotStableProjectTree(project);
+    const tmxPath = join(project, "omegat", "project_save.tmx");
+    const tmxBeforeElection = await readFile(tmxPath);
+    const tmxMtimeBeforeElection = (await stat(tmxPath, { bigint: true })).mtimeNs;
+    const remoteBeforeElection = prepared.remotePath
+      ? await readFile(prepared.remotePath)
+      : null;
+    const remoteMtimeBeforeElection = prepared.remotePath
+      ? (await stat(prepared.remotePath, { bigint: true })).mtimeNs
+      : null;
+
+    const killedOldOwner = await killPackaged(launchedA);
+    launchedA = undefined;
+    assert.equal(killedOldOwner.browserPid, oldOwnerMarker.owner_process_id);
+    assert.equal(
+      await pathExists(`/proc/${killedOldOwner.browserPid}`),
+      false,
+      `${headKind} old owner PID remained live before replacement launch`,
+    );
+
+    [launchedA, launchedB] = await Promise.all(
+      replacementTracePaths.map((tracePath) =>
+        launchPackaged(xvfb.display, config, startupProject, {
+          OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: prepared.operation,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: electionMarkerPath,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: electionReleasePath,
+        })
+      ),
+    );
+    const electionMarker = await waitFor(
+      `${headKind} simultaneous replacement winner`,
+      async () =>
+        await pathExists(electionMarkerPath)
+          ? JSON.parse(await readFile(electionMarkerPath, "utf8"))
+          : undefined,
+    );
+    assert.equal(electionMarker.batch_id, prepared.headBatchId);
+    assert.equal(electionMarker.operation, prepared.operation);
+    assert.notEqual(electionMarker.owner_process_id, killedOldOwner.browserPid);
+    const replacements = [launchedA, launchedB];
+    const winnerIndex = replacements.findIndex(
+      (replacement) =>
+        replacement.application.pid === electionMarker.owner_process_id,
+    );
+    assert.notEqual(winnerIndex, -1);
+    const loserIndex = 1 - winnerIndex;
+    const winner = replacements[winnerIndex];
+    const loser = replacements[loserIndex];
+    const durableWinner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(durableWinner.process_id, winner.application.pid);
+    assert.equal(durableWinner.app_instance, electionMarker.app_instance);
+    assert.equal(durableWinner.generation, electionMarker.generation);
+    assert.notEqual(durableWinner.claim_id, oldDurableOwner.claim_id);
+    assert.equal(typeof durableWinner.claim_id, "string");
+    assert(durableWinner.claim_id.length > 0);
+
+    for (const tracePath of replacementTracePaths) {
+      assert.equal(
+        await pathExists(tracePath)
+          ? parseNdjson(await readFile(tracePath, "utf8")).length
+          : 0,
+        0,
+        `${headKind} replacement delivered before the winner release`,
+      );
+    }
+    const loserScope = {
+      root: project,
+      app_instance: `${label}-simultaneous-loser`,
+      owner_process_id: loser.application.pid,
+      generation: electionMarker.generation + 1,
+    };
+    const loserPending = await invokeRpcResult(
+      loser.client,
+      "transaction.receipt.pending",
+      loserScope,
+    );
+    assert.equal(
+      loserPending.resolved,
+      false,
+      `${headKind} losing replacement obtained the product head`,
+    );
+    assert.match(loserPending.error, /locked by another process|owned by live app/);
+    const loserAck = await invokeRpcResult(
+      loser.client,
+      "transaction.receipt.ack",
+      {
+        ...loserScope,
+        batch_id: prepared.headBatchId,
+        operation: prepared.operation,
+        outcome: "succeeded",
+      },
+    );
+    assert.equal(
+      loserAck.resolved,
+      false,
+      `${headKind} losing replacement acknowledged the product head`,
+    );
+    assert.match(loserAck.error, /locked by another process|owned by live app/);
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      durableWinner,
+      `${headKind} losing replacement changed the winning claim`,
+    );
+
+    await writeFile(electionReleasePath, "release\n", "utf8");
+    await waitFor(`${headKind} product head and refresh tail drain`, async () =>
+      !await pathExists(prepared.activePath)
+        && !await pathExists(prepared.refreshJournalPath)
+        ? true
+        : undefined
+    );
+    const winnerTrace = parseNdjson(
+      await readFile(replacementTracePaths[winnerIndex], "utf8"),
+    );
+    assertOrderedDispatch(
+      winnerTrace,
+      [prepared.headBatchId, prepared.refreshBatchId],
+      `${headKind} simultaneous replacement recovery`,
+    );
+    assert.equal(
+      winnerTrace.filter((row) => row.batch_id === prepared.headBatchId).length,
+      1,
+      `${headKind} winner received the product head more than once`,
+    );
+    assert.equal(
+      await pathExists(replacementTracePaths[loserIndex])
+        ? parseNdjson(
+            await readFile(replacementTracePaths[loserIndex], "utf8"),
+          ).length
+        : 0,
+      0,
+      `${headKind} loser received a renderer envelope`,
+    );
+
+    const productHistory = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.equal(
+      productHistory.filter((row) =>
+        row.batch_id === prepared.headBatchId
+        && row.status === "completed"
+        && row.payload.phase === "renderer-acknowledged"
+      ).length,
+      1,
+      `${headKind} product head has duplicate terminal history`,
+    );
+    const refreshHistory = parseNdjson(
+      await readFile(prepared.refreshHistoryPath, "utf8"),
+    );
+    assert.equal(
+      refreshHistory.filter((row) =>
+        row.batch_id === prepared.refreshBatchId
+        && row.status === "completed"
+      ).length,
+      1,
+      `${headKind} refresh tail has duplicate terminal history`,
+    );
+    assert.deepEqual(
+      await snapshotStableProjectTree(project),
+      stableTreeBeforeElection,
+      `${headKind} election replayed a stable project write`,
+    );
+    assert.deepEqual(await readFile(tmxPath), tmxBeforeElection);
+    assert.equal(
+      (await stat(tmxPath, { bigint: true })).mtimeNs,
+      tmxMtimeBeforeElection,
+      `${headKind} election replayed the TMX write`,
+    );
+    if (prepared.remotePath) {
+      assert.deepEqual(await readFile(prepared.remotePath), remoteBeforeElection);
+      assert.equal(
+        (await stat(prepared.remotePath, { bigint: true })).mtimeNs,
+        remoteMtimeBeforeElection,
+        "team election replayed the remote write",
+      );
+      assert.equal(
+        await readFile(prepared.remotePath, "utf8"),
+        prepared.remoteContent,
+      );
+    }
+
+    const winnerWorkspace = await workspaceState(winner.client);
+    if (headKind === "close") {
+      assert.equal(winnerWorkspace.project, null);
+      assert.equal(winnerWorkspace.welcome, true);
+      assert.equal(winnerWorkspace.activeSurfaces, 0);
+    } else {
+      assert.equal(winnerWorkspace.project, project);
+      assert.equal(winnerWorkspace.source, prepared.source);
+      assert.equal(winnerWorkspace.translation, prepared.translation);
+      assert.equal(winnerWorkspace.activeSurfaces, 1);
+      assert.deepEqual(JSON.parse(winnerWorkspace.key), prepared.key);
+      const entries = await winner.client.evaluate(
+        'window.omegat.rpc("entry.list", {})',
+        true,
+      );
+      const wanted = entries.find((entry) => entry.key.file === prepared.key.file);
+      const decoy = entries.find((entry) => entry.key.file === prepared.decoyKey.file);
+      assert.deepEqual(wanted.key, prepared.key);
+      assert.equal(wanted.translation, prepared.translation);
+      assert.deepEqual(decoy.key, prepared.decoyKey);
+      assert.equal(decoy.translation, "");
+    }
+
+    atomicReplacementElectionResults.push({
+      headKind,
+      oldOwnerExitedBeforeReplacementLaunch: true,
+      oldOwner: {
+        browserPid: killedOldOwner.browserPid,
+        sidecarPid: killedOldOwner.sidecarPid,
+        claimId: oldDurableOwner.claim_id,
+      },
+      simultaneousReplacementCount: replacements.length,
+      winner: {
+        browserPid: winner.application.pid,
+        claimId: durableWinner.claim_id,
+        selectedBatchId: electionMarker.batch_id,
+        dispatchOrder: [prepared.headBatchId, prepared.refreshBatchId],
+      },
+      loser: {
+        browserPid: loser.application.pid,
+        deliveredEnvelopes: 0,
+        pendingRejected: true,
+        acknowledgementRejected: true,
+      },
+      preKillContender: {
+        pendingRejected: true,
+        acknowledgementRejected: true,
+        deliveredEnvelopes: 0,
+      },
+      terminalHeadCount: 1,
+      terminalRefreshCount: 1,
+      tmxWriteReplayed: false,
+      teamRemoteWriteReplayed: false,
+      completeEntryKey: prepared.key,
+      decoyEntryKey: prepared.decoyKey,
+      winnerDocument3Surfaces: winnerWorkspace.activeSurfaces,
+    });
+
+    await terminatePackaged(launchedA);
+    launchedA = undefined;
+    await terminatePackaged(launchedB);
+    launchedB = undefined;
+
+    if (headKind === "close") {
+      launchedA = await launchPackaged(xvfb.display, config, project);
+      const reopened = await workspaceState(launchedA.client);
+      assert.equal(reopened.project, project);
+      assert.equal(reopened.source, prepared.source);
+      assert.equal(reopened.translation, prepared.translation);
+      assert.equal(reopened.activeSurfaces, 1);
+      assert.deepEqual(JSON.parse(reopened.key), prepared.key);
+      const result = atomicReplacementElectionResults.at(-1);
+      result.winnerDocument3SurfacesAfterExplicitReopen = reopened.activeSurfaces;
+      await terminatePackaged(launchedA);
+      launchedA = undefined;
+    }
+  }
+
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
@@ -2345,6 +2845,7 @@ try {
     receiptAckMatrix,
     closeReceiptRecovery,
     selectedHeadCrashRecovery,
+    atomicReplacementElectionResults,
   }));
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());
