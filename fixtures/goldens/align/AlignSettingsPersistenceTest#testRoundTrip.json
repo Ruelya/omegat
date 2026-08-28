@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testRoundTrip",
+  "algorithm": "forward-backward",
+  "calculator": "poisson",
+  "counter": "char",
+  "segment": false,
+  "remove_tags": true,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

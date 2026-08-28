@@ -1,0 +1,5 @@
+{
+  "java_test": "org.omegat.gui.editor.history.WordPredictorTest#testMinFrequency",
+  "min_frequency": 10.0,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

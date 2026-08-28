@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testIsWhiteSpace",
+  "empty": false,
+  "space": true,
+  "nbsp": true,
+  "mixed": false,
+  "keys": [
+    "org.omegat.util.StringUtilTest#testIsWhiteSpace"
+  ]
+}
