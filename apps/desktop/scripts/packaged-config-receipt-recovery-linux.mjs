@@ -592,6 +592,7 @@ try {
           "open-filter-editor",
           "filters",
         );
+        await waitForSelector(client, '[data-filter-open="text"]');
         await click(client, '[data-filter-open="text"]');
         await waitForSelector(client, '[data-filter-option="preserve_spaces"]');
         assert.equal(
@@ -676,6 +677,7 @@ try {
         "open-filter-editor",
         "filters",
       );
+      await waitForSelector(client, '[data-filter-open="text"]');
       await click(client, '[data-filter-open="text"]');
       await waitForSelector(client, '[data-filter-option="preserve_spaces"]');
       assert.equal(
