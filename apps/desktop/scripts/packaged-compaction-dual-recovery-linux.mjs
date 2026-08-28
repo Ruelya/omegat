@@ -649,7 +649,13 @@ async function prepareMixedReceiptProject(
   };
 }
 
-async function prepareCloseReceiptProject(configDir, project, label) {
+async function prepareCloseReceiptProject(configDir, project, remote, label) {
+  await mkdir(join(remote, "target"), { recursive: true });
+  await writeFile(
+    join(remote, "target", "takeover.txt"),
+    `${label} remote before`,
+    "utf8",
+  );
   const session = new SidecarSession(configDir);
   await session.request("project.create", {
     root: project,
@@ -657,6 +663,20 @@ async function prepareCloseReceiptProject(configDir, project, label) {
     target_lang: "fr",
     sentence_seg: false,
   });
+  await session.request("team.mapping", {
+    repositories: [{
+      repo_type: "file",
+      url: remote,
+      branch: null,
+      mappings: [{
+        local: "/target/takeover.txt",
+        repository: "/target/takeover.txt",
+        includes: [],
+        excludes: [],
+      }],
+    }],
+  });
+  await session.request("team.sync", {});
   const source = `${label} duplicate source`;
   await writeFile(join(project, "source", "a-wanted.txt"), source, "utf8");
   await writeFile(join(project, "source", "z-decoy.txt"), source, "utf8");
@@ -697,7 +717,14 @@ async function prepareCloseReceiptProject(configDir, project, label) {
     translation,
     key: wanted.key,
     decoyKey: decoy.key,
+    remotePath: join(remote, "target", "takeover.txt"),
     activePath: join(project, ".repositories", "transactions", "active.json"),
+    ownerPath: join(
+      project,
+      ".repositories",
+      "transactions",
+      "renderer-owner.json",
+    ),
     teamHistoryPath: join(
       project,
       ".repositories",
@@ -1371,8 +1398,13 @@ try {
 
   const closeConfig = join(workDir, "lost-close-config");
   const closeProject = join(workDir, "lost-close-project");
+  const closeRemote = join(workDir, "lost-close-remote");
   const closeFirstTracePath = join(workDir, "close-first-envelope-trace.ndjson");
   const closeFirstAckTracePath = join(workDir, "close-first-ack-trace.ndjson");
+  const closeClaimedOwnerTracePath = join(
+    workDir,
+    "close-claimed-owner-envelope-trace.ndjson",
+  );
   const closeRestartTracePath = join(workDir, "close-restart-envelope-trace.ndjson");
   const closeContenderTracePath = join(
     workDir,
@@ -1380,10 +1412,13 @@ try {
   );
   const closeHeadMarkerPath = join(workDir, "close-selected-head-sidecar-kill.json");
   const closeOwnerMarkerPath = join(workDir, "close-owner-claim.json");
-  const closeOwnerReleasePath = join(workDir, "close-owner-release");
+  const closeDeadOwnerReleasePath = join(workDir, "close-dead-owner-release");
+  const closeTakeoverMarkerPath = join(workDir, "close-takeover-claim.json");
+  const closeTakeoverReleasePath = join(workDir, "close-takeover-release");
   const lostClose = await prepareCloseReceiptProject(
     closeConfig,
     closeProject,
+    closeRemote,
     "lost-close",
   );
   launchedA = await launchPackaged(xvfb.display, closeConfig, closeProject, {
@@ -1449,6 +1484,20 @@ try {
 
   const closeTailSession = new SidecarSession(closeConfig);
   await closeTailSession.request("project.open", { root: closeProject });
+  const closeTeamBatchId = "lost-close-team-tail";
+  await writeFile(
+    join(closeProject, "target", "takeover.txt"),
+    "close tail committed exactly once",
+    "utf8",
+  );
+  const closeTeam = await closeTailSession.request("team.commit", {
+    which: "target",
+    transaction_project_root: closeProject,
+    transaction_generation: closeBatches[0].generation,
+    transaction_batch_id: closeTeamBatchId,
+  });
+  assert.equal(closeTeam.receipt.batch_id, closeTeamBatchId);
+  assert.equal(closeTeam.receipt.payload.operation, "commit-target");
   const closeSaveBatchId = "lost-close-save-tail";
   const closeSave = await closeTailSession.request("project.save", {
     transaction_project_root: closeProject,
@@ -1463,9 +1512,14 @@ try {
     closeBatches.map((row) => [row.batch_id, row.status]),
     [
       [closeBatchId, "sidecar_committed"],
+      [closeTeamBatchId, "sidecar_committed"],
       [closeSaveBatchId, "sidecar_committed"],
     ],
   );
+  const closeRemoteBeforeRecovery = await readFile(lostClose.remotePath, "utf8");
+  const closeRemoteMtimeBeforeRecovery = (
+    await stat(lostClose.remotePath, { bigint: true })
+  ).mtimeNs;
   const closeTailPath = join(closeProject, "glossary", "after-close.txt");
   await mkdir(dirname(closeTailPath), { recursive: true });
   await writeFile(
@@ -1495,9 +1549,11 @@ try {
   );
   assert.equal(closeFirstTrace[0]?.batch_id, closeBatchId);
   assert.equal(
-    closeFirstTrace.some((row) => row.batch_id === closeTailBatchId),
+    closeFirstTrace.some((row) =>
+      [closeTeamBatchId, closeSaveBatchId, closeTailBatchId].includes(row.batch_id)
+    ),
     false,
-    "a refresh tail bypassed the unacknowledged close receipt",
+    "a team/save/refresh tail bypassed the unacknowledged close receipt",
   );
   const stableTreeBeforeRecovery = await snapshotStableProjectTree(closeProject);
   const killedAfterLostClose = await killPackaged(launchedA);
@@ -1508,10 +1564,10 @@ try {
     closeConfig,
     null,
     {
-      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeRestartTracePath,
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeClaimedOwnerTracePath,
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "project.close",
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: closeOwnerMarkerPath,
-      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: closeOwnerReleasePath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: closeDeadOwnerReleasePath,
     },
   );
   const ownerClaim = await waitFor("durable close owner claim", async () =>
@@ -1522,6 +1578,50 @@ try {
   assert.equal(ownerClaim.batch_id, closeBatchId);
   assert.equal(ownerClaim.operation, "project.close");
   assert.equal(ownerClaim.owner_process_id, launchedA.application.pid);
+  const durableOwnerClaim = JSON.parse(await readFile(lostClose.ownerPath, "utf8"));
+  assert.equal(durableOwnerClaim.project_root, closeProject);
+  assert.equal(durableOwnerClaim.app_instance, ownerClaim.app_instance);
+  assert.equal(durableOwnerClaim.process_id, ownerClaim.owner_process_id);
+  assert.equal(durableOwnerClaim.generation, ownerClaim.generation);
+  assert.equal(typeof durableOwnerClaim.claim_id, "string");
+  assert(durableOwnerClaim.claim_id.length > 0);
+  assert.equal(
+    await pathExists(closeClaimedOwnerTracePath)
+      ? parseNdjson(await readFile(closeClaimedOwnerTracePath, "utf8")).length
+      : 0,
+    0,
+    "the claimed owner delivered the envelope before its SIGKILL boundary",
+  );
+  const killedClaimedOwner = await killPackaged(launchedA);
+  launchedA = undefined;
+  assert.equal(killedClaimedOwner.browserPid, ownerClaim.owner_process_id);
+
+  launchedA = await launchPackaged(
+    xvfb.display,
+    closeConfig,
+    null,
+    {
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeRestartTracePath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "project.close",
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: closeTakeoverMarkerPath,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: closeTakeoverReleasePath,
+    },
+  );
+  const takeoverClaim = await waitFor("replacement close owner takeover", async () =>
+    await pathExists(closeTakeoverMarkerPath)
+      ? JSON.parse(await readFile(closeTakeoverMarkerPath, "utf8"))
+      : undefined
+  );
+  assert.equal(takeoverClaim.batch_id, closeBatchId);
+  assert.equal(takeoverClaim.operation, "project.close");
+  assert.equal(takeoverClaim.owner_process_id, launchedA.application.pid);
+  assert.notEqual(takeoverClaim.owner_process_id, ownerClaim.owner_process_id);
+  assert(takeoverClaim.generation > ownerClaim.generation);
+  const durableTakeoverClaim = JSON.parse(await readFile(lostClose.ownerPath, "utf8"));
+  assert.equal(durableTakeoverClaim.app_instance, takeoverClaim.app_instance);
+  assert.equal(durableTakeoverClaim.process_id, takeoverClaim.owner_process_id);
+  assert.equal(durableTakeoverClaim.generation, takeoverClaim.generation);
+  assert.notEqual(durableTakeoverClaim.claim_id, durableOwnerClaim.claim_id);
   launchedB = await launchPackaged(xvfb.display, closeConfig, null, {
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeContenderTracePath,
   });
@@ -1542,8 +1642,8 @@ try {
     0,
     "the rejected replacement delivered an envelope owned by another process",
   );
-  await writeFile(closeOwnerReleasePath, "release\n", "utf8");
-  await waitFor("detached close and refresh FIFO drained", async () =>
+  await writeFile(closeTakeoverReleasePath, "release\n", "utf8");
+  await waitFor("detached close, team, save, and refresh FIFO drained", async () =>
     !await pathExists(lostClose.activePath)
       && !await pathExists(lostClose.refreshJournalPath)
       ? true
@@ -1566,7 +1666,7 @@ try {
   );
   assertOrderedDispatch(
     closeRestartTrace,
-    [closeBatchId, closeSaveBatchId, closeTailBatchId],
+    [closeBatchId, closeTeamBatchId, closeSaveBatchId, closeTailBatchId],
     "detached lost close acknowledgement restart",
   );
   assert.equal(
@@ -1600,6 +1700,15 @@ try {
   );
   assert.equal(
     closeHistory.filter((row) =>
+      row.batch_id === closeTeamBatchId
+      && row.status === "completed"
+      && row.payload.phase === "renderer-acknowledged"
+    ).length,
+    1,
+    "close team tail produced more than one terminal history row",
+  );
+  assert.equal(
+    closeHistory.filter((row) =>
       row.batch_id === closeSaveBatchId
       && row.status === "completed"
       && row.payload.phase === "renderer-acknowledged"
@@ -1616,6 +1725,12 @@ try {
     ).length,
     1,
     "close refresh tail produced more than one terminal history row",
+  );
+  assert.equal(await readFile(lostClose.remotePath, "utf8"), closeRemoteBeforeRecovery);
+  assert.equal(
+    (await stat(lostClose.remotePath, { bigint: true })).mtimeNs,
+    closeRemoteMtimeBeforeRecovery,
+    "owner takeover replayed the committed team tail",
   );
   await terminatePackaged(launchedA);
   launchedA = undefined;
@@ -1650,12 +1765,30 @@ try {
   assert.equal(reopenedDecoy.translation, "");
   closeReceiptRecovery = {
     lostAckBatchId: closeBatchId,
+    teamTailBatchId: closeTeamBatchId,
     saveTailBatchId: closeSaveBatchId,
     refreshTailBatchId: closeTailBatchId,
-    restartedDispatchOrder: [closeBatchId, closeSaveBatchId, closeTailBatchId],
+    restartedDispatchOrder: [
+      closeBatchId,
+      closeTeamBatchId,
+      closeSaveBatchId,
+      closeTailBatchId,
+    ],
     rendererStayedClosedDuringRecovery: true,
     concurrentReplacementRejectedByDurableOwner: true,
+    claimedOwnerKilledBeforeRendererDelivery: {
+      claimId: durableOwnerClaim.claim_id,
+      killedBrowserPid: killedClaimedOwner.browserPid,
+      killedSidecarPid: killedClaimedOwner.sidecarPid,
+      deliveredEnvelopes: 0,
+    },
+    uniqueReplacementTakeover: {
+      claimId: durableTakeoverClaim.claim_id,
+      browserPid: takeoverClaim.owner_process_id,
+      selectedBatchId: takeoverClaim.batch_id,
+    },
     stableProjectTreeReplayed: false,
+    teamRemoteWriteReplayed: false,
     completeEntryKey: lostClose.key,
     decoyEntryKey: lostClose.decoyKey,
     document3SurfacesAfterReopen: reopenedClose.activeSurfaces,
@@ -1670,7 +1803,12 @@ try {
     receiptType: "close",
     lostAckBatchId: closeBatchId,
     notReplayed: ["lost-close-initial-entry"],
-    restartedDispatchOrder: [closeBatchId, closeSaveBatchId, closeTailBatchId],
+    restartedDispatchOrder: [
+      closeBatchId,
+      closeTeamBatchId,
+      closeSaveBatchId,
+      closeTailBatchId,
+    ],
     trailingReceiptsDrained: true,
   });
   await terminatePackaged(launchedA);

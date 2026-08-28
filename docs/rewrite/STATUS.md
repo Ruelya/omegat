@@ -792,6 +792,19 @@ responsive, then drains close → save → refresh exactly once. Explicit reopen
 retains the wanted complete six-field `EntryKey`, its sole `Document3`
 translation, and the untranslated same-source decoy. Windows and macOS owner
 liveness/package behavior were not run.
+A Linux packaged owner-takeover matrix now SIGKILLs the entire Electron process
+group after its durable close-head claim but before
+`transaction:envelope` delivery. A single replacement Electron process adopts
+that same head under a new claim and generation, while a simultaneous contender
+remains responsive but cannot dispatch or acknowledge it. The recovered
+detached queue drains close → `team.commit` (`commit-target`) → save → refresh;
+the dead claim never advances a tail, every terminal receipt occurs once, and
+exact remote bytes/nanosecond mtime plus the stable TMX/project tree prove that
+neither the team write nor another product write was replayed. Explicit reopen
+retains the complete six-field wanted key, its sole `Document3` translation,
+and the untranslated same-source decoy. The sidecar contract independently
+keeps the same close → team → save product-journal order and unchanged remote
+and TMX mtimes through replacement ownership. This is Linux-only evidence.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and

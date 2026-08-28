@@ -230,6 +230,7 @@ async function holdAfterClaimingTransactionHead(
     operation,
     app_instance: appInstance,
     owner_process_id: process.pid,
+    generation: envelope.generation,
   });
   while (!stoppingSidecar && !existsSync(releasePath)) {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));

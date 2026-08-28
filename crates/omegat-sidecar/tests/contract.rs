@@ -671,7 +671,7 @@ fn close_receipt_is_discovered_and_acknowledged_without_an_open_project() {
 }
 
 #[test]
-fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
+fn close_team_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     fn spawn_sidecar(
         config: &std::path::Path,
     ) -> (
@@ -694,8 +694,11 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let temp = tempfile::tempdir().unwrap();
     let config = temp.path().join("config");
     let root = temp.path().join("queued-project");
+    let remote = temp.path().join("queued-remote");
     let active = root.join(".repositories/transactions/active.json");
     let history = root.join(".repositories/transactions/history.ndjson");
+    std::fs::create_dir_all(remote.join("target")).unwrap();
+    std::fs::write(remote.join("target/queued.txt"), "remote-before").unwrap();
     let (mut first, mut first_in, mut first_out) = spawn_sidecar(&config);
     rpc(
         &mut first_in,
@@ -709,18 +712,40 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
             "sentence_seg": false,
         }),
     );
+    let mapped = rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [{
+                    "local": "/target/queued.txt",
+                    "repository": "/target/queued.txt",
+                    "includes": [],
+                    "excludes": [],
+                }],
+            }],
+        }),
+    );
+    assert_eq!(mapped["result"]["ok"], true);
+    let synced = rpc(&mut first_in, &mut first_out, 3, "team.sync", json!({}));
+    assert_eq!(synced["result"]["action"], "sync");
     std::fs::write(root.join("source/source.txt"), "queued source").unwrap();
     rpc(
         &mut first_in,
         &mut first_out,
-        2,
+        4,
         "project.reload",
         json!({}),
     );
     let closed = rpc(
         &mut first_in,
         &mut first_out,
-        3,
+        5,
         "project.close",
         json!({
             "transaction_project_root": root,
@@ -735,15 +760,32 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let reopened = rpc(
         &mut first_in,
         &mut first_out,
-        4,
+        6,
         "project.open",
         json!({ "root": root }),
     );
     assert_eq!(reopened["error"], Value::Null);
+    std::fs::write(root.join("target/queued.txt"), "committed exactly once").unwrap();
+    let team = rpc(
+        &mut first_in,
+        &mut first_out,
+        7,
+        "team.commit",
+        json!({
+            "which": "target",
+            "transaction_project_root": root,
+            "transaction_generation": 51,
+            "transaction_batch_id": "queued-team",
+        }),
+    );
+    assert_eq!(
+        team["result"]["receipt"]["payload"]["operation"],
+        "commit-target"
+    );
     let saved = rpc(
         &mut first_in,
         &mut first_out,
-        5,
+        8,
         "project.save",
         json!({
             "transaction_project_root": root,
@@ -766,7 +808,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
             .iter()
             .map(|row| row["batch_id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec!["queued-close", "queued-save"]
+        vec!["queued-close", "queued-team", "queued-save"]
     );
     assert!(journal["batches"]
         .as_array()
@@ -777,7 +819,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let selected = rpc(
         &mut first_in,
         &mut first_out,
-        6,
+        9,
         "transaction.receipt.pending",
         json!({
             "root": root,
@@ -795,11 +837,16 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let save_tmx = root.join("omegat/project_save.tmx");
     let product_before_recovery = std::fs::read(&save_tmx).unwrap();
     let product_mtime_before_recovery = std::fs::metadata(&save_tmx).unwrap().modified().unwrap();
+    let remote_before_recovery = std::fs::read(remote.join("target/queued.txt")).unwrap();
+    let remote_mtime_before_recovery = std::fs::metadata(remote.join("target/queued.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
     let (mut owner, mut owner_in, mut owner_out) = spawn_sidecar(&config);
     let owner_selected = rpc(
         &mut owner_in,
         &mut owner_out,
-        7,
+        10,
         "transaction.receipt.pending",
         json!({
             "root": root,
@@ -820,7 +867,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let rejected = rpc(
         &mut contender_in,
         &mut contender_out,
-        8,
+        11,
         "transaction.receipt.pending",
         json!({
             "root": root,
@@ -836,7 +883,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let rejected_ack = rpc(
         &mut contender_in,
         &mut contender_out,
-        9,
+        12,
         "transaction.receipt.ack",
         json!({
             "root": root,
@@ -857,7 +904,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let close_ack = rpc(
         &mut owner_in,
         &mut owner_out,
-        10,
+        13,
         "transaction.receipt.ack",
         json!({
             "root": root,
@@ -869,10 +916,40 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
         }),
     );
     assert_eq!(close_ack["result"]["ack"]["acknowledged"], true);
+    let team_head = rpc(
+        &mut owner_in,
+        &mut owner_out,
+        14,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "replacement-owner",
+            "generation": 52,
+        }),
+    );
+    assert_eq!(
+        team_head["result"]["envelopes"][0]["batch_id"],
+        "queued-team"
+    );
+    let team_ack = rpc(
+        &mut owner_in,
+        &mut owner_out,
+        15,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "replacement-owner",
+            "generation": 52,
+            "batch_id": "queued-team",
+            "operation": "commit-target",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(team_ack["result"]["ack"]["acknowledged"], true);
     let save_head = rpc(
         &mut owner_in,
         &mut owner_out,
-        11,
+        16,
         "transaction.receipt.pending",
         json!({
             "root": root,
@@ -887,7 +964,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     let save_ack = rpc(
         &mut owner_in,
         &mut owner_out,
-        12,
+        17,
         "transaction.receipt.ack",
         json!({
             "root": root,
@@ -901,7 +978,7 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     assert_eq!(save_ack["result"]["ack"]["acknowledged"], true);
     assert!(!active.exists());
     let rows = std::fs::read_to_string(history).unwrap();
-    for batch_id in ["queued-close", "queued-save"] {
+    for batch_id in ["queued-close", "queued-team", "queued-save"] {
         assert_eq!(
             rows.lines()
                 .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -918,6 +995,17 @@ fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
     assert_eq!(
         std::fs::metadata(&save_tmx).unwrap().modified().unwrap(),
         product_mtime_before_recovery
+    );
+    assert_eq!(
+        std::fs::read(remote.join("target/queued.txt")).unwrap(),
+        remote_before_recovery
+    );
+    assert_eq!(
+        std::fs::metadata(remote.join("target/queued.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        remote_mtime_before_recovery
     );
 
     contender.kill().unwrap();
