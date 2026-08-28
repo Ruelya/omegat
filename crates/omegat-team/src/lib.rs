@@ -654,9 +654,10 @@ mod tests {
         let active = root.join(".repositories/transactions/active.json");
         let committed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
-        assert_eq!(committed["status"], "completed");
-        assert_eq!(committed["payload"]["phase"], "committed");
-        assert!(committed["payload"]["product_manifest"]["files"]
+        assert_eq!(committed["version"], 2);
+        assert_eq!(committed["batches"][0]["status"], "completed");
+        assert_eq!(committed["batches"][0]["payload"]["phase"], "committed");
+        assert!(committed["batches"][0]["payload"]["product_manifest"]["files"]
             .as_array()
             .unwrap()
             .iter()
@@ -1412,9 +1413,13 @@ mod tests {
         .unwrap();
         let unacknowledged: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
-        assert_eq!(unacknowledged["status"], "sidecar_committed");
-        assert_eq!(unacknowledged["generation"], 16);
-        assert_eq!(unacknowledged["batch_id"], "mixed-receipt");
+        assert_eq!(unacknowledged["version"], 2);
+        assert_eq!(
+            unacknowledged["batches"][0]["status"],
+            "sidecar_committed"
+        );
+        assert_eq!(unacknowledged["batches"][0]["generation"], 16);
+        assert_eq!(unacknowledged["batches"][0]["batch_id"], "mixed-receipt");
 
         let inspected = peek_transaction_receipt(&props).unwrap().unwrap();
         assert_eq!(inspected.generation, 16);
@@ -1423,7 +1428,7 @@ mod tests {
         let after_inspection: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
         assert_eq!(
-            after_inspection["generation"], 16,
+            after_inspection["batches"][0]["generation"], 16,
             "read-only receipt discovery adopted a renderer generation"
         );
 
