@@ -78,7 +78,9 @@ pub(crate) fn acquire_project_transaction_lock(
     })
 }
 
-fn acquire_claimed_dispatch_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
+fn acquire_blocking_project_transaction_lock(
+    props: &ProjectProperties,
+) -> Result<ProjectTransactionLock> {
     let dir = transaction_dir(props);
     let lock = DurableFifoLock::acquire(&dir, &product_fifo_layout().lock_file)
         .map_err(TeamError::Command)?;
@@ -3057,7 +3059,7 @@ pub fn pending_transaction_receipt_for_claimed_owner(
     // cannot leak a half-returned envelope, and a later process must run the
     // same owner election before it can observe the FIFO head.
     product_owner_claim_checkpoint(props, app_instance, process_id, generation)?;
-    let _lock = acquire_claimed_dispatch_lock(props)?;
+    let _lock = acquire_blocking_project_transaction_lock(props)?;
     let Some(owner) = load_renderer_owner_claim(props)? else {
         return Err(TeamError::Conflict(
             "transaction dispatcher owner disappeared before head lookup".into(),
@@ -3094,7 +3096,11 @@ pub fn pending_transaction_receipt_for_claimed_owner(
 pub fn peek_transaction_receipt(
     props: &ProjectProperties,
 ) -> Result<Option<TransactionRendererReceipt>> {
-    let _lock = acquire_project_transaction_lock(props)?;
+    // Discovery must not report a false empty/error result merely because a
+    // concurrent claimant is inside its short owner-publication critical
+    // section. Closed Electron processes have no filesystem event that would
+    // otherwise wake discovery again after the lock is released.
+    let _lock = acquire_blocking_project_transaction_lock(props)?;
     let Some(transaction) = SyncTransaction::load_dispatch_head(props)? else {
         return Ok(None);
     };
