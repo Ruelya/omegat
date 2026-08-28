@@ -623,6 +623,27 @@ completed conflicts. Fingerprint replay also waits behind an active long
 operation, and Team actions remain disabled until that operation is terminal,
 so a delayed watcher batch cannot cancel or replace `team.resolve`. This remains
 Linux-only evidence.
+Conflict and fingerprint durability now share the same version-1 transaction
+envelope: canonical project root, renderer generation, batch ID, status,
+protocol error code, timestamp, and a typed payload. Team sync/commit/resolve
+and external-refresh histories therefore record the same pending,
+sidecar-committed, completed, cancelled, and request-cancelled (`-32800`)
+semantics. Load paths reject a mismatched version/root and never revive
+terminal envelopes; generation rollover cancels stale fingerprints.
+`project.external-refresh` now persists a `sidecar_committed` checkpoint before
+its successful response reaches Electron. If Electron dies before its ack, the
+replacement renderer performs only an in-memory six-field rebind against the
+reopened sidecar and then completes the durable head, rather than replaying the
+already successful refresh. Sidecar and renderer fault-injection tests cover
+this exact response/ack gap.
+A separate real Linux `linux-unpacked` E2E leaves both pending fingerprint and
+conflict envelopes in project A, SIGKILLs the packaged Electron process group
+including its sidecar, and starts project B with the same config. B exposes only
+its own complete `EntryKey`, sole `Document3`, and empty conflict list; A's
+fingerprint is cancelled without entering B and A's conflict journal remains
+untouched. After a second packaged SIGKILL, reopening A recovers only A's
+snapshot and complete-key conflict, while the stale fingerprint stays terminal.
+This is Linux-only evidence.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
