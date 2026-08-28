@@ -248,10 +248,12 @@ async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const client = new DevToolsClient(target.webSocketDebuggerUrl);
   await client.connect();
   await client.command("Runtime.enable");
-  await waitFor("project workspace", async () =>
-    await client.evaluate(
-      `document.querySelector(".app")?.dataset.projectId === ${JSON.stringify(project)}`,
-    )
+  await waitFor("settled project workspace", async () =>
+    await client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      return app?.dataset.projectId === ${JSON.stringify(project)}
+        && ["entry", "external-refresh"].includes(app?.dataset.projectEvent ?? "");
+    })()`)
   );
   return { application, client, stderr: () => stderr };
 }
@@ -435,7 +437,7 @@ async function runFault(operation, point, markerName, drive, verify) {
   );
   await drive(launched.client);
   const markerWaitStarted = Date.now();
-  const markerOutcome = await waitFor(markerName, async () => {
+  await waitFor(markerName, async () => {
     if (await pathExists(marker)) return { reached: true };
     const renderer = await launched.client.evaluate(`(() => {
       const app = document.querySelector(".app");
@@ -460,15 +462,10 @@ async function runFault(operation, point, markerName, drive, verify) {
       const journal = await pathExists(active)
         ? JSON.parse(await readFile(active, "utf8"))
         : null;
-      return { reached: false, renderer, preferences, journal };
+      throw new Error(JSON.stringify({ renderer, preferences, journal }));
     }
     return undefined;
   });
-  assert.equal(
-    markerOutcome.reached,
-    true,
-    `${markerName} failed before checkpoint: ${JSON.stringify(markerOutcome)}`,
-  );
   const status = point === "before_atomic_publish" ? "pending" : "sidecar_committed";
   const envelope = await activeEnvelope(active, status, operation);
   const killed = await killPackaged(launched);
