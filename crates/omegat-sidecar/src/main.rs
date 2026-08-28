@@ -87,6 +87,11 @@ impl App {
             log::warn!("cannot recover shared config transactions: {error}");
         }
         let mut prefs = Preferences::load_or_default(&config_dir);
+        // The file may have moved with its configuration directory. Its
+        // serialized path is advisory; the process-selected directory is the
+        // authority for every subsequent shared-config RPC.
+        prefs.config_dir = config_dir.clone();
+        prefs.normalize();
         let scripts = std::env::var_os("OMEGAT_SCRIPTS_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from(&prefs.script_dir));
