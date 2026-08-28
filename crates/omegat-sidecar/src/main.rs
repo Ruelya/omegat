@@ -2218,19 +2218,24 @@ fn pending_transaction_envelopes(
     generation: u64,
     owner_retry_timeout: Option<std::time::Duration>,
     owner_retry_attempts: usize,
+    owner_prepared_and_claimed: bool,
     cancellation: &CancellationToken,
 ) -> std::result::Result<(Vec<Value>, Vec<u32>), (i32, String)> {
-    refresh_journal::prepare(config_dir, &props.root, app_instance, generation)
-        .map_err(refresh_journal_err)?;
-    let retried_after_owners = claim_transaction_owner_with_retry_cancellable(
-        props,
-        app_instance,
-        owner_process_id,
-        generation,
-        owner_retry_timeout,
-        owner_retry_attempts,
-        cancellation,
-    )?;
+    let retried_after_owners = if owner_prepared_and_claimed {
+        Vec::new()
+    } else {
+        refresh_journal::prepare(config_dir, &props.root, app_instance, generation)
+            .map_err(refresh_journal_err)?;
+        claim_transaction_owner_with_retry_cancellable(
+            props,
+            app_instance,
+            owner_process_id,
+            generation,
+            owner_retry_timeout,
+            owner_retry_attempts,
+            cancellation,
+        )?
+    };
     let receipt = omegat_team::pending_transaction_receipt_for_claimed_owner(
         props,
         generation,
@@ -2460,6 +2465,7 @@ fn dispatch_refresh_journal(
     params: Value,
     config_dir: &std::path::Path,
     open_root: Option<&std::path::Path>,
+    owner_prepared_and_claimed: bool,
     cancellation: &CancellationToken,
 ) -> Option<std::result::Result<Value, (i32, String)>> {
     if !method.starts_with("project.refresh.") && !method.starts_with("transaction.receipt.") {
@@ -2507,6 +2513,7 @@ fn dispatch_refresh_journal(
                             generation,
                             owner_retry_timeout,
                             owner_retry_attempts,
+                            owner_prepared_and_claimed,
                             cancellation,
                         )?;
                     // Expose exactly one durable head. The Electron dispatcher
@@ -2550,6 +2557,7 @@ fn dispatch_refresh_journal(
                         generation,
                         None,
                         1,
+                        false,
                         cancellation,
                     )?;
                     if let Some(index) = pending.iter().position(|envelope| {
@@ -2895,6 +2903,21 @@ fn main() {
                                 )?;
                             let props = omegat_core::properties::ProjectProperties::load(&root)
                                 .map_err(core_err)?;
+                            {
+                                // Preparation can touch legacy refresh rows
+                                // under the product operation lock. Complete it
+                                // before publishing this process as the durable
+                                // owner so a transient preparation conflict
+                                // cannot leave a live owner with no envelope.
+                                let _journal = refresh_journal_lock.lock().unwrap();
+                                refresh_journal::prepare(
+                                    &refresh_config_dir,
+                                    &props.root,
+                                    &app_instance,
+                                    generation,
+                                )
+                                .map_err(refresh_journal_err)?;
+                            }
                             claim_transaction_owner_with_retry_cancellable(
                                 &props,
                                 &app_instance,
@@ -2916,6 +2939,7 @@ fn main() {
             let mut refresh_result = match owner_retry_preclaim {
                 Some(Err(error)) => Some(Err(error)),
                 preclaim => {
+                    let owner_prepared_and_claimed = preclaim.is_some();
                     if let Some(Ok(previous_owners)) = preclaim {
                         retried_after_owners = previous_owners;
                     }
@@ -2926,6 +2950,7 @@ fn main() {
                         refresh_params,
                         &refresh_config_dir,
                         active.as_deref(),
+                        owner_prepared_and_claimed,
                         &cancellation,
                     )
                 }
