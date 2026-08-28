@@ -833,6 +833,32 @@ fn write_product_journal(
         .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
 }
 
+fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
+    let mut journal = load_product_journal(props)?;
+    let terminal = journal
+        .batches
+        .iter()
+        .filter(|transaction| !transaction.0.status.is_recoverable())
+        .map(|transaction| transaction.snapshot.clone())
+        .collect::<Vec<_>>();
+    if terminal.is_empty() {
+        return Ok(());
+    }
+    journal
+        .batches
+        .retain(|transaction| transaction.0.status.is_recoverable());
+    for snapshot in terminal {
+        remove_path(&snapshot)?;
+    }
+    if journal.batches.is_empty() {
+        remove_path(&transaction_dir(props).join("active.json"))?;
+        remove_path(&transaction_dir(props).join(".active.previous.json"))?;
+    } else {
+        write_product_journal(props, &journal)?;
+    }
+    Ok(())
+}
+
 fn renderer_owner_path(props: &ProjectProperties) -> PathBuf {
     transaction_dir(props).join("renderer-owner.json")
 }
@@ -1094,6 +1120,7 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
 }
 
 fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
+    compact_terminal_product_transactions(props)?;
     let Some(mut transaction) = SyncTransaction::load_active_operation(props)? else {
         return Ok(false);
     };

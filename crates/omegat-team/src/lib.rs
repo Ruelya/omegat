@@ -663,13 +663,18 @@ mod tests {
             .iter()
             .any(|receipt| receipt["path"] == "project/omegat/project_save.tmx"));
         assert_eq!(
-            committed["commit"]["manifest_sha256"]
+            committed["batches"][0]["commit"]["manifest_sha256"]
                 .as_str()
                 .unwrap()
                 .len(),
             64
         );
-        assert!(committed["commit"]["manifest_items"].as_u64().unwrap() > 0);
+        assert!(
+            committed["batches"][0]["commit"]["manifest_items"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
 
         let saved = parse_tmx(
             &std::fs::read_to_string(props.save_tmx_path()).unwrap(),
