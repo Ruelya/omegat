@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-28 verification:** core selected suites **152 passed**, filters
 **86 passed**, team **46 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
-**12 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
+**15 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The raw NDJSON contract and real Linux packaged matrix also pass the
@@ -873,31 +873,42 @@ and destination-directory fsync; each restart repairs a complete pair and
 removes every staging directory. The full old+new writer matrix passes through
 `npm run test:e2e:writer-recovery:linux`. Windows and macOS runners were not
 available and those package paths were not run.
-The config FIFO now publishes each non-empty `active.json` revision to a
-same-value `active.recovery.json` first, selects the highest valid revision on
-restart, repairs a missing/truncated/corrupt peer, and refuses to mutate the
-product when both replicas are invalid. Terminal results are also retained in
-same-value `dedupe.json`/`dedupe.recovery.json` indexes. `history.ndjson` is
-compacted to the latest **64** rows in production; its complete ordered result
-set remains in the index, so a damaged/truncated history is rebuilt and an old
-batch retry returns its original success or failure without applying the
-operation again. Electron accepts an explicit retry batch identity, while the
-sidecar reloads the current persisted preferences after returning that original
-result so a historical response cannot replace newer in-memory fields.
-A real Linux `linux-unpacked` matrix externally SIGKILLs the Electron/sidecar
-process group at `active.json` and `history.ndjson` candidate-write, candidate
-fsync, rename, and parent-directory-fsync boundaries (**8** cases). Every
-restart verifies the exact locale product, one completed dedupe entry, bounded
-canonical history, removal of both active replicas, no hidden replacement
-candidate, and no config row in either project journal. A separate dual-Electron
-case uses a test bound of **3**, kills the first owner before history compaction,
-lets the already-waiting second PID compact and commit its FIFO tail, then kills
-that owner after compaction. A third process preserves the exact five-batch
-order, locale plus font fields, both dead PID identities, and byte/mtime-stable
-product state across a successful old-batch retry and a rejected conflicting
-retry. This is Linux evidence only; Windows file-lock/replacement semantics and
-macOS file-lock/replacement semantics were not run because those runners were
-not available.
+The shared-config FIFO is now explicitly **v2**. Startup upgrades v1 primary or
+recovery `active` journals, v1 terminal history, complete v1 dedupe indexes, and
+the older no-index layout under the same OS lock. A partially completed
+migration can contain v2 replicas, v1 peers, and a renamed but not yet manifested
+archive segment; restart validates and adopts that segment without duplicating
+or losing a terminal result. `active.json` still publishes first to a same-value
+`active.recovery.json`, chooses the highest valid revision, repairs one missing
+or corrupt peer, and refuses product mutation when both replicas are invalid.
+
+`dedupe.json`/`dedupe.recovery.json` are now a bounded hot index (latest **64**
+terminal batches in production), not an ever-growing full-result file. Evicted
+results move in FIFO order to immutable, SHA-256-named v2 archive segments.
+`manifest.json`/`manifest.recovery.json` durably describe those segments; a
+segment reaches stable storage before either manifest advances, and the hot
+index is pruned only after both manifest publication steps. `history.ndjson`
+remains a bounded **64**-row diagnostic projection. Any archived batch can still
+return its exact original success or failure, while a reused identity with a
+different operation or payload is rejected before product mutation.
+
+The real Linux `linux-unpacked` evidence now covers the earlier **8**
+`active.json`/`history.ndjson` replacement boundaries plus **16** primary and
+recovery dedupe/manifest candidate-write, candidate-fsync, rename, and
+parent-directory-fsync deaths, and all **4** immutable-segment write/fsync/
+rename/directory-fsync deaths. Every restart verifies one ordered terminal
+result, bounded hot/history state, same-value replicas, immutable archive bytes,
+no hidden candidate, and byte/mtime-stable product state. ENOSPC is injected at
+both dedupe and manifest publication, EACCES at manifest publication, and a real
+`0555` transaction directory verifies permission denial before product
+mutation. A dual-Electron rolling-upgrade case starts from v1 active/history
+with no index, kills the first process after archive rename, proves the second
+pre-existing process cannot bypass its lock, kills that process after recovered
+compaction, then has a third process finish migration and return an arbitrary
+old batch's exact result. The cross-platform packaged driver resolves Linux,
+Windows, and macOS layouts and process-tree termination, but Windows and macOS
+file-lock/replacement package evidence was **not run** because this runner is
+Linux-only.
 A new real Linux `linux-unpacked` matrix drives project properties, repository
 mapping, file-filter options, and segmentation settings exclusively through
 visible controls. It externally SIGKILLs Electron at both sides of each relevant
