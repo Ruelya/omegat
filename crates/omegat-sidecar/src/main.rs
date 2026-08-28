@@ -170,7 +170,11 @@ impl App {
         if generation == 0 {
             Ok(None)
         } else {
-            omegat_team::pending_transaction_receipt(&props, generation)
+            omegat_team::transaction_receipt(
+                &props,
+                generation,
+                batch_id.as_deref().expect("scoped product batch id"),
+            )
                 .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))
         }
     }
@@ -203,7 +207,11 @@ impl App {
         let receipt = if generation == 0 {
             None
         } else {
-            omegat_team::pending_transaction_receipt(&props, generation)
+            omegat_team::transaction_receipt(
+                &props,
+                generation,
+                batch_id.as_deref().expect("scoped product batch id"),
+            )
                 .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
         };
         let mut value = serde_json::to_value(updated).unwrap();
@@ -568,9 +576,12 @@ impl App {
                 let receipt = if transaction_generation == 0 {
                     None
                 } else {
-                    omegat_team::pending_transaction_receipt(
+                    omegat_team::transaction_receipt(
                         &self.session()?.props,
                         transaction_generation,
+                        transaction_batch_id
+                            .as_deref()
+                            .expect("scoped resolve transaction batch id"),
                     )
                     .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
                 };
@@ -838,9 +849,12 @@ impl App {
                         let receipt = if transaction_generation == 0 {
                             None
                         } else {
-                            omegat_team::pending_transaction_receipt(
+                            omegat_team::transaction_receipt(
                                 &s.props,
                                 transaction_generation,
+                                transaction_batch_id
+                                    .as_deref()
+                                    .expect("scoped sync transaction batch id"),
                             )
                             .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
                         };
@@ -883,9 +897,12 @@ impl App {
                 let receipt = if transaction_generation == 0 {
                     None
                 } else {
-                    omegat_team::pending_transaction_receipt(
+                    omegat_team::transaction_receipt(
                         &self.session()?.props,
                         transaction_generation,
+                        transaction_batch_id
+                            .as_deref()
+                            .expect("scoped commit transaction batch id"),
                     )
                     .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
                 };
@@ -1461,11 +1478,20 @@ fn pending_transaction_envelopes(
     config_dir: &std::path::Path,
     props: &omegat_core::properties::ProjectProperties,
     app_instance: &str,
+    owner_process_id: u32,
     generation: u64,
 ) -> std::result::Result<Vec<Value>, (i32, String)> {
     let mut envelopes = Vec::new();
-    if let Some(receipt) = omegat_team::pending_transaction_receipt(props, generation)
-        .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+    if let Some(receipt) = omegat_team::pending_transaction_receipt_for_owner(
+        props,
+        generation,
+        app_instance,
+        owner_process_id,
+    )
+    .map_err(|error| match error {
+        omegat_team::TeamError::Conflict(message) => (error_code::TEAM_CONFLICT, message),
+        other => (error_code::INTERNAL_ERROR, other.to_string()),
+    })?
     {
         envelopes.push(serde_json::to_value(receipt).map_err(|error| {
             (
@@ -1582,6 +1608,7 @@ fn transaction_receipt_scope(
     (
         std::path::PathBuf,
         String,
+        u32,
         u64,
         Option<String>,
         Option<String>,
@@ -1616,6 +1643,20 @@ fn transaction_receipt_scope(
             error_code::INVALID_PARAMS,
             "transaction receipt requires app_instance".into(),
         ))?;
+    let owner_process_id = params
+        .get("owner_process_id")
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|value| *value > 0 && *value <= u32::MAX as u64)
+                .map(|value| value as u32)
+                .ok_or((
+                    error_code::INVALID_PARAMS,
+                    "transaction receipt owner process id must be a positive u32".into(),
+                ))
+        })
+        .transpose()?
+        .unwrap_or_else(std::process::id);
     let generation = params
         .get("generation")
         .and_then(Value::as_u64)
@@ -1662,7 +1703,14 @@ fn transaction_receipt_scope(
             "transaction acknowledgement requires operation".into(),
         ));
     }
-    Ok((root, app_instance, generation, batch_id, operation))
+    Ok((
+        root,
+        app_instance,
+        owner_process_id,
+        generation,
+        batch_id,
+        operation,
+    ))
 }
 
 fn refresh_scope(
@@ -1762,7 +1810,7 @@ fn dispatch_refresh_journal(
                 return Ok(json!({ "projects": projects }));
             }
             let require_batch_id = method == "transaction.receipt.ack";
-            let (root, app_instance, generation, batch_id, operation) =
+            let (root, app_instance, owner_process_id, generation, batch_id, operation) =
                 transaction_receipt_scope(&params, open_root, require_batch_id)?;
             let props =
                 omegat_core::properties::ProjectProperties::load(&root).map_err(core_err)?;
@@ -1772,6 +1820,7 @@ fn dispatch_refresh_journal(
                         config_dir,
                         &props,
                         &app_instance,
+                        owner_process_id,
                         generation,
                     )?;
                     // Expose exactly one durable head. The Electron dispatcher
@@ -1789,6 +1838,7 @@ fn dispatch_refresh_journal(
                         config_dir,
                         &props,
                         &app_instance,
+                        owner_process_id,
                         generation,
                     )?;
                     if let Some(index) = pending.iter().position(|envelope| {

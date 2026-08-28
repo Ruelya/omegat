@@ -45,12 +45,12 @@ pub use rebase_and_commit::{
 };
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    acknowledge_transaction_receipt, commit_after_version, commit_product_transaction_cancellable,
-    commit_project_files, commit_project_files_cancellable,
+    acknowledge_transaction_receipt, claim_transaction_dispatch, commit_after_version,
+    commit_product_transaction_cancellable, commit_project_files, commit_project_files_cancellable,
     commit_project_files_cancellable_scoped, get_version, peek_transaction_receipt,
-    pending_transaction_receipt, recover_interrupted_sync, switch_to_version, sync,
-    sync_cancellable, sync_cancellable_scoped, TransactionRendererAck, TransactionRendererPayload,
-    TransactionRendererReceipt,
+    pending_transaction_receipt, pending_transaction_receipt_for_owner, recover_interrupted_sync,
+    switch_to_version, sync, sync_cancellable, sync_cancellable_scoped, transaction_receipt,
+    TransactionRendererAck, TransactionRendererPayload, TransactionRendererReceipt,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;

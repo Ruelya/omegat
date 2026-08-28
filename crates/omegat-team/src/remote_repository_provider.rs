@@ -28,6 +28,8 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static OWNER_CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+const PRODUCT_JOURNAL_VERSION: u8 = 2;
 #[cfg(test)]
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
 #[cfg(test)]
@@ -367,9 +369,29 @@ struct SyncTransactionPayload {
 #[serde(transparent)]
 struct SyncTransaction(TransactionEnvelope<SyncTransactionPayload>);
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProductTransactionJournal {
+    version: u8,
+    project_root: PathBuf,
+    batches: Vec<SyncTransaction>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RendererOwnerClaim {
+    version: u8,
+    project_root: PathBuf,
+    app_instance: String,
+    process_id: u32,
+    generation: u64,
+    claim_id: String,
+    updated_unix_ms: u128,
+}
+
 /// Small renderer-facing view of any durable product transaction.
 ///
-/// The potentially large product manifest remains in `active.json`; the
+/// The potentially large product manifest remains in the `active.json` journal; the
 /// renderer needs only the envelope identity and receipt fingerprint to
 /// explicitly acknowledge that it consumed the committed product result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -419,14 +441,11 @@ impl std::ops::DerefMut for SyncTransaction {
 
 impl SyncTransaction {
     fn ensure_slot_available(props: &ProjectProperties) -> Result<()> {
-        let dir = transaction_dir(props);
-        for path in [dir.join("active.json"), dir.join(".active.previous.json")] {
-            if path.is_file() {
-                return Err(TeamError::Conflict(format!(
-                    "team transaction is waiting for renderer acknowledgement: {}",
-                    path.display()
-                )));
-            }
+        if let Some(transaction) = Self::load_active_operation(props)? {
+            return Err(TeamError::Conflict(format!(
+                "team transaction {} is still in progress",
+                transaction.0.batch_id
+            )));
         }
         Ok(())
     }
@@ -537,11 +556,17 @@ impl SyncTransaction {
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         let dir = transaction_dir(props);
         std::fs::create_dir_all(&dir)?;
-        let active = dir.join("active.json");
-        let previous = dir.join(".active.previous.json");
-        remove_path(&previous)?;
-        write_json_atomic(&active, self)
-            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        let mut journal = load_product_journal(props)?;
+        if let Some(existing) = journal
+            .batches
+            .iter_mut()
+            .find(|transaction| transaction.0.batch_id == self.0.batch_id)
+        {
+            *existing = self.clone();
+        } else {
+            journal.batches.push(self.clone());
+        }
+        write_product_journal(props, &journal)?;
         let mut history = OpenOptions::new()
             .create(true)
             .append(true)
@@ -563,10 +588,7 @@ impl SyncTransaction {
         self.phase = phase.into();
         self.0.transition(status, error_code);
         self.persist(props)?;
-        remove_path(&transaction_dir(props).join("active.json"))?;
-        remove_path(&transaction_dir(props).join(".active.previous.json"))?;
-        remove_path(&self.snapshot)?;
-        Ok(())
+        self.remove_from_journal(props)
     }
 
     fn publish_product_commit(
@@ -643,10 +665,7 @@ impl SyncTransaction {
     }
 
     fn cleanup(self, props: &ProjectProperties) -> Result<()> {
-        remove_path(&transaction_dir(props).join("active.json"))?;
-        remove_path(&transaction_dir(props).join(".active.previous.json"))?;
-        remove_path(&self.snapshot)?;
-        Ok(())
+        self.remove_from_journal(props)
     }
 
     fn finish_for_error(
@@ -667,19 +686,8 @@ impl SyncTransaction {
         }
     }
 
-    fn load(props: &ProjectProperties) -> Result<Option<Self>> {
-        let dir = transaction_dir(props);
-        let active = dir.join("active.json");
-        let previous = dir.join(".active.previous.json");
-        let path = if active.is_file() {
-            active.clone()
-        } else if previous.is_file() {
-            previous.clone()
-        } else {
-            return Ok(None);
-        };
-        let transaction: Self = serde_json::from_str(&std::fs::read_to_string(&path)?)
-            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+    fn validate_loaded(&self, props: &ProjectProperties) -> Result<()> {
+        let transaction = self;
         transaction
             .0
             .validate_for_root(&props.root)
@@ -704,14 +712,203 @@ impl SyncTransaction {
                 )));
             }
         }
-        if !transaction.0.status.is_recoverable() {
-            remove_path(&transaction.snapshot)?;
-            remove_path(&active)?;
-            remove_path(&previous)?;
-            return Ok(None);
-        }
-        Ok(Some(transaction))
+        Ok(())
     }
+
+    fn load_active_operation(props: &ProjectProperties) -> Result<Option<Self>> {
+        let journal = load_product_journal(props)?;
+        let mut pending = journal
+            .batches
+            .into_iter()
+            .filter(|transaction| transaction.0.status == TransactionStatus::Pending);
+        let transaction = pending.next();
+        if pending.next().is_some() {
+            return Err(TeamError::Command(
+                "product transaction journal contains multiple active operations".into(),
+            ));
+        }
+        Ok(transaction)
+    }
+
+    fn load_receipt_head(props: &ProjectProperties) -> Result<Option<Self>> {
+        Ok(load_product_journal(props)?
+            .batches
+            .into_iter()
+            .find(|transaction| transaction.0.status == TransactionStatus::SidecarCommitted))
+    }
+
+    fn load_receipt(
+        props: &ProjectProperties,
+        batch_id: &str,
+    ) -> Result<Option<Self>> {
+        Ok(load_product_journal(props)?
+            .batches
+            .into_iter()
+            .find(|transaction| {
+                transaction.0.batch_id == batch_id
+                    && transaction.0.status == TransactionStatus::SidecarCommitted
+            }))
+    }
+
+    fn remove_from_journal(self, props: &ProjectProperties) -> Result<()> {
+        let mut journal = load_product_journal(props)?;
+        let before = journal.batches.len();
+        journal
+            .batches
+            .retain(|transaction| transaction.0.batch_id != self.0.batch_id);
+        if journal.batches.len() == before {
+            return Err(TeamError::Command(format!(
+                "product transaction {} disappeared from journal",
+                self.0.batch_id
+            )));
+        }
+        remove_path(&self.snapshot)?;
+        if journal.batches.is_empty() {
+            remove_path(&transaction_dir(props).join("active.json"))?;
+            remove_path(&transaction_dir(props).join(".active.previous.json"))?;
+        } else {
+            write_product_journal(props, &journal)?;
+        }
+        Ok(())
+    }
+}
+
+fn load_product_journal(props: &ProjectProperties) -> Result<ProductTransactionJournal> {
+    let dir = transaction_dir(props);
+    let active = dir.join("active.json");
+    let previous = dir.join(".active.previous.json");
+    let path = if active.is_file() {
+        active
+    } else if previous.is_file() {
+        previous
+    } else {
+        return Ok(ProductTransactionJournal {
+            version: PRODUCT_JOURNAL_VERSION,
+            project_root: normalized(&props.root),
+            batches: Vec::new(),
+        });
+    };
+    let bytes = std::fs::read(&path)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?;
+    let journal = if value.get("batches").is_some() {
+        serde_json::from_value::<ProductTransactionJournal>(value)
+            .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?
+    } else {
+        // Version-1 installations stored one transparent envelope directly in
+        // active.json. Read it as the first journal row without rewriting it
+        // until the next durable state transition.
+        let transaction = serde_json::from_value::<SyncTransaction>(value)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        ProductTransactionJournal {
+            version: PRODUCT_JOURNAL_VERSION,
+            project_root: normalized(&props.root),
+            batches: vec![transaction],
+        }
+    };
+    if journal.version != PRODUCT_JOURNAL_VERSION {
+        return Err(TeamError::Command(format!(
+            "unsupported product transaction journal version {}",
+            journal.version
+        )));
+    }
+    if normalized(&journal.project_root) != normalized(&props.root) {
+        return Err(TeamError::Command(format!(
+            "product transaction journal root {} does not match {}",
+            journal.project_root.display(),
+            props.root.display()
+        )));
+    }
+    for transaction in &journal.batches {
+        transaction.validate_loaded(props)?;
+    }
+    Ok(journal)
+}
+
+fn write_product_journal(
+    props: &ProjectProperties,
+    journal: &ProductTransactionJournal,
+) -> Result<()> {
+    write_json_atomic(&transaction_dir(props).join("active.json"), journal)
+        .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
+}
+
+fn renderer_owner_path(props: &ProjectProperties) -> PathBuf {
+    transaction_dir(props).join("renderer-owner.json")
+}
+
+fn process_is_alive(process_id: u32) -> bool {
+    if process_id == 0 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/proc").join(process_id.to_string()).exists()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Other platforms retain the claim until the same app instance
+        // reconnects. Linux has the packaged concurrent-owner evidence.
+        let _ = process_id;
+        true
+    }
+}
+
+/// Claim the unified product/refresh renderer dispatcher for one live app.
+///
+/// The claim is persisted separately from either backend journal, so a second
+/// sidecar cannot expose a refresh tail around a product head owned by another
+/// Electron process. On Linux, a replacement may take over only after the
+/// recorded owner process has exited.
+pub fn claim_transaction_dispatch(
+    props: &ProjectProperties,
+    app_instance: &str,
+    process_id: u32,
+    generation: u64,
+) -> Result<()> {
+    if app_instance.is_empty() || process_id == 0 || generation == 0 {
+        return Err(TeamError::Command(
+            "renderer owner claim requires app instance, process id, and generation".into(),
+        ));
+    }
+    let _lock = acquire_project_transaction_lock(props)?;
+    let path = renderer_owner_path(props);
+    if path.is_file() {
+        let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
+            .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
+        if claim.version != TRANSACTION_ENVELOPE_VERSION
+            || normalized(&claim.project_root) != normalized(&props.root)
+        {
+            return Err(TeamError::Command(format!(
+                "invalid renderer owner claim at {}",
+                path.display()
+            )));
+        }
+        if claim.app_instance != app_instance && process_is_alive(claim.process_id) {
+            return Err(TeamError::Conflict(format!(
+                "transaction dispatcher is owned by live app {} (pid {})",
+                claim.app_instance, claim.process_id
+            )));
+        }
+        if claim.app_instance == app_instance
+            && claim.process_id == process_id
+            && claim.generation == generation
+        {
+            return Ok(());
+        }
+    }
+    let sequence = OWNER_CLAIM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let claim = RendererOwnerClaim {
+        version: TRANSACTION_ENVELOPE_VERSION,
+        project_root: normalized(&props.root),
+        app_instance: app_instance.to_string(),
+        process_id,
+        generation,
+        claim_id: format!("{}-{process_id}-{sequence}", unix_ms()),
+        updated_unix_ms: unix_ms(),
+    };
+    write_json_atomic(&path, &claim)
+        .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))
 }
 
 fn capture_product_manifest(props: &ProjectProperties) -> Result<TeamProductManifest> {
@@ -897,16 +1094,10 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
 }
 
 fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
-    let Some(mut transaction) = SyncTransaction::load(props)? else {
+    let Some(mut transaction) = SyncTransaction::load_active_operation(props)? else {
         return Ok(false);
     };
     transaction.validate_repository_shape(props)?;
-    if transaction.0.status == TransactionStatus::SidecarCommitted {
-        // The product and its receipt crossed the atomic boundary. Keep both
-        // active state and rollback snapshot until a renderer explicitly acks
-        // this exact envelope, including after a sidecar or Electron restart.
-        return Ok(false);
-    }
     if transaction.phase == "capturing" {
         transaction.finish(
             props,
@@ -1478,7 +1669,7 @@ fn acknowledged_receipt_in_history(
     Ok(false)
 }
 
-/// Return the one committed product receipt that still requires renderer ack.
+/// Return the FIFO head committed product receipt that still requires renderer ack.
 ///
 /// A replacement renderer adopts the receipt under its current project
 /// generation. Pending pre-commit transactions are recovered separately and
@@ -1487,19 +1678,31 @@ pub fn pending_transaction_receipt(
     props: &ProjectProperties,
     generation: u64,
 ) -> Result<Option<TransactionRendererReceipt>> {
+    pending_transaction_receipt_for_owner(
+        props,
+        generation,
+        &format!("direct-{}", std::process::id()),
+        std::process::id(),
+    )
+}
+
+pub fn pending_transaction_receipt_for_owner(
+    props: &ProjectProperties,
+    generation: u64,
+    app_instance: &str,
+    process_id: u32,
+) -> Result<Option<TransactionRendererReceipt>> {
     if generation == 0 {
         return Err(TeamError::Command(
             "renderer receipt generation must be non-zero".into(),
         ));
     }
+    claim_transaction_dispatch(props, app_instance, process_id, generation)?;
     let _lock = acquire_project_transaction_lock(props)?;
-    let Some(mut transaction) = SyncTransaction::load(props)? else {
+    let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
-    if transaction.0.status != TransactionStatus::SidecarCommitted {
-        return Ok(None);
-    }
     if transaction.0.generation != generation {
         // Renderer adoption must not move this receipt behind or ahead of the
         // refresh backend. updated_unix_ms is the durable dispatcher key.
@@ -1520,19 +1723,39 @@ pub fn peek_transaction_receipt(
     props: &ProjectProperties,
 ) -> Result<Option<TransactionRendererReceipt>> {
     let _lock = acquire_project_transaction_lock(props)?;
-    let Some(transaction) = SyncTransaction::load(props)? else {
+    let Some(transaction) = SyncTransaction::load_receipt_head(props)? else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;
-    if transaction.0.status != TransactionStatus::SidecarCommitted {
-        return Ok(None);
+    transaction.renderer_receipt().map(Some)
+}
+
+/// Return one exact committed receipt for the product RPC that created it.
+///
+/// This does not claim or reorder the dispatcher. A direct reply may describe
+/// a FIFO tail while `transaction.receipt.pending` continues to expose only
+/// the older durable head.
+pub fn transaction_receipt(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+) -> Result<Option<TransactionRendererReceipt>> {
+    if generation == 0 || batch_id.is_empty() {
+        return Err(TeamError::Command(
+            "transaction receipt requires generation and batch id".into(),
+        ));
     }
+    let _lock = acquire_project_transaction_lock(props)?;
+    let Some(transaction) = SyncTransaction::load_receipt(props, batch_id)? else {
+        return Ok(None);
+    };
+    transaction.validate_repository_shape(props)?;
     transaction.renderer_receipt().map(Some)
 }
 
 /// Idempotently acknowledge a product receipt after renderer publication.
 ///
-/// Only this transition removes `active.json` and its rollback snapshot. If
+/// Only this transition removes the exact journal row and its rollback snapshot. If
 /// the acknowledgement response is lost, repeating the same RPC consults the
 /// durable completed history and performs no product write or compensation.
 pub fn acknowledge_transaction_receipt(
@@ -1547,7 +1770,7 @@ pub fn acknowledge_transaction_receipt(
         ));
     }
     let _lock = acquire_project_transaction_lock(props)?;
-    if let Some(mut transaction) = SyncTransaction::load(props)? {
+    if let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? {
         transaction.validate_repository_shape(props)?;
         if transaction.0.batch_id != batch_id {
             return Err(TeamError::Conflict(format!(

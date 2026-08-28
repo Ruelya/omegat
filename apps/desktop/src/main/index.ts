@@ -214,6 +214,7 @@ async function publishPendingTransactionEnvelopes(
     root,
     generation,
     app_instance: appInstance,
+    owner_process_id: process.pid,
   }) as { envelopes?: TransactionEnvelope[] };
   const envelopes = Array.isArray(result.envelopes) ? result.envelopes : [];
   const head = envelopes[0];
@@ -707,6 +708,7 @@ app.whenReady().then(() => {
         operation: envelope.payload.operation,
         outcome,
         app_instance: appInstance,
+        owner_process_id: process.pid,
       });
       const trace = process.env.OMEGAT_TEST_TRANSACTION_ACK_TRACE;
       if (trace) {
