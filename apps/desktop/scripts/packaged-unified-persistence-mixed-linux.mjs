@@ -625,12 +625,16 @@ async function runMixedQueueTakeovers(display, workDir, config) {
       ...limits,
       OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceA,
     });
-    await waitFor("prepared cross-root FIFO drain", async () =>
-      !await pathExists(projectPaths(rootA).active)
-        && !await pathExists(projectPaths(rootB).active)
-        ? true
-        : undefined
-    );
+    await waitFor("prepared cross-root FIFO drain", async () => {
+      if (
+        await pathExists(projectPaths(rootA).active)
+        || await pathExists(projectPaths(rootB).active)
+        || !await pathExists(traceA)
+      ) return undefined;
+      const rows = parseNdjson(await readFile(traceA, "utf8"))
+        .filter((row) => row.result === "acknowledged");
+      return rows.length === 6 ? true : undefined;
+    });
     const acknowledged = parseNdjson(await readFile(traceA, "utf8"))
       .filter((row) => row.result === "acknowledged");
     const expectedB = [
@@ -640,10 +644,10 @@ async function runMixedQueueTakeovers(display, workDir, config) {
     assert.deepEqual(
       acknowledged.map((row) => row.batch_id),
       [
-        expectedA[0][0],
         expectedB[0][0],
-        expectedA[1][0],
+        expectedA[0][0],
         expectedB[1][0],
+        expectedA[1][0],
         expectedA[2][0],
         expectedA[3][0],
       ],
