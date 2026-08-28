@@ -6461,7 +6461,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let config = temp.path().join("config");
         let root = temp.path().join(format!("product-{point}"));
         let active_path = root.join(".repositories/transactions/active.json");
-        let active_recovery_path = root.join(".repositories/transactions/.active.recovery.json");
+        let active_recovery_path = root.join(".repositories/transactions/.active.previous.json");
         let owner_path = root.join(".repositories/transactions/renderer-owner.json");
         let history_path = root.join(".repositories/transactions/history.ndjson");
         let marker_path = temp.path().join(format!("product-{point}-checkpoint"));
@@ -7159,9 +7159,8 @@ fn unified_journal_migrates_refresh_envelopes_and_compacts_only_acked_work() {
 
     let compact_config = temp.path().join("compact-config");
     let journal_path = compact_root.join(".repositories/transactions/active.json");
-    let journal_recovery_path = compact_root.join(
-        ".repositories/transactions/.active.recovery.json",
-    );
+    let journal_recovery_path =
+        compact_root.join(".repositories/transactions/.active.previous.json");
     let history_path = compact_root.join(".repositories/transactions/history.ndjson");
     let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config, None);
     rpc(
