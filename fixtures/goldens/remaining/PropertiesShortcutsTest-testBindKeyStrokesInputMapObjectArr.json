@@ -1,0 +1,22 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesInputMapObjectArr",
+  "size": 3,
+  "bindings": [
+    {
+      "stroke": "ctrl pressed P",
+      "action": "TEST_USER_1"
+    },
+    {
+      "stroke": "ctrl pressed S",
+      "action": "TEST_SAVE"
+    },
+    {
+      "stroke": "ctrl pressed X",
+      "action": "TEST_CUT"
+    }
+  ],
+  "keys": [
+    "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesInputMapObjectArr"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TMXReaderTest#testLeveL2",
+  "count": 4,
+  "pairs": {
+    "2 <a0> zz <t1>xx</t1>": "tr",
+    "3 <n0>xx</n0>": "tr",
+    "First part <i0> end.": "First <t0> tr.",
+    "entuv": "betuv"
+  },
+  "keys": [
+    "org.omegat.util.TMXReaderTest#testLeveL2"
+  ]
+}
