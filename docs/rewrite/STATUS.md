@@ -800,6 +800,21 @@ and TMX mtimes through replacement ownership. The complete package, owner, and
 compaction matrix passes through
 `npm run test:e2e:compaction-dual-recovery:linux`. Windows and macOS owner
 liveness/package behavior were not run.
+Product `active.json` v2 compaction now has its own durable fault boundaries,
+independent of the refresh journal. It idempotently archives each acknowledged
+terminal row and fsyncs `history.ndjson` plus its parent before changing the
+queue; it then atomically renames and parent-fsyncs the compacted product queue.
+At `after_archive_fsync`, SIGKILL leaves the original terminal → unacknowledged
+entry receipt → team receipt → save receipt queue authoritative. At
+`after_queue_rename`, the compacted unacknowledged entry → team → save queue is
+already authoritative. The sidecar contract kills a separate process at each
+boundary, verifies one terminal archive row, FIFO-head retention, and takeover
+from the dead durable owner. The real Linux packaged matrix independently parks
+and SIGKILLs the Electron process group at both product boundaries, then proves
+one replacement claim drains entry → team → save exactly once without changing
+TMX or file-remote bytes/mtime. Both paths retain the exact six-field duplicate
+`EntryKey`, one `Document3` translation surface, and an untranslated same-source
+decoy. This is Linux-only evidence; Windows and macOS were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and

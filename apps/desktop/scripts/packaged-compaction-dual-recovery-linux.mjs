@@ -535,6 +535,132 @@ async function prepareProductProject(configDir, project, label) {
   };
 }
 
+async function prepareProductCompactionProject(
+  configDir,
+  project,
+  remote,
+  label,
+) {
+  await mkdir(join(remote, "target"), { recursive: true });
+  const remotePath = join(remote, "target", "compaction.txt");
+  await writeFile(remotePath, `${label} remote before`, "utf8");
+  const session = new SidecarSession(configDir);
+  await session.request("project.create", {
+    root: project,
+    source_lang: "en",
+    target_lang: "fr",
+    sentence_seg: false,
+  });
+  await session.request("team.mapping", {
+    repositories: [{
+      repo_type: "file",
+      url: remote,
+      branch: null,
+      mappings: [{
+        local: "/target/compaction.txt",
+        repository: "/target/compaction.txt",
+        includes: [],
+        excludes: [],
+      }],
+    }],
+  });
+  await session.request("team.sync", {});
+  const source = `${label} duplicate source`;
+  await writeFile(join(project, "source", "a-wanted.txt"), source, "utf8");
+  await writeFile(join(project, "source", "z-decoy.txt"), source, "utf8");
+  await session.request("project.reload", {});
+  const entries = await session.request("entry.list", {});
+  assert.equal(entries.length, 2);
+  const wanted = entries.find((entry) => entry.key.file === "a-wanted.txt");
+  const decoy = entries.find((entry) => entry.key.file === "z-decoy.txt");
+  assert(wanted);
+  assert(decoy);
+  assertCompleteEntryKey(wanted.key);
+  assertCompleteEntryKey(decoy.key);
+
+  const translation = `${label} product compaction translation 😀`;
+  const receiptBatchId = `${label}-entry-receipt`;
+  const committed = await session.request("entry.set", {
+    index: wanted.index,
+    key: wanted.key,
+    translation,
+    note: "product journal compaction",
+    revision: wanted.revision,
+    default_translation: false,
+    transaction_project_root: project,
+    transaction_generation: 121,
+    transaction_batch_id: receiptBatchId,
+  });
+  assert.equal(committed.receipt.status, "sidecar_committed");
+  assert.equal(committed.receipt.payload.operation, "entry.set");
+
+  const remoteContent = `${label} remote committed exactly once`;
+  await writeFile(join(project, "target", "compaction.txt"), remoteContent, "utf8");
+  const teamBatchId = `${label}-team-tail`;
+  const team = await session.request("team.commit", {
+    which: "target",
+    transaction_project_root: project,
+    transaction_generation: 121,
+    transaction_batch_id: teamBatchId,
+  });
+  assert.equal(team.receipt.status, "sidecar_committed");
+  assert.equal(team.receipt.payload.operation, "commit-target");
+  assert.equal(await readFile(remotePath, "utf8"), remoteContent);
+
+  const saveBatchId = `${label}-save-tail`;
+  const save = await session.request("project.save", {
+    transaction_project_root: project,
+    transaction_generation: 121,
+    transaction_batch_id: saveBatchId,
+  });
+  assert.equal(save.receipt.status, "sidecar_committed");
+  assert.equal(save.receipt.payload.operation, "project.save");
+  await session.close();
+
+  const transactions = join(project, ".repositories", "transactions");
+  const activePath = join(transactions, "active.json");
+  const historyPath = join(transactions, "history.ndjson");
+  const ownerPath = join(transactions, "renderer-owner.json");
+  const journal = JSON.parse(await readFile(activePath, "utf8"));
+  assert.equal(journal.version, 2);
+  assert.deepEqual(
+    journal.batches.map((row) => [row.batch_id, row.status]),
+    [
+      [receiptBatchId, "sidecar_committed"],
+      [teamBatchId, "sidecar_committed"],
+      [saveBatchId, "sidecar_committed"],
+    ],
+  );
+  const terminalBatchId = `${label}-acknowledged-terminal`;
+  const terminalSnapshot = join(transactions, `${terminalBatchId}.snapshot`);
+  await mkdir(terminalSnapshot, { recursive: true });
+  await writeFile(join(terminalSnapshot, "archived"), "terminal\n", "utf8");
+  const terminal = structuredClone(journal.batches[0]);
+  terminal.batch_id = terminalBatchId;
+  terminal.status = "completed";
+  terminal.updated_unix_ms = Math.max(1, terminal.updated_unix_ms - 1_000);
+  terminal.payload.phase = "renderer-acknowledged";
+  terminal.payload.snapshot = terminalSnapshot;
+  journal.batches.unshift(terminal);
+  await durableWriteJson(activePath, journal);
+
+  return {
+    activePath,
+    historyPath,
+    ownerPath,
+    remotePath,
+    receiptBatchId,
+    teamBatchId,
+    saveBatchId,
+    terminalBatchId,
+    source,
+    translation,
+    key: wanted.key,
+    decoyKey: decoy.key,
+    remoteContent,
+  };
+}
+
 async function prepareMixedReceiptProject(
   configDir,
   project,
@@ -783,6 +909,7 @@ await Promise.all([access(executable), access(sidecar)]);
 const workDir = await mkdtemp(join(tmpdir(), "omegat-compaction-dual-e2e-"));
 const xvfb = await startXvfb();
 const results = [];
+const productCompactionResults = [];
 const receiptAckMatrix = [];
 let launchedA;
 let launchedB;
@@ -791,6 +918,177 @@ let selectedHeadCrashRecovery;
 let closeReceiptRecovery;
 
 try {
+  for (const point of ["after_archive_fsync", "after_queue_rename"]) {
+    const scenario = `product-${point.replace("after_", "")}`;
+    const config = join(workDir, `${scenario}-config`);
+    const project = join(workDir, `${scenario}-project`);
+    const remote = join(workDir, `${scenario}-remote`);
+    const marker = join(workDir, `${scenario}.marker`);
+    const restartTracePath = join(workDir, `${scenario}-restart-trace.ndjson`);
+    const prepared = await prepareProductCompactionProject(
+      config,
+      project,
+      remote,
+      scenario,
+    );
+    const originalQueue = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    const remoteMtimeBefore = (await stat(prepared.remotePath, { bigint: true })).mtimeNs;
+
+    launchedA = await launchPackaged(xvfb.display, config, project, {
+      OMEGAT_TEST_PRODUCT_COMPACTION_POINT: point,
+      OMEGAT_TEST_PRODUCT_COMPACTION_MARKER: marker,
+    });
+    await waitFor(`${point} product-journal marker`, () => pathExists(marker));
+    const parked = await workspaceState(launchedA.client);
+    assert.equal(parked.project, project);
+    assert.equal(parked.source, prepared.source);
+    assert.equal(parked.translation, prepared.translation);
+    assert.equal(parked.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(parked.key), prepared.key);
+    const durableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(durableOwner.project_root, project);
+    assert.equal(durableOwner.process_id, launchedA.application.pid);
+    assert.equal(durableOwner.generation, parked.generation);
+    assert.equal(typeof durableOwner.claim_id, "string");
+    assert(durableOwner.claim_id.length > 0);
+
+    const queueAtBoundary = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    const expectedQueue = point === "after_archive_fsync"
+      ? [
+          prepared.terminalBatchId,
+          prepared.receiptBatchId,
+          prepared.teamBatchId,
+          prepared.saveBatchId,
+        ]
+      : [
+          prepared.receiptBatchId,
+          prepared.teamBatchId,
+          prepared.saveBatchId,
+        ];
+    assert.deepEqual(
+      queueAtBoundary.batches.map((row) => row.batch_id),
+      expectedQueue,
+    );
+    if (point === "after_archive_fsync") {
+      assert.deepEqual(queueAtBoundary, originalQueue);
+    }
+    for (const row of queueAtBoundary.batches) {
+      if (row.batch_id === prepared.terminalBatchId) {
+        assert.equal(row.status, "completed");
+      } else {
+        assert.equal(row.status, "sidecar_committed");
+        assert.equal(row.commit.manifest_sha256.length, 64);
+      }
+    }
+    const archivedAtBoundary = parseNdjson(
+      await readFile(prepared.historyPath, "utf8"),
+    );
+    assert.equal(
+      archivedAtBoundary.filter((row) =>
+        row.batch_id === prepared.terminalBatchId && row.status === "completed"
+      ).length,
+      1,
+      `product ${point} archive is not idempotent`,
+    );
+    const stableTreeBeforeRecovery = await snapshotStableProjectTree(project);
+    const tmxPath = join(project, "omegat", "project_save.tmx");
+    const tmxBeforeRecovery = await readFile(tmxPath);
+    const tmxMtimeBeforeRecovery = (await stat(tmxPath, { bigint: true })).mtimeNs;
+    const killed = await killPackaged(launchedA);
+    launchedA = undefined;
+
+    launchedA = await launchPackaged(xvfb.display, config, project, {
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: restartTracePath,
+    });
+    await waitFor(`${point} product FIFO drain`, async () =>
+      await pathExists(prepared.activePath) ? undefined : true
+    );
+    const recovered = await workspaceState(launchedA.client);
+    assert.equal(recovered.project, project);
+    assert.equal(recovered.source, prepared.source);
+    assert.equal(recovered.translation, prepared.translation);
+    assert.equal(recovered.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(recovered.key), prepared.key);
+    const entries = await launchedA.client.evaluate(
+      'window.omegat.rpc("entry.list", {})',
+      true,
+    );
+    const wanted = entries.find((entry) => entry.key.file === prepared.key.file);
+    const decoy = entries.find((entry) => entry.key.file === prepared.decoyKey.file);
+    assert.deepEqual(wanted.key, prepared.key);
+    assert.equal(wanted.translation, prepared.translation);
+    assert.deepEqual(decoy.key, prepared.decoyKey);
+    assert.equal(decoy.translation, "");
+
+    const restartTrace = parseNdjson(await readFile(restartTracePath, "utf8"));
+    assertOrderedDispatch(
+      restartTrace,
+      [prepared.receiptBatchId, prepared.teamBatchId, prepared.saveBatchId],
+      `product ${point} recovery`,
+    );
+    assert.equal(
+      restartTrace.some((row) => row.batch_id === prepared.terminalBatchId),
+      false,
+      "product compaction dispatched an acknowledged terminal row",
+    );
+    const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    for (const batchId of [
+      prepared.terminalBatchId,
+      prepared.receiptBatchId,
+      prepared.teamBatchId,
+      prepared.saveBatchId,
+    ]) {
+      assert.equal(
+        history.filter((row) =>
+          row.batch_id === batchId && row.status === "completed"
+        ).length,
+        1,
+        `product ${point} duplicated terminal history for ${batchId}`,
+      );
+    }
+    assert.deepEqual(
+      await snapshotStableProjectTree(project),
+      stableTreeBeforeRecovery,
+      `product ${point} recovery replayed a stable project write`,
+    );
+    assert.deepEqual(await readFile(tmxPath), tmxBeforeRecovery);
+    assert.equal(
+      (await stat(tmxPath, { bigint: true })).mtimeNs,
+      tmxMtimeBeforeRecovery,
+      `product ${point} recovery replayed the TMX write`,
+    );
+    assert.equal(await readFile(prepared.remotePath, "utf8"), prepared.remoteContent);
+    assert.equal(
+      (await stat(prepared.remotePath, { bigint: true })).mtimeNs,
+      remoteMtimeBefore,
+      `product ${point} recovery replayed the team remote write`,
+    );
+    const takeoverOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(takeoverOwner.process_id, launchedA.application.pid);
+    assert.notEqual(takeoverOwner.process_id, durableOwner.process_id);
+    assert.notEqual(takeoverOwner.claim_id, durableOwner.claim_id);
+    assert.equal(takeoverOwner.generation, recovered.generation);
+
+    productCompactionResults.push({
+      point,
+      killed,
+      queueAtBoundary: expectedQueue,
+      recoveredDispatchOrder: [
+        prepared.receiptBatchId,
+        prepared.teamBatchId,
+        prepared.saveBatchId,
+      ],
+      archivedTerminalCount: 1,
+      completeEntryKey: prepared.key,
+      document3Surfaces: recovered.activeSurfaces,
+      productTmxReplayed: false,
+      teamRemoteWriteReplayed: false,
+      replacementOwnerClaimId: takeoverOwner.claim_id,
+    });
+    await terminatePackaged(launchedA);
+    launchedA = undefined;
+  }
+
   for (const point of ["after_archive_fsync", "after_queue_rename"]) {
     const scenario = point.replace("after_", "");
     const sharedConfig = join(workDir, `${scenario}-shared-config`);
@@ -1918,6 +2216,7 @@ try {
     simultaneousElectronInstances: true,
     sharedConfigDirectory: true,
     scenarios: results,
+    productCompactionScenarios: productCompactionResults,
     mixedReceiptRecovery,
     receiptAckMatrix,
     closeReceiptRecovery,

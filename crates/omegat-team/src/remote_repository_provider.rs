@@ -17,7 +17,7 @@ use omegat_core::cancellation::CancellationToken;
 use omegat_core::properties::ProjectProperties;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -737,10 +737,7 @@ impl SyncTransaction {
             .find(|transaction| transaction.0.status == TransactionStatus::SidecarCommitted))
     }
 
-    fn load_receipt(
-        props: &ProjectProperties,
-        batch_id: &str,
-    ) -> Result<Option<Self>> {
+    fn load_receipt(props: &ProjectProperties, batch_id: &str) -> Result<Option<Self>> {
         Ok(load_product_journal(props)?
             .batches
             .into_iter()
@@ -833,28 +830,121 @@ fn write_product_journal(
         .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
 }
 
+fn sync_parent(path: &Path) -> Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        TeamError::Command(format!(
+            "product transaction path has no parent: {}",
+            path.display()
+        ))
+    })?;
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn archive_terminal_product_transactions(
+    props: &ProjectProperties,
+    terminal: &[SyncTransaction],
+) -> Result<()> {
+    let path = transaction_dir(props).join("history.ndjson");
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(TeamError::Io(error)),
+    };
+    let existing = existing
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut history = OpenOptions::new().create(true).append(true).open(&path)?;
+    for transaction in terminal {
+        let value = serde_json::to_value(transaction)
+            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+        if existing.iter().any(|archived| archived == &value) {
+            continue;
+        }
+        serde_json::to_writer(&mut history, transaction)
+            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+        history.write_all(b"\n")?;
+    }
+    history.sync_all()?;
+    sync_parent(&path)
+}
+
+fn product_compaction_checkpoint(point: &str) -> Result<()> {
+    if std::env::var("OMEGAT_TEST_PRODUCT_COMPACTION_POINT").as_deref() != Ok(point) {
+        return Ok(());
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_PRODUCT_COMPACTION_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(TeamError::Io(error)),
+    };
+    writeln!(file, "{point}")?;
+    file.sync_all()?;
+    sync_parent(&marker)?;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
 fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()> {
     let mut journal = load_product_journal(props)?;
     let terminal = journal
         .batches
         .iter()
         .filter(|transaction| !transaction.0.status.is_recoverable())
-        .map(|transaction| transaction.snapshot.clone())
+        .cloned()
         .collect::<Vec<_>>();
     if terminal.is_empty() {
+        if journal.batches.is_empty() {
+            let active = transaction_dir(props).join("active.json");
+            remove_path(&active)?;
+            remove_path(&transaction_dir(props).join(".active.previous.json"))?;
+            sync_parent(&active)?;
+        }
         return Ok(());
+    }
+    archive_terminal_product_transactions(props, &terminal)?;
+    product_compaction_checkpoint("after_archive_fsync")?;
+    if std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_ARCHIVE").as_deref() == Ok("1") {
+        std::process::abort();
     }
     journal
         .batches
         .retain(|transaction| transaction.0.status.is_recoverable());
-    for snapshot in terminal {
-        remove_path(&snapshot)?;
+    for transaction in &terminal {
+        remove_path(&transaction.snapshot)?;
+    }
+    // Always publish the compacted v2 queue first, including an empty queue.
+    // The atomic writer fsyncs the replacement and parent directory, so a
+    // process death at the checkpoint cannot revive an archived terminal row.
+    write_product_journal(props, &journal)?;
+    product_compaction_checkpoint("after_queue_rename")?;
+    if std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME").as_deref()
+        == Ok("1")
+    {
+        std::process::abort();
     }
     if journal.batches.is_empty() {
-        remove_path(&transaction_dir(props).join("active.json"))?;
+        let active = transaction_dir(props).join("active.json");
+        remove_path(&active)?;
         remove_path(&transaction_dir(props).join(".active.previous.json"))?;
-    } else {
-        write_product_journal(props, &journal)?;
+        sync_parent(&active)?;
     }
     Ok(())
 }
@@ -1120,7 +1210,17 @@ pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
 }
 
 fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
-    compact_terminal_product_transactions(props)?;
+    let journal = load_product_journal(props)?;
+    // A committed receipt is renderer-owned work. Leave any terminal prefix in
+    // place until transaction.receipt.pending has durably claimed a dispatcher;
+    // compaction then runs under that same project lock and owner claim.
+    if !journal
+        .batches
+        .iter()
+        .any(|transaction| transaction.0.status == TransactionStatus::SidecarCommitted)
+    {
+        compact_terminal_product_transactions(props)?;
+    }
     let Some(mut transaction) = SyncTransaction::load_active_operation(props)? else {
         return Ok(false);
     };
@@ -1726,6 +1826,7 @@ pub fn pending_transaction_receipt_for_owner(
     }
     claim_transaction_dispatch(props, app_instance, process_id, generation)?;
     let _lock = acquire_project_transaction_lock(props)?;
+    compact_terminal_product_transactions(props)?;
     let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? else {
         return Ok(None);
     };
