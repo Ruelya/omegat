@@ -811,8 +811,11 @@ impl App {
                         let receipt = if transaction_generation == 0 {
                             None
                         } else {
-                            omegat_team::pending_transaction_receipt(&s.props, transaction_generation)
-                                .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+                            omegat_team::pending_transaction_receipt(
+                                &s.props,
+                                transaction_generation,
+                            )
+                            .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
                         };
                         Ok(json!({
                             "action": r.action,
@@ -853,7 +856,7 @@ impl App {
                 let receipt = if transaction_generation == 0 {
                     None
                 } else {
-                            omegat_team::pending_transaction_receipt(
+                    omegat_team::pending_transaction_receipt(
                         &self.session()?.props,
                         transaction_generation,
                     )
@@ -1427,6 +1430,59 @@ fn refresh_journal_err(error: String) -> (i32, String) {
     )
 }
 
+fn pending_transaction_envelopes(
+    config_dir: &std::path::Path,
+    props: &omegat_core::properties::ProjectProperties,
+    app_instance: &str,
+    generation: u64,
+) -> std::result::Result<Vec<Value>, (i32, String)> {
+    let mut envelopes = Vec::new();
+    if let Some(receipt) = omegat_team::pending_transaction_receipt(props, generation)
+        .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+    {
+        envelopes.push(serde_json::to_value(receipt).map_err(|error| {
+            (
+                error_code::INTERNAL_ERROR,
+                format!("serialize product transaction receipt: {error}"),
+            )
+        })?);
+    }
+    envelopes.extend(
+        refresh_journal::pending(config_dir, &props.root, app_instance, generation)
+            .map_err(refresh_journal_err)?
+            .into_iter()
+            .map(|envelope| {
+                serde_json::to_value(envelope).map_err(|error| {
+                    (
+                        error_code::INTERNAL_ERROR,
+                        format!("serialize refresh transaction receipt: {error}"),
+                    )
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?,
+    );
+    envelopes.sort_by(|left, right| {
+        let key = |envelope: &Value| {
+            (
+                envelope
+                    .get("updated_unix_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(u64::MAX),
+                envelope
+                    .get("batch_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                envelope
+                    .pointer("/payload/operation")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )
+        };
+        key(left).cmp(&key(right))
+    });
+    Ok(envelopes)
+}
+
 fn transaction_scope(
     params: &Value,
     session_root: &std::path::Path,
@@ -1482,7 +1538,13 @@ fn transaction_receipt_scope(
     open_root: Option<&std::path::Path>,
     require_batch_id: bool,
 ) -> std::result::Result<
-    (std::path::PathBuf, String, u64, Option<String>, Option<String>),
+    (
+        std::path::PathBuf,
+        String,
+        u64,
+        Option<String>,
+        Option<String>,
+    ),
     (i32, String),
 > {
     let root = params
@@ -1616,28 +1678,47 @@ fn dispatch_refresh_journal(
             let require_batch_id = method == "transaction.receipt.ack";
             let (root, app_instance, generation, batch_id, operation) =
                 transaction_receipt_scope(&params, open_root, require_batch_id)?;
-            let props = omegat_core::properties::ProjectProperties::load(&root).map_err(core_err)?;
+            let props =
+                omegat_core::properties::ProjectProperties::load(&root).map_err(core_err)?;
             return match method {
                 "transaction.receipt.pending" => {
-                    if let Some(receipt) =
-                        omegat_team::pending_transaction_receipt(&props, generation)
-                            .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
-                    {
-                        Ok(json!({ "envelopes": [receipt] }))
-                    } else {
-                        let envelopes = refresh_journal::pending(
-                            config_dir,
-                            &root,
-                            &app_instance,
-                            generation,
-                        )
-                        .map_err(refresh_journal_err)?;
-                        Ok(json!({ "envelopes": envelopes }))
-                    }
+                    let mut envelopes = pending_transaction_envelopes(
+                        config_dir,
+                        &props,
+                        &app_instance,
+                        generation,
+                    )?;
+                    // Expose exactly one durable head. The Electron dispatcher
+                    // asks again after its renderer acknowledgement, so neither
+                    // backend can race or publish around an older receipt.
+                    envelopes.truncate(1);
+                    Ok(json!({ "envelopes": envelopes }))
                 }
                 "transaction.receipt.ack" => {
                     let batch_id = batch_id.as_deref().expect("required transaction batch id");
-                    let operation = operation.as_deref().expect("required transaction operation");
+                    let operation = operation
+                        .as_deref()
+                        .expect("required transaction operation");
+                    let pending = pending_transaction_envelopes(
+                        config_dir,
+                        &props,
+                        &app_instance,
+                        generation,
+                    )?;
+                    if let Some(index) = pending.iter().position(|envelope| {
+                        envelope.get("batch_id").and_then(Value::as_str) == Some(batch_id)
+                    }) {
+                        if index != 0 {
+                            let head = pending[0]
+                                .get("batch_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("<invalid>");
+                            return Err((
+                                error_code::TEAM_CONFLICT,
+                                format!("transaction receipt FIFO head is {head}, not {batch_id}"),
+                            ));
+                        }
+                    }
                     let ack = if operation == "project.external-refresh" {
                         let outcome = params
                             .get("outcome")
@@ -1660,10 +1741,7 @@ fn dispatch_refresh_journal(
                         .map_err(|error| (error_code::TEAM_CONFLICT, error))?
                     } else {
                         omegat_team::acknowledge_transaction_receipt(
-                            &props,
-                            generation,
-                            batch_id,
-                            operation,
+                            &props, generation, batch_id, operation,
                         )
                         .map_err(|error| match error {
                             omegat_team::TeamError::Conflict(message) => {

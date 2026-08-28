@@ -22,9 +22,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::{Mutex, MutexGuard};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -524,6 +524,14 @@ impl SyncTransaction {
 
     fn persist(&mut self, props: &ProjectProperties) -> Result<()> {
         self.0.touch();
+        self.persist_current(props)
+    }
+
+    fn persist_preserving_dispatch_order(&mut self, props: &ProjectProperties) -> Result<()> {
+        self.persist_current(props)
+    }
+
+    fn persist_current(&mut self, props: &ProjectProperties) -> Result<()> {
         self.0
             .validate_for_root(&props.root)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
@@ -1493,8 +1501,10 @@ pub fn pending_transaction_receipt(
         return Ok(None);
     }
     if transaction.0.generation != generation {
-        transaction.0.restamp_generation(generation);
-        transaction.persist(props)?;
+        // Renderer adoption must not move this receipt behind or ahead of the
+        // refresh backend. updated_unix_ms is the durable dispatcher key.
+        transaction.0.generation = generation;
+        transaction.persist_preserving_dispatch_order(props)?;
     }
     transaction.renderer_receipt().map(Some)
 }

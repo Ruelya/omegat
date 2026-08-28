@@ -345,7 +345,10 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
     assert_eq!(set["result"]["entry"]["key"], wanted["key"]);
     assert_eq!(set["result"]["entry"]["translation"], "Occurrence durable");
     assert_eq!(set["result"]["receipt"]["status"], "sidecar_committed");
-    assert_eq!(set["result"]["receipt"]["payload"]["operation"], "entry.set");
+    assert_eq!(
+        set["result"]["receipt"]["payload"]["operation"],
+        "entry.set"
+    );
     let set_ack = rpc(
         &mut stdin,
         &mut stdout,
@@ -965,6 +968,283 @@ fn concurrent_project_recoveries_isolate_product_and_refresh_receipts() {
     recovered_b.kill().unwrap();
     recovered_a.wait().unwrap();
     recovered_b.wait().unwrap();
+}
+
+#[test]
+fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
+    fn pending(
+        input: &mut impl Write,
+        output: &mut impl BufRead,
+        id: i64,
+        root: &std::path::Path,
+    ) -> Value {
+        rpc(
+            input,
+            output,
+            id,
+            "transaction.receipt.pending",
+            json!({
+                "root": root,
+                "app_instance": "fair-dispatch-electron",
+                "generation": 31,
+            }),
+        )
+    }
+
+    fn acknowledge(
+        input: &mut impl Write,
+        output: &mut impl BufRead,
+        id: i64,
+        root: &std::path::Path,
+        batch_id: &str,
+        operation: &str,
+    ) -> Value {
+        rpc(
+            input,
+            output,
+            id,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": "fair-dispatch-electron",
+                "generation": 31,
+                "batch_id": batch_id,
+                "operation": operation,
+                "outcome": "coalesced",
+            }),
+        )
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("project");
+    let remote = temp.path().join("remote");
+    std::fs::create_dir_all(remote.join("source")).unwrap();
+    std::fs::write(remote.join("source/shared.txt"), "remote initial").unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .env("OMEGAT_CONFIG_DIR", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = BufReader::new(child.stdout.take().unwrap());
+    rpc(
+        &mut input,
+        &mut output,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    let mapped = rpc(
+        &mut input,
+        &mut output,
+        2,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [{
+                    "local": "/source/shared.txt",
+                    "repository": "/source/shared.txt",
+                    "includes": [],
+                    "excludes": [],
+                }],
+            }],
+        }),
+    );
+    assert_eq!(mapped["result"]["ok"], true);
+    let initialized = rpc(&mut input, &mut output, 3, "team.sync", json!({}));
+    assert_eq!(initialized["result"]["action"], "sync");
+
+    let old_refresh = rpc(
+        &mut input,
+        &mut output,
+        4,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "fair-dispatch-electron",
+            "generation": 31,
+            "paths": [root.join("source/shared.txt")],
+            "fingerprints": { "source/shared.txt": "refresh-before-team" },
+            "sources": ["native"],
+        }),
+    );
+    let old_refresh_id = old_refresh["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::thread::sleep(Duration::from_millis(5));
+    std::fs::write(root.join("source/shared.txt"), "team committed").unwrap();
+    let team = rpc(
+        &mut input,
+        &mut output,
+        5,
+        "team.commit",
+        json!({
+            "which": "source",
+            "transaction_project_root": root,
+            "transaction_generation": 31,
+            "transaction_batch_id": "fair-team-receipt",
+        }),
+    );
+    assert_eq!(
+        team["result"]["receipt"]["payload"]["operation"],
+        "commit-source"
+    );
+
+    let first = pending(&mut input, &mut output, 6, &root);
+    assert_eq!(first["result"]["envelopes"].as_array().unwrap().len(), 1);
+    assert_eq!(first["result"]["envelopes"][0]["batch_id"], old_refresh_id);
+    assert_eq!(
+        first["result"]["envelopes"][0]["payload"]["fingerprints"]["source/shared.txt"],
+        "refresh-before-team"
+    );
+    assert_eq!(
+        first["result"]["envelopes"][0]["payload"].get("phase"),
+        None
+    );
+    let premature_team_ack = acknowledge(
+        &mut input,
+        &mut output,
+        7,
+        &root,
+        "fair-team-receipt",
+        "commit-source",
+    );
+    assert_eq!(premature_team_ack["error"]["code"], -32005);
+    assert!(root.join(".repositories/transactions/active.json").exists());
+
+    let old_refresh_ack = acknowledge(
+        &mut input,
+        &mut output,
+        8,
+        &root,
+        &old_refresh_id,
+        "project.external-refresh",
+    );
+    assert_eq!(old_refresh_ack["result"]["ack"]["acknowledged"], true);
+    let team_head = pending(&mut input, &mut output, 9, &root);
+    assert_eq!(
+        team_head["result"]["envelopes"][0]["batch_id"],
+        "fair-team-receipt"
+    );
+    assert_eq!(
+        team_head["result"]["envelopes"][0]["payload"],
+        json!({ "operation": "commit-source" })
+    );
+    assert_eq!(team_head["result"]["envelopes"][0]["generation"], 31);
+    let team_ack = acknowledge(
+        &mut input,
+        &mut output,
+        10,
+        &root,
+        "fair-team-receipt",
+        "commit-source",
+    );
+    assert_eq!(team_ack["result"]["ack"]["acknowledged"], true);
+    assert_eq!(
+        std::fs::read_to_string(remote.join("source/shared.txt")).unwrap(),
+        "team committed"
+    );
+
+    std::thread::sleep(Duration::from_millis(5));
+    let refresh_one = rpc(
+        &mut input,
+        &mut output,
+        11,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "fair-dispatch-electron",
+            "generation": 31,
+            "paths": [root.join("source/shared.txt")],
+            "fingerprints": { "source/shared.txt": "refresh-one" },
+            "sources": ["sidecar"],
+        }),
+    );
+    let refresh_one_id = refresh_one["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::thread::sleep(Duration::from_millis(5));
+    let refresh_two = rpc(
+        &mut input,
+        &mut output,
+        12,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "fair-dispatch-electron",
+            "generation": 31,
+            "paths": [root.join("source/shared.txt")],
+            "fingerprints": { "source/shared.txt": "refresh-two" },
+            "sources": ["native"],
+        }),
+    );
+    let refresh_two_id = refresh_two["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    std::thread::sleep(Duration::from_millis(5));
+    let saved = rpc(
+        &mut input,
+        &mut output,
+        13,
+        "project.save",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 31,
+            "transaction_batch_id": "fair-save-receipt",
+        }),
+    );
+    assert_eq!(
+        saved["result"]["receipt"]["payload"]["operation"],
+        "project.save"
+    );
+
+    for (id, batch_id, operation) in [
+        (14, refresh_one_id.as_str(), "project.external-refresh"),
+        (16, refresh_two_id.as_str(), "project.external-refresh"),
+        (18, "fair-save-receipt", "project.save"),
+    ] {
+        let head = pending(&mut input, &mut output, id, &root);
+        assert_eq!(head["result"]["envelopes"].as_array().unwrap().len(), 1);
+        assert_eq!(head["result"]["envelopes"][0]["batch_id"], batch_id);
+        assert_eq!(
+            head["result"]["envelopes"][0]["payload"]["operation"],
+            operation
+        );
+        if operation == "project.external-refresh" {
+            assert!(head["result"]["envelopes"][0]["payload"]["fingerprints"].is_object());
+        } else {
+            assert_eq!(
+                head["result"]["envelopes"][0]["payload"],
+                json!({ "operation": "project.save" })
+            );
+        }
+        let ack = acknowledge(&mut input, &mut output, id + 1, &root, batch_id, operation);
+        assert_eq!(ack["result"]["ack"]["acknowledged"], true);
+    }
+    let drained = pending(&mut input, &mut output, 20, &root);
+    assert_eq!(drained["result"]["envelopes"], json!([]));
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+    assert!(!root
+        .join(".repositories/transactions/external-refresh.json")
+        .exists());
+
+    let _ = child.kill();
+    child.wait().unwrap();
 }
 
 #[test]
@@ -1791,7 +2071,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
             .iter()
             .map(|batch| batch["batch_id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec![first_id.as_str(), second_id.as_str()]
+        vec![first_id.as_str()]
     );
     let completed = rpc(
         &mut second_in,
@@ -2230,19 +2510,13 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
             .iter()
             .map(|batch| batch["batch_id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        vec![receipt_batch.as_str(), pending_batch.as_str()]
+        vec![receipt_batch.as_str()]
     );
     assert_eq!(
         compacted["result"]["envelopes"][0]["status"],
         "sidecar_committed"
     );
     assert_eq!(compacted["result"]["envelopes"][0]["commit"], receipt);
-    assert_eq!(compacted["result"]["envelopes"][1]["status"], "pending");
-    assert_eq!(
-        compacted["result"]["envelopes"][1].get("commit"),
-        None,
-        "pending FIFO tail gained a receipt during compaction"
-    );
     assert!(compacted["result"]["envelopes"]
         .as_array()
         .unwrap()
@@ -2251,8 +2525,15 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     let compacted_on_disk: Value =
         serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
     assert_eq!(
-        compacted_on_disk["batches"],
-        compacted["result"]["envelopes"]
+        compacted_on_disk["batches"][0],
+        compacted["result"]["envelopes"][0]
+    );
+    assert_eq!(compacted_on_disk["batches"][1]["batch_id"], pending_batch);
+    assert_eq!(compacted_on_disk["batches"][1]["status"], "pending");
+    assert_eq!(
+        compacted_on_disk["batches"][1].get("commit"),
+        None,
+        "pending FIFO tail gained a receipt during compaction"
     );
     let history: Vec<Value> = std::fs::read_to_string(&history_path)
         .unwrap()
@@ -2280,10 +2561,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
             "outcome": "succeeded",
         }),
     );
-    assert_eq!(
-        acknowledged_receipt["result"]["ack"]["acknowledged"],
-        true
-    );
+    assert_eq!(acknowledged_receipt["result"]["ack"]["acknowledged"], true);
     let stale_generation = rpc(
         &mut second_in,
         &mut second_out,
@@ -2710,7 +2988,10 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
             "generation": 1
         }),
     );
-    assert_eq!(replay_pending["result"]["envelopes"][0]["status"], "pending");
+    assert_eq!(
+        replay_pending["result"]["envelopes"][0]["status"],
+        "pending"
+    );
     let replayed = rpc(
         &mut replay_in,
         &mut replay_out,

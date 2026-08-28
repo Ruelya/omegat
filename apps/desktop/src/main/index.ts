@@ -272,7 +272,11 @@ async function persistExternalProjectChange(event: ExternalProjectChange) {
       result = await persist();
     }
     if (result.batch) {
-      publishTransactionEnvelope(event.root, event.generation, result.batch);
+      await publishPendingTransactionEnvelopes(
+        await statefulClient(),
+        event.root,
+        event.generation,
+      );
     }
   } catch (error) {
     process.stderr.write(
@@ -370,10 +374,10 @@ async function rpc(
     && typeof receipt.project_root === "string"
     && typeof receipt.generation === "number"
   ) {
-    publishTransactionEnvelope(
+    await publishPendingTransactionEnvelopes(
+      client,
       receipt.project_root,
       receipt.generation,
-      receipt as TransactionEnvelope,
     );
   }
   const scopedExternalRefresh = method === "project.external-refresh"
