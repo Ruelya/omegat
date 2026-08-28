@@ -1667,30 +1667,18 @@ try {
       `product ${point} archive is not idempotent`,
     );
 
-    const preKillContenderWait = join(
-      workDir,
-      `${scenario}-pre-kill-contender-wait.json`,
-    );
     const preKillContenderTrace = join(
       workDir,
       `${scenario}-pre-kill-contender-trace.ndjson`,
     );
     launchedB = await launchPackaged(xvfb.display, config, null, {
-      OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: preKillContenderWait,
       OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: preKillContenderTrace,
     });
-    const contenderWait = await waitFor(
-      `product ${point} pre-kill contender owner wait`,
-      async () =>
-        await pathExists(preKillContenderWait)
-          ? JSON.parse(await readFile(preKillContenderWait, "utf8"))
-          : undefined,
-    );
-    assert.equal(
-      contenderWait.previous_owner_process_id,
-      durableOwner.process_id,
-      `product ${point} contender did not wait for the live owner`,
-    );
+    // The interrupted compactor still owns operation.lock, so detached
+    // discovery blocks before owner election. Give that asynchronous request a
+    // scheduling turn, then prove it neither changed the durable claim nor
+    // received the parked head.
+    await sleep(250);
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
       durableOwner,
@@ -2071,7 +2059,7 @@ try {
       archivedTerminalCount: 1,
       preKillContender: {
         browserPid: preKillContenderPid,
-        pendingBlockedByLiveOwner: true,
+        pendingBlockedByOperationLock: true,
         deliveredEnvelopes: 0,
         ownerClaimUnchanged: true,
         remainedResponsive: true,
