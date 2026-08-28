@@ -3842,7 +3842,13 @@ try {
         row.batch_id === oldOwner.batch_id
         && row.status === "request_cancelled"
         && row.error_code === -32800
-        && row.payload.phase === "renderer-cancelled-recovered"
+        && row.payload.phase === (
+          cancellationPoint === "after_intent_queue_rename"
+            ? "renderer-cancelled-recovered"
+            : cancellationPoint === "after_rollback_fsync"
+              ? "renderer-cancelled-takeover"
+              : "renderer-cancelled"
+        )
       ).length,
       1,
     );
