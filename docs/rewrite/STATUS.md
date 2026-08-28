@@ -904,15 +904,20 @@ rename. At every boundary the UI still says `cancelling` until protocol
 together. Three replacement Electron processes observe the restored
 conflict/TMX, but none receives the cancelled resolve envelope and exactly one
 durable dispatcher owner remains. The rollback-fsync case sends a second
-packaged cancellation call against the existing `cancellation_pending` row:
-it owns the sole terminal transition, reuses the persisted
-`renderer-rollback-durable` checkpoint, and neither opens a second rollback nor
-writes a second terminal row. The terminal-rename case then SIGKILLs two more
-packaged process groups at `after_archive_fsync` and `after_queue_rename`;
-restart sees one archived request-cancelled row and an empty compacted queue.
-A separate packaged FIFO-tail case keeps real `team.sync` → save → close
-receipts ahead of resolve, kills after the tail's cancellation intent, and
-proves one replacement delivers those three heads in order while every process
+wave of **two packaged Electron processes concurrently** against the same
+`cancellation_pending` row. The product lock selects one durable cancellation
+owner while the loser waits; both receive protocol **-32800**, only one
+`renderer-rollback-durable` checkpoint and one terminal row exist, neither
+caller claims the resolve dispatcher, and both envelope traces stay empty.
+The terminal-rename case also SIGKILLs packaged process groups at
+`after_archive_fsync` and `after_queue_rename`; restart sees one archived
+request-cancelled row and an empty compacted queue.
+The packaged FIFO-tail case is now a five-row combined matrix: real
+`team.sync` → save → close receipts stay ahead of resolve while SIGKILL occurs
+at each of `after_intent_queue_rename`, `after_rollback_fsync`,
+`after_terminal_queue_rename`, `after_archive_fsync`, and
+`after_queue_rename`. In every row exactly one replacement delivers those three
+heads in order, losing pending/ack calls are rejected, and every process
 delivers zero resolve envelopes. Exact Git HEAD, file-remote bytes/mtime,
 complete six-field wanted and decoy keys, and the single `Document3` surface
 remain unchanged. These assertions run through
