@@ -944,11 +944,21 @@ surface.
 The terminal-rename case also SIGKILLs packaged process groups at
 `after_archive_fsync` and `after_queue_rename`; restart sees one archived
 request-cancelled row and an empty compacted queue.
-The packaged FIFO-tail case is now a five-row combined matrix: real
+The packaged FIFO-tail case is now a seven-row combined matrix: real
 `team.sync` → save → close receipts stay ahead of resolve while SIGKILL occurs
 at each of `after_intent_queue_rename`, `after_rollback_fsync`,
 `after_terminal_queue_rename`, `after_archive_fsync`, and
-`after_queue_rename`. In every row exactly one replacement delivers those three
+`after_queue_rename`, plus two consecutive-owner rows in which the third
+pre-existing cancellation waiter reaches `after_archive_fsync` or
+`after_queue_rename` itself. That waiter is released from the exact durable
+checkpoint and returns **-32800** without a cancellation takeover marker,
+another rollback, another terminal publication, or a resolve envelope. The raw
+NDJSON contract runs the same two waiter/compaction combinations. In both
+surfaces all four logical cancellation calls converge on **-32800**, one
+rollback-durable row and one request-cancelled row remain, and the product
+journal keeps the exact `team.sync` → save → close FIFO prefix while archiving
+only the cancelled resolve tail.
+In every row exactly one replacement delivers those three
 heads in order, losing pending/ack calls are rejected, and every process
 delivers zero resolve envelopes. In the first two rows, the cancellation
 takeover completes before replacement dispatch, so FIFO recovery cannot hide a

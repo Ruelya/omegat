@@ -3805,11 +3805,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
         followup_checkpoint: Option<(&str, &std::path::Path)>,
         wait_marker: Option<&std::path::Path>,
         takeover_marker: Option<&std::path::Path>,
-        compaction_checkpoint: Option<(
-            &str,
-            &std::path::Path,
-            &std::path::Path,
-        )>,
+        compaction_checkpoint: Option<(&str, &std::path::Path, &std::path::Path)>,
     ) -> (
         std::process::Child,
         std::process::ChildStdin,
@@ -3952,8 +3948,14 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             ("raw-cancel-fifo-close", "project.close"),
         ];
 
-        let (mut owner, mut owner_in, mut owner_out) =
-            spawn_sidecar(&config, Some((point, &owner_marker)), None, None, None, None);
+        let (mut owner, mut owner_in, mut owner_out) = spawn_sidecar(
+            &config,
+            Some((point, &owner_marker)),
+            None,
+            None,
+            None,
+            None,
+        );
         rpc(
             &mut owner_in,
             &mut owner_out,
@@ -4325,8 +4327,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
             waiter_response["error"],
             json!({"code": -32800, "message": "request cancelled"})
         );
-        let mut protocol_error_codes =
-            vec![waiter_response["error"]["code"].as_i64().unwrap()];
+        let mut protocol_error_codes = vec![waiter_response["error"]["code"].as_i64().unwrap()];
         if point == "after_intent_queue_rename" {
             assert!(
                 !takeover_marker.exists(),
@@ -4417,9 +4418,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
                 rollback_owner_retry["error"],
                 json!({"code": -32800, "message": "request cancelled"})
             );
-            protocol_error_codes.push(
-                rollback_owner_retry["error"]["code"].as_i64().unwrap(),
-            );
+            protocol_error_codes.push(rollback_owner_retry["error"]["code"].as_i64().unwrap());
         }
         if let Some(terminal_owner_pid) = terminal_owner_pid {
             let terminal_owner_retry = rpc(
@@ -4441,9 +4440,7 @@ fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
                 terminal_owner_retry["error"],
                 json!({"code": -32800, "message": "request cancelled"})
             );
-            protocol_error_codes.push(
-                terminal_owner_retry["error"]["code"].as_i64().unwrap(),
-            );
+            protocol_error_codes.push(terminal_owner_retry["error"]["code"].as_i64().unwrap());
         }
         if point == "after_intent_queue_rename" {
             protocol_error_codes.sort_unstable();
