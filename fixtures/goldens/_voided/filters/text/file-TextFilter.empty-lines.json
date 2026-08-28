@@ -1,0 +1,17 @@
+{
+  "id": "text",
+  "fixture": "text/file-TextFilter.txt",
+  "java_test": "org.omegat.filters.TextFilterTest#testParseEmptyLinesBreak",
+  "options": { "segmentOn": "EMPTYLINES" },
+  "sources": [
+    "This test file for test TextFilter.",
+    "It should be second entry for empty-line separator or third line for line-break separator.",
+    "It should be third entry for empty-line separator or fifth line for line-break separator."
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "This test file for test TextFilter.",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

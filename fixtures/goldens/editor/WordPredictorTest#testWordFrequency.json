@@ -1,0 +1,74 @@
+{
+  "java_test": "org.omegat.gui.editor.history.WordPredictorTest#testWordFrequency",
+  "steps": [
+    {
+      "train": [
+        [
+          "a",
+          "big",
+          "brown",
+          "bear"
+        ],
+        [
+          "a",
+          "big",
+          "brown",
+          "bench"
+        ],
+        [
+          "a",
+          "big",
+          "yellow",
+          "banana"
+        ]
+      ],
+      "predict_big": [
+        {
+          "word": "brown",
+          "frequency": 100.0
+        }
+      ]
+    },
+    {
+      "train": [
+        [
+          "a",
+          "big",
+          "yellow",
+          "duck"
+        ]
+      ],
+      "predict_big": [
+        {
+          "word": "brown",
+          "frequency": 50.0
+        },
+        {
+          "word": "yellow",
+          "frequency": 50.0
+        }
+      ]
+    },
+    {
+      "train": [
+        [
+          "a",
+          "big",
+          "yellow",
+          "daisy"
+        ]
+      ],
+      "predict_big": [
+        {
+          "word": "yellow",
+          "frequency": 60.0
+        },
+        {
+          "word": "brown",
+          "frequency": 40.0
+        }
+      ]
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

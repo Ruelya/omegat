@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.GlossaryTextAreaTest#testClear",
+  "before": "source1 = translation1source2 = translation2\n1. comment2",
+  "after": "",
+  "keys": [
+    "org.omegat.gui.glossary.GlossaryTextAreaTest#testClear"
+  ]
+}

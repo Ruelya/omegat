@@ -1,0 +1,5 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorControllerTest#testEditorControllerDefaults",
+  "displayed_file_index": 0,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

@@ -1,0 +1,5 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testLanguageFallbackWhenNothingStored",
+  "fallback": "eo",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

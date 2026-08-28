@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorControllerTest#testEditorControllerLoadSimpleProject",
+  "current_file": "source.txt",
+  "current_entry_number": 1,
+  "translation_start": 4,
+  "translation_end": 4,
+  "note": "Headless Java test is skipped; offset is SegmentBuilder.insertString for XXX + newline.",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
