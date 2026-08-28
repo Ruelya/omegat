@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.DocumentFilter3Test#testReplace_RejectsWhenNotInEditMode",
+  "edit_mode": false,
+  "offset": 0,
+  "length": 1,
+  "text": "text",
+  "applied": false,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

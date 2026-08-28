@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.languagetools.LanguageToolTest#testEnglish",
+  "lang": "en-US",
+  "text": "Check test",
+  "match_count": 0,
+  "keys": [
+    "org.omegat.languagetools.LanguageToolTest#testEnglish"
+  ]
+}

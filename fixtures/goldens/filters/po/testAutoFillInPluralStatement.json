@@ -1,0 +1,38 @@
+{
+  "id": "po",
+  "fixture": "po/file-POFilter-fuzzyCtx.po",
+  "java_test": "org.omegat.filters.POFilterTest#testAutoFillInPluralStatement",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "autoFillInPluralStatement": "true",
+    "disallowBlank": "false"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "POT-Creation-Date: 2005-08-23 10:06+0200\nPO-Revision-Date: 2002-08-25 16:15GMT+2\nLast-Translator: l10n team <team@example.org>\nLanguage-Team: l10n <i18n@example.org>\nMIME-Version: 1.0\nContent-Type: text/plain; charset=ISO8859-1\nContent-Transfer-Encoding: 8bit\nLanguage: be\nPlural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n",
+    "True fuzzy 2!",
+    "source",
+    "old message ID",
+    "new message ID"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "existing": {
+    "True fuzzy 2!": "translate",
+    "old message ID": "old message string"
+  },
+  "empty_write_text": "msgid \"\"\nmsgstr \"POT-Creation-Date: 2005-08-23 10:06+0200\\n\"\n\"PO-Revision-Date: 2002-08-25 16:15GMT+2\\n\"\n\"Last-Translator: l10n team <team@example.org>\\n\"\n\"Language-Team: l10n <i18n@example.org>\\n\"\n\"MIME-Version: 1.0\\n\"\n\"Content-Type: text/plain; charset=ISO8859-1\\n\"\n\"Content-Transfer-Encoding: 8bit\\n\"\n\"Language: be\\n\"\n\"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\\n\"\n\nmsgid \"source\"\nmsgstr \"source\"\n\n#: path\nmsgid \"new message ID\"\nmsgstr \"new message ID\"\n"
+}

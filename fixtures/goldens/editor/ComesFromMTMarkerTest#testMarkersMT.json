@@ -1,0 +1,13 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.ComesFromMTMarkerTest#testMarkersMT",
+  "source": "source",
+  "translation": "target",
+  "marks": [
+    {
+      "startOffset": 0,
+      "endOffset": 6,
+      "entryPart": "TRANSLATION"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

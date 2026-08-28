@@ -1,0 +1,9 @@
+{
+  "id": "po",
+  "fixture": "po/file-POFilter-Monolingual.po",
+  "java_test": "org.omegat.filters.POFilterTest#testLoadMonolingual",
+  "options": { "monolingualFormat": "true" },
+  "sources": ["first source", "second source"],
+  "ids": ["firstId", "secondId"],
+  "empty_write": "preserve_source"
+}

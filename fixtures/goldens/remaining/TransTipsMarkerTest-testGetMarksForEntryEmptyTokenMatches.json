@@ -1,0 +1,7 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.TransTipsMarkerTest#testGetMarksForEntryEmptyTokenMatches",
+  "null_marks": false,
+  "empty": true,
+  "marks": 0
+}
