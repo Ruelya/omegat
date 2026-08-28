@@ -1024,6 +1024,14 @@ fn transaction_owner_retry_wait_checkpoint(
         return Ok(());
     };
     let marker = PathBuf::from(marker);
+    let marker = if marker.exists() {
+        PathBuf::from(format!(
+            "{}.{previous_owner_process_id}",
+            marker.to_string_lossy()
+        ))
+    } else {
+        marker
+    };
     if let Some(parent) = marker.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1043,22 +1051,37 @@ fn transaction_owner_retry_wait_checkpoint(
 
 /// Wait for the currently recorded dispatcher owner to exit.
 ///
-/// Callers use the returned PID as the boundary for one, and only one,
-/// replacement election retry. A contender that loses that retry must not
-/// silently wait for the new owner as well, because that could turn one
-/// recovery wave into a chain of owners.
+/// Callers use the returned PID as one bounded replacement-election boundary.
+/// Any additional retry is an explicit caller decision and observes the newly
+/// published claim again rather than spinning against a stale owner.
 pub fn wait_for_transaction_dispatch_owner_exit(
     props: &ProjectProperties,
     timeout: Duration,
 ) -> Result<Option<u32>> {
+    wait_for_transaction_dispatch_owner_exit_cancellable(
+        props,
+        timeout,
+        &CancellationToken::default(),
+    )
+}
+
+/// Cancellable owner-liveness boundary used by the NDJSON replacement
+/// dispatcher. Cancelling a waiting contender never changes the durable owner
+/// claim or exposes the product head.
+pub fn wait_for_transaction_dispatch_owner_exit_cancellable(
+    props: &ProjectProperties,
+    timeout: Duration,
+    cancellation: &CancellationToken,
+) -> Result<Option<u32>> {
     let path = renderer_owner_path(props);
     let deadline = Instant::now() + timeout;
     let claim = loop {
+        check_cancelled(cancellation)?;
         match acquire_project_transaction_lock(props) {
             Ok(_lock) => {
                 if path.is_file() {
-                    let claim: RendererOwnerClaim =
-                        serde_json::from_slice(&std::fs::read(&path)?).map_err(|error| {
+                    let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
+                        .map_err(|error| {
                             TeamError::Command(format!("renderer owner claim: {error}"))
                         })?;
                     if claim.version != TRANSACTION_ENVELOPE_VERSION
@@ -1086,6 +1109,7 @@ pub fn wait_for_transaction_dispatch_owner_exit(
     };
     transaction_owner_retry_wait_checkpoint(props, claim.process_id)?;
     while process_is_alive(claim.process_id) {
+        check_cancelled(cancellation)?;
         if Instant::now() >= deadline {
             return Ok(None);
         }
@@ -2078,6 +2102,87 @@ pub fn acknowledge_transaction_receipt(
     Err(TeamError::Conflict(format!(
         "unknown renderer receipt {batch_id}"
     )))
+}
+
+/// Roll back a committed-but-undelivered conflict resolution after the user
+/// cancels at the dispatcher boundary.
+///
+/// Only `resolve-conflict` is eligible: unlike sync/commit, it has not
+/// published a repository mutation, and its retained local snapshot can be
+/// restored atomically before the durable receipt becomes request-cancelled.
+pub fn cancel_transaction_receipt(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+    operation: &str,
+) -> Result<()> {
+    if generation == 0 || batch_id.is_empty() || operation != "resolve-conflict" {
+        return Err(TeamError::Command(
+            "only a scoped resolve-conflict receipt can be cancelled".into(),
+        ));
+    }
+    let _lock = acquire_project_transaction_lock(props)?;
+    let Some(mut transaction) = SyncTransaction::load_receipt_head(props)? else {
+        let path = transaction_dir(props).join("history.ndjson");
+        if let Ok(history) = std::fs::read_to_string(path) {
+            for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
+                let archived: SyncTransaction = serde_json::from_str(line).map_err(|error| {
+                    TeamError::Command(format!("team transaction history: {error}"))
+                })?;
+                if archived.0.batch_id == batch_id {
+                    if archived.0.generation == generation
+                        && archived.operation == operation
+                        && archived.0.status == TransactionStatus::RequestCancelled
+                        && archived.0.error_code == Some(REQUEST_CANCELLED_CODE)
+                    {
+                        return Ok(());
+                    }
+                    break;
+                }
+            }
+        }
+        return Err(TeamError::Conflict(format!(
+            "unknown renderer receipt {batch_id}"
+        )));
+    };
+    transaction.validate_repository_shape(props)?;
+    if transaction.0.batch_id != batch_id
+        || transaction.0.generation != generation
+        || transaction.operation != operation
+    {
+        return Err(TeamError::Conflict(format!(
+            "renderer receipt does not match cancelled resolve {batch_id}"
+        )));
+    }
+    if !transaction.published.is_empty() || !transaction.commit_started.is_empty() {
+        return Err(TeamError::Conflict(format!(
+            "resolve receipt {batch_id} published repository work"
+        )));
+    }
+    let committed_manifest = transaction.product_manifest.as_ref().ok_or_else(|| {
+        TeamError::Command(format!(
+            "resolve receipt {batch_id} has no committed product manifest"
+        ))
+    })?;
+    if &capture_product_manifest(props)? != committed_manifest {
+        return Err(TeamError::Conflict(format!(
+            "resolve receipt {batch_id} product changed before cancellation"
+        )));
+    }
+    let snapshot = SyncSnapshot::open(
+        props,
+        transaction.snapshot.clone(),
+        transaction.prep_existed,
+        transaction.file_remotes.clone(),
+    )?;
+    snapshot.restore_project_and_prep(props)?;
+    transaction.phase = "renderer-cancelled".into();
+    transaction.0.transition(
+        TransactionStatus::RequestCancelled,
+        Some(REQUEST_CANCELLED_CODE),
+    );
+    transaction.persist(props)?;
+    transaction.cleanup(props)
 }
 
 pub fn get_version(

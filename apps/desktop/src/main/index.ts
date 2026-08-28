@@ -207,7 +207,8 @@ function killSidecarAfterSelectedTransactionHead(
 
 async function holdAfterClaimingTransactionHead(
   envelopes: TransactionEnvelope[],
-): Promise<void> {
+  cancellationRequested: () => boolean = () => false,
+): Promise<boolean> {
   const operation =
     process.env.OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR;
   const markerPath =
@@ -223,7 +224,7 @@ async function holdAfterClaimingTransactionHead(
     || envelope.payload.operation !== operation
     || existsSync(markerPath)
   ) {
-    return;
+    return cancellationRequested();
   }
   durableTestMarker(markerPath, {
     batch_id: envelope.batch_id,
@@ -232,9 +233,14 @@ async function holdAfterClaimingTransactionHead(
     owner_process_id: process.pid,
     generation: envelope.generation,
   });
-  while (!stoppingSidecar && !existsSync(releasePath)) {
+  while (
+    !stoppingSidecar
+    && !existsSync(releasePath)
+    && !cancellationRequested()
+  ) {
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
   }
+  return cancellationRequested();
 }
 
 async function holdBeforeTransactionDispatch(): Promise<void> {
@@ -257,28 +263,68 @@ function traceTransactionOwnerRetry(value: unknown) {
   if (trace) appendFileSync(trace, `${JSON.stringify(value)}\n`);
 }
 
+async function cancelCommittedResolveReceipt(
+  client: SidecarRpcClient,
+  root: string,
+  generation: number,
+  receipt: { batchId: string; operation: string },
+): Promise<never> {
+  if (receipt.operation !== "resolve-conflict") {
+    throw new Error("only an undelivered team.resolve receipt can be cancelled");
+  }
+  try {
+    await client.request("transaction.receipt.ack", {
+      root,
+      generation,
+      batch_id: receipt.batchId,
+      operation: receipt.operation,
+      outcome: "cancelled",
+      app_instance: appInstance,
+      owner_process_id: process.pid,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw error;
+  }
+  throw new Error("sidecar accepted cancellation without protocol -32800");
+}
+
 async function publishPendingTransactionEnvelopes(
   client: SidecarRpcClient,
   root: string,
   generation: number,
+  clientRequestId?: string | null,
+  expectedReceipt?: { batchId: string; operation: string } | null,
 ) {
   let result: {
     envelopes?: TransactionEnvelope[];
-    owner_retry?: { previous_owner_process_id?: number } | null;
+    owner_retry?: {
+      previous_owner_process_id?: number;
+      previous_owner_process_ids?: number[];
+    } | null;
   };
   try {
-    result = await client.request("transaction.receipt.pending", {
-      root,
-      generation,
-      app_instance: appInstance,
-      owner_process_id: process.pid,
-      // Linux is the platform where dispatcher ownership has a real PID
-      // liveness contract. A losing packaged process stays alive here and gets
-      // exactly one retry after the owner it observed exits.
-      ...(process.platform === "linux"
-        ? { owner_retry_timeout_ms: 300_000 }
-        : {}),
-    }) as typeof result;
+    result = await client.request(
+      "transaction.receipt.pending",
+      {
+        root,
+        generation,
+        app_instance: appInstance,
+        owner_process_id: process.pid,
+        // Linux is the platform where dispatcher ownership has a real PID
+        // liveness contract. A losing packaged process stays alive across two
+        // owner deaths, then rejects if it also loses the third election.
+        ...(process.platform === "linux"
+          ? {
+              owner_retry_timeout_ms: 300_000,
+              owner_retry_attempts: 2,
+            }
+          : {}),
+      },
+      null,
+      false,
+      clientRequestId ?? null,
+    ) as typeof result;
   } catch (error) {
     const message = String(error);
     const previousOwner = message.match(
@@ -292,6 +338,20 @@ async function publishPendingTransactionEnvelopes(
         error: message,
       });
     }
+    if (
+      error instanceof Error
+      && error.name === "AbortError"
+      && clientRequestId
+      && client.deferredCancellationRequested(clientRequestId)
+      && expectedReceipt
+    ) {
+      await cancelCommittedResolveReceipt(
+        client,
+        root,
+        generation,
+        expectedReceipt,
+      );
+    }
     throw error;
   }
   if (typeof result.owner_retry?.previous_owner_process_id === "number") {
@@ -299,6 +359,9 @@ async function publishPendingTransactionEnvelopes(
       result: "claimed",
       replacement_process_id: process.pid,
       previous_owner_process_id: result.owner_retry.previous_owner_process_id,
+      previous_owner_process_ids:
+        result.owner_retry.previous_owner_process_ids
+        ?? [result.owner_retry.previous_owner_process_id],
     });
   }
   const envelopes = Array.isArray(result.envelopes) ? result.envelopes : [];
@@ -322,7 +385,25 @@ async function publishPendingTransactionEnvelopes(
       endRecoveryWrite();
     }
   }
-  await holdAfterClaimingTransactionHead(envelopes);
+  const cancelled = await holdAfterClaimingTransactionHead(
+    envelopes,
+    () =>
+      Boolean(
+        clientRequestId
+        && client.deferredCancellationRequested(clientRequestId)
+      ),
+  );
+  if (cancelled) {
+    if (!expectedReceipt) {
+      throw new Error("cancelled team.resolve has no scoped receipt");
+    }
+    await cancelCommittedResolveReceipt(
+      client,
+      root,
+      generation,
+      expectedReceipt,
+    );
+  }
   if (killSidecarAfterSelectedTransactionHead(envelopes)) return -1;
   envelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)
@@ -622,8 +703,15 @@ async function rpc(
   const endWrite = watchedProjectWriteMethods.has(method)
     ? projectFileWatcher.beginWriteSource(method)
     : () => undefined;
-  const result = await client.request(method, requestParams, clientRequestId)
+  const deferredResolve = method === "team.resolve" && clientRequestId !== null;
+  const result = await client.request(
+    method,
+    requestParams,
+    clientRequestId,
+    deferredResolve,
+  )
     .finally(endWrite);
+  try {
   const receipt = result !== null
       && typeof result === "object"
       && "receipt" in result
@@ -654,6 +742,19 @@ async function rpc(
       client,
       receipt.project_root,
       receipt.generation,
+      deferredResolve ? clientRequestId : null,
+      "batch_id" in receipt
+          && typeof receipt.batch_id === "string"
+          && "payload" in receipt
+          && receipt.payload !== null
+          && typeof receipt.payload === "object"
+          && "operation" in receipt.payload
+          && typeof receipt.payload.operation === "string"
+        ? {
+            batchId: receipt.batch_id,
+            operation: receipt.payload.operation,
+          }
+        : null,
     );
   }
   const scopedExternalRefresh = method === "project.external-refresh"
@@ -669,7 +770,22 @@ async function rpc(
       process.kill(process.pid, "SIGKILL");
     }
   }
+  if (deferredResolve && clientRequestId) {
+    client.settleDeferred(clientRequestId, "succeeded");
+  }
   return result;
+  } catch (error) {
+    if (deferredResolve && clientRequestId) {
+      client.settleDeferred(
+        clientRequestId,
+        error instanceof Error && error.name === "AbortError"
+          ? "cancelled"
+          : "failed",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
+  }
 }
 
 function createWindow() {

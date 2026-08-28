@@ -1492,52 +1492,99 @@ fn transaction_owner_retry_timeout(
         .transpose()
 }
 
-fn claim_transaction_owner_with_retry(
+fn transaction_owner_retry_attempts(params: &Value) -> std::result::Result<usize, (i32, String)> {
+    params
+        .get("owner_retry_attempts")
+        .map(|value| {
+            value
+                .as_u64()
+                .filter(|value| (1..=8).contains(value))
+                .map(|value| value as usize)
+                .ok_or((
+                    error_code::INVALID_PARAMS,
+                    "owner retry attempts must be between 1 and 8".into(),
+                ))
+        })
+        .unwrap_or(Ok(1))
+}
+
+fn owner_retry_json(previous_owner_process_ids: &[u32]) -> Value {
+    json!({
+        "previous_owner_process_id": previous_owner_process_ids.last(),
+        "previous_owner_process_ids": previous_owner_process_ids,
+    })
+}
+
+fn claim_transaction_owner_with_retry_cancellable(
     props: &omegat_core::properties::ProjectProperties,
     app_instance: &str,
     owner_process_id: u32,
     generation: u64,
     owner_retry_timeout: Option<std::time::Duration>,
-) -> std::result::Result<Option<u32>, (i32, String)> {
-    match (
-        omegat_team::claim_transaction_dispatch(
+    owner_retry_attempts: usize,
+    cancellation: &CancellationToken,
+) -> std::result::Result<Vec<u32>, (i32, String)> {
+    let mut conflict_message = match omegat_team::claim_transaction_dispatch(
+        props,
+        app_instance,
+        owner_process_id,
+        generation,
+    ) {
+        Ok(()) => return Ok(Vec::new()),
+        Err(omegat_team::TeamError::Conflict(message)) => message,
+        Err(other) => return Err((error_code::INTERNAL_ERROR, other.to_string())),
+    };
+    let Some(timeout) = owner_retry_timeout else {
+        return Err((error_code::TEAM_CONFLICT, conflict_message));
+    };
+    let deadline = std::time::Instant::now() + timeout;
+    let mut previous_owners = Vec::with_capacity(owner_retry_attempts);
+    for attempt in 0..owner_retry_attempts {
+        if cancellation.is_cancelled() {
+            return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
+        }
+        let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+            return Err((error_code::TEAM_CONFLICT, conflict_message));
+        };
+        let previous_owner = omegat_team::wait_for_transaction_dispatch_owner_exit_cancellable(
+            props,
+            remaining,
+            cancellation,
+        )
+        .map_err(|error| match error {
+            omegat_team::TeamError::Cancelled => {
+                (error_code::REQUEST_CANCELLED, "request cancelled".into())
+            }
+            other => (error_code::INTERNAL_ERROR, other.to_string()),
+        })?;
+        let Some(previous_owner) = previous_owner else {
+            return Err((error_code::TEAM_CONFLICT, conflict_message));
+        };
+        previous_owners.push(previous_owner);
+        match omegat_team::claim_transaction_dispatch(
             props,
             app_instance,
             owner_process_id,
             generation,
-        ),
-        owner_retry_timeout,
-    ) {
-        (Ok(()), _) => Ok(None),
-        (Err(omegat_team::TeamError::Conflict(message)), Some(timeout)) => {
-            let previous_owner =
-                omegat_team::wait_for_transaction_dispatch_owner_exit(props, timeout)
-                    .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?;
-            let Some(previous_owner) = previous_owner else {
-                return Err((error_code::TEAM_CONFLICT, message));
-            };
-            omegat_team::claim_transaction_dispatch(
-                props,
-                app_instance,
-                owner_process_id,
-                generation,
-            )
-            .map_err(|error| match error {
-                omegat_team::TeamError::Conflict(message) => (
+        ) {
+            Ok(()) => return Ok(previous_owners),
+            Err(omegat_team::TeamError::Conflict(message))
+                if attempt + 1 < owner_retry_attempts =>
+            {
+                conflict_message = message;
+            }
+            Err(omegat_team::TeamError::Conflict(message)) => {
+                return Err((
                     error_code::TEAM_CONFLICT,
                     format!(
                         "replacement retry after owner pid {previous_owner} exited was rejected: {message}"
                     ),
-                ),
-                other => (error_code::INTERNAL_ERROR, other.to_string()),
-            })?;
-            Ok(Some(previous_owner))
+                ));
+            }
+            Err(other) => return Err((error_code::INTERNAL_ERROR, other.to_string())),
         }
-        (Err(omegat_team::TeamError::Conflict(message)), None) => {
-            Err((error_code::TEAM_CONFLICT, message))
-        }
-        (Err(other), _) => Err((error_code::INTERNAL_ERROR, other.to_string())),
     }
+    Err((error_code::TEAM_CONFLICT, conflict_message))
 }
 
 fn pending_transaction_envelopes(
@@ -1547,14 +1594,18 @@ fn pending_transaction_envelopes(
     owner_process_id: u32,
     generation: u64,
     owner_retry_timeout: Option<std::time::Duration>,
-) -> std::result::Result<(Vec<Value>, Option<u32>), (i32, String)> {
+    owner_retry_attempts: usize,
+    cancellation: &CancellationToken,
+) -> std::result::Result<(Vec<Value>, Vec<u32>), (i32, String)> {
     let mut envelopes = Vec::new();
-    let retried_after_owner = claim_transaction_owner_with_retry(
+    let retried_after_owners = claim_transaction_owner_with_retry_cancellable(
         props,
         app_instance,
         owner_process_id,
         generation,
         owner_retry_timeout,
+        owner_retry_attempts,
+        cancellation,
     )?;
     let receipt = omegat_team::pending_transaction_receipt_for_owner(
         props,
@@ -1621,7 +1672,7 @@ fn pending_transaction_envelopes(
                     )
             })
     });
-    Ok((envelopes, retried_after_owner))
+    Ok((envelopes, retried_after_owners))
 }
 
 fn transaction_scope(
@@ -1830,6 +1881,7 @@ fn dispatch_refresh_journal(
     params: Value,
     config_dir: &std::path::Path,
     open_root: Option<&std::path::Path>,
+    cancellation: &CancellationToken,
 ) -> Option<std::result::Result<Value, (i32, String)>> {
     if !method.starts_with("project.refresh.") && !method.starts_with("transaction.receipt.") {
         return None;
@@ -1891,23 +1943,26 @@ fn dispatch_refresh_journal(
             return match method {
                 "transaction.receipt.pending" => {
                     let owner_retry_timeout = transaction_owner_retry_timeout(&params)?;
-                    let (mut envelopes, previous_owner_process_id) = pending_transaction_envelopes(
-                        config_dir,
-                        &props,
-                        &app_instance,
-                        owner_process_id,
-                        generation,
-                        owner_retry_timeout,
-                    )?;
+                    let owner_retry_attempts = transaction_owner_retry_attempts(&params)?;
+                    let (mut envelopes, previous_owner_process_ids) =
+                        pending_transaction_envelopes(
+                            config_dir,
+                            &props,
+                            &app_instance,
+                            owner_process_id,
+                            generation,
+                            owner_retry_timeout,
+                            owner_retry_attempts,
+                            cancellation,
+                        )?;
                     // Expose exactly one durable head. The Electron dispatcher
                     // asks again after its renderer acknowledgement, so neither
                     // backend can race or publish around an older receipt.
                     envelopes.truncate(1);
                     Ok(json!({
                         "envelopes": envelopes,
-                        "owner_retry": previous_owner_process_id.map(|process_id| json!({
-                            "previous_owner_process_id": process_id,
-                        })),
+                        "owner_retry": (!previous_owner_process_ids.is_empty())
+                            .then(|| owner_retry_json(&previous_owner_process_ids)),
                     }))
                 }
                 "transaction.receipt.ack" => {
@@ -1915,6 +1970,24 @@ fn dispatch_refresh_journal(
                     let operation = operation
                         .as_deref()
                         .expect("required transaction operation");
+                    if operation == "resolve-conflict"
+                        && params.get("outcome").and_then(Value::as_str) == Some("cancelled")
+                    {
+                        // Cancellation can race an owner-election wait, so it
+                        // must not require this caller to claim the dispatcher.
+                        // The product lock serializes the exact receipt
+                        // rollback with every head lookup and acknowledgement.
+                        omegat_team::cancel_transaction_receipt(
+                            &props, generation, batch_id, operation,
+                        )
+                        .map_err(|error| match error {
+                            omegat_team::TeamError::Conflict(message) => {
+                                (error_code::TEAM_CONFLICT, message)
+                            }
+                            other => (error_code::INTERNAL_ERROR, other.to_string()),
+                        })?;
+                        return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
+                    }
                     let (pending, _) = pending_transaction_envelopes(
                         config_dir,
                         &props,
@@ -1922,6 +1995,8 @@ fn dispatch_refresh_journal(
                         owner_process_id,
                         generation,
                         None,
+                        1,
+                        cancellation,
                     )?;
                     if let Some(index) = pending.iter().position(|envelope| {
                         envelope.get("batch_id").and_then(Value::as_str) == Some(batch_id)
@@ -2254,52 +2329,54 @@ fn main() {
                 let _ = ready_rx.recv_timeout(std::time::Duration::from_secs(2));
             }
             let mut refresh_params = transaction_params.clone();
-            let owner_retry_preclaim =
-                if project_lifecycle_method == "transaction.receipt.pending" {
-                    match transaction_owner_retry_timeout(&refresh_params) {
-                        Ok(Some(timeout)) => {
-                            refresh_params
-                                .as_object_mut()
-                                .expect("RPC params are an object")
-                                .remove("owner_retry_timeout_ms");
-                            let active_root = open_project.lock().unwrap().clone();
-                            Some((|| {
-                                let (
-                                    root,
-                                    app_instance,
-                                    owner_process_id,
-                                    generation,
-                                    _,
-                                    _,
-                                ) = transaction_receipt_scope(
+            let owner_retry_preclaim = if project_lifecycle_method == "transaction.receipt.pending"
+            {
+                match transaction_owner_retry_timeout(&refresh_params) {
+                    Ok(Some(timeout)) => {
+                        let owner_retry_attempts =
+                            transaction_owner_retry_attempts(&refresh_params);
+                        refresh_params
+                            .as_object_mut()
+                            .expect("RPC params are an object")
+                            .remove("owner_retry_timeout_ms");
+                        refresh_params
+                            .as_object_mut()
+                            .expect("RPC params are an object")
+                            .remove("owner_retry_attempts");
+                        let active_root = open_project.lock().unwrap().clone();
+                        Some((|| {
+                            let owner_retry_attempts = owner_retry_attempts?;
+                            let (root, app_instance, owner_process_id, generation, _, _) =
+                                transaction_receipt_scope(
                                     &transaction_params,
                                     active_root.as_deref(),
                                     false,
                                 )?;
-                                let props =
-                                    omegat_core::properties::ProjectProperties::load(&root)
-                                        .map_err(core_err)?;
-                                claim_transaction_owner_with_retry(
-                                    &props,
-                                    &app_instance,
-                                    owner_process_id,
-                                    generation,
-                                    Some(timeout),
-                                )
-                            })())
-                        }
-                        Ok(None) => None,
-                        Err(error) => Some(Err(error)),
+                            let props = omegat_core::properties::ProjectProperties::load(&root)
+                                .map_err(core_err)?;
+                            claim_transaction_owner_with_retry_cancellable(
+                                &props,
+                                &app_instance,
+                                owner_process_id,
+                                generation,
+                                Some(timeout),
+                                owner_retry_attempts,
+                                &cancellation,
+                            )
+                        })())
                     }
-                } else {
-                    None
-                };
-            let mut retried_after_owner = None;
+                    Ok(None) => None,
+                    Err(error) => Some(Err(error)),
+                }
+            } else {
+                None
+            };
+            let mut retried_after_owners = Vec::new();
             let mut refresh_result = match owner_retry_preclaim {
                 Some(Err(error)) => Some(Err(error)),
                 preclaim => {
-                    if let Some(Ok(previous_owner)) = preclaim {
-                        retried_after_owner = previous_owner;
+                    if let Some(Ok(previous_owners)) = preclaim {
+                        retried_after_owners = previous_owners;
                     }
                     let _journal = refresh_journal_lock.lock().unwrap();
                     let active = open_project.lock().unwrap();
@@ -2308,15 +2385,14 @@ fn main() {
                         refresh_params,
                         &refresh_config_dir,
                         active.as_deref(),
+                        &cancellation,
                     )
                 }
             };
-            if let (Some(previous_owner), Some(Ok(result))) =
-                (retried_after_owner, refresh_result.as_mut())
-            {
-                result["owner_retry"] = json!({
-                    "previous_owner_process_id": previous_owner,
-                });
+            if !retried_after_owners.is_empty() {
+                if let Some(Ok(result)) = refresh_result.as_mut() {
+                    result["owner_retry"] = owner_retry_json(&retried_after_owners);
+                }
             }
             let scoped_external_refresh = project_lifecycle_method == "project.external-refresh"
                 && transaction_params

@@ -2933,7 +2933,13 @@ fn protocol_cancellation_rolls_back_team_sync_and_commit() {
 
 #[test]
 fn protocol_cancellation_rolls_back_team_conflict_resolution() {
+    let temp = tempfile::tempdir().unwrap();
+    let retry_wait_marker = temp.path().join("cancel-owner-wait.json");
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .env(
+            "OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER",
+            &retry_wait_marker,
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -2941,7 +2947,6 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
         .expect("sidecar");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
-    let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("cancel-team-resolve");
     let created = rpc(
         &mut stdin,
@@ -3043,10 +3048,139 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     );
     assert_eq!(team_envelope.error_code, Some(-32800));
 
-    let refresh = rpc(
+    let dispatch_cancel_batch = "conflict-dispatch-cancel-45";
+    let committed = rpc(
         &mut stdin,
         &mut stdout,
         3,
+        "team.resolve",
+        json!({
+            "source": "cancel me",
+            "side": "ours",
+            "transaction_project_root": root,
+            "transaction_generation": 45,
+            "transaction_batch_id": dispatch_cancel_batch,
+        }),
+    );
+    assert_eq!(
+        committed["result"]["receipt"]["batch_id"],
+        dispatch_cancel_batch
+    );
+    assert_eq!(
+        committed["result"]["receipt"]["status"],
+        "sidecar_committed"
+    );
+    let selected = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "resolve-dispatch-cancel-owner",
+            "generation": 45,
+        }),
+    );
+    assert_eq!(
+        selected["result"]["envelopes"][0]["batch_id"],
+        dispatch_cancel_batch
+    );
+    let owner_before_cancel: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/renderer-owner.json")).unwrap(),
+    )
+    .unwrap();
+    let cancelled_owner_wait = send_cancelled_request(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "resolve-dispatch-cancel-contender",
+            "generation": 46,
+            "owner_retry_timeout_ms": 20_000,
+            "owner_retry_attempts": 2,
+        }),
+        || {
+            for _ in 0..1_000 {
+                if retry_wait_marker.is_file() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("resolve contender did not enter the owner-election wait");
+        },
+    );
+    assert_eq!(
+        cancelled_owner_wait["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(root.join(".repositories/transactions/renderer-owner.json")).unwrap()
+        )
+        .unwrap(),
+        owner_before_cancel,
+        "cancelled contender replaced the live dispatcher owner"
+    );
+
+    let cancelled_after_claim = rpc(
+        &mut stdin,
+        &mut stdout,
+        6,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "resolve-dispatch-cancel-owner",
+            "generation": 45,
+            "batch_id": dispatch_cancel_batch,
+            "operation": "resolve-conflict",
+            "outcome": "cancelled",
+        }),
+    );
+    assert_eq!(
+        cancelled_after_claim["error"],
+        json!({"code": -32800, "message": "request cancelled"})
+    );
+    assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before);
+    assert_eq!(std::fs::read(&conflicts_path).unwrap(), conflicts_before);
+    assert!(!prep.join("resolved.json").exists());
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+    let owner_after_cancel: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/renderer-owner.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(owner_after_cancel, owner_before_cancel);
+    let cancelled_history =
+        std::fs::read_to_string(root.join(".repositories/transactions/history.ndjson")).unwrap();
+    let cancelled_dispatch_rows = cancelled_history
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| {
+            row["batch_id"] == dispatch_cancel_batch
+                && row["status"] == "request_cancelled"
+                && row["error_code"] == -32800
+                && row["payload"]["phase"] == "renderer-cancelled"
+        })
+        .count();
+    assert_eq!(cancelled_dispatch_rows, 1);
+    let no_cancelled_delivery = rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "resolve-dispatch-cancel-owner",
+            "generation": 45,
+        }),
+    );
+    assert_eq!(no_cancelled_delivery["result"]["envelopes"], json!([]));
+
+    let refresh = rpc(
+        &mut stdin,
+        &mut stdout,
+        8,
         "project.refresh.enqueue",
         json!({
             "root": root,
@@ -3076,7 +3210,7 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
     assert_eq!(refresh_envelope.error_code, None);
     assert!(refresh_envelope.batch_id.starts_with("refresh-"));
 
-    let responsive = rpc(&mut stdin, &mut stdout, 4, "sys.version", json!({}));
+    let responsive = rpc(&mut stdin, &mut stdout, 9, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
     let _ = child.kill();
 }
@@ -3496,7 +3630,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
+fn keep_ours_resolve_receipt_survivors_elect_third_owner_after_two_deaths() {
     struct Sidecar {
         child: std::process::Child,
         input: std::process::ChildStdin,
@@ -3558,6 +3692,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         app_instance: &str,
         generation: u64,
         owner_retry_timeout_ms: Option<u64>,
+        owner_retry_attempts: Option<u64>,
     ) {
         let mut params = json!({
             "root": root,
@@ -3566,6 +3701,9 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         });
         if let Some(timeout) = owner_retry_timeout_ms {
             params["owner_retry_timeout_ms"] = json!(timeout);
+        }
+        if let Some(attempts) = owner_retry_attempts {
+            params["owner_retry_attempts"] = json!(attempts);
         }
         writeln!(
             sidecar.input,
@@ -3778,7 +3916,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         json!({
             "source": "Repeated resolve source",
             "rebind_key": wanted["key"],
-            "side": "theirs",
+            "side": "ours",
             "transaction_project_root": root,
             "transaction_generation": 70,
             "transaction_batch_id": batch_id,
@@ -3821,16 +3959,16 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         .join(old_pid.to_string())
         .exists());
 
-    let owner_markers = (0..3)
+    let owner_markers = (0..4)
         .map(|index| temp.path().join(format!("resolve-owner-{index}.json")))
         .collect::<Vec<_>>();
-    let owner_releases = (0..3)
+    let owner_releases = (0..4)
         .map(|index| temp.path().join(format!("resolve-owner-{index}.release")))
         .collect::<Vec<_>>();
-    let wait_markers = (0..3)
+    let wait_markers = (0..4)
         .map(|index| temp.path().join(format!("resolve-wait-{index}.json")))
         .collect::<Vec<_>>();
-    let mut replacements = (0..3)
+    let mut replacements = (0..4)
         .map(|index| {
             spawn_sidecar(
                 &config,
@@ -3847,6 +3985,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
             &format!("resolve-replacement-{index}"),
             80 + index as u64,
             Some(20_000),
+            Some(2),
         );
     }
     let first_winner_index = {
@@ -3865,20 +4004,15 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         }
         winner.expect("first three-way resolve replacement election had no winner")
     };
-    wait_for_file(
-        &wait_markers[(first_winner_index + 1) % 3],
-        &mut replacements,
-    );
-    wait_for_file(
-        &wait_markers[(first_winner_index + 2) % 3],
-        &mut replacements,
-    );
+    for index in (0..4).filter(|index| *index != first_winner_index) {
+        wait_for_file(&wait_markers[index], &mut replacements);
+    }
     assert!(!wait_markers[first_winner_index].exists());
     let first_owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
     let first_winner_pid = replacements[first_winner_index].child.id();
     assert_eq!(first_owner["process_id"], first_winner_pid);
     assert_ne!(first_owner["claim_id"], old_owner["claim_id"]);
-    for index in (0..3).filter(|index| *index != first_winner_index) {
+    for index in (0..4).filter(|index| *index != first_winner_index) {
         let wait: Value =
             serde_json::from_slice(&std::fs::read(&wait_markers[index]).unwrap()).unwrap();
         assert_eq!(
@@ -3902,7 +4036,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         "first resolve winner changed the durable queue before delivery"
     );
 
-    let surviving_indices = (0..3)
+    let surviving_indices = (0..4)
         .filter(|index| *index != first_winner_index)
         .collect::<Vec<_>>();
     let second_winner_index = {
@@ -3921,44 +4055,118 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         }
         winner.expect("surviving resolve loser did not retry the owner election")
     };
-    let second_loser_index = *surviving_indices
+    let second_loser_indices = surviving_indices
         .iter()
-        .find(|index| **index != second_winner_index)
-        .unwrap();
+        .copied()
+        .filter(|index| *index != second_winner_index)
+        .collect::<Vec<_>>();
     let second_owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
-    assert_eq!(
-        second_owner["process_id"],
-        replacements[second_winner_index].child.id()
-    );
+    let second_winner_pid = replacements[second_winner_index].child.id();
+    assert_eq!(second_owner["process_id"], second_winner_pid);
     assert_ne!(second_owner["claim_id"], first_owner["claim_id"]);
-    let rejected_retry = response_for(&mut replacements[second_loser_index].output, 1);
+    let second_wait_markers = second_loser_indices
+        .iter()
+        .map(|index| {
+            std::path::PathBuf::from(format!(
+                "{}.{second_winner_pid}",
+                wait_markers[*index].to_string_lossy()
+            ))
+        })
+        .collect::<Vec<_>>();
+    for _ in 0..1_000 {
+        for index in &surviving_indices {
+            assert!(
+                replacements[*index].child.try_wait().unwrap().is_none(),
+                "surviving replacement exited before second owner wait"
+            );
+        }
+        if second_wait_markers.iter().all(|marker| marker.is_file()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        second_wait_markers.iter().all(|marker| marker.is_file()),
+        "second-election losers did not wait on the second owner"
+    );
+    for marker in &second_wait_markers {
+        let wait: Value = serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+        assert_eq!(wait["previous_owner_process_id"], second_winner_pid);
+    }
+    let queue_before_second_kill = std::fs::read(&active_path).unwrap();
+    replacements[second_winner_index].child.kill().unwrap();
+    assert!(!replacements[second_winner_index]
+        .child
+        .wait()
+        .unwrap()
+        .success());
+    assert!(!std::path::Path::new("/proc")
+        .join(second_winner_pid.to_string())
+        .exists());
+    assert_eq!(
+        std::fs::read(&active_path).unwrap(),
+        queue_before_second_kill,
+        "second resolve winner changed the durable queue before delivery"
+    );
+
+    let third_winner_index = {
+        let mut winner = None;
+        for _ in 0..1_000 {
+            for index in &second_loser_indices {
+                if owner_markers[*index].is_file() {
+                    winner = Some(*index);
+                    break;
+                }
+            }
+            if winner.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        winner.expect("second resolve winner death did not trigger a third election")
+    };
+    let third_loser_index = *second_loser_indices
+        .iter()
+        .find(|index| **index != third_winner_index)
+        .unwrap();
+    let third_owner: Value = serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+    assert_eq!(
+        third_owner["process_id"],
+        replacements[third_winner_index].child.id()
+    );
+    assert_ne!(third_owner["claim_id"], second_owner["claim_id"]);
+    let rejected_retry = response_for(&mut replacements[third_loser_index].output, 1);
     assert_eq!(rejected_retry["error"]["code"], -32005);
     assert!(rejected_retry["error"]["message"]
         .as_str()
         .unwrap()
         .contains(&format!(
-            "replacement retry after owner pid {first_winner_pid} exited was rejected"
+            "replacement retry after owner pid {second_winner_pid} exited was rejected"
         )));
 
-    std::fs::write(&owner_releases[second_winner_index], b"release\n").unwrap();
-    let recovered = response_for(&mut replacements[second_winner_index].output, 1);
+    std::fs::write(&owner_releases[third_winner_index], b"release\n").unwrap();
+    let recovered = response_for(&mut replacements[third_winner_index].output, 1);
     assert_eq!(recovered["result"]["envelopes"][0]["batch_id"], batch_id);
     assert_eq!(
         recovered["result"]["owner_retry"]["previous_owner_process_id"],
-        first_winner_pid
+        second_winner_pid
     );
-    let second_app = format!("resolve-replacement-{second_winner_index}");
-    let second_generation = 80 + second_winner_index as u64;
-    let second_winner = &mut replacements[second_winner_index];
+    assert_eq!(
+        recovered["result"]["owner_retry"]["previous_owner_process_ids"],
+        json!([first_winner_pid, second_winner_pid])
+    );
+    let third_app = format!("resolve-replacement-{third_winner_index}");
+    let third_generation = 80 + third_winner_index as u64;
+    let third_winner = &mut replacements[third_winner_index];
     let ack = rpc(
-        &mut second_winner.input,
-        &mut second_winner.output,
+        &mut third_winner.input,
+        &mut third_winner.output,
         2,
         "transaction.receipt.ack",
         json!({
             "root": root,
-            "app_instance": second_app,
-            "generation": second_generation,
+            "app_instance": third_app,
+            "generation": third_generation,
             "batch_id": batch_id,
             "operation": "resolve-conflict",
             "outcome": "succeeded",
@@ -3966,28 +4174,28 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
     );
     assert_eq!(ack["result"]["ack"]["acknowledged"], true);
     let opened = rpc(
-        &mut second_winner.input,
-        &mut second_winner.output,
+        &mut third_winner.input,
+        &mut third_winner.output,
         3,
         "project.open",
         json!({ "root": root }),
     );
     assert_eq!(opened["error"], Value::Null);
     let drained = rpc(
-        &mut second_winner.input,
-        &mut second_winner.output,
+        &mut third_winner.input,
+        &mut third_winner.output,
         4,
         "transaction.receipt.pending",
         json!({
             "root": root,
-            "app_instance": second_app,
-            "generation": second_generation,
+            "app_instance": third_app,
+            "generation": third_generation,
         }),
     );
     assert_eq!(drained["result"]["envelopes"], json!([]));
     let final_entries = rpc(
-        &mut second_winner.input,
-        &mut second_winner.output,
+        &mut third_winner.input,
+        &mut third_winner.output,
         5,
         "entry.list",
         json!({}),
@@ -4004,7 +4212,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         .iter()
         .find(|entry| entry["key"] == decoy["key"])
         .unwrap();
-    assert_eq!(final_wanted["translation"], "resolve theirs");
+    assert_eq!(final_wanted["translation"], "resolve ours");
     assert_eq!(final_decoy["translation"], "");
     assert_eq!(std::fs::read(&tmx_path).unwrap(), tmx_after_resolve);
     assert_eq!(
@@ -4033,7 +4241,7 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
         1
     );
     for (index, replacement) in replacements.iter_mut().enumerate() {
-        if index == first_winner_index {
+        if index == first_winner_index || index == second_winner_index {
             continue;
         }
         replacement.child.kill().unwrap();

@@ -161,4 +161,66 @@ describe("SidecarRpcClient", () => {
       params: { id: 2 },
     });
   });
+
+  it("keeps a committed resolve cancellable until dispatcher settlement", async () => {
+    const lines: string[] = [];
+    const operations: unknown[] = [];
+    const client = new SidecarRpcClient(
+      (line) => lines.push(line),
+      () => undefined,
+      (event) => operations.push(event),
+    );
+    const resolve = client.request(
+      "team.resolve",
+      { source: "same", side: "ours" },
+      "operation-teamResolve-1",
+      true,
+    );
+    client.acceptChunk(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { conflicts: [], receipt: { batch_id: "resolve-1" } },
+    })}\n`);
+    await expect(resolve).resolves.toMatchObject({ conflicts: [] });
+    expect(operations.at(-1)).toMatchObject({ phase: "started" });
+
+    const dispatch = client.request(
+      "transaction.receipt.pending",
+      { root: "/project" },
+      null,
+      false,
+      "operation-teamResolve-1",
+    );
+    expect(client.cancel("operation-teamResolve-1")).toBe(true);
+    expect(client.deferredCancellationRequested("operation-teamResolve-1")).toBe(true);
+    expect(operations.at(-1)).toMatchObject({ phase: "cancelling" });
+    expect(lines.map((line) => JSON.parse(line)).at(-1)).toEqual({
+      jsonrpc: "2.0",
+      method: "$/cancelRequest",
+      params: { id: 2 },
+    });
+    client.acceptChunk(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      error: { code: -32800, message: "request cancelled" },
+    })}\n`);
+    await expect(dispatch).rejects.toMatchObject({
+      name: "AbortError",
+      message: "request cancelled",
+    });
+    expect(operations.at(-1)).toMatchObject({ phase: "cancelling" });
+    expect(client.settleDeferred(
+      "operation-teamResolve-1",
+      "cancelled",
+      "request cancelled",
+    )).toBe(true);
+    expect(operations.at(-1)).toEqual({
+      requestId: "operation-teamResolve-1",
+      method: "team.resolve",
+      phase: "cancelled",
+      error: "request cancelled",
+      errorCode: -32800,
+    });
+    expect(lines).toHaveLength(3);
+  });
 });

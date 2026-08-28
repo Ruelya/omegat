@@ -301,7 +301,8 @@ async function invokeRpcResult(client, method, params) {
   ))()`, true);
 }
 
-async function clickTeamResolveTheirs(client, entryKey) {
+async function clickTeamResolve(client, entryKey, side) {
+  assert(["ours", "theirs"].includes(side));
   return client.evaluate(`(() => {
     document.querySelector('[data-operation-action="team-window"]')?.click();
     const row = [...document.querySelectorAll("[data-team-conflict-key]")]
@@ -310,7 +311,7 @@ async function clickTeamResolveTheirs(client, entryKey) {
           === ${JSON.stringify(JSON.stringify(entryKey))}
       );
     const button = row?.querySelector(
-      '[data-operation-action="team-resolve-theirs"]'
+      ${JSON.stringify(`[data-operation-action="team-resolve-${side}"]`)}
     );
     if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
     button.click();
@@ -1371,7 +1372,8 @@ const results = [];
 const productCompactionResults = [];
 const receiptAckMatrix = [];
 const atomicReplacementElectionResults = [];
-let resolveReplacementElection;
+const resolveReplacementElections = [];
+const resolveCancellationResults = [];
 let launchedA;
 let launchedB;
 let quorumReplacements = [];
@@ -3378,8 +3380,9 @@ try {
     }
   }
 
-  {
-    const label = "atomic-team-resolve";
+  for (const resolveSide of ["theirs", "ours"]) {
+    const label = `atomic-team-resolve-${resolveSide}`;
+    const selectedTranslation = prepared => prepared[resolveSide];
     const config = join(workDir, `${label}-config`);
     const project = join(workDir, `${label}-project`);
     const remote = join(workDir, `${label}-remote`);
@@ -3422,10 +3425,163 @@ try {
     assert.equal(beforeResolve.translation, prepared.ours);
     assert.equal(beforeResolve.activeSurfaces, 1);
     assert.deepEqual(JSON.parse(beforeResolve.key), prepared.wantedKey);
+    const tmxPath = join(project, "omegat", "project_save.tmx");
+    const conflictsPath = join(
+      project,
+      ".repositories",
+      "prep",
+      "conflicts.json",
+    );
+    const tmxBeforeCancel = await readFile(tmxPath);
+    const conflictsBeforeCancel = await readFile(conflictsPath);
+    const fileRemoteBeforeCancel = await readFile(prepared.fileRemotePath);
+    const fileRemoteMtimeBeforeCancel =
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs;
+    const gitHeadBeforeCancel = await git([
+      "--git-dir",
+      prepared.gitRemote,
+      "rev-parse",
+      "refs/heads/main",
+    ]);
+    await launchedA.client.evaluate(`(() => {
+      window.__omegatResolveOperationTrace = [];
+      window.__omegatResolveDomPhases = [];
+      window.__omegatStopResolveTrace?.();
+      window.__omegatStopResolveTrace = window.omegat.onRpcOperation((event) => {
+        if (event.method === "team.resolve") {
+          window.__omegatResolveOperationTrace.push(event);
+        }
+      });
+      window.__omegatResolvePhaseObserver?.disconnect();
+      const app = document.querySelector(".app");
+      window.__omegatResolvePhaseObserver = new MutationObserver(() => {
+        const phase = app?.dataset.operationPhase ?? "";
+        if (
+          phase
+          && window.__omegatResolveDomPhases.at(-1) !== phase
+        ) {
+          window.__omegatResolveDomPhases.push(phase);
+        }
+      });
+      window.__omegatResolvePhaseObserver.observe(app, { attributes: true });
+    })()`);
     assert.equal(
-      await clickTeamResolveTheirs(launchedA.client, prepared.wantedKey),
+      await clickTeamResolve(launchedA.client, prepared.wantedKey, resolveSide),
       true,
-      "visible team.resolve keep-theirs action was unavailable",
+      `visible team.resolve keep-${resolveSide} action was unavailable`,
+    );
+    const cancelledOwnerMarker = await waitFor(
+      "cancellable team.resolve owner claim before renderer delivery",
+      async () =>
+        await pathExists(oldOwnerMarkerPath)
+          ? JSON.parse(await readFile(oldOwnerMarkerPath, "utf8"))
+          : undefined,
+    );
+    assert.equal(cancelledOwnerMarker.operation, "resolve-conflict");
+    assert.equal(
+      cancelledOwnerMarker.owner_process_id,
+      launchedA.application.pid,
+    );
+    assert.equal(
+      await launchedA.client.evaluate(`(() => {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+        button.click();
+        return true;
+      })()`),
+      true,
+      "team.resolve dispatcher cancellation action was unavailable",
+    );
+    const cancelledState = await waitFor(
+      "protocol-confirmed team.resolve dispatcher cancellation",
+      async () => {
+        const state = await launchedA.client.evaluate(`(() => {
+          const app = document.querySelector(".app");
+          return {
+            operation: app?.dataset.operation ?? "",
+            phase: app?.dataset.operationPhase ?? "",
+            requestId: app?.dataset.operationRequestId ?? "",
+            conflictCount: document.querySelectorAll("[data-team-conflict-key]").length,
+            rpcTrace: window.__omegatResolveOperationTrace,
+            domPhases: window.__omegatResolveDomPhases,
+          };
+        })()`);
+        return state.operation === "teamResolve"
+            && state.phase === "cancelled"
+            && !await pathExists(prepared.activePath)
+          ? state
+          : undefined;
+      },
+    );
+    const cancelledEvents = cancelledState.rpcTrace.filter(
+      (event) => event.requestId === cancelledState.requestId,
+    );
+    assert.deepEqual(
+      cancelledEvents.map((event) => event.phase),
+      ["started", "cancelling", "cancelled"],
+    );
+    assert.equal(cancelledEvents.at(-1).errorCode, -32800);
+    assert(cancelledState.domPhases.includes("cancelling"));
+    assert.equal(cancelledState.conflictCount, 1);
+    assert.deepEqual(await readFile(tmxPath), tmxBeforeCancel);
+    assert.deepEqual(await readFile(conflictsPath), conflictsBeforeCancel);
+    assert.deepEqual(
+      await readFile(prepared.fileRemotePath),
+      fileRemoteBeforeCancel,
+    );
+    assert.equal(
+      (await stat(prepared.fileRemotePath, { bigint: true })).mtimeNs,
+      fileRemoteMtimeBeforeCancel,
+    );
+    assert.equal(
+      await git([
+        "--git-dir",
+        prepared.gitRemote,
+        "rev-parse",
+        "refs/heads/main",
+      ]),
+      gitHeadBeforeCancel,
+    );
+    const workspaceAfterCancel = await workspaceState(launchedA.client);
+    assert.equal(workspaceAfterCancel.translation, prepared.ours);
+    assert.equal(workspaceAfterCancel.activeSurfaces, 1);
+    assert.deepEqual(
+      JSON.parse(workspaceAfterCancel.key),
+      prepared.wantedKey,
+    );
+    const cancellationHistory = parseNdjson(
+      await readFile(prepared.historyPath, "utf8"),
+    );
+    assert.equal(
+      cancellationHistory.filter((row) =>
+        row.batch_id === cancelledOwnerMarker.batch_id
+        && row.status === "request_cancelled"
+        && row.error_code === -32800
+        && row.payload.phase === "renderer-cancelled"
+      ).length,
+      1,
+    );
+    resolveCancellationResults.push({
+      resolution: `keep-${resolveSide}`,
+      window: "owner-claim-before-renderer-delivery",
+      requestTrace: cancelledEvents.map((event) => event.phase),
+      protocolErrorCode: cancelledEvents.at(-1).errorCode,
+      projectRollback: true,
+      fileRemoteWrite: false,
+      gitHeadWrite: false,
+      completeEntryKey: prepared.wantedKey,
+      decoyEntryKey: prepared.decoyKey,
+      document3Surfaces: workspaceAfterCancel.activeSurfaces,
+    });
+    await launchedA.client.evaluate(`(() => {
+      window.__omegatStopResolveTrace?.();
+      window.__omegatResolvePhaseObserver?.disconnect();
+    })()`);
+    await rm(oldOwnerMarkerPath, { force: true });
+    assert.equal(
+      await clickTeamResolve(launchedA.client, prepared.wantedKey, resolveSide),
+      true,
+      `visible team.resolve keep-${resolveSide} retry action was unavailable`,
     );
     const oldOwnerMarker = await waitFor(
       "team.resolve owner claim before renderer delivery",
@@ -3451,7 +3607,6 @@ try {
     assert.equal(resolveHead.commit.manifest_sha256.length, 64);
 
     const stableTreeAfterResolve = await snapshotStableProjectTree(project);
-    const tmxPath = join(project, "omegat", "project_save.tmx");
     const tmxAfterResolve = await readFile(tmxPath);
     const tmxMtimeAfterResolve = (await stat(tmxPath, { bigint: true })).mtimeNs;
     const fileRemoteAfterResolve = await readFile(prepared.fileRemotePath);
@@ -3516,7 +3671,7 @@ try {
         () => pathExists(candidate.dispatchMarker),
       );
       assert.equal(replacement.workspace.project, project);
-      assert.equal(replacement.workspace.translation, prepared.theirs);
+      assert.equal(replacement.workspace.translation, selectedTranslation(prepared));
       assert.equal(replacement.workspace.activeSurfaces, 1);
       assert.deepEqual(
         JSON.parse(replacement.workspace.key),
@@ -3651,7 +3806,75 @@ try {
     const secondLoserIndices = firstLoserIndices.filter(
       (index) => index !== secondWinnerIndex,
     );
-    await waitFor("team.resolve retry outcomes from all survivors", async () => {
+    const secondDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(secondDurableOwner.process_id, secondWinner.application.pid);
+    assert.equal(secondDurableOwner.app_instance, secondOwnerMarker.app_instance);
+    assert.equal(secondDurableOwner.generation, secondOwnerMarker.generation);
+    assert.notEqual(secondDurableOwner.claim_id, firstDurableOwner.claim_id);
+    const secondWaitMarkers = secondLoserIndices.map((index) =>
+      `${candidates[index].waitMarker}.${secondWinner.application.pid}`
+    );
+    await waitFor("team.resolve second-election losers entered owner wait", async () => {
+      const waits = await Promise.all(secondWaitMarkers.map(pathExists));
+      return waits.every(Boolean) ? true : undefined;
+    });
+    for (const marker of secondWaitMarkers) {
+      const wait = JSON.parse(await readFile(marker, "utf8"));
+      assert.equal(wait.previous_owner_process_id, secondWinner.application.pid);
+    }
+    for (const candidate of candidates) {
+      assert.equal(
+        await pathExists(candidate.envelopeTrace)
+          ? parseNdjson(await readFile(candidate.envelopeTrace, "utf8")).length
+          : 0,
+        0,
+        "team.resolve replacement leaked an envelope before second owner death",
+      );
+    }
+
+    const queueBeforeSecondKill = await readFile(prepared.activePath);
+    const secondWinnerKilled = await killPackaged(secondWinner);
+    quorumReplacements = replacements.filter(
+      (_, index) => index !== firstWinnerIndex && index !== secondWinnerIndex,
+    );
+    assert.equal(secondWinnerKilled.browserPid, secondWinner.application.pid);
+    assert.equal(
+      await pathExists(`/proc/${secondWinnerKilled.browserPid}`),
+      false,
+      "second team.resolve replacement owner remained alive",
+    );
+    assert.deepEqual(
+      await readFile(prepared.activePath),
+      queueBeforeSecondKill,
+      "second team.resolve owner changed the queue before renderer delivery",
+    );
+
+    const thirdWinnerIndex = await waitFor(
+      "surviving team.resolve losers third owner election",
+      async () => {
+        for (const index of secondLoserIndices) {
+          if (await pathExists(candidates[index].ownerMarker)) return { index };
+        }
+        return undefined;
+      },
+    ).then((winner) => winner.index);
+    const thirdOwnerMarker = JSON.parse(
+      await readFile(candidates[thirdWinnerIndex].ownerMarker, "utf8"),
+    );
+    const thirdWinner = replacements[thirdWinnerIndex];
+    const thirdLoserIndices = secondLoserIndices.filter(
+      (index) => index !== thirdWinnerIndex,
+    );
+    assert.equal(thirdLoserIndices.length, 1);
+    assert.equal(thirdOwnerMarker.batch_id, resolveBatchId);
+    assert.equal(thirdOwnerMarker.operation, "resolve-conflict");
+    assert.equal(thirdOwnerMarker.owner_process_id, thirdWinner.application.pid);
+    const thirdDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+    assert.equal(thirdDurableOwner.process_id, thirdWinner.application.pid);
+    assert.equal(thirdDurableOwner.app_instance, thirdOwnerMarker.app_instance);
+    assert.equal(thirdDurableOwner.generation, thirdOwnerMarker.generation);
+    assert.notEqual(thirdDurableOwner.claim_id, secondDurableOwner.claim_id);
+    await waitFor("team.resolve two-round retry outcomes", async () => {
       const traces = await Promise.all(
         firstLoserIndices.map((index) => pathExists(candidates[index].retryTrace)),
       );
@@ -3660,27 +3883,33 @@ try {
     for (const index of firstLoserIndices) {
       const trace = parseNdjson(await readFile(candidates[index].retryTrace, "utf8"));
       assert.equal(trace.length, 1);
-      assert.equal(
-        trace[0].previous_owner_process_id,
-        firstWinner.application.pid,
-      );
-      assert.equal(
-        trace[0].result,
-        index === secondWinnerIndex ? "claimed" : "rejected",
-      );
+      if (index === secondWinnerIndex) {
+        assert.equal(trace[0].result, "claimed");
+        assert.deepEqual(
+          trace[0].previous_owner_process_ids,
+          [firstWinner.application.pid],
+        );
+      } else if (index === thirdWinnerIndex) {
+        assert.equal(trace[0].result, "claimed");
+        assert.deepEqual(
+          trace[0].previous_owner_process_ids,
+          [firstWinner.application.pid, secondWinner.application.pid],
+        );
+      } else {
+        assert.equal(trace[0].result, "rejected");
+        assert.equal(
+          trace[0].previous_owner_process_id,
+          secondWinner.application.pid,
+        );
+      }
     }
-    const secondDurableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
-    assert.equal(secondDurableOwner.process_id, secondWinner.application.pid);
-    assert.equal(secondDurableOwner.app_instance, secondOwnerMarker.app_instance);
-    assert.equal(secondDurableOwner.generation, secondOwnerMarker.generation);
-    assert.notEqual(secondDurableOwner.claim_id, firstDurableOwner.claim_id);
-    for (const index of secondLoserIndices) {
+    for (const index of thirdLoserIndices) {
       const loser = replacements[index];
       const scope = {
         root: project,
-        app_instance: `${label}-second-loser-${index}`,
+        app_instance: `${label}-third-loser-${index}`,
         owner_process_id: loser.application.pid,
-        generation: secondOwnerMarker.generation + index + 20,
+        generation: thirdOwnerMarker.generation + index + 30,
       };
       const pending = await invokeRpcResult(
         loser.client,
@@ -3708,31 +3937,31 @@ try {
           ? parseNdjson(await readFile(candidate.envelopeTrace, "utf8")).length
           : 0,
         0,
-        "team.resolve replacement leaked an envelope before second release",
+        "team.resolve replacement leaked an envelope before third release",
       );
     }
 
-    const reopenedSecondWinner = await invokeRpcResult(
-      secondWinner.client,
+    const reopenedThirdWinner = await invokeRpcResult(
+      thirdWinner.client,
       "project.open",
       { root: project },
     );
-    assert.equal(reopenedSecondWinner.resolved, true);
-    assert.equal(reopenedSecondWinner.value.root, project);
-    await writeFile(candidates[secondWinnerIndex].ownerRelease, "release\n", "utf8");
+    assert.equal(reopenedThirdWinner.resolved, true);
+    assert.equal(reopenedThirdWinner.value.root, project);
+    await writeFile(candidates[thirdWinnerIndex].ownerRelease, "release\n", "utf8");
     await waitFor("team.resolve recovered receipt acknowledgement", async () =>
       !await pathExists(prepared.activePath) ? true : undefined
     );
     const recovered = await waitFor(
-      "team.resolve second owner renderer rebind",
+      "team.resolve third owner renderer rebind",
       async () => {
-        const state = await workspaceState(secondWinner.client);
-        const conflictCount = await secondWinner.client.evaluate(
+        const state = await workspaceState(thirdWinner.client);
+        const conflictCount = await thirdWinner.client.evaluate(
           'window.omegat.rpc("team.conflicts", {}).then((value) => value.conflicts.length)',
           true,
         );
         return state.project === project
-            && state.translation === prepared.theirs
+            && state.translation === selectedTranslation(prepared)
             && state.activeSurfaces === 1
             && state.key
             && conflictCount === 0
@@ -3741,7 +3970,7 @@ try {
       },
     );
     assert.deepEqual(JSON.parse(recovered.state.key), prepared.wantedKey);
-    const finalEntries = await secondWinner.client.evaluate(
+    const finalEntries = await thirdWinner.client.evaluate(
       'window.omegat.rpc("entry.list", {})',
       true,
     );
@@ -3755,16 +3984,16 @@ try {
     assert(finalDecoy);
     assertCompleteEntryKey(finalWanted.key);
     assertCompleteEntryKey(finalDecoy.key);
-    assert.equal(finalWanted.translation, prepared.theirs);
+    assert.equal(finalWanted.translation, selectedTranslation(prepared));
     assert.equal(finalDecoy.translation, "");
     const winningTrace = parseNdjson(
-      await readFile(candidates[secondWinnerIndex].envelopeTrace, "utf8"),
+      await readFile(candidates[thirdWinnerIndex].envelopeTrace, "utf8"),
     );
     assert.equal(winningTrace.length, 1);
     assert.equal(winningTrace[0].batch_id, resolveBatchId);
     assert.equal(winningTrace[0].operation, "resolve-conflict");
     for (const index of candidates.map((_, index) => index)) {
-      if (index === secondWinnerIndex) continue;
+      if (index === thirdWinnerIndex) continue;
       assert.equal(
         await pathExists(candidates[index].envelopeTrace)
           ? parseNdjson(await readFile(candidates[index].envelopeTrace, "utf8")).length
@@ -3817,9 +4046,10 @@ try {
       gitHeadAfterResolve,
       "team.resolve election rewrote the Git HEAD",
     );
-    resolveReplacementElection = {
+    resolveReplacementElections.push({
       headKind: "team.resolve",
       operation: "resolve-conflict",
+      resolution: `keep-${resolveSide}`,
       realGitMainRepository: true,
       fileMapping: true,
       initialReplacementCount: replacements.length,
@@ -3832,7 +4062,15 @@ try {
         contenderCount: firstLoserIndices.length,
         winnerBrowserPid: secondWinner.application.pid,
         winnerClaimId: secondDurableOwner.claim_id,
-        rejectedLoserCount: secondLoserIndices.length,
+        killedBeforeRendererDelivery: true,
+        rejectedLoserCount: 0,
+        launchedAdditionalProcesses: 0,
+      },
+      survivingLoserThirdElection: {
+        contenderCount: secondLoserIndices.length,
+        winnerBrowserPid: thirdWinner.application.pid,
+        winnerClaimId: thirdDurableOwner.claim_id,
+        rejectedLoserCount: thirdLoserIndices.length,
         launchedAdditionalProcesses: 0,
       },
       terminalHeadCount: 1,
@@ -3843,10 +4081,13 @@ try {
       completeEntryKey: prepared.wantedKey,
       decoyEntryKey: prepared.decoyKey,
       winnerDocument3Surfaces: recovered.state.activeSurfaces,
-    };
+    });
     await Promise.all(
       replacements
-        .filter((_, index) => index !== firstWinnerIndex)
+        .filter(
+          (_, index) =>
+            index !== firstWinnerIndex && index !== secondWinnerIndex
+        )
         .map((replacement) => terminatePackaged(replacement)),
     );
     quorumReplacements = [];
@@ -3864,7 +4105,8 @@ try {
     closeReceiptRecovery,
     selectedHeadCrashRecovery,
     atomicReplacementElectionResults,
-    resolveReplacementElection,
+    resolveReplacementElections,
+    resolveCancellationResults,
   }));
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());
