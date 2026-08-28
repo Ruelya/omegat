@@ -5024,8 +5024,19 @@ try {
     await waitFor("FIFO heads drained after cancelled resolve tail", async () =>
       !await pathExists(prepared.activePath) ? true : undefined
     );
-    const durableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
-    assert.equal(durableOwner.released, true);
+    const durableOwner = await waitFor(
+      `${killBoundary} FIFO owner release`,
+      async () => {
+        if (!await pathExists(prepared.ownerPath)) return undefined;
+        const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+        return claim.released === true
+            && replacements.some((replacement) =>
+              replacement.application.pid === claim.process_id
+            )
+          ? claim
+          : undefined;
+      },
+    );
     const winnerIndex = replacements.findIndex((replacement) =>
       replacement.application.pid === durableOwner.process_id
     );
