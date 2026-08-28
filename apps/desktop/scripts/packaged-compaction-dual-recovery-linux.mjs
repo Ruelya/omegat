@@ -5330,18 +5330,44 @@ try {
     }
     quorumReplacements = replacements;
     await writeFile(dispatchRelease, "release\n", "utf8");
-    const firstWinnerIndex = await waitFor(
+    const firstElection = await waitFor(
       "team.resolve first four-replacement election",
       async () => {
         for (const [index, candidate] of candidates.entries()) {
-          if (await pathExists(candidate.ownerMarker)) return { index };
+          if (await pathExists(candidate.ownerMarker)) {
+            return {
+              index,
+              marker: JSON.parse(await readFile(candidate.ownerMarker, "utf8")),
+              rendererMarkerObserved: true,
+            };
+          }
+        }
+        if (await pathExists(prepared.ownerPath)) {
+          const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+          const index = replacements.findIndex((replacement) =>
+            replacement.application.pid === claim.process_id
+          );
+          if (index !== -1 && claim.claim_id !== oldDurableOwner.claim_id) {
+            return {
+              index,
+              marker: {
+                batch_id: resolveBatchId,
+                operation: "resolve-conflict",
+                app_instance: claim.app_instance,
+                owner_process_id: claim.process_id,
+                generation: claim.generation,
+              },
+              // The sidecar claim is durable before Electron receives the
+              // response. Killing here exercises that narrower crash window.
+              rendererMarkerObserved: false,
+            };
+          }
         }
         return undefined;
       },
-    ).then((winner) => winner.index);
-    const firstOwnerMarker = JSON.parse(
-      await readFile(candidates[firstWinnerIndex].ownerMarker, "utf8"),
     );
+    const firstWinnerIndex = firstElection.index;
+    const firstOwnerMarker = firstElection.marker;
     assert.equal(firstOwnerMarker.batch_id, resolveBatchId);
     assert.equal(firstOwnerMarker.operation, "resolve-conflict");
     const firstWinner = replacements[firstWinnerIndex];
@@ -5409,18 +5435,44 @@ try {
       false,
       "first team.resolve replacement owner remained alive",
     );
-    const secondWinnerIndex = await waitFor(
+    const secondElection = await waitFor(
       "surviving team.resolve loser self-retry election",
       async () => {
         for (const index of firstLoserIndices) {
-          if (await pathExists(candidates[index].ownerMarker)) return { index };
+          if (await pathExists(candidates[index].ownerMarker)) {
+            return {
+              index,
+              marker: JSON.parse(
+                await readFile(candidates[index].ownerMarker, "utf8"),
+              ),
+              rendererMarkerObserved: true,
+            };
+          }
+        }
+        if (await pathExists(prepared.ownerPath)) {
+          const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+          const index = firstLoserIndices.find((candidateIndex) =>
+            replacements[candidateIndex].application.pid === claim.process_id
+          );
+          if (index !== undefined && claim.claim_id !== firstDurableOwner.claim_id) {
+            return {
+              index,
+              marker: {
+                batch_id: resolveBatchId,
+                operation: "resolve-conflict",
+                app_instance: claim.app_instance,
+                owner_process_id: claim.process_id,
+                generation: claim.generation,
+              },
+              rendererMarkerObserved: false,
+            };
+          }
         }
         return undefined;
       },
-    ).then((winner) => winner.index);
-    const secondOwnerMarker = JSON.parse(
-      await readFile(candidates[secondWinnerIndex].ownerMarker, "utf8"),
     );
+    const secondWinnerIndex = secondElection.index;
+    const secondOwnerMarker = secondElection.marker;
     assert.equal(secondOwnerMarker.batch_id, resolveBatchId);
     assert.equal(secondOwnerMarker.operation, "resolve-conflict");
     const secondWinner = replacements[secondWinnerIndex];
@@ -5679,12 +5731,14 @@ try {
         browserPid: firstWinnerKilled.browserPid,
         claimId: firstDurableOwner.claim_id,
         killedBeforeRendererDelivery: true,
+        rendererMarkerObserved: firstElection.rendererMarkerObserved,
       },
       survivingLoserRetryElection: {
         contenderCount: firstLoserIndices.length,
         winnerBrowserPid: secondWinner.application.pid,
         winnerClaimId: secondDurableOwner.claim_id,
         killedBeforeRendererDelivery: true,
+        rendererMarkerObserved: secondElection.rendererMarkerObserved,
         rejectedLoserCount: 0,
         launchedAdditionalProcesses: 0,
       },
