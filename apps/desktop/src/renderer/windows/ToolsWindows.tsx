@@ -27,6 +27,15 @@ import type {
 import { useApp } from "../store/app";
 import { Modal } from "./Modal";
 
+async function callerManagedProductRpc(
+  method: string,
+  params: unknown,
+): Promise<unknown> {
+  const invoke = window.omegat?.rpcWithTransactionReceipt ?? window.omegat?.rpc;
+  if (!invoke) throw new Error("sidecar bridge unavailable");
+  return invoke(method, params);
+}
+
 async function acknowledgeProductReceipt(
   receipt: TransactionEnvelope | null | undefined,
 ) {
@@ -877,7 +886,7 @@ export function MappingWindow() {
             className="primary"
             onClick={async () => {
               const repositories = repositoriesFromEditorRows(rows);
-              const result = (await window.omegat?.rpc("team.mapping", {
+              const result = (await callerManagedProductRpc("team.mapping", {
                 repositories,
               })) as {
                 props?: ProjectPropsDto;
@@ -1134,7 +1143,7 @@ export function ProjectEditWindow() {
             className="primary"
             onClick={async () => {
               if (props?.root) {
-                const result = (await window.omegat?.rpc("project.update", {
+                const result = (await callerManagedProductRpc("project.update", {
                   root: props.root,
                   ...draft,
                   source_dir_excludes: draft.source_dir_excludes

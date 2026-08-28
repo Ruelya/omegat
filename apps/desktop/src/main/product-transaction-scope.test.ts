@@ -104,25 +104,25 @@ describe("transactionEnvelopesForRenderer", () => {
     payload: { operation: "project.external-refresh" },
   };
 
-  it("keeps a directly returned receipt on its operation-specific caller path", () => {
-    expect(transactionEnvelopesForRenderer(
-      [current],
-      { batchId: "current", operation: "team.mapping" },
-      false,
-    )).toEqual([]);
-  });
-
-  it("still publishes recovery, older FIFO, and deferred resolve receipts", () => {
-    expect(transactionEnvelopesForRenderer([current], null, false)).toEqual([current]);
-    expect(transactionEnvelopesForRenderer(
-      [older],
-      { batchId: "current", operation: "team.mapping" },
-      false,
-    )).toEqual([older]);
+  it("keeps a caller-managed receipt on its operation-specific path", () => {
     expect(transactionEnvelopesForRenderer(
       [current],
       { batchId: "current", operation: "team.mapping" },
       true,
+    )).toEqual([]);
+  });
+
+  it("still publishes recovery, older FIFO, and raw bridge receipts", () => {
+    expect(transactionEnvelopesForRenderer([current], null, false)).toEqual([current]);
+    expect(transactionEnvelopesForRenderer(
+      [older],
+      { batchId: "current", operation: "team.mapping" },
+      true,
+    )).toEqual([older]);
+    expect(transactionEnvelopesForRenderer(
+      [current],
+      { batchId: "current", operation: "team.mapping" },
+      false,
     )).toEqual([current]);
   });
 });

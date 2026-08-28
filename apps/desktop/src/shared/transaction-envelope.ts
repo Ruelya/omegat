@@ -45,3 +45,23 @@ export type TransactionAck = {
 };
 
 export type TransactionOutcome = "succeeded" | "cancelled" | "coalesced";
+
+const CALLER_MANAGED_TRANSACTION_METHODS = new Set([
+  "entry.set",
+  "project.save",
+  "project.close",
+  "project.reload",
+  "project.compile",
+  "project.import",
+  "project.update",
+  "team.mapping",
+  "team.sync",
+  "team.commit",
+  "team.resolve",
+  "align.run",
+  "align.write",
+]);
+
+export function isCallerManagedTransactionMethod(method: string): boolean {
+  return CALLER_MANAGED_TRANSACTION_METHODS.has(method);
+}

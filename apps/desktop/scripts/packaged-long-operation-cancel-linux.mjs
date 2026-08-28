@@ -1041,7 +1041,10 @@ try {
     },
   ];
   const configured = await client.evaluate(
-    `window.omegat.rpc("team.mapping", ${JSON.stringify({ repositories })})`,
+    `window.omegat.rpcWithTransactionReceipt(
+      "team.mapping",
+      ${JSON.stringify({ repositories })}
+    )`,
     true,
   );
   assert.equal(configured.ok, true);
@@ -1141,7 +1144,7 @@ try {
     const decoy = entries.find((entry) => entry.key.file === "1001-decoy.yaml");
     if (!wanted || !decoy) throw new Error("packaged duplicate entries were not loaded");
     const translation = "wanted duplicate translation 😀 tail";
-    await window.omegat.rpc("entry.set", {
+    const set = await window.omegat.rpcWithTransactionReceipt("entry.set", {
       index: wanted.index,
       key: wanted.key,
       translation,
@@ -1149,7 +1152,9 @@ try {
       revision: wanted.revision,
       default_translation: false,
     });
-    await window.omegat.rpc("project.save", {});
+    await window.omegat.acknowledgeTransactionReceipt(set.receipt, "succeeded");
+    const saved = await window.omegat.rpcWithTransactionReceipt("project.save", {});
+    await window.omegat.acknowledgeTransactionReceipt(saved.receipt, "succeeded");
     return {
       translation,
       wanted: { index: wanted.index, key: wanted.key },
@@ -1502,12 +1507,20 @@ try {
     ],
   }];
   const conflictConfigured = await client.evaluate(
-    `window.omegat.rpc("team.mapping", ${
+    `window.omegat.rpcWithTransactionReceipt("team.mapping", ${
       JSON.stringify({ repositories: conflictRepositories })
     })`,
     true,
   );
   assert.equal(conflictConfigured.ok, true);
+  const conflictMappingAck = await client.evaluate(
+    `window.omegat.acknowledgeTransactionReceipt(
+      ${JSON.stringify(conflictConfigured.receipt)},
+      "succeeded"
+    )`,
+    true,
+  );
+  assert.equal(conflictMappingAck.ack.acknowledged, true);
   const beforeTeamOrdering = await editorState(client);
   assert.equal(
     beforeTeamOrdering.key,
@@ -1669,7 +1682,7 @@ try {
       JSON.stringify(entry.key) === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
     );
     if (!decoy) throw new Error("same-source decoy disappeared after visible commit");
-    const updated = await window.omegat.rpc("entry.set", {
+    const updated = await window.omegat.rpcWithTransactionReceipt("entry.set", {
       index: decoy.index,
       key: decoy.key,
       translation: ${JSON.stringify(secondConflictOurs)},
@@ -1677,7 +1690,9 @@ try {
       revision: decoy.revision,
       default_translation: false,
     });
-    await window.omegat.rpc("project.save", {});
+    await window.omegat.acknowledgeTransactionReceipt(updated.receipt, "succeeded");
+    const saved = await window.omegat.rpcWithTransactionReceipt("project.save", {});
+    await window.omegat.acknowledgeTransactionReceipt(saved.receipt, "succeeded");
     return updated.entry;
   })()`, true);
   assert.deepEqual(committedSecondConflict.key, duplicateSetup.decoy.key);

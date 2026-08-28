@@ -35,17 +35,17 @@ type TransactionReceiptIdentity = {
 };
 
 /**
- * A receipt returned by the current RPC belongs to that RPC's renderer caller.
- * Publishing the same receipt on the recovery channel races the caller's
- * operation-specific state update and acknowledgement. Older FIFO heads,
- * restart recovery, and deferred resolve receipts still use the channel.
+ * A caller-managed receipt returned by the current RPC belongs to that RPC's
+ * renderer action. Publishing the same receipt on the recovery channel races
+ * its operation-specific state update and acknowledgement. Older FIFO heads,
+ * restart recovery, and raw bridge callers still use the channel.
  */
 export function transactionEnvelopesForRenderer<T extends TransactionReceiptIdentity>(
   envelopes: readonly T[],
   directlyReturnedReceipt: { batchId: string; operation: string } | null | undefined,
-  deferredResponse: boolean,
+  callerManagesReceipt: boolean,
 ): T[] {
-  if (!directlyReturnedReceipt || deferredResponse) return [...envelopes];
+  if (!directlyReturnedReceipt || !callerManagesReceipt) return [...envelopes];
   return envelopes.filter((envelope) =>
     envelope.batch_id !== directlyReturnedReceipt.batchId
     || envelope.payload.operation !== directlyReturnedReceipt.operation

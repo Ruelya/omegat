@@ -301,6 +301,7 @@ async function publishPendingTransactionEnvelopes(
   generation: number,
   clientRequestId?: string | null,
   expectedReceipt?: { batchId: string; operation: string } | null,
+  callerManagesExpectedReceipt = false,
 ) {
   let result: {
     envelopes?: TransactionEnvelope[];
@@ -414,7 +415,7 @@ async function publishPendingTransactionEnvelopes(
   const rendererEnvelopes = transactionEnvelopesForRenderer(
     envelopes,
     expectedReceipt,
-    Boolean(clientRequestId),
+    callerManagesExpectedReceipt,
   );
   rendererEnvelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)
@@ -693,6 +694,7 @@ async function rpc(
   method: string,
   params: unknown = {},
   clientRequestId: string | null = null,
+  callerManagesTransactionReceipt = false,
 ): Promise<unknown> {
   // Native callbacks may take the full worker timeout. Keep project and
   // navigation RPCs responsive while each Marker runs in its own sidecar,
@@ -766,6 +768,7 @@ async function rpc(
             operation: receipt.payload.operation,
           }
         : null,
+      callerManagesTransactionReceipt,
     );
   }
   const scopedExternalRefresh = method === "project.external-refresh"
@@ -835,8 +838,19 @@ app.whenReady().then(() => {
   startSidecar();
   ipcMain.handle(
     "rpc",
-    (_e, method: string, params: unknown, clientRequestId?: string) =>
-      rpc(method, params, clientRequestId ?? null),
+    (
+      _e,
+      method: string,
+      params: unknown,
+      clientRequestId?: string,
+      callerManagesTransactionReceipt?: boolean,
+    ) =>
+      rpc(
+        method,
+        params,
+        clientRequestId ?? null,
+        callerManagesTransactionReceipt === true,
+      ),
   );
   ipcMain.handle("rpc-cancel", (_e, clientRequestId: string) =>
     rpcClient?.cancel(clientRequestId) ?? false

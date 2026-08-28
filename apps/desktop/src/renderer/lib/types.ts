@@ -335,6 +335,11 @@ declare global {
         params?: unknown,
         clientRequestId?: string,
       ) => Promise<unknown>;
+      rpcWithTransactionReceipt?: (
+        method: string,
+        params?: unknown,
+        clientRequestId?: string,
+      ) => Promise<unknown>;
       cancelRpc?: (clientRequestId: string) => Promise<boolean>;
       onRpcOperation?: (fn: (event: RpcOperationEvent) => void) => () => void;
       startup?: () => Promise<{

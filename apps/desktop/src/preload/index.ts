@@ -9,6 +9,18 @@ import type {
 contextBridge.exposeInMainWorld("omegat", {
   rpc: (method: string, params?: unknown, clientRequestId?: string) =>
     ipcRenderer.invoke("rpc", method, params ?? {}, clientRequestId),
+  rpcWithTransactionReceipt: (
+    method: string,
+    params?: unknown,
+    clientRequestId?: string,
+  ) =>
+    ipcRenderer.invoke(
+      "rpc",
+      method,
+      params ?? {},
+      clientRequestId,
+      true,
+    ) as Promise<unknown>,
   cancelRpc: (clientRequestId: string) =>
     ipcRenderer.invoke("rpc-cancel", clientRequestId) as Promise<boolean>,
   onRpcOperation: (fn: (event: RpcOperationEvent) => void) => {

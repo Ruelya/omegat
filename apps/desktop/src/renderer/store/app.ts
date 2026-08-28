@@ -55,6 +55,7 @@ import {
   type RpcOperationEvent,
   type RpcOperationPhase,
 } from "../../shared/rpc-operation";
+import { isCallerManagedTransactionMethod } from "../../shared/transaction-envelope";
 
 function readLocal(key: string): string | null {
   try {
@@ -84,12 +85,15 @@ async function rpc<T>(
   if (!window.omegat) {
     throw new Error("sidecar bridge unavailable");
   }
+  const invoke = isCallerManagedTransactionMethod(method)
+    ? window.omegat.rpcWithTransactionReceipt ?? window.omegat.rpc
+    : window.omegat.rpc;
   if (!signal) {
     try {
       return await (
         clientRequestId
-          ? window.omegat.rpc(method, params, clientRequestId)
-          : window.omegat.rpc(method, params)
+          ? invoke(method, params, clientRequestId)
+          : invoke(method, params)
       ) as T;
     } catch (error) {
       // Electron serializes ipcMain handler failures as ordinary Error
@@ -113,7 +117,7 @@ async function rpc<T>(
   };
   signal.addEventListener("abort", cancel, { once: true });
   try {
-    return await window.omegat.rpc(method, params, requestId) as T;
+    return await invoke(method, params, requestId) as T;
   } finally {
     signal.removeEventListener("abort", cancel);
   }
@@ -829,7 +833,12 @@ export const useApp = create<AppState>((set, get) => ({
         await get().commitCurrent();
         if (!dockLifecycle.isCurrent(lifecycle)) return false;
       }
-      await rpc("project.save");
+      const saved = await rpc<{ receipt?: TransactionEnvelope | null } | undefined>(
+        "project.save",
+      );
+      if (saved?.receipt) {
+        await acknowledgeTransactionEnvelopeOrDefer(saved.receipt);
+      }
       if (!dockLifecycle.isCurrent(lifecycle)) return false;
     }
 
