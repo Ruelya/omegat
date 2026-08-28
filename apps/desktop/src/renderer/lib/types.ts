@@ -33,6 +33,18 @@ export type CommittedRefreshResult = {
   props: ProjectPropsDto;
   stats: StatsDto;
 };
+export type TeamRendererReceipt = {
+  version: number;
+  project_root: string;
+  generation: number;
+  batch_id: string;
+  status: "sidecar_committed";
+  operation: string;
+  commit: {
+    manifest_sha256: string;
+    manifest_items: number;
+  };
+};
 export type EditorConflict = {
   index: number;
   key: EntryKeyDto;
@@ -342,6 +354,19 @@ declare global {
         batchId: string,
         outcome: "succeeded" | "cancelled" | "coalesced",
       ) => Promise<{ remaining: unknown[] }>;
+      acknowledgeTeamReceipt?: (
+        root: string,
+        generation: number,
+        batchId: string,
+      ) => Promise<{
+        ack: {
+          acknowledged: boolean;
+          already_acknowledged: boolean;
+        };
+      }>;
+      onTeamReceipt?: (
+        fn: (receipt: TeamRendererReceipt) => void,
+      ) => () => void;
       onProjectExternalChange?: (
         fn: (event: {
           id: string;

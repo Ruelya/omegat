@@ -275,6 +275,14 @@ pub fn pending(
     // sidecar receipt or a pending FIFO tail can never be dropped or have an
     // old terminal generation rewritten as current.
     if compact_acknowledged_batches(root, &mut journal)? {
+        if std::env::var("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_ARCHIVE").as_deref() == Ok("1")
+        {
+            // Fault injection after durable history append but before the
+            // compacted queue's atomic replacement. The original journal must
+            // remain the recovery source, including its unacknowledged receipt
+            // and pending tail.
+            std::process::abort();
+        }
         if journal.batches.is_empty() {
             remove_file(&journal_path(root))?;
             return Ok(Vec::new());

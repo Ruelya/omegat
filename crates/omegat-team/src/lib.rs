@@ -45,9 +45,11 @@ pub use rebase_and_commit::{
 };
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    commit_after_version, commit_product_transaction_cancellable, commit_project_files,
-    commit_project_files_cancellable, commit_project_files_cancellable_scoped, get_version,
+    acknowledge_renderer_receipt, commit_after_version, commit_product_transaction_cancellable,
+    commit_project_files, commit_project_files_cancellable,
+    commit_project_files_cancellable_scoped, get_version, pending_renderer_receipt,
     recover_interrupted_sync, switch_to_version, sync, sync_cancellable, sync_cancellable_scoped,
+    TeamRendererAck, TeamRendererReceipt,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -391,23 +393,18 @@ mod tests {
         std::fs::write(props.source_dir.join("unrelated.txt"), "project tree stays").unwrap();
 
         let tmx_before = std::fs::read(props.save_tmx_path()).unwrap();
-        let conflicts_before = std::fs::read(
-            props
-                .root
-                .join(".repositories/prep/conflicts.json"),
-        )
-        .unwrap();
+        let conflicts_before =
+            std::fs::read(props.root.join(".repositories/prep/conflicts.json")).unwrap();
         let (stage_tx, stage_rx) = std::sync::mpsc::sync_channel(0);
         let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
         let resume_rx = std::sync::Mutex::new(resume_rx);
-        let cancellation = omegat_core::cancellation::CancellationToken::with_checkpoint_observer(
-            move |stage| {
+        let cancellation =
+            omegat_core::cancellation::CancellationToken::with_checkpoint_observer(move |stage| {
                 if stage == "team.resolve.writeback" {
                     stage_tx.send(()).unwrap();
                     resume_rx.lock().unwrap().recv().unwrap();
                 }
-            },
-        );
+            });
         let worker_cancellation = cancellation.clone();
         let worker_first = first.clone();
         let worker = std::thread::spawn(move || {
@@ -451,8 +448,8 @@ mod tests {
                 .ends_with(".snapshot")));
 
         let props = ProjectProperties::load(&root).unwrap();
-        let remaining = resolve_for_key(&props, "Repeated source", Some(&first), "theirs", None)
-            .unwrap();
+        let remaining =
+            resolve_for_key(&props, "Repeated source", Some(&first), "theirs", None).unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].entry_key.as_ref(), Some(&second));
         let after_first = parse_tmx(
@@ -593,14 +590,7 @@ mod tests {
         let props = ProjectProperties::load(Path::new(&root)).unwrap();
         let key: EntryKeyDto = serde_json::from_str(&raw_key).unwrap();
         crate::rebase_and_commit::crash_after_resolution_writeback();
-        resolve_for_key(
-            &props,
-            &key.source_text,
-            Some(&key),
-            "theirs",
-            None,
-        )
-        .unwrap();
+        resolve_for_key(&props, &key.source_text, Some(&key), "theirs", None).unwrap();
         panic!("resolution crash injection did not terminate the worker");
     }
 
@@ -1287,6 +1277,181 @@ mod tests {
                     && row["payload"]["published"] == serde_json::json!([0])
             }),
             true
+        );
+    }
+
+    #[test]
+    fn mixed_git_and_file_compensation_and_renderer_ack_are_atomic() {
+        if Command::new("git").arg("--version").output().is_err() {
+            panic!("git is required for mixed repository transaction coverage");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bare = dir.path().join("remote.git");
+        seed_bare(&bare, &dir.path().join("seed"));
+        let file_remote = dir.path().join("file-remote");
+        let failure_remote = dir.path().join("failure-remote");
+        std::fs::create_dir_all(file_remote.join("source")).unwrap();
+        std::fs::create_dir_all(failure_remote.join("source")).unwrap();
+        std::fs::write(file_remote.join("source/file.txt"), "file-before").unwrap();
+        std::fs::write(failure_remote.join("source/block.txt"), "block-before").unwrap();
+
+        let mapping = |local: &str| {
+            vec![RepositoryMapping {
+                local: format!("source/{local}"),
+                repository: format!("source/{local}"),
+                includes: vec![],
+                excludes: vec![],
+            }]
+        };
+        let mut props = team_props(
+            dir.path().join("project"),
+            "git",
+            &bare.to_string_lossy(),
+            mapping("remote.txt"),
+        );
+        props.repositories.push(RepositoryDef {
+            repo_type: "file".into(),
+            url: file_remote.to_string_lossy().into_owned(),
+            branch: None,
+            mappings: mapping("file.txt"),
+        });
+        props.repositories.push(RepositoryDef {
+            repo_type: "file".into(),
+            url: failure_remote.to_string_lossy().into_owned(),
+            branch: None,
+            mappings: mapping("block.txt"),
+        });
+        props.write().unwrap();
+        for repo in &props.repositories {
+            crate::remote_repository_factory::prepare(&props, repo).unwrap();
+        }
+        std::fs::write(props.source_dir.join("remote.txt"), "git-candidate").unwrap();
+        std::fs::write(props.source_dir.join("file.txt"), "file-candidate").unwrap();
+        std::fs::write(props.source_dir.join("block.txt"), "block-candidate").unwrap();
+
+        crate::remote_repository_provider::fail_next_commit_for(2);
+        let failed = commit_project_files_cancellable_scoped(
+            &props,
+            "source",
+            &omegat_core::cancellation::CancellationToken::default(),
+            15,
+            Some("mixed-compensation"),
+        )
+        .unwrap_err();
+        assert!(failed
+            .to_string()
+            .contains("injected repository 2 commit failure"));
+        assert_eq!(
+            std::fs::read_to_string(file_remote.join("source/file.txt")).unwrap(),
+            "file-before"
+        );
+        assert_eq!(
+            std::fs::read_to_string(failure_remote.join("source/block.txt")).unwrap(),
+            "block-before"
+        );
+
+        let remote = git2::Repository::open_bare(&bare).unwrap();
+        let remote_commit = remote
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let remote_tree = remote_commit.tree().unwrap();
+        let remote_blob = remote
+            .find_blob(
+                remote_tree
+                    .get_path(Path::new("source/remote.txt"))
+                    .unwrap()
+                    .id(),
+            )
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(remote_blob.content()).unwrap(),
+            "remote"
+        );
+
+        let work = crate::project_team_settings::repo_work_dir(&props, &props.repositories[0]);
+        let work_repo = git2::Repository::open(&work).unwrap();
+        assert_eq!(
+            work_repo.head().unwrap().target(),
+            Some(remote_commit.id()),
+            "compensating Git HEAD was not published"
+        );
+        assert_eq!(
+            std::fs::read_to_string(work.join("source/remote.txt")).unwrap(),
+            "remote"
+        );
+        assert!(work_repo.statuses(None).unwrap().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(props.source_dir.join("remote.txt")).unwrap(),
+            "git-candidate",
+            "rollback must preserve the user's pre-transaction project snapshot"
+        );
+        let active = props.root.join(".repositories/transactions/active.json");
+        assert!(!active.exists());
+        let failed_history =
+            std::fs::read_to_string(props.root.join(".repositories/transactions/history.ndjson"))
+                .unwrap();
+        let failed_terminal: serde_json::Value =
+            serde_json::from_str(failed_history.lines().last().unwrap()).unwrap();
+        assert_eq!(failed_terminal["batch_id"], "mixed-compensation");
+        assert_eq!(failed_terminal["status"], "cancelled");
+
+        commit_project_files_cancellable_scoped(
+            &props,
+            "source",
+            &omegat_core::cancellation::CancellationToken::default(),
+            16,
+            Some("mixed-receipt"),
+        )
+        .unwrap();
+        let unacknowledged: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
+        assert_eq!(unacknowledged["status"], "sidecar_committed");
+        assert_eq!(unacknowledged["generation"], 16);
+        assert_eq!(unacknowledged["batch_id"], "mixed-receipt");
+
+        let adopted = pending_renderer_receipt(&props, 17).unwrap().unwrap();
+        assert_eq!(adopted.generation, 17);
+        assert_eq!(adopted.batch_id, "mixed-receipt");
+        assert_eq!(adopted.status, TransactionStatus::SidecarCommitted);
+        assert!(active.exists(), "unacknowledged receipt was compacted");
+
+        let first_ack = acknowledge_renderer_receipt(&props, 17, "mixed-receipt").unwrap();
+        assert!(first_ack.acknowledged);
+        assert!(!first_ack.already_acknowledged);
+        assert!(!active.exists());
+        let history_after_first =
+            std::fs::read(props.root.join(".repositories/transactions/history.ndjson")).unwrap();
+        let duplicate = acknowledge_renderer_receipt(&props, 17, "mixed-receipt").unwrap();
+        assert!(duplicate.acknowledged);
+        assert!(duplicate.already_acknowledged);
+        assert_eq!(
+            std::fs::read(props.root.join(".repositories/transactions/history.ndjson")).unwrap(),
+            history_after_first,
+            "duplicate renderer ack appended or replayed product work"
+        );
+        assert_eq!(
+            std::fs::read_to_string(file_remote.join("source/file.txt")).unwrap(),
+            "file-candidate"
+        );
+        let committed_remote = git2::Repository::open_bare(&bare).unwrap();
+        let committed_tree = committed_remote
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .peel_to_tree()
+            .unwrap();
+        let committed_blob = committed_remote
+            .find_blob(
+                committed_tree
+                    .get_path(Path::new("source/remote.txt"))
+                    .unwrap()
+                    .id(),
+            )
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(committed_blob.content()).unwrap(),
+            "git-candidate"
         );
     }
 

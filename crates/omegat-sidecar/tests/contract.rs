@@ -53,6 +53,8 @@ const METHODS: &[&str] = &[
     "finder.run",
     "team.sync",
     "team.commit",
+    "team.receipt.pending",
+    "team.receipt.ack",
     "team.conflicts",
     "team.resolve",
     "team.mapping",
@@ -445,6 +447,187 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
     );
     assert!(!root.join(".repositories/transactions/active.json").exists());
     let _ = child.kill();
+}
+
+#[test]
+fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("team-receipt-project");
+    let remote = temp.path().join("team-receipt-remote");
+    std::fs::create_dir_all(remote.join("source")).unwrap();
+    std::fs::write(remote.join("source/shared.txt"), "remote-before").unwrap();
+
+    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&config);
+    let created = rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    assert_eq!(created["result"]["root"], root.to_string_lossy().as_ref());
+    let mapped = rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "team.mapping",
+        json!({
+            "repositories": [{
+                "repo_type": "file",
+                "url": remote,
+                "branch": null,
+                "mappings": [{
+                    "local": "/source/shared.txt",
+                    "repository": "/source/shared.txt",
+                    "includes": [],
+                    "excludes": [],
+                }],
+            }],
+        }),
+    );
+    assert_eq!(mapped["result"]["ok"], true);
+    let initialized = rpc(&mut first_in, &mut first_out, 3, "team.sync", json!({}));
+    assert_eq!(initialized["result"]["action"], "sync");
+    std::fs::write(root.join("source/shared.txt"), "renderer-ack-candidate").unwrap();
+    let committed = rpc(
+        &mut first_in,
+        &mut first_out,
+        4,
+        "team.commit",
+        json!({
+            "which": "source",
+            "transaction_project_root": root,
+            "transaction_generation": 11,
+            "transaction_batch_id": "renderer-team-ack",
+        }),
+    );
+    assert_eq!(committed["error"], Value::Null);
+    let receipt = &committed["result"]["receipt"];
+    assert_eq!(receipt["version"], 1);
+    assert_eq!(receipt["batch_id"], "renderer-team-ack");
+    assert_eq!(receipt["generation"], 11);
+    assert_eq!(receipt["status"], "sidecar_committed");
+    assert_eq!(receipt["operation"], "commit-source");
+    assert_eq!(
+        std::fs::read_to_string(remote.join("source/shared.txt")).unwrap(),
+        "renderer-ack-candidate"
+    );
+    let active = root.join(".repositories/transactions/active.json");
+    assert!(active.exists());
+    first_child.kill().unwrap();
+    first_child.wait().unwrap();
+
+    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&config);
+    let opened = rpc(
+        &mut second_in,
+        &mut second_out,
+        5,
+        "project.open",
+        json!({ "root": root }),
+    );
+    assert_eq!(opened["error"], Value::Null);
+    let pending = rpc(
+        &mut second_in,
+        &mut second_out,
+        6,
+        "team.receipt.pending",
+        json!({ "root": root, "generation": 12 }),
+    );
+    assert_eq!(
+        pending["result"]["receipt"]["batch_id"],
+        "renderer-team-ack"
+    );
+    assert_eq!(pending["result"]["receipt"]["generation"], 12);
+    assert_eq!(pending["result"]["receipt"]["status"], "sidecar_committed");
+    let acknowledged = rpc(
+        &mut second_in,
+        &mut second_out,
+        7,
+        "team.receipt.ack",
+        json!({
+            "root": root,
+            "generation": 12,
+            "batch_id": "renderer-team-ack",
+        }),
+    );
+    assert_eq!(acknowledged["result"]["ack"]["acknowledged"], true);
+    assert_eq!(acknowledged["result"]["ack"]["already_acknowledged"], false);
+    assert!(!active.exists());
+    let history_path = root.join(".repositories/transactions/history.ndjson");
+    let history_after_ack = std::fs::read(&history_path).unwrap();
+    let remote_after_ack = file_snapshot(&remote);
+    second_child.kill().unwrap();
+    second_child.wait().unwrap();
+
+    let (mut third_child, mut third_in, mut third_out) = spawn_sidecar(&config);
+    rpc(
+        &mut third_in,
+        &mut third_out,
+        8,
+        "project.open",
+        json!({ "root": root }),
+    );
+    let duplicate = rpc(
+        &mut third_in,
+        &mut third_out,
+        9,
+        "team.receipt.ack",
+        json!({
+            "root": root,
+            "generation": 12,
+            "batch_id": "renderer-team-ack",
+        }),
+    );
+    assert_eq!(duplicate["result"]["ack"]["acknowledged"], true);
+    assert_eq!(duplicate["result"]["ack"]["already_acknowledged"], true);
+    assert_eq!(std::fs::read(&history_path).unwrap(), history_after_ack);
+    assert_eq!(file_snapshot(&remote), remote_after_ack);
+    let no_pending = rpc(
+        &mut third_in,
+        &mut third_out,
+        10,
+        "team.receipt.pending",
+        json!({ "root": root, "generation": 12 }),
+    );
+    assert_eq!(no_pending["result"]["receipt"], Value::Null);
+    let unknown = rpc(
+        &mut third_in,
+        &mut third_out,
+        11,
+        "team.receipt.ack",
+        json!({
+            "root": root,
+            "generation": 12,
+            "batch_id": "unknown-receipt",
+        }),
+    );
+    assert_eq!(unknown["error"]["code"], -32005);
+    let _ = third_child.kill();
 }
 
 #[test]
@@ -1441,13 +1624,18 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
 
     fn spawn_sidecar(
         config: &std::path::Path,
+        abort_compaction: bool,
     ) -> (
         std::process::Child,
         std::process::ChildStdin,
         BufReader<std::process::ChildStdout>,
     ) {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
-            .env("OMEGAT_CONFIG_DIR", config)
+        let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
+        command.env("OMEGAT_CONFIG_DIR", config);
+        if abort_compaction {
+            command.env("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_ARCHIVE", "1");
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -1515,7 +1703,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
     let journal_path = compact_root.join(".repositories/transactions/external-refresh.json");
     let history_path =
         compact_root.join(".repositories/transactions/external-refresh-history.ndjson");
-    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config);
+    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config, false);
     rpc(
         &mut first_in,
         &mut first_out,
@@ -1589,7 +1777,50 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         .insert(0, acknowledged);
     std::fs::write(&journal_path, serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
 
-    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&compact_config);
+    let journal_before_interrupted_compaction = std::fs::read(&journal_path).unwrap();
+    let (mut interrupted_child, mut interrupted_in, mut interrupted_out) =
+        spawn_sidecar(&compact_config, true);
+    rpc(
+        &mut interrupted_in,
+        &mut interrupted_out,
+        5,
+        "project.open",
+        json!({ "root": compact_root }),
+    );
+    writeln!(
+        interrupted_in,
+        "{}",
+        json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "project.refresh.pending",
+            "params": refresh_scope(
+                &compact_root,
+                "electron-interrupted-compaction",
+                1,
+            ),
+        })
+    )
+    .unwrap();
+    interrupted_in.flush().unwrap();
+    drop(interrupted_in);
+    assert!(!interrupted_child.wait().unwrap().success());
+    assert_eq!(
+        std::fs::read(&journal_path).unwrap(),
+        journal_before_interrupted_compaction,
+        "interrupted compaction replaced the source journal"
+    );
+    let after_interruption: Value =
+        serde_json::from_slice(&journal_before_interrupted_compaction).unwrap();
+    assert_eq!(after_interruption["batches"][0]["status"], "completed");
+    assert_eq!(
+        after_interruption["batches"][1]["status"],
+        "sidecar_committed"
+    );
+    assert_eq!(after_interruption["batches"][1]["commit"], receipt);
+    assert_eq!(after_interruption["batches"][2]["status"], "pending");
+
+    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&compact_config, false);
     rpc(
         &mut second_in,
         &mut second_out,
@@ -1748,7 +1979,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
             serde_json::to_vec_pretty(&raw_journal(root, envelope_version, unknown_payload))
                 .unwrap();
         std::fs::write(&malformed_path, &malformed).unwrap();
-        let (mut child, mut child_in, mut child_out) = spawn_sidecar(&config);
+        let (mut child, mut child_in, mut child_out) = spawn_sidecar(&config, false);
         rpc(
             &mut child_in,
             &mut child_out,

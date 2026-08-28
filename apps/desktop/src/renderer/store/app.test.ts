@@ -10,13 +10,19 @@ import type { RpcOperationEvent } from "../../shared/rpc-operation";
 import {
   connectExternalProjectEvents,
   connectRpcOperationEvents,
+  connectTeamReceiptEvents,
   resetAppState,
   useApp,
 } from "./app";
+import type { TeamRendererReceipt } from "../lib/types";
 
 const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
 let rpcOperationListener: ((event: RpcOperationEvent) => void) | null = null;
+let teamReceiptListener: ((receipt: TeamRendererReceipt) => void) | null = null;
+const acknowledgeTeamReceipt = vi.fn(async () => ({
+  ack: { acknowledged: true, already_acknowledged: false },
+}));
 const refreshEntriesAfterExternalChange =
   useApp.getState().refreshEntriesAfterExternalChange;
 
@@ -39,6 +45,13 @@ function installBridge() {
         rpcOperationListener = listener;
         return () => {
           if (rpcOperationListener === listener) rpcOperationListener = null;
+        };
+      },
+      acknowledgeTeamReceipt,
+      onTeamReceipt: (listener: (receipt: TeamRendererReceipt) => void) => {
+        teamReceiptListener = listener;
+        return () => {
+          if (teamReceiptListener === listener) teamReceiptListener = null;
         };
       },
       pickDir: async () => null,
@@ -83,7 +96,9 @@ describe("app store", () => {
   beforeEach(() => {
     rpc.mockReset();
     cancelRpc.mockClear();
+    acknowledgeTeamReceipt.mockClear();
     rpcOperationListener = null;
+    teamReceiptListener = null;
     installBridge();
     resetAppState();
     useApp.setState({ refreshEntriesAfterExternalChange });
@@ -868,6 +883,116 @@ describe("app store", () => {
       },
       methods: ["team.sync"],
     });
+  });
+
+  it("acks a team receipt only after its renderer rebind succeeds", async () => {
+    const root = "/team-receipt";
+    projectEvents.publishProject("load", root);
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const receipt: TeamRendererReceipt = {
+      version: 1,
+      project_root: root,
+      generation,
+      batch_id: "operation-teamSync-1",
+      status: "sidecar_committed",
+      operation: "sync",
+      commit: {
+        manifest_sha256: "a".repeat(64),
+        manifest_items: 4,
+      },
+    };
+    const order: string[] = [];
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "team.sync") {
+        order.push("sidecar-committed");
+        return { action: "sync", message: "done", receipt };
+      }
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    const rebind = vi.fn(async () => {
+      order.push("renderer-rebound");
+      return true;
+    });
+    acknowledgeTeamReceipt.mockImplementationOnce(async () => {
+      order.push("renderer-acked");
+      return {
+        ack: { acknowledged: true, already_acknowledged: false },
+      };
+    });
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: false,
+        has_repositories: true,
+      },
+      refreshEntriesAfterExternalChange: rebind,
+    });
+
+    await useApp.getState().teamSync();
+
+    expect(order).toEqual([
+      "sidecar-committed",
+      "renderer-rebound",
+      "renderer-acked",
+    ]);
+    expect(acknowledgeTeamReceipt).toHaveBeenCalledWith(
+      root,
+      generation,
+      "operation-teamSync-1",
+    );
+    expect(useApp.getState().longOperation?.phase).toBe("succeeded");
+  });
+
+  it("retries a recovery receipt after a lost ack without replaying team writes", async () => {
+    const root = "/team-receipt-restart";
+    projectEvents.publishProject("load", root);
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const receipt: TeamRendererReceipt = {
+      version: 1,
+      project_root: root,
+      generation,
+      batch_id: "team-after-sidecar-restart",
+      status: "sidecar_committed",
+      operation: "commit-source",
+      commit: {
+        manifest_sha256: "b".repeat(64),
+        manifest_items: 3,
+      },
+    };
+    const rebind = vi.fn(async () => true);
+    acknowledgeTeamReceipt
+      .mockRejectedValueOnce(new Error("sidecar exited before ack"))
+      .mockResolvedValueOnce({
+        ack: { acknowledged: true, already_acknowledged: true },
+      });
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: false,
+        has_repositories: true,
+      },
+      refreshEntriesAfterExternalChange: rebind,
+    });
+    const disconnect = connectTeamReceiptEvents();
+
+    teamReceiptListener?.(receipt);
+    await vi.waitFor(() =>
+      expect(useApp.getState().error).toContain(
+        "team receipt acknowledgement pending",
+      )
+    );
+    teamReceiptListener?.(receipt);
+    await vi.waitFor(() => expect(acknowledgeTeamReceipt).toHaveBeenCalledTimes(2));
+
+    expect(rebind).toHaveBeenCalledTimes(2);
+    expect(rpc.mock.calls.some(([method]) =>
+      method === "team.sync" || method === "team.commit"
+    )).toBe(false);
+    disconnect();
   });
 
   it("commits, saves, and rebinds the complete EntryKey across project reload", async () => {

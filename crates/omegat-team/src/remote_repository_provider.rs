@@ -8,7 +8,8 @@ use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::transaction_envelope::{
-    write_json_atomic, TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
+    write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
+    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 use crate::{team_enabled, SyncReport};
 use fs2::FileExt;
@@ -357,6 +358,34 @@ struct SyncTransactionPayload {
 #[serde(transparent)]
 struct SyncTransaction(TransactionEnvelope<SyncTransactionPayload>);
 
+/// Small renderer-facing view of a durable team product receipt.
+///
+/// The potentially large product manifest remains in `active.json`; the
+/// renderer needs only the envelope identity and receipt fingerprint to
+/// explicitly acknowledge that it consumed the committed team result.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamRendererReceipt {
+    pub version: u8,
+    pub project_root: PathBuf,
+    pub generation: u64,
+    pub batch_id: String,
+    pub status: TransactionStatus,
+    pub operation: String,
+    pub commit: TransactionCommit,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamRendererAck {
+    pub version: u8,
+    pub project_root: PathBuf,
+    pub generation: u64,
+    pub batch_id: String,
+    pub acknowledged: bool,
+    pub already_acknowledged: bool,
+}
+
 impl std::ops::Deref for SyncTransaction {
     type Target = SyncTransactionPayload;
 
@@ -372,12 +401,26 @@ impl std::ops::DerefMut for SyncTransaction {
 }
 
 impl SyncTransaction {
+    fn ensure_slot_available(props: &ProjectProperties) -> Result<()> {
+        let dir = transaction_dir(props);
+        for path in [dir.join("active.json"), dir.join(".active.previous.json")] {
+            if path.is_file() {
+                return Err(TeamError::Conflict(format!(
+                    "team transaction is waiting for renderer acknowledgement: {}",
+                    path.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn begin(
         props: &ProjectProperties,
         operation: &str,
         generation: u64,
         batch_id: Option<&str>,
     ) -> Result<(Self, SyncSnapshot)> {
+        Self::ensure_slot_available(props)?;
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let generated_id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
         let id = batch_id
@@ -416,6 +459,7 @@ impl SyncTransaction {
         generation: u64,
         batch_id: Option<&str>,
     ) -> Result<(Self, SyncSnapshot)> {
+        Self::ensure_slot_available(props)?;
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let generated_id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
         let id = batch_id
@@ -500,7 +544,12 @@ impl SyncTransaction {
         Ok(())
     }
 
-    fn publish_product_commit(&mut self, props: &ProjectProperties, phase: &str) -> Result<()> {
+    fn publish_product_commit(
+        &mut self,
+        props: &ProjectProperties,
+        phase: &str,
+        await_renderer_ack: bool,
+    ) -> Result<()> {
         let manifest = capture_product_manifest(props)?;
         let manifest_items = manifest.files.len() as u64
             + manifest.repository_versions.len() as u64
@@ -508,12 +557,58 @@ impl SyncTransaction {
         self.phase = phase.into();
         self.product_manifest = Some(manifest.clone());
         self.0
-            .commit_product(TransactionStatus::Completed, &manifest, manifest_items)
+            .commit_product(
+                if await_renderer_ack {
+                    TransactionStatus::SidecarCommitted
+                } else {
+                    TransactionStatus::Completed
+                },
+                &manifest,
+                manifest_items,
+            )
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         self.persist(props)?;
         #[cfg(test)]
         if CRASH_AFTER_PRODUCT_COMMIT.swap(0, Ordering::SeqCst) == 1 {
             std::process::abort();
+        }
+        Ok(())
+    }
+
+    fn renderer_receipt(&self) -> Result<TeamRendererReceipt> {
+        if self.0.status != TransactionStatus::SidecarCommitted {
+            return Err(TeamError::Command(format!(
+                "team transaction {} is not awaiting renderer acknowledgement",
+                self.0.batch_id
+            )));
+        }
+        let commit = self.0.commit.clone().ok_or_else(|| {
+            TeamError::Command(format!(
+                "team transaction {} has no product receipt",
+                self.0.batch_id
+            ))
+        })?;
+        Ok(TeamRendererReceipt {
+            version: self.0.version,
+            project_root: self.0.project_root.clone(),
+            generation: self.0.generation,
+            batch_id: self.0.batch_id.clone(),
+            status: self.0.status,
+            operation: self.operation.clone(),
+            commit,
+        })
+    }
+
+    fn validate_repository_shape(&self, props: &ProjectProperties) -> Result<()> {
+        if self.repository_count != props.repositories.len()
+            || self.rollback_versions.len() != props.repositories.len()
+        {
+            return Err(TeamError::Command(format!(
+                "team transaction {} expected {} repositories, found {}",
+                self.0.batch_id,
+                self.repository_count,
+                props.repositories.len()
+            )));
         }
         Ok(())
     }
@@ -560,18 +655,27 @@ impl SyncTransaction {
             .0
             .validate_for_root(&props.root)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
-        if !transaction.0.status.is_recoverable() {
-            if let Some(manifest) = transaction.product_manifest.as_ref() {
-                let manifest_items = manifest.files.len() as u64
-                    + manifest.repository_versions.len() as u64
-                    + u64::from(manifest.root_git_version.is_some());
-                if !transaction.0.verify_product(manifest, manifest_items) {
-                    return Err(TeamError::Command(format!(
-                        "team transaction {} product receipt mismatch",
-                        transaction.0.batch_id
-                    )));
-                }
+        if matches!(
+            transaction.0.status,
+            TransactionStatus::SidecarCommitted | TransactionStatus::Completed
+        ) {
+            let manifest = transaction.product_manifest.as_ref().ok_or_else(|| {
+                TeamError::Command(format!(
+                    "team transaction {} has no product manifest",
+                    transaction.0.batch_id
+                ))
+            })?;
+            let manifest_items = manifest.files.len() as u64
+                + manifest.repository_versions.len() as u64
+                + u64::from(manifest.root_git_version.is_some());
+            if !transaction.0.verify_product(manifest, manifest_items) {
+                return Err(TeamError::Command(format!(
+                    "team transaction {} product receipt mismatch",
+                    transaction.0.batch_id
+                )));
             }
+        }
+        if !transaction.0.status.is_recoverable() {
             remove_path(&transaction.snapshot)?;
             remove_path(&active)?;
             remove_path(&previous)?;
@@ -767,15 +871,12 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
     let Some(mut transaction) = SyncTransaction::load(props)? else {
         return Ok(false);
     };
-    if transaction.repository_count != props.repositories.len()
-        || transaction.rollback_versions.len() != props.repositories.len()
-    {
-        return Err(TeamError::Command(format!(
-            "team transaction {} expected {} repositories, found {}",
-            transaction.0.batch_id,
-            transaction.repository_count,
-            props.repositories.len()
-        )));
+    transaction.validate_repository_shape(props)?;
+    if transaction.0.status == TransactionStatus::SidecarCommitted {
+        // The product and its receipt crossed the atomic boundary. Keep both
+        // active state and rollback snapshot until a renderer explicitly acks
+        // this exact envelope, including after a sidecar or Electron restart.
+        return Ok(false);
     }
     if transaction.phase == "capturing" {
         transaction.finish(
@@ -876,7 +977,7 @@ pub fn commit_product_transaction_cancellable<T>(
                 return Err(error);
             }
             product_transaction_checkpoint(operation, "before_atomic_publish")?;
-            if let Err(error) = journal.publish_product_commit(props, "committed") {
+            if let Err(error) = journal.publish_product_commit(props, "committed", false) {
                 snapshot.restore_project_and_prep(props)?;
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
@@ -976,6 +1077,7 @@ pub fn sync_cancellable_scoped(
     }
 
     let (mut journal, snapshot) = SyncTransaction::begin(props, "sync", generation, batch_id)?;
+    let await_renderer_ack = generation != 0 && batch_id.is_some();
     let mut observed = vec![None; props.repositories.len()];
     let mut rollback_versions = vec![None; props.repositories.len()];
     let mut published = Vec::new();
@@ -1101,7 +1203,7 @@ pub fn sync_cancellable_scoped(
     }
 
     let publish_result = product_transaction_checkpoint("team.sync", "before_atomic_publish")
-        .and_then(|_| journal.publish_product_commit(props, "committed"));
+        .and_then(|_| journal.publish_product_commit(props, "committed", await_renderer_ack));
     if let Err(error) = publish_result {
         let mut rollback_failures = rollback_repositories(
             props,
@@ -1125,7 +1227,9 @@ pub fn sync_cancellable_scoped(
         )));
     }
     product_transaction_checkpoint("team.sync", "after_atomic_publish")?;
-    journal.cleanup(props)?;
+    if !await_renderer_ack {
+        journal.cleanup(props)?;
+    }
     for repo in &props.repositories {
         report
             .message
@@ -1181,6 +1285,7 @@ pub fn commit_project_files_cancellable_scoped(
     }
     let root_git = props.root.join(".git").exists();
     if !props.repositories.is_empty() || root_git {
+        let await_renderer_ack = generation != 0 && batch_id.is_some();
         let (mut journal, snapshot) =
             SyncTransaction::begin(props, &format!("commit-{label}"), generation, batch_id)?;
         let mut rollback_versions = vec![None; props.repositories.len()];
@@ -1268,7 +1373,7 @@ pub fn commit_project_files_cancellable_scoped(
             )));
         }
         let publish_result = product_transaction_checkpoint("team.commit", "before_atomic_publish")
-            .and_then(|_| journal.publish_product_commit(props, "committed"));
+            .and_then(|_| journal.publish_product_commit(props, "committed", await_renderer_ack));
         if let Err(error) = publish_result {
             let mut rollback_failures = rollback_repositories(
                 props,
@@ -1297,7 +1402,9 @@ pub fn commit_project_files_cancellable_scoped(
             )));
         }
         product_transaction_checkpoint("team.commit", "after_atomic_publish")?;
-        journal.cleanup(props)?;
+        if !await_renderer_ack {
+            journal.cleanup(props)?;
+        }
     }
     Ok(SyncReport {
         action: format!("commit-{label}"),
@@ -1312,6 +1419,119 @@ pub fn commit_project_files_cancellable_scoped(
         ),
         conflicts: vec![],
     })
+}
+
+fn acknowledged_receipt_in_history(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+) -> Result<bool> {
+    let path = transaction_dir(props).join("history.ndjson");
+    let Ok(history) = std::fs::read_to_string(&path) else {
+        return Ok(false);
+    };
+    for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
+        let transaction: SyncTransaction = serde_json::from_str(line)
+            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+        if transaction.0.batch_id == batch_id {
+            return Ok(transaction.0.generation == generation
+                && transaction.0.status == TransactionStatus::Completed
+                && transaction.phase == "renderer-acknowledged");
+        }
+    }
+    Ok(false)
+}
+
+/// Return the one committed team receipt that still requires renderer ack.
+///
+/// A replacement renderer adopts the receipt under its current project
+/// generation. Pending pre-commit transactions are recovered separately and
+/// are never exposed as committed work.
+pub fn pending_renderer_receipt(
+    props: &ProjectProperties,
+    generation: u64,
+) -> Result<Option<TeamRendererReceipt>> {
+    if generation == 0 {
+        return Err(TeamError::Command(
+            "renderer receipt generation must be non-zero".into(),
+        ));
+    }
+    let _lock = acquire_project_transaction_lock(props)?;
+    let Some(mut transaction) = SyncTransaction::load(props)? else {
+        return Ok(None);
+    };
+    transaction.validate_repository_shape(props)?;
+    if transaction.0.status != TransactionStatus::SidecarCommitted {
+        return Ok(None);
+    }
+    if transaction.0.generation != generation {
+        transaction.0.restamp_generation(generation);
+        transaction.persist(props)?;
+    }
+    transaction.renderer_receipt().map(Some)
+}
+
+/// Idempotently acknowledge a team receipt after renderer publication.
+///
+/// Only this transition removes `active.json` and its rollback snapshot. If
+/// the acknowledgement response is lost, repeating the same RPC consults the
+/// durable completed history and performs no product write or compensation.
+pub fn acknowledge_renderer_receipt(
+    props: &ProjectProperties,
+    generation: u64,
+    batch_id: &str,
+) -> Result<TeamRendererAck> {
+    if generation == 0 || batch_id.is_empty() {
+        return Err(TeamError::Command(
+            "renderer acknowledgement requires generation and batch id".into(),
+        ));
+    }
+    let _lock = acquire_project_transaction_lock(props)?;
+    if let Some(mut transaction) = SyncTransaction::load(props)? {
+        transaction.validate_repository_shape(props)?;
+        if transaction.0.batch_id != batch_id {
+            return Err(TeamError::Conflict(format!(
+                "team renderer receipt is {}, not {batch_id}",
+                transaction.0.batch_id
+            )));
+        }
+        if transaction.0.generation != generation {
+            return Err(TeamError::Conflict(format!(
+                "team renderer receipt {} belongs to generation {}, not {generation}",
+                transaction.0.batch_id, transaction.0.generation
+            )));
+        }
+        if transaction.0.status != TransactionStatus::SidecarCommitted {
+            return Err(TeamError::Conflict(format!(
+                "team transaction {batch_id} is not awaiting renderer acknowledgement"
+            )));
+        }
+        transaction.phase = "renderer-acknowledged".into();
+        transaction.0.transition(TransactionStatus::Completed, None);
+        transaction.persist(props)?;
+        transaction.cleanup(props)?;
+        return Ok(TeamRendererAck {
+            version: TRANSACTION_ENVELOPE_VERSION,
+            project_root: normalized(&props.root),
+            generation,
+            batch_id: batch_id.to_string(),
+            acknowledged: true,
+            already_acknowledged: false,
+        });
+    }
+    if acknowledged_receipt_in_history(props, generation, batch_id)? {
+        return Ok(TeamRendererAck {
+            version: TRANSACTION_ENVELOPE_VERSION,
+            project_root: normalized(&props.root),
+            generation,
+            batch_id: batch_id.to_string(),
+            acknowledged: true,
+            already_acknowledged: true,
+        });
+    }
+    Err(TeamError::Conflict(format!(
+        "unknown team renderer receipt {batch_id}"
+    )))
 }
 
 pub fn get_version(

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import {
   access,
   mkdir,
@@ -14,6 +14,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 const WAIT_MS = 60_000;
 const desktopDir = resolve(import.meta.dirname, "..");
@@ -25,6 +26,7 @@ const sidecar =
   ?? resolve(desktopDir, "..", "..", "target", "release", "omegat-sidecar");
 const keepWorkDir = process.env.OMEGAT_KEEP_E2E_WORKDIR === "1";
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+const execFile = promisify(execFileCallback);
 
 async function waitFor(label, check, timeoutMs = WAIT_MS) {
   const deadline = Date.now() + timeoutMs;
@@ -318,6 +320,68 @@ async function snapshot(root, { ignoreTopLevel = [] } = {}) {
   return files;
 }
 
+async function git(args, cwd) {
+  const result = await execFile("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return result.stdout.trim();
+}
+
+async function bareGitState(remote) {
+  const head = await git([
+    "--git-dir",
+    remote,
+    "rev-parse",
+    "refs/heads/main",
+  ]);
+  const names = (await git([
+    "--git-dir",
+    remote,
+    "ls-tree",
+    "-r",
+    "--name-only",
+    "refs/heads/main",
+  ])).split(/\r?\n/).filter(Boolean);
+  const files = [];
+  for (const name of names) {
+    const { stdout } = await execFile(
+      "git",
+      ["--git-dir", remote, "show", `refs/heads/main:${name}`],
+      { encoding: null, maxBuffer: 16 * 1024 * 1024 },
+    );
+    files.push([name, Buffer.from(stdout).toString("base64")]);
+  }
+  return { head, files };
+}
+
+async function findGitWorktree(project) {
+  const repositories = join(project, ".repositories");
+  for (const entry of await readdir(repositories, { withFileTypes: true })) {
+    if (
+      entry.isDirectory()
+      && await pathExists(join(repositories, entry.name, ".git"))
+    ) {
+      return join(repositories, entry.name);
+    }
+  }
+  throw new Error("packaged Git worktree was not created");
+}
+
+async function assertGitCoherent(project, remote, expected) {
+  const state = await bareGitState(remote);
+  assert.deepEqual(state.files, expected.files);
+  const worktree = await findGitWorktree(project);
+  assert.equal(await git(["rev-parse", "HEAD"], worktree), state.head);
+  assert.equal(await git(["status", "--porcelain"], worktree), "");
+  assert.deepEqual(
+    await snapshot(worktree, { ignoreTopLevel: [".git"] }),
+    expected.files,
+  );
+  return state;
+}
+
 function parseNdjson(raw) {
   return raw.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
@@ -455,7 +519,8 @@ await Promise.all([access(executable), access(sidecar)]);
 const workDir = await mkdtemp(join(tmpdir(), "omegat-team-rename-e2e-"));
 const configDir = join(workDir, "config");
 const project = join(workDir, "project");
-const mainRemote = join(workDir, "main-file-remote");
+const mainRemote = join(workDir, "main-git-remote.git");
+const mainSeed = join(workDir, "main-git-seed");
 const mappingRemote = join(workDir, "mapping-file-remote");
 const active = join(project, ".repositories", "transactions", "active.json");
 const history = join(project, ".repositories", "transactions", "history.ndjson");
@@ -469,9 +534,9 @@ const mainProduct = join(project, "team-main.marker");
 const mappingProduct = join(project, "team-mapping.marker");
 const repositories = [
   {
-    repo_type: "file",
+    repo_type: "git",
     url: mainRemote,
-    branch: null,
+    branch: "main",
     mappings: [{
       local: "/team-main.marker",
       repository: "/main.marker",
@@ -497,9 +562,18 @@ let launched;
 try {
   await Promise.all([
     mkdir(configDir, { recursive: true }),
-    mkdir(mainRemote, { recursive: true }),
+    mkdir(mainSeed, { recursive: true }),
     mkdir(mappingRemote, { recursive: true }),
   ]);
+  await git(["init", "--bare", mainRemote], workDir);
+  await git(["init", "-b", "main"], mainSeed);
+  await git(["config", "user.name", "OmegaT E2E"], mainSeed);
+  await git(["config", "user.email", "omegat-e2e@example.invalid"], mainSeed);
+  await writeFile(join(mainSeed, "main-seed.keep"), "main seed\n", "utf8");
+  await git(["add", "-A"], mainSeed);
+  await git(["commit", "-m", "seed packaged team Git remote"], mainSeed);
+  await git(["remote", "add", "origin", mainRemote], mainSeed);
+  await git(["push", "-u", "origin", "HEAD:refs/heads/main"], mainSeed);
   await rpcOnce(configDir, "project.create", {
     root: project,
     source_lang: "en",
@@ -511,7 +585,6 @@ try {
     writeFile(join(project, "source", "b-decoy.txt"), duplicateSource, "utf8"),
     writeFile(mainProduct, "main-v1\n", "utf8"),
     writeFile(mappingProduct, "mapping-v1\n", "utf8"),
-    writeFile(join(mainRemote, "main-seed.keep"), "main seed\n", "utf8"),
     writeFile(join(mappingRemote, "mapping-seed.keep"), "mapping seed\n", "utf8"),
   ]);
 
@@ -547,8 +620,8 @@ try {
   await terminatePackaged(launched);
   launched = undefined;
 
-  // team.sync: kill while the product and both file remotes have changed but
-  // before the completed receipt crosses active.json's atomic rename.
+  // team.sync: kill while the product, Git remote, and file remote have
+  // changed but before the sidecar receipt crosses active.json's atomic rename.
   launched = await launchPackaged(
     xvfb.display,
     configDir,
@@ -560,17 +633,15 @@ try {
   const syncProjectBefore = await snapshot(project, {
     ignoreTopLevel: [".repositories"],
   });
-  const syncRemotesBefore = [
-    await snapshot(mainRemote),
-    await snapshot(mappingRemote),
-  ];
+  const syncGitBefore = await bareGitState(mainRemote);
+  const syncMappingBefore = await snapshot(mappingRemote);
   await triggerVisibleTeamOperation(launched.client, "team-sync");
   await waitFor("team.sync pre-rename checkpoint", () => pathExists(syncBeforeMarker));
   const syncPending = await activeEnvelope(active, "pending");
   assert.equal(syncPending.payload.operation, "sync");
   assert.deepEqual(await editorState(launched.client), syncBeforeEditor);
-  assert.notDeepEqual(await snapshot(mainRemote), syncRemotesBefore[0]);
-  assert.notDeepEqual(await snapshot(mappingRemote), syncRemotesBefore[1]);
+  assert.notDeepEqual(await bareGitState(mainRemote), syncGitBefore);
+  assert.notDeepEqual(await snapshot(mappingRemote), syncMappingBefore);
   const syncKilledBefore = await killPackaged(launched);
   launched = undefined;
 
@@ -587,8 +658,8 @@ try {
     await snapshot(project, { ignoreTopLevel: [".repositories"] }),
     syncProjectBefore,
   );
-  assert.deepEqual(await snapshot(mainRemote), syncRemotesBefore[0]);
-  assert.deepEqual(await snapshot(mappingRemote), syncRemotesBefore[1]);
+  await assertGitCoherent(project, mainRemote, syncGitBefore);
+  assert.deepEqual(await snapshot(mappingRemote), syncMappingBefore);
   await terminatePackaged(launched);
   launched = undefined;
 
@@ -604,17 +675,15 @@ try {
   const syncAfterEditor = await placeActiveCaret(launched.client);
   await triggerVisibleTeamOperation(launched.client, "team-sync");
   await waitFor("team.sync post-rename checkpoint", () => pathExists(syncAfterMarker));
-  const syncCommitted = await activeEnvelope(active, "completed");
+  const syncCommitted = await activeEnvelope(active, "sidecar_committed");
   assert.equal(syncCommitted.payload.operation, "sync");
   assert.equal(syncCommitted.commit.manifest_sha256.length, 64);
   assert.deepEqual(await editorState(launched.client), syncAfterEditor);
   const syncCommittedProject = await snapshot(project, {
     ignoreTopLevel: [".repositories"],
   });
-  const syncCommittedRemotes = [
-    await snapshot(mainRemote),
-    await snapshot(mappingRemote),
-  ];
+  const syncCommittedGit = await bareGitState(mainRemote);
+  const syncCommittedMapping = await snapshot(mappingRemote);
   const syncKilledAfter = await killPackaged(launched);
   launched = undefined;
 
@@ -627,12 +696,26 @@ try {
   await waitFor("team.sync committed receipt cleanup", async () =>
     await pathExists(active) ? undefined : true
   );
+  const syncGeneration = await launched.client.evaluate(
+    'Number(document.querySelector(".app")?.dataset.projectGeneration ?? 0)',
+  );
+  const duplicateSyncAck = await launched.client.evaluate(
+    `window.omegat.acknowledgeTeamReceipt(
+      ${JSON.stringify(project)},
+      ${JSON.stringify(syncGeneration)},
+      ${JSON.stringify(syncCommitted.batch_id)}
+    )`,
+    true,
+  );
+  assert.equal(duplicateSyncAck.ack.acknowledged, true);
+  assert.equal(duplicateSyncAck.ack.already_acknowledged, true);
   assert.deepEqual(
     await snapshot(project, { ignoreTopLevel: [".repositories"] }),
     syncCommittedProject,
   );
-  assert.deepEqual(await snapshot(mainRemote), syncCommittedRemotes[0]);
-  assert.deepEqual(await snapshot(mappingRemote), syncCommittedRemotes[1]);
+  assert.deepEqual(await bareGitState(mainRemote), syncCommittedGit);
+  await assertGitCoherent(project, mainRemote, syncCommittedGit);
+  assert.deepEqual(await snapshot(mappingRemote), syncCommittedMapping);
   await terminatePackaged(launched);
   launched = undefined;
 
@@ -653,17 +736,15 @@ try {
   const commitProjectBefore = await snapshot(project, {
     ignoreTopLevel: [".repositories"],
   });
-  const commitRemotesBefore = [
-    await snapshot(mainRemote),
-    await snapshot(mappingRemote),
-  ];
+  const commitGitBefore = await bareGitState(mainRemote);
+  const commitMappingBefore = await snapshot(mappingRemote);
   await triggerVisibleTeamOperation(launched.client, "team-commit-source");
   await waitFor("team.commit pre-rename checkpoint", () => pathExists(commitBeforeMarker));
   const commitPending = await activeEnvelope(active, "pending");
   assert.equal(commitPending.payload.operation, "commit-source");
   assert.deepEqual(await editorState(launched.client), commitBeforeEditor);
-  assert.notDeepEqual(await snapshot(mainRemote), commitRemotesBefore[0]);
-  assert.notDeepEqual(await snapshot(mappingRemote), commitRemotesBefore[1]);
+  assert.notDeepEqual(await bareGitState(mainRemote), commitGitBefore);
+  assert.notDeepEqual(await snapshot(mappingRemote), commitMappingBefore);
   const commitKilledBefore = await killPackaged(launched);
   launched = undefined;
 
@@ -680,8 +761,8 @@ try {
     await snapshot(project, { ignoreTopLevel: [".repositories"] }),
     commitProjectBefore,
   );
-  assert.deepEqual(await snapshot(mainRemote), commitRemotesBefore[0]);
-  assert.deepEqual(await snapshot(mappingRemote), commitRemotesBefore[1]);
+  await assertGitCoherent(project, mainRemote, commitGitBefore);
+  assert.deepEqual(await snapshot(mappingRemote), commitMappingBefore);
   await terminatePackaged(launched);
   launched = undefined;
 
@@ -695,17 +776,15 @@ try {
   const commitAfterEditor = await placeActiveCaret(launched.client);
   await triggerVisibleTeamOperation(launched.client, "team-commit-source");
   await waitFor("team.commit post-rename checkpoint", () => pathExists(commitAfterMarker));
-  const commitCommitted = await activeEnvelope(active, "completed");
+  const commitCommitted = await activeEnvelope(active, "sidecar_committed");
   assert.equal(commitCommitted.payload.operation, "commit-source");
   assert.equal(commitCommitted.commit.manifest_sha256.length, 64);
   assert.deepEqual(await editorState(launched.client), commitAfterEditor);
   const commitProduct = await snapshot(project, {
     ignoreTopLevel: [".repositories"],
   });
-  const commitRemotes = [
-    await snapshot(mainRemote),
-    await snapshot(mappingRemote),
-  ];
+  const committedGit = await bareGitState(mainRemote);
+  const committedMapping = await snapshot(mappingRemote);
   const commitKilledAfter = await killPackaged(launched);
   launched = undefined;
 
@@ -718,13 +797,30 @@ try {
   await waitFor("team.commit committed receipt cleanup", async () =>
     await pathExists(active) ? undefined : true
   );
+  const commitGeneration = await launched.client.evaluate(
+    'Number(document.querySelector(".app")?.dataset.projectGeneration ?? 0)',
+  );
+  const duplicateCommitAck = await launched.client.evaluate(
+    `window.omegat.acknowledgeTeamReceipt(
+      ${JSON.stringify(project)},
+      ${JSON.stringify(commitGeneration)},
+      ${JSON.stringify(commitCommitted.batch_id)}
+    )`,
+    true,
+  );
+  assert.equal(duplicateCommitAck.ack.acknowledged, true);
+  assert.equal(duplicateCommitAck.ack.already_acknowledged, true);
   assert.deepEqual(
     await snapshot(project, { ignoreTopLevel: [".repositories"] }),
     commitProduct,
   );
-  assert.deepEqual(await snapshot(mainRemote), commitRemotes[0]);
-  assert.deepEqual(await snapshot(mappingRemote), commitRemotes[1]);
-  assert.equal(await readFile(join(mainRemote, "main.marker"), "utf8"), "main-v2\n");
+  assert.deepEqual(await bareGitState(mainRemote), committedGit);
+  await assertGitCoherent(project, mainRemote, committedGit);
+  assert.deepEqual(await snapshot(mappingRemote), committedMapping);
+  assert.equal(
+    await git(["--git-dir", mainRemote, "show", "refs/heads/main:main.marker"]),
+    "main-v2",
+  );
   assert.equal(
     await readFile(join(mappingRemote, "mapping.marker"), "utf8"),
     "mapping-v2\n",
@@ -781,7 +877,7 @@ try {
         batchId: syncPending.batch_id,
         killed: syncKilledBefore,
         projectRollback: true,
-        remoteRollback: { main: true, mapping: true },
+        remoteRollback: { gitHeadAndWorktree: true, fileMapping: true },
         editorBeforeKill: syncBeforeEditor,
         editorAfterRecovery: syncRecoveredEditor,
       },
@@ -789,6 +885,8 @@ try {
         batchId: syncCommitted.batch_id,
         killed: syncKilledAfter,
         receiptPreserved: true,
+        rendererAckRecovered: true,
+        duplicateAckIdempotent: duplicateSyncAck.ack.already_acknowledged,
         replayedWrites: 0,
         editorBeforeKill: syncAfterEditor,
         editorAfterRecovery: syncCommittedEditor,
@@ -799,7 +897,7 @@ try {
         batchId: commitPending.batch_id,
         killed: commitKilledBefore,
         projectRollback: true,
-        remoteRollback: { main: true, mapping: true },
+        remoteRollback: { gitHeadAndWorktree: true, fileMapping: true },
         editorBeforeKill: commitBeforeEditor,
         editorAfterRecovery: commitRecoveredEditor,
       },
@@ -807,6 +905,8 @@ try {
         batchId: commitCommitted.batch_id,
         killed: commitKilledAfter,
         receiptPreserved: true,
+        rendererAckRecovered: true,
+        duplicateAckIdempotent: duplicateCommitAck.ack.already_acknowledged,
         replayedWrites: 0,
         editorBeforeKill: commitAfterEditor,
         editorAfterRecovery: commitCommittedEditor,

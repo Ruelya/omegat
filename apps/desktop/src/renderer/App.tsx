@@ -8,6 +8,7 @@ import { SearchWindow } from "./search/SearchWindow";
 import {
   connectExternalProjectEvents,
   connectRpcOperationEvents,
+  connectTeamReceiptEvents,
   useApp,
 } from "./store/app";
 import { Welcome } from "./welcome/Welcome";
@@ -49,6 +50,7 @@ export function App() {
 
   useEffect(() => connectExternalProjectEvents(), []);
   useEffect(() => connectRpcOperationEvents(), []);
+  useEffect(() => connectTeamReceiptEvents(), []);
 
   useEffect(() => {
     const root = app.props?.root;

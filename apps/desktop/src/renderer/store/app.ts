@@ -43,6 +43,7 @@ import type {
   SearchHitDto,
   StatsDto,
   TeamConflict,
+  TeamRendererReceipt,
   WindowId,
 } from "../lib/types";
 import { applyDocumentLocale, detectLocale, t } from "../i18n";
@@ -1129,11 +1130,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
   teamSync: async () => {
     try {
-      const r = await get().runLongOperation<{ action: string; message: string }>(
+      const r = await get().runLongOperation<{
+        action: string;
+        message: string;
+        receipt?: TeamRendererReceipt | null;
+      }>(
         "teamSync",
       );
       set({ teamMessage: `${r.action}: ${r.message}` });
       await get().refreshEntriesAfterExternalChange(undefined, true);
+      if (r.receipt) await acknowledgeTeamReceiptOrDefer(r.receipt);
     } catch (e) {
       if (isAbortError(e)) {
         set({ teamMessage: "sync cancelled" });
@@ -1161,12 +1167,17 @@ export const useApp = create<AppState>((set, get) => ({
   },
   teamCommit: async (which) => {
     try {
-      const r = await get().runLongOperation<{ action: string; message: string }>(
+      const r = await get().runLongOperation<{
+        action: string;
+        message: string;
+        receipt?: TeamRendererReceipt | null;
+      }>(
         "teamCommit",
         { which },
       );
       set({ teamMessage: `${r.action}: ${r.message}` });
       get().logLine(`commit ${which}`);
+      if (r.receipt) await acknowledgeTeamReceiptOrDefer(r.receipt);
     } catch (error) {
       if (!isAbortError(error)) throw error;
       set({ teamMessage: `commit ${which} cancelled` });
@@ -1672,6 +1683,80 @@ export function connectRpcOperationEvents(): () => void {
     useApp.setState((state) => ({
       longOperation: applyRpcOperationEvent(state.longOperation, event),
     }));
+  }) ?? (() => undefined);
+}
+
+async function acknowledgeTeamReceipt(receipt: TeamRendererReceipt): Promise<boolean> {
+  const state = useApp.getState();
+  if (
+    receipt.version !== 1
+    || receipt.status !== "sidecar_committed"
+    || state.props?.root !== receipt.project_root
+    || state.projectEvent.projectGeneration !== receipt.generation
+  ) {
+    return false;
+  }
+  const result = await window.omegat?.acknowledgeTeamReceipt?.(
+    receipt.project_root,
+    receipt.generation,
+    receipt.batch_id,
+  );
+  return result?.ack.acknowledged === true;
+}
+
+async function acknowledgeTeamReceiptOrDefer(
+  receipt: TeamRendererReceipt,
+): Promise<void> {
+  try {
+    if (!await acknowledgeTeamReceipt(receipt)) {
+      throw new Error("renderer receipt scope changed before acknowledgement");
+    }
+  } catch (error) {
+    const current = useApp.getState();
+    if (
+      current.props?.root === receipt.project_root
+      && current.projectEvent.projectGeneration === receipt.generation
+    ) {
+      useApp.setState({
+        error: `team receipt acknowledgement pending: ${String(error)}`,
+      });
+    }
+  }
+}
+
+export function connectTeamReceiptEvents(): () => void {
+  const inFlight = new Set<string>();
+  return window.omegat?.onTeamReceipt?.((receipt) => {
+    const identity = `${receipt.generation}\0${receipt.project_root}\0${receipt.batch_id}`;
+    if (inFlight.has(identity)) return;
+    const state = useApp.getState();
+    if (
+      receipt.version !== 1
+      || receipt.status !== "sidecar_committed"
+      || state.props?.root !== receipt.project_root
+      || state.projectEvent.projectGeneration !== receipt.generation
+    ) return;
+    inFlight.add(identity);
+    void (async () => {
+      // A replacement sidecar has already reopened the committed product.
+      // Re-list and publish its exact complete-key state before acknowledging;
+      // never replay the team write or its compensation path.
+      const rebound = await useApp.getState().refreshEntriesAfterExternalChange();
+      if (!rebound) return;
+      await acknowledgeTeamReceipt(receipt);
+    })().catch((error) => {
+      const current = useApp.getState();
+      if (
+        current.props?.root === receipt.project_root
+        && current.projectEvent.projectGeneration === receipt.generation
+      ) {
+        useApp.setState({
+          error: `team receipt acknowledgement pending: ${String(error)}`,
+        });
+      }
+    }).finally(() => {
+      inFlight.delete(identity);
+    });
   }) ?? (() => undefined);
 }
 

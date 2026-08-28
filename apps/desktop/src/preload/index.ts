@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { RpcOperationEvent } from "../shared/rpc-operation";
 
+type TeamRendererReceipt = {
+  version: number;
+  project_root: string;
+  generation: number;
+  batch_id: string;
+  status: "sidecar_committed";
+  operation: string;
+  commit: {
+    manifest_sha256: string;
+    manifest_items: number;
+  };
+};
+
 contextBridge.exposeInMainWorld("omegat", {
   rpc: (method: string, params?: unknown, clientRequestId?: string) =>
     ipcRenderer.invoke("rpc", method, params ?? {}, clientRequestId),
@@ -41,6 +54,26 @@ contextBridge.exposeInMainWorld("omegat", {
     batchId,
     outcome,
   ) as Promise<{ remaining: unknown[] }>,
+  acknowledgeTeamReceipt: (
+    root: string,
+    generation: number,
+    batchId: string,
+  ) => ipcRenderer.invoke(
+    "team-receipt-ack",
+    root,
+    generation,
+    batchId,
+  ) as Promise<{
+    ack: {
+      acknowledged: boolean;
+      already_acknowledged: boolean;
+    };
+  }>,
+  onTeamReceipt: (fn: (receipt: TeamRendererReceipt) => void) => {
+    const listener = (_: unknown, receipt: TeamRendererReceipt) => fn(receipt);
+    ipcRenderer.on("team:receipt", listener);
+    return () => ipcRenderer.removeListener("team:receipt", listener);
+  },
   onProjectExternalChange: (
     fn: (event: {
       id: string;

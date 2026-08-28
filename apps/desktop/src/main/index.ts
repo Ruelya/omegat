@@ -117,6 +117,19 @@ type RefreshBatch = {
   };
 };
 
+type TeamRendererReceipt = {
+  version: number;
+  project_root: string;
+  generation: number;
+  batch_id: string;
+  status: "sidecar_committed";
+  operation: string;
+  commit: {
+    manifest_sha256: string;
+    manifest_items: number;
+  };
+};
+
 function normalizedProjectRoot(root: string): string {
   try {
     return realpathSync(root);
@@ -148,6 +161,36 @@ function publishRefreshBatch(
       ...batch.payload,
     });
   });
+}
+
+function publishTeamReceipt(
+  root: string,
+  generation: number,
+  receipt: TeamRendererReceipt,
+) {
+  if (
+    receipt.version !== 1
+    || receipt.generation !== generation
+    || receipt.status !== "sidecar_committed"
+    || normalizedProjectRoot(receipt.project_root) !== normalizedProjectRoot(root)
+  ) return;
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send("team:receipt", receipt);
+  });
+}
+
+async function publishPendingTeamReceipt(
+  client: SidecarRpcClient,
+  root: string,
+  generation: number,
+) {
+  const result = await client.request("team.receipt.pending", {
+    root,
+    generation,
+  }) as { receipt?: TeamRendererReceipt | null };
+  if (!result.receipt) return false;
+  publishTeamReceipt(root, generation, result.receipt);
+  return true;
 }
 
 async function pendingRefreshBatches(
@@ -195,11 +238,18 @@ function scheduleSidecarRecovery() {
       projectFileWatcher.currentProject()?.root === watched.root
       && projectFileWatcher.currentProject()?.generation === watched.generation
     ) {
-      await publishPendingRefreshBatches(
+      const teamReceiptPending = await publishPendingTeamReceipt(
         client,
         watched.root,
         watched.generation,
       );
+      if (!teamReceiptPending) {
+        await publishPendingRefreshBatches(
+          client,
+          watched.root,
+          watched.generation,
+        );
+      }
     }
   })().catch((error) => {
     process.stderr.write(`sidecar recovery failed: ${String(error)}\n`);
@@ -468,7 +518,11 @@ app.whenReady().then(() => {
         typeof generation === "number" ? generation : undefined,
       );
       const client = await statefulClient();
-      await publishPendingRefreshBatches(client, root, activeGeneration);
+      const teamReceiptPending =
+        await publishPendingTeamReceipt(client, root, activeGeneration);
+      if (!teamReceiptPending) {
+        await publishPendingRefreshBatches(client, root, activeGeneration);
+      }
     }
   });
   ipcMain.handle(
@@ -495,6 +549,39 @@ app.whenReady().then(() => {
         outcome,
         app_instance: appInstance,
       });
+    },
+  );
+  ipcMain.handle(
+    "team-receipt-ack",
+    async (
+      _e,
+      root: string,
+      generation: number,
+      batchId: string,
+    ) => {
+      const result = await rpc("team.receipt.ack", {
+        root,
+        generation,
+        batch_id: batchId,
+      });
+      const active = projectFileWatcher.currentProject();
+      if (
+        active?.root === root
+        && active.generation === generation
+      ) {
+        setTimeout(() => {
+          void statefulClient()
+            .then((client) =>
+              publishPendingRefreshBatches(client, root, generation)
+            )
+            .catch((error) => {
+              process.stderr.write(
+                `cannot publish refresh after team receipt ack: ${String(error)}\n`,
+              );
+            });
+        }, 0);
+      }
+      return result;
     },
   );
   ipcMain.handle("project-unwatch", async () => {

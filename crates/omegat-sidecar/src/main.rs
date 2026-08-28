@@ -775,9 +775,20 @@ impl App {
                     transaction_generation,
                     transaction_batch_id.as_deref(),
                 ) {
-                    Ok(r) => Ok(
-                        json!({"action": r.action, "message": r.message, "conflicts": r.conflicts}),
-                    ),
+                    Ok(r) => {
+                        let receipt = if transaction_generation == 0 {
+                            None
+                        } else {
+                            omegat_team::pending_renderer_receipt(&s.props, transaction_generation)
+                                .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+                        };
+                        Ok(json!({
+                            "action": r.action,
+                            "message": r.message,
+                            "conflicts": r.conflicts,
+                            "receipt": receipt,
+                        }))
+                    }
                     Err(omegat_team::TeamError::Cancelled) => {
                         Err((error_code::REQUEST_CANCELLED, "request cancelled".into()))
                     }
@@ -807,7 +818,44 @@ impl App {
                     }
                     other => (error_code::INTERNAL_ERROR, other.to_string()),
                 })?;
-                Ok(json!({"action": r.action, "message": r.message}))
+                let receipt = if transaction_generation == 0 {
+                    None
+                } else {
+                    omegat_team::pending_renderer_receipt(
+                        &self.session()?.props,
+                        transaction_generation,
+                    )
+                    .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+                };
+                Ok(json!({
+                    "action": r.action,
+                    "message": r.message,
+                    "receipt": receipt,
+                }))
+            }
+            "team.receipt.pending" => {
+                let (generation, _) =
+                    renderer_receipt_scope(&params, &self.session()?.props.root, false)?;
+                let receipt =
+                    omegat_team::pending_renderer_receipt(&self.session()?.props, generation)
+                        .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?;
+                Ok(json!({ "receipt": receipt }))
+            }
+            "team.receipt.ack" => {
+                let (generation, batch_id) =
+                    renderer_receipt_scope(&params, &self.session()?.props.root, true)?;
+                let ack = omegat_team::acknowledge_renderer_receipt(
+                    &self.session()?.props,
+                    generation,
+                    batch_id.as_deref().expect("required receipt batch id"),
+                )
+                .map_err(|error| match error {
+                    omegat_team::TeamError::Conflict(message) => {
+                        (error_code::TEAM_CONFLICT, message)
+                    }
+                    other => (error_code::INTERNAL_ERROR, other.to_string()),
+                })?;
+                Ok(json!({ "ack": ack }))
             }
             "script.run" => {
                 let src = params
@@ -1416,6 +1464,57 @@ fn transaction_scope(
         return Err((
             error_code::INVALID_PARAMS,
             "transaction generation requires a batch id".into(),
+        ));
+    }
+    Ok((generation, batch_id))
+}
+
+fn renderer_receipt_scope(
+    params: &Value,
+    session_root: &std::path::Path,
+    require_batch_id: bool,
+) -> std::result::Result<(u64, Option<String>), (i32, String)> {
+    let root = params
+        .get("root")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or((
+            error_code::INVALID_PARAMS,
+            "team renderer receipt requires root".into(),
+        ))?;
+    let normalized =
+        |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if normalized(std::path::Path::new(root)) != normalized(session_root) {
+        return Err((
+            error_code::INVALID_PARAMS,
+            "team renderer receipt root is not the open project".into(),
+        ));
+    }
+    let generation = params
+        .get("generation")
+        .and_then(Value::as_u64)
+        .filter(|generation| *generation != 0)
+        .ok_or((
+            error_code::INVALID_PARAMS,
+            "team renderer receipt requires a non-zero generation".into(),
+        ))?;
+    let batch_id = params
+        .get("batch_id")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or((
+                    error_code::INVALID_PARAMS,
+                    "team renderer acknowledgement batch id must be non-empty".into(),
+                ))
+        })
+        .transpose()?;
+    if require_batch_id && batch_id.is_none() {
+        return Err((
+            error_code::INVALID_PARAMS,
+            "team renderer acknowledgement requires batch_id".into(),
         ));
     }
     Ok((generation, batch_id))
