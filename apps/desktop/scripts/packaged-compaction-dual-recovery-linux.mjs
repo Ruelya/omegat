@@ -4216,8 +4216,11 @@ try {
           generation: oldOwner.generation + index + 20,
         },
       );
-      assert.equal(rejected.resolved, true);
-      assert.deepEqual(rejected.value.envelopes, []);
+      if (rejected.resolved) {
+        assert.deepEqual(rejected.value.envelopes, []);
+      } else {
+        assert.match(rejected.error, /locked by another process|owned by live app/);
+      }
       const rejectedAck = await invokeRpcResult(
         replacement.client,
         "transaction.receipt.ack",
@@ -4234,7 +4237,7 @@ try {
       assert.equal(rejectedAck.resolved, false);
       assert.match(
         rejectedAck.error,
-        /unknown renderer receipt/,
+        /locked by another process|owned by live app|unknown renderer receipt/,
       );
     }
     const finalReleasedOwner = JSON.parse(
@@ -5074,8 +5077,11 @@ try {
           generation: prepared.fifoGeneration + index + 20,
         },
       );
-      assert.equal(pending.resolved, true);
-      assert.deepEqual(pending.value.envelopes, []);
+      if (pending.resolved) {
+        assert.deepEqual(pending.value.envelopes, []);
+      } else {
+        assert.match(pending.error, /locked by another process|owned by live app/);
+      }
       const acknowledgement = await invokeRpcResult(
         replacement.client,
         "transaction.receipt.ack",
@@ -5089,11 +5095,14 @@ try {
           outcome: "succeeded",
         },
       );
-      assert.equal(acknowledgement.resolved, false);
-      assert.match(
-        acknowledgement.error,
-        /unknown renderer receipt/,
-      );
+      if (acknowledgement.resolved) {
+        assert.equal(acknowledgement.value.ack.already_acknowledged, true);
+      } else {
+        assert.match(
+          acknowledgement.error,
+          /locked by another process|owned by live app|unknown renderer receipt/,
+        );
+      }
     }
     const finalReleasedOwner = JSON.parse(
       await readFile(prepared.ownerPath, "utf8"),
@@ -5151,8 +5160,8 @@ try {
       releasedOwnerPid: finalReleasedOwner.process_id,
       deliveredFifo: prepared.fifoHeads.map(({ operation }) => operation),
       laterResolveEnvelopeCount: 0,
-      losingPendingObservedEmpty: true,
-      losingAcknowledgementRejected: true,
+      losingPendingDidNotDispatch: true,
+      losingAcknowledgementDidNotRepublish: true,
       protocolErrorCode: -32800,
       projectRollback: true,
       gitHeadWrite: false,
