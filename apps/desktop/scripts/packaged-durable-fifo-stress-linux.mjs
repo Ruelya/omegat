@@ -150,14 +150,31 @@ const rows = [
       "config-replica-rename-parent-fsync",
       "config-terminal-history",
       "cross-root-owner-release",
+      "multi-seed",
+      "history-gc",
+      "project-move-during-sequence",
     ],
     validate(report) {
       assert.equal(report.result, "passed");
-      assert(report.steps >= 8);
+      assert(report.seeds.length >= 3);
+      assert.equal(report.runs.length, report.seeds.length);
+      assert(report.stepsPerSeed >= 12);
       assert.equal(report.trace.length, report.steps);
       assert.equal(report.allQueuesDrained, true);
       assert.equal(report.allTerminalDecisionsExact, true);
       assert.equal(report.ownerReleaseTombstonesVerified, true);
+      assert.equal(report.historyGcVerified, true);
+      assert.equal(report.projectMoveCombinedWithFaultSequence, true);
+      assert(
+        report.runs.every((run) =>
+          run.steps === report.stepsPerSeed
+          && run.projectMove.mutableScopeRebased
+          && run.projectMove.immutableSegmentsVerified > 0
+          && run.historyGc.projects.every((history) => history.generation > 0)
+          && run.historyGc.config.generation > 0
+        ),
+        "multi-seed GC/project-move evidence is incomplete",
+      );
       assert.equal(
         report.trace.some((row) =>
           row.kind === "project.save" && row.point === "before_atomic_publish"
@@ -178,11 +195,14 @@ const rows = [
         true,
       );
       return {
-        seed: report.seed,
-        steps: report.steps,
+        seeds: report.seeds,
+        stepsPerSeed: report.stepsPerSeed,
+        totalSteps: report.steps,
         durationMs: report.durationMs,
-        roots: report.roots,
+        roots: report.runs.map((run) => run.roots),
         ownerReleaseTombstonesVerified: true,
+        historyGcVerified: true,
+        projectMoveCombinedWithFaultSequence: true,
       };
     },
   },

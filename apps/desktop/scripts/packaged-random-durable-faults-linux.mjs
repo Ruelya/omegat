@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -30,25 +31,37 @@ if (process.platform !== "linux") {
 }
 await Promise.all([stat(executable), stat(sidecar)]);
 
-const steps = Number.parseInt(process.env.OMEGAT_RANDOM_FAULT_STEPS ?? "24", 10);
-assert(Number.isSafeInteger(steps) && steps >= 8 && steps <= 256);
-const initialSeed = Number.parseInt(
-  process.env.OMEGAT_RANDOM_FAULT_SEED ?? "6695",
+const stepsPerSeed = Number.parseInt(
+  process.env.OMEGAT_RANDOM_FAULT_STEPS ?? "16",
   10,
-) >>> 0;
-let randomState = initialSeed || 1;
-const random = () => {
-  randomState ^= randomState << 13;
-  randomState ^= randomState >>> 17;
-  randomState ^= randomState << 5;
-  return randomState >>> 0;
-};
+);
+assert(
+  Number.isSafeInteger(stepsPerSeed)
+    && stepsPerSeed >= 12
+    && stepsPerSeed <= 256,
+);
+const seeds = (
+  process.env.OMEGAT_RANDOM_FAULT_SEEDS
+  ?? process.env.OMEGAT_RANDOM_FAULT_SEED
+  ?? "6695,1592639215,3512640997"
+)
+  .split(",")
+  .map((seed) => Number.parseInt(seed.trim(), 10) >>> 0);
+assert(seeds.length > 0 && seeds.every((seed) => seed > 0));
 
 const limits = {
-  OMEGAT_TEST_CONFIG_HISTORY_LIMIT: "256",
-  OMEGAT_TEST_CONFIG_DEDUPE_HOT_LIMIT: "256",
-  OMEGAT_TEST_PRODUCT_HISTORY_RECENT_LIMIT: "256",
-  OMEGAT_TEST_PRODUCT_HISTORY_HOT_LIMIT: "256",
+  OMEGAT_TEST_CONFIG_HISTORY_LIMIT: "2",
+  OMEGAT_TEST_CONFIG_DEDUPE_HOT_LIMIT: "2",
+  OMEGAT_TEST_CONFIG_ARCHIVE_SEGMENT_LIMIT: "1",
+  OMEGAT_TEST_CONFIG_ARCHIVE_COMPACTION_SEGMENT_LIMIT: "2",
+  OMEGAT_TEST_CONFIG_ARCHIVE_COMPACTION_BATCH_LIMIT: "64",
+  OMEGAT_TEST_CONFIG_ARCHIVE_BATCH_PREFIX_HEX: "1",
+  OMEGAT_TEST_PRODUCT_HISTORY_RECENT_LIMIT: "2",
+  OMEGAT_TEST_PRODUCT_HISTORY_HOT_LIMIT: "2",
+  OMEGAT_TEST_PRODUCT_HISTORY_SEGMENT_LIMIT: "1",
+  OMEGAT_TEST_PRODUCT_HISTORY_COMPACTION_SEGMENTS: "2",
+  OMEGAT_TEST_PRODUCT_HISTORY_COMPACTION_RECORDS: "64",
+  OMEGAT_TEST_PRODUCT_HISTORY_PREFIX_HEX: "1",
 };
 const rpc = (client, method, params = {}) =>
   client.evaluate(
@@ -65,13 +78,6 @@ const startRpc = (client, method, params) =>
     window.__omegatRandomDurableFault = pending;
     return true;
   })()`);
-const parseRows = async (path) => {
-  if (!await pathExists(path)) return [];
-  return (await readFile(path, "utf8"))
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-};
 const projectPaths = (root) => {
   const directory = join(root, ".repositories", "transactions");
   return {
@@ -79,6 +85,11 @@ const projectPaths = (root) => {
     active: join(directory, "active.json"),
     activeRecovery: join(directory, ".active.previous.json"),
     history: join(directory, "history.ndjson"),
+    hot: join(directory, "history-hot.json"),
+    hotRecovery: join(directory, ".history-hot.recovery.json"),
+    manifest: join(directory, "history-manifest.json"),
+    manifestRecovery: join(directory, ".history-manifest.recovery.json"),
+    archive: join(directory, "history-archive"),
     owner: join(directory, "renderer-owner.json"),
     ownerRecovery: join(directory, ".renderer-owner.recovery.json"),
   };
@@ -90,6 +101,11 @@ const configPaths = (config) => {
     active: join(directory, "active.json"),
     activeRecovery: join(directory, "active.recovery.json"),
     history: join(directory, "history.ndjson"),
+    hot: join(directory, "history-hot.json"),
+    hotRecovery: join(directory, ".history-hot.recovery.json"),
+    manifest: join(directory, "history-manifest.json"),
+    manifestRecovery: join(directory, ".history-manifest.recovery.json"),
+    archive: join(directory, "history-archive"),
   };
 };
 const assertReplicasEqual = async (left, right) => {
@@ -106,6 +122,44 @@ const assertNoCandidates = async (directory) => {
 };
 const terminal = (row) =>
   ["completed", "cancelled", "request_cancelled", "failed"].includes(row.status);
+
+const durableHistoryRows = async (paths) => {
+  const rows = [];
+  if (await pathExists(paths.hot)) {
+    rows.push(...JSON.parse(await readFile(paths.hot, "utf8")).records);
+  }
+  if (await pathExists(paths.archive)) {
+    for (const name of await readdir(paths.archive)) {
+      if (!name.endsWith(".json")) continue;
+      const segment = JSON.parse(
+        await readFile(join(paths.archive, name), "utf8"),
+      );
+      rows.push(...segment.records);
+    }
+  }
+  return rows;
+};
+
+const terminalRows = async (paths, batchId) =>
+  (await durableHistoryRows(paths))
+    .filter((row) => row.batch_id === batchId && terminal(row));
+
+const historyGcStatus = async (paths) => {
+  await assertReplicasEqual(paths.hot, paths.hotRecovery);
+  await assertReplicasEqual(paths.manifest, paths.manifestRecovery);
+  const manifest = JSON.parse(await readFile(paths.manifest, "utf8"));
+  const archiveFiles = await readdir(paths.archive);
+  assert(manifest.generation > 0, `${paths.directory} did not advance GC generation`);
+  assert(
+    archiveFiles.length > 0,
+    `${paths.directory} has no immutable history generation`,
+  );
+  return {
+    generation: manifest.generation,
+    segmentCount: manifest.segments.length,
+    archiveFiles: archiveFiles.length,
+  };
+};
 
 async function createProject(display, config, root, text) {
   let app = await launchPackagedRenderer(display, config, null, limits);
@@ -137,7 +191,15 @@ async function recoverProject(display, config, root, batchId) {
   }
 }
 
-async function projectFault(display, workDir, config, root, index, afterPublish) {
+async function projectFault(
+  display,
+  workDir,
+  config,
+  root,
+  rootIndex,
+  index,
+  afterPublish,
+) {
   const label = `random-project-${index}`;
   const marker = join(workDir, `${label}.marker`);
   const point = afterPublish ? "after_atomic_publish" : "before_atomic_publish";
@@ -164,8 +226,7 @@ async function projectFault(display, workDir, config, root, index, afterPublish)
     killed = await killPackaged(owner);
     owner = undefined;
     await recoverProject(display, config, root, batchId);
-    const rows = (await parseRows(projectPaths(root).history))
-      .filter((row) => row.batch_id === batchId && terminal(row));
+    const rows = await terminalRows(projectPaths(root), batchId);
     assert.equal(rows.length, 1, `${batchId} did not converge to one terminal`);
     assert.equal(rows[0].status, afterPublish ? "completed" : "cancelled");
     await assertReplicasEqual(
@@ -181,6 +242,7 @@ async function projectFault(display, workDir, config, root, index, afterPublish)
       index,
       kind: "project.save",
       root,
+      rootIndex,
       batchId,
       point,
       killed,
@@ -192,7 +254,16 @@ async function projectFault(display, workDir, config, root, index, afterPublish)
   }
 }
 
-async function configFault(display, workDir, config, root, index, historyFault) {
+async function configFault(
+  display,
+  workDir,
+  config,
+  root,
+  rootIndex,
+  index,
+  historyFault,
+  random,
+) {
   const batchId = `random-config-${index}`;
   const marker = join(workDir, `${batchId}.marker`);
   const requestedTheme = `random-theme-${index}`;
@@ -228,8 +299,7 @@ async function configFault(display, workDir, config, root, index, historyFault) 
       const prefs = await rpc(recovered.client, "prefs.get");
       return prefs.theme === requestedTheme ? true : undefined;
     });
-    const rows = (await parseRows(configPaths(config).history))
-      .filter((row) => row.batch_id === batchId && terminal(row));
+    const rows = await terminalRows(configPaths(config), batchId);
     assert.equal(rows.length, 1, `${batchId} did not converge to one terminal`);
     assert.equal(rows[0].status, "completed");
     await assertReplicasEqual(
@@ -241,6 +311,7 @@ async function configFault(display, workDir, config, root, index, historyFault) 
       index,
       kind: "prefs.patch",
       root,
+      rootIndex,
       point: historyFault ? "after_terminal_history_publish" : point,
       replica: historyFault ? null : replica,
       killed,
@@ -254,82 +325,182 @@ async function configFault(display, workDir, config, root, index, historyFault) 
   }
 }
 
-const workDir = await mkdtemp(join(tmpdir(), "omegat-random-durable-faults-"));
-const config = join(workDir, "config");
-const roots = [join(workDir, "project-a"), join(workDir, "project-b")];
-const display = await startPackagedDisplay();
-const startedAt = Date.now();
-try {
+async function moveProject(display, config, oldRoot, newRoot, rootIndex) {
+  const beforePaths = projectPaths(oldRoot);
+  const immutableBefore = new Map();
+  if (await pathExists(beforePaths.archive)) {
+    for (const name of await readdir(beforePaths.archive)) {
+      immutableBefore.set(
+        name,
+        (await readFile(join(beforePaths.archive, name))).toString("base64"),
+      );
+    }
+  }
+  await rename(oldRoot, newRoot);
+  await recoverProject(display, config, newRoot, `move-root-${rootIndex}`);
+  const afterPaths = projectPaths(newRoot);
+  for (const [name, bytes] of immutableBefore) {
+    assert.equal(
+      (await readFile(join(afterPaths.archive, name))).toString("base64"),
+      bytes,
+      `project move rewrote immutable history segment ${name}`,
+    );
+  }
+  const recent = (await readFile(afterPaths.history, "utf8"))
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  assert(
+    recent.every((row) => row.project_root === newRoot),
+    "project move retained stale mutable history scope",
+  );
+  await assertReplicasEqual(afterPaths.owner, afterPaths.ownerRecovery);
+  return {
+    rootIndex,
+    oldRoot,
+    newRoot,
+    immutableSegmentsVerified: immutableBefore.size,
+    mutableScopeRebased: true,
+  };
+}
+
+const makeRandom = (seed) => {
+  let state = seed || 1;
+  return () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return state >>> 0;
+  };
+};
+
+async function runSeed(display, suiteDir, seed) {
+  const workDir = join(suiteDir, `seed-${seed}`);
+  const config = join(workDir, "config");
+  const roots = [join(workDir, "project-a"), join(workDir, "project-b")];
+  const random = makeRandom(seed);
   await mkdir(config, { recursive: true });
-  await createProject(display.display, config, roots[0], "random source a");
-  await createProject(display.display, config, roots[1], "random source b");
+  await createProject(display, config, roots[0], `random source a seed ${seed}`);
+  await createProject(display, config, roots[1], `random source b seed ${seed}`);
   const trace = [];
-  for (let index = 0; index < steps; index += 1) {
-    const scenario = index < 4 ? index : random() % 4;
-    const root = index < 2 ? roots[index] : roots[random() % roots.length];
+  let projectMove;
+  for (let index = 0; index < stepsPerSeed; index += 1) {
+    if (index === 6) {
+      const oldRoot = roots[0];
+      roots[0] = join(workDir, "project-a-after-history-move");
+      projectMove = await moveProject(
+        display,
+        config,
+        oldRoot,
+        roots[0],
+        0,
+      );
+    }
+    const scenario = index < 8
+      ? index % 2
+      : index < 12
+        ? 2 + index % 2
+        : random() % 4;
+    const rootIndex = index < 8 ? index % roots.length : random() % roots.length;
+    const root = roots[rootIndex];
     if (scenario === 0 || scenario === 1) {
       trace.push(await projectFault(
-        display.display,
+        display,
         workDir,
         config,
         root,
+        rootIndex,
         index,
         scenario === 1,
       ));
     } else {
       trace.push(await configFault(
-        display.display,
+        display,
         workDir,
         config,
         root,
+        rootIndex,
         index,
         scenario === 3,
+        random,
       ));
     }
   }
+  assert(projectMove, `seed ${seed} did not execute the project move`);
+  const projectHistoryGc = [];
   for (const root of roots) {
     assert.equal(await pathExists(projectPaths(root).active), false);
     await assertReplicasEqual(
       projectPaths(root).owner,
       projectPaths(root).ownerRecovery,
     );
+    await assertNoCandidates(projectPaths(root).directory);
+    projectHistoryGc.push(await historyGcStatus(projectPaths(root)));
   }
-  assert.equal(
-    trace.filter((row) => row.kind === "project.save").length > 0,
-    true,
-  );
-  assert.equal(
-    trace.filter((row) => row.kind === "prefs.patch").length > 0,
-    true,
-  );
+  const configHistoryGc = await historyGcStatus(configPaths(config));
+  await assertNoCandidates(configPaths(config).directory);
   assert.deepEqual(
     [...new Set(
       trace
         .filter((row) => row.kind === "project.save")
-        .map((row) => row.root),
+        .map((row) => row.rootIndex),
     )].toSorted(),
-    roots.toSorted(),
+    [0, 1],
+  );
+  assert(
+    trace.some((row) =>
+      row.kind === "project.save" && row.root === projectMove.newRoot
+    ),
+    `seed ${seed} did not continue transactions after project move`,
+  );
+  return {
+    seed,
+    steps: stepsPerSeed,
+    roots,
+    trace,
+    projectMove,
+    historyGc: {
+      projects: projectHistoryGc,
+      config: configHistoryGc,
+    },
+  };
+}
+
+const suiteDir = await mkdtemp(join(tmpdir(), "omegat-random-durable-faults-"));
+const display = await startPackagedDisplay();
+const startedAt = Date.now();
+try {
+  const runs = [];
+  for (const seed of seeds) {
+    runs.push(await runSeed(display.display, suiteDir, seed));
+  }
+  const trace = runs.flatMap((run) =>
+    run.trace.map((row) => ({ ...row, seed: run.seed }))
   );
   console.log(JSON.stringify({
     result: "passed",
     driver: "packaged-random-durable-faults-linux",
     package: executable,
     platform: process.platform,
-    seed: initialSeed,
-    steps,
+    seeds,
+    seed: seeds[0],
+    stepsPerSeed,
+    steps: trace.length,
     durationMs: Date.now() - startedAt,
-    roots,
+    runs,
     trace,
     allQueuesDrained: true,
     allTerminalDecisionsExact: true,
     ownerReleaseTombstonesVerified: true,
+    historyGcVerified: true,
+    projectMoveCombinedWithFaultSequence: true,
     platformsNotRun: ["windows", "macos"],
   }, null, 2));
 } finally {
   await stopPackagedDisplay(display);
   if (process.env.OMEGAT_KEEP_E2E !== "1") {
-    await rm(workDir, { recursive: true, force: true });
+    await rm(suiteDir, { recursive: true, force: true });
   } else {
-    console.error(`kept randomized durable fault workdir: ${workDir}`);
+    console.error(`kept randomized durable fault workdir: ${suiteDir}`);
   }
 }
