@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **28 passed** plus sidecar journal/watcher unit
-**7 passed** and plugin filter **1 passed**, and desktop **24 files / 174 tests
+**7 passed** and plugin filter **1 passed**, and desktop **24 files / 175 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The sidecar contract and real Linux package both exercise pre-kill contender
@@ -862,21 +862,32 @@ the exact Git HEAD, file-remote bytes and nanosecond mtime, TMX, six-field
 the team head. The close, file-team commit, and save election cases also run
 with three replacements. These are real Linux `linux-unpacked` assertions;
 Windows and macOS were not run.
-A further real Linux packaged election starts from the visible keep-theirs
-control for a `team.resolve` conflict backed by a real Git main repository and
-a separate file mapping. Four live replacement Electron processes compete for
-the committed resolve head. The first claim winner is SIGKILLed before renderer
-delivery; the three already-running losers observe that exact owner PID exit
-and retry without a process relaunch. Exactly one becomes the second owner,
-while the other two retries are rejected and every non-winner records zero
+A further real Linux packaged election now runs symmetrically from the visible
+keep-theirs **and keep-ours** controls for `team.resolve` conflicts backed by a
+real Git main repository and a separate file mapping. In each case four live
+replacement Electron processes compete for the committed resolve head. The
+first claim winner is SIGKILLed before renderer delivery; the three
+already-running losers observe that exact PID exit and retry without a process
+relaunch. The second winner is also SIGKILLed after its claim and before
+delivery; its two surviving losers observe the new PID and perform a third
+election. Exactly one third owner receives one envelope, the final loser is
+rejected, and no extra process is launched. Every non-winner records zero
 envelopes. The single terminal history row, unchanged stable project tree and
 TMX mtime, unchanged Git HEAD, and unchanged file-remote bytes/mtime prove that
-recovery did not replay any committed product write. The winner rebinds the
-complete six-field wanted key to the theirs translation in one `Document3`
-surface, while the same-source decoy stays untranslated. The sidecar contract
-independently runs three replacements across the same first-owner death and
-asserts that both living losers wait on the first replacement PID rather than
-the stale predecessor claim; one wins the retry and the other is rejected.
+neither owner death replayed a committed product write. The winner rebinds the
+complete six-field wanted key to the selected ours/theirs translation in one
+`Document3` surface, while the same-source decoy stays untranslated.
+Before each election, the same package cancels one committed resolve after its
+owner claim but before renderer delivery. Its operation trace remains
+`cancelling` until the sidecar returns `-32800`, then becomes `cancelled`;
+exact TMX/conflict bytes are restored, no Git or file-remote write occurs, the
+same-source decoy remains untouched, and no cancelled envelope survives.
+The sidecar contract independently runs keep-ours through the same two owner
+deaths and third election. It also cancels a contender while that contender is
+waiting on a live owner, verifies that the durable claim does not change, then
+cancels the committed head after claim and confirms one request-cancelled
+history row with no later delivery. These are real Linux assertions; Windows
+and macOS owner-liveness/package behavior were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
