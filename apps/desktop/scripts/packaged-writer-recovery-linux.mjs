@@ -1334,14 +1334,9 @@ async function runConfigOwnerDeath(display, workDir) {
           history: await pathExists(prepared.historyPath)
             ? parseNdjson(await readFile(prepared.historyPath, "utf8"))
             : [],
-          renderer: await contender.client.evaluate(`(() => ({
-            font: document.querySelector(
-              '[data-window-id="prefs"] .prefs-grid > .form label input'
-            )?.value ?? null,
-            error: document.querySelector(
-              '[data-window-id="prefs"] [data-persistence-error="prefs"]'
-            )?.textContent ?? null,
-          }))()`),
+          contenderProcessAlive: await pathExists(
+            `/proc/${contender.application.pid}`,
+          ),
         }));
       }
       return prefs.locale === "fr" && prefs.font_ui === "Shared Config Font"
