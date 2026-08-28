@@ -1080,7 +1080,7 @@ async function verifyMoveAndGc(launched, fixture, evidence) {
     );
   }
   const projectRows = await segmentedRows(projectHistoryPaths(movedProject));
-  for (const row of evidence.filter(({ scope }) => row.scope === "project")) {
+  for (const row of evidence.filter(({ scope }) => scope === "project")) {
     assert.equal(
       terminalRows(projectRows)
         .filter(({ batch_id }) => batch_id === row.batchId).length,
