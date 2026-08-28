@@ -207,6 +207,7 @@ describe("SidecarRpcClient", () => {
     await expect(dispatch).rejects.toMatchObject({
       name: "AbortError",
       message: "request cancelled",
+      code: -32800,
     });
     expect(operations.at(-1)).toMatchObject({ phase: "cancelling" });
     expect(client.settleDeferred(

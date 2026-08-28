@@ -190,6 +190,9 @@ export class SidecarRpcClient {
       if (response.error) {
         const error = new Error(response.error.message ?? "sidecar RPC failed");
         if (response.error.code === -32800) error.name = "AbortError";
+        if (typeof response.error.code === "number") {
+          (error as Error & { code: number }).code = response.error.code;
+        }
         if (request.clientRequestId) {
           this.onOperation({
             requestId: request.clientRequestId,

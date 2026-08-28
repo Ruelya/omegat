@@ -310,6 +310,7 @@ async function startTracedRpc(client, traceKey, method, params, requestId) {
       resolved: null,
       value: null,
       error: null,
+      errorCode: null,
     };
     window.__omegatConcurrentRpc[${JSON.stringify(traceKey)}] = record;
     void window.omegat.rpc(
@@ -324,6 +325,10 @@ async function startTracedRpc(client, traceKey, method, params, requestId) {
       (error) => {
         record.resolved = false;
         record.error = String(error);
+        record.errorCode =
+          typeof error === "object" && error !== null && "code" in error
+            ? error.code
+            : null;
       },
     ).finally(() => {
       record.settled = true;
@@ -3635,17 +3640,25 @@ try {
 
     if (cancellationPoint === "after_rollback_fsync") {
       const cancelOwnerMarker = join(workDir, `${label}-concurrent-owner.json`);
-      const cancelOwnerRelease = join(workDir, `${label}-concurrent-owner.release`);
       const concurrentEnvelopeTraces = Array.from(
-        { length: 2 },
+        { length: 3 },
         (_, index) => join(workDir, `${label}-concurrent-${index}.ndjson`),
       );
+      const cancellationWaitMarkers = concurrentEnvelopeTraces.map((_, index) =>
+        join(workDir, `${label}-concurrent-${index}-wait.json`)
+      );
+      const cancellationTakeoverMarkers = concurrentEnvelopeTraces.map((_, index) =>
+        join(workDir, `${label}-concurrent-${index}-takeover.json`)
+      );
       const concurrentCancelCallers = await Promise.all(
-        concurrentEnvelopeTraces.map((trace) =>
+        concurrentEnvelopeTraces.map((trace, index) =>
           launchPackagedRenderer(xvfb.display, config, null, {
             OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: "after_rollback_fsync",
             OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER: cancelOwnerMarker,
-            OMEGAT_TEST_RESOLVE_CANCELLATION_RELEASE: cancelOwnerRelease,
+            OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER:
+              cancellationWaitMarkers[index],
+            OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER:
+              cancellationTakeoverMarkers[index],
             OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: trace,
           })
         ),
@@ -3676,7 +3689,7 @@ try {
         )
         ),
       );
-      assert.deepEqual(concurrentStarts, [true, true]);
+      assert.deepEqual(concurrentStarts, [true, true, true]);
       const durableCancelOwner = await waitFor(
         "one concurrent packaged cancellation owner",
         async () =>
@@ -3702,18 +3715,64 @@ try {
         1,
         "concurrent cancellation did not select exactly one durable owner",
       );
+      const firstOwnerIndex = concurrentSidecars.indexOf(
+        durableCancelOwner.sidecar_process_id,
+      );
+      assert.notEqual(firstOwnerIndex, -1);
+      const survivorIndices = concurrentCancelCallers
+        .map((_, index) => index)
+        .filter((index) => index !== firstOwnerIndex);
+      await Promise.all(survivorIndices.map((index) =>
+        waitFor(`packaged cancellation loser ${index} waiting on owner lock`, () =>
+          pathExists(cancellationWaitMarkers[index])
+        )
+      ));
+      assert.equal(
+        await pathExists(cancellationWaitMarkers[firstOwnerIndex]),
+        false,
+        "the first cancellation owner was reported as its own waiter",
+      );
+      for (const index of survivorIndices) {
+        const waiting = JSON.parse(
+          await readFile(cancellationWaitMarkers[index], "utf8"),
+        );
+        assert.equal(waiting.point, "waiting-for-owner-lock");
+        assert.equal(waiting.sidecar_process_id, concurrentSidecars[index]);
+      }
       assert.deepEqual(
         JSON.parse(await readFile(prepared.ownerPath, "utf8")),
         durableOldOwner,
         "secondary cancellation race elected a resolve dispatcher owner",
       );
-      await writeFile(cancelOwnerRelease, "release\n", "utf8");
-      const concurrentResults = await waitFor(
-        "both packaged secondary cancellation acknowledgements",
+      const killedCancelOwner = await killPackaged(
+        concurrentCancelCallers[firstOwnerIndex],
+      );
+      assert.equal(
+        killedCancelOwner.sidecarPid,
+        durableCancelOwner.sidecar_process_id,
+      );
+      const survivingCancelCallers = survivorIndices.map(
+        (index) => concurrentCancelCallers[index],
+      );
+      quorumReplacements = survivingCancelCallers;
+      await waitFor(
+        "already-waiting packaged loser took over cancellation",
         async () => {
-          const states = await Promise.all(concurrentCancelCallers.map(
-            (replacement, index) =>
-              tracedRpcState(replacement.client, traceKeys[index]),
+          const present = [];
+          for (const index of survivorIndices) {
+            if (await pathExists(cancellationTakeoverMarkers[index])) {
+              present.push(index);
+            }
+          }
+          return present.length > 0 ? present : undefined;
+        },
+      );
+      const concurrentResults = await waitFor(
+        "surviving packaged cancellation acknowledgements",
+        async () => {
+          const states = await Promise.all(survivorIndices.map(
+            (index) =>
+              tracedRpcState(concurrentCancelCallers[index].client, traceKeys[index]),
           ));
           if (!states.every((state) => state?.settled)) {
             throw new Error(`concurrent cancellation states: ${JSON.stringify(states)}`);
@@ -3724,8 +3783,32 @@ try {
       for (const state of concurrentResults) {
         assert.equal(state.started, true);
         assert.equal(state.resolved, false);
-        assert.match(state.error, /request cancelled/);
+        assert.equal(state.error, "AbortError: request cancelled");
+        assert.equal(state.errorCode, -32800);
       }
+      const takeoverIndices = [];
+      for (const index of survivorIndices) {
+        if (await pathExists(cancellationTakeoverMarkers[index])) {
+          takeoverIndices.push(index);
+        }
+      }
+      assert.equal(
+        takeoverIndices.length,
+        1,
+        "OS lock release selected more than one cancellation takeover owner",
+      );
+      const takeover = JSON.parse(
+        await readFile(cancellationTakeoverMarkers[takeoverIndices[0]], "utf8"),
+      );
+      assert.equal(takeover.point, "took-over-pending-cancellation");
+      assert.equal(
+        takeover.sidecar_process_id,
+        concurrentSidecars[takeoverIndices[0]],
+      );
+      const idempotentLoserIndex = survivorIndices.find(
+        (index) => index !== takeoverIndices[0],
+      );
+      assert.notEqual(idempotentLoserIndex, undefined);
       for (const trace of concurrentEnvelopeTraces) {
         assert.equal(
           await pathExists(trace)
@@ -3758,18 +3841,22 @@ try {
       );
       duplicateResolveCancellationResults.push({
         cancellationBoundary: cancellationPoint,
-        firstCallerKilled: true,
+        firstCancellationOwnerKilledWhileHoldingOsLock: true,
+        killedOwnerBrowserPid: killedCancelOwner.browserPid,
+        killedOwnerSidecarPid: killedCancelOwner.sidecarPid,
         simultaneousPackagedCallerPids:
           concurrentCancelCallers.map((replacement) => replacement.application.pid),
-        durableCancelOwnerSidecarPid: durableCancelOwner.sidecar_process_id,
-        idempotentLoserCount: 1,
+        waitingLoserSidecarPids:
+          survivorIndices.map((index) => concurrentSidecars[index]),
+        takeoverOwnerSidecarPid: takeover.sidecar_process_id,
+        idempotentLoserSidecarPid: concurrentSidecars[idempotentLoserIndex],
         protocolErrorCode: -32800,
         durableRollbackCount: 1,
         terminalCount: 1,
         resolveEnvelopeCount: 0,
       });
       await Promise.all(
-        concurrentCancelCallers.map((replacement) => terminatePackaged(replacement)),
+        survivingCancelCallers.map((replacement) => terminatePackaged(replacement)),
       );
       quorumReplacements = [];
     }

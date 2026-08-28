@@ -49,6 +49,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
 
 pub(crate) struct ProjectTransactionLock {
     _file: std::fs::File,
+    waited: bool,
 }
 
 pub(crate) fn acquire_project_transaction_lock(
@@ -72,7 +73,10 @@ pub(crate) fn acquire_project_transaction_lock(
             TeamError::Io(error)
         }
     })?;
-    Ok(ProjectTransactionLock { _file: file })
+    Ok(ProjectTransactionLock {
+        _file: file,
+        waited: false,
+    })
 }
 
 fn wait_for_project_transaction_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
@@ -84,8 +88,23 @@ fn wait_for_project_transaction_lock(props: &ProjectProperties) -> Result<Projec
         .read(true)
         .write(true)
         .open(&path)?;
-    file.lock_exclusive().map_err(TeamError::Io)?;
-    Ok(ProjectTransactionLock { _file: file })
+    let waited = match file.try_lock_exclusive() {
+        Ok(()) => false,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            resolve_cancellation_lock_checkpoint(
+                "OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER",
+                props,
+                "waiting-for-owner-lock",
+            )?;
+            file.lock_exclusive().map_err(TeamError::Io)?;
+            true
+        }
+        Err(error) => return Err(TeamError::Io(error)),
+    };
+    Ok(ProjectTransactionLock {
+        _file: file,
+        waited,
+    })
 }
 
 #[cfg(test)]
@@ -994,6 +1013,25 @@ fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+}
+
+fn resolve_cancellation_lock_checkpoint(
+    variable: &str,
+    props: &ProjectProperties,
+    point: &str,
+) -> Result<()> {
+    let Some(marker) = std::env::var_os(variable) else {
+        return Ok(());
+    };
+    write_json_atomic(
+        &PathBuf::from(marker),
+        &serde_json::json!({
+            "point": point,
+            "project_root": normalized(&props.root),
+            "sidecar_process_id": std::process::id(),
+        }),
+    )
+    .map_err(|error| TeamError::Command(format!("resolve cancellation lock checkpoint: {error}")))
 }
 
 fn product_owner_claim_checkpoint(
@@ -2299,7 +2337,7 @@ pub fn cancel_transaction_receipt(
     // idempotency key. Unlike unrelated team operations, the loser must wait
     // for the current cancellation owner (or its OS-released lock after
     // process death), then observe the sole terminal decision as -32800.
-    let _lock = wait_for_project_transaction_lock(props)?;
+    let lock = wait_for_project_transaction_lock(props)?;
     let Some(mut transaction) = load_product_journal(props)?
         .batches
         .into_iter()
@@ -2337,6 +2375,13 @@ pub fn cancel_transaction_receipt(
         )));
     }
     if transaction.0.status == TransactionStatus::CancellationPending {
+        if lock.waited {
+            resolve_cancellation_lock_checkpoint(
+                "OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER",
+                props,
+                "took-over-pending-cancellation",
+            )?;
+        }
         validate_pending_resolve_cancellation(props, &transaction)?;
         rollback_pending_resolve_cancellation(props, &mut transaction)?;
         resolve_cancellation_checkpoint("after_rollback_fsync")?;
