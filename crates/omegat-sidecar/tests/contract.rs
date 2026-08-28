@@ -3955,9 +3955,10 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
     );
     let second_app = format!("resolve-replacement-{second_winner_index}");
     let second_generation = 80 + second_winner_index as u64;
+    let second_winner = &mut replacements[second_winner_index];
     let ack = rpc(
-        &mut replacements[second_winner_index].input,
-        &mut replacements[second_winner_index].output,
+        &mut second_winner.input,
+        &mut second_winner.output,
         3,
         "transaction.receipt.ack",
         json!({
@@ -3971,8 +3972,8 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
     );
     assert_eq!(ack["result"]["ack"]["acknowledged"], true);
     let drained = rpc(
-        &mut replacements[second_winner_index].input,
-        &mut replacements[second_winner_index].output,
+        &mut second_winner.input,
+        &mut second_winner.output,
         4,
         "transaction.receipt.pending",
         json!({
@@ -3983,8 +3984,8 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
     );
     assert_eq!(drained["result"]["envelopes"], json!([]));
     let final_entries = rpc(
-        &mut replacements[second_winner_index].input,
-        &mut replacements[second_winner_index].output,
+        &mut second_winner.input,
+        &mut second_winner.output,
         5,
         "entry.list",
         json!({}),
