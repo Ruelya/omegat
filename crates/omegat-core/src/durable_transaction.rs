@@ -1653,10 +1653,16 @@ mod tests {
         "wiki.import",
         "script.run",
         "script.slot",
+        "align.run",
         "project.external-refresh",
     ];
 
-    const CONFIG_WRITERS: &[&str] = &["prefs.patch", "aligner.configure", "spell.install"];
+    const CONFIG_WRITERS: &[&str] = &[
+        "prefs.set",
+        "prefs.patch",
+        "aligner.configure",
+        "spell.install",
+    ];
 
     fn all_writers() -> impl Iterator<Item = &'static str> {
         PROJECT_WRITERS.iter().chain(CONFIG_WRITERS).copied()

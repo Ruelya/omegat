@@ -15,6 +15,7 @@ import { join } from "node:path";
 import {
   executable,
   killPackaged,
+  launchPackaged,
   launchPackagedRenderer,
   pathExists,
   sidecar,
@@ -124,7 +125,7 @@ async function createProject(display, config, root, text) {
 }
 
 async function recoverProject(display, config, root, batchId) {
-  let recovered = await launchPackagedRenderer(display, config, root, limits);
+  let recovered = await launchPackaged(display, config, root, limits);
   try {
     await waitFor(`project transaction ${batchId} recovery`, async () =>
       !await pathExists(projectPaths(root).active) ? true : undefined
@@ -137,10 +138,10 @@ async function recoverProject(display, config, root, batchId) {
 }
 
 async function projectFault(display, workDir, config, root, index, afterPublish) {
-  const batchId = `random-project-${index}`;
-  const marker = join(workDir, `${batchId}.marker`);
+  const label = `random-project-${index}`;
+  const marker = join(workDir, `${label}.marker`);
   const point = afterPublish ? "after_atomic_publish" : "before_atomic_publish";
-  let owner = await launchPackagedRenderer(display, config, root, {
+  let owner = await launchPackaged(display, config, root, {
     ...limits,
     OMEGAT_TEST_PRODUCT_TRANSACTION_OPERATION: "project.save",
     OMEGAT_TEST_PRODUCT_TRANSACTION_POINT: point,
@@ -148,18 +149,25 @@ async function projectFault(display, workDir, config, root, index, afterPublish)
   });
   let killed;
   try {
-    assert.equal(await startRpc(owner.client, "project.save", {
-      transaction_project_root: root,
-      transaction_generation: 10_000 + index,
-      transaction_batch_id: batchId,
-    }), true);
-    await waitFor(`${batchId} ${point}`, () => pathExists(marker));
+    assert.equal(await startRpc(owner.client, "project.save", {}), true);
+    await waitFor(`${label} ${point}`, () => pathExists(marker));
+    const active = JSON.parse(
+      await readFile(projectPaths(root).active, "utf8"),
+    );
+    const expectedActiveStatus = afterPublish ? "sidecar_committed" : "pending";
+    const envelope = active.batches.find((row) =>
+      row.payload?.operation === "project.save"
+      && row.status === expectedActiveStatus
+    );
+    assert(envelope, `${label} did not publish its ${expectedActiveStatus} envelope`);
+    const batchId = envelope.batch_id;
     killed = await killPackaged(owner);
     owner = undefined;
     await recoverProject(display, config, root, batchId);
     const rows = (await parseRows(projectPaths(root).history))
       .filter((row) => row.batch_id === batchId && terminal(row));
     assert.equal(rows.length, 1, `${batchId} did not converge to one terminal`);
+    assert.equal(rows[0].status, afterPublish ? "completed" : "cancelled");
     await assertReplicasEqual(
       projectPaths(root).owner,
       projectPaths(root).ownerRecovery,
@@ -173,6 +181,7 @@ async function projectFault(display, workDir, config, root, index, afterPublish)
       index,
       kind: "project.save",
       root,
+      batchId,
       point,
       killed,
       terminalStatus: rows[0].status,
@@ -256,8 +265,8 @@ try {
   await createProject(display.display, config, roots[1], "random source b");
   const trace = [];
   for (let index = 0; index < steps; index += 1) {
-    const root = roots[random() % roots.length];
     const scenario = index < 4 ? index : random() % 4;
+    const root = index < 2 ? roots[index] : roots[random() % roots.length];
     if (scenario === 0 || scenario === 1) {
       trace.push(await projectFault(
         display.display,
@@ -292,6 +301,14 @@ try {
   assert.equal(
     trace.filter((row) => row.kind === "prefs.patch").length > 0,
     true,
+  );
+  assert.deepEqual(
+    [...new Set(
+      trace
+        .filter((row) => row.kind === "project.save")
+        .map((row) => row.root),
+    )].toSorted(),
+    roots.toSorted(),
   );
   console.log(JSON.stringify({
     result: "passed",
