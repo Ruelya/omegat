@@ -8,7 +8,7 @@ use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::transaction_envelope::{
-    write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
+    normalized, write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
     REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 use crate::{team_enabled, SyncReport};
