@@ -613,6 +613,11 @@ function startSidecar(): SidecarRpcClient {
     );
     sidecar = null;
     rpcClient = null;
+    // A recovery envelope delivered through the dead sidecar epoch may have
+    // failed while the renderer was processing it. The replacement must
+    // republish that same durable head to unblock retry; direct caller-owned
+    // receipts remain on their operation-specific acknowledgement path.
+    publishedRecoveryTransactionReceipts.clear();
     scheduleSidecarRecovery();
   });
   return client;
