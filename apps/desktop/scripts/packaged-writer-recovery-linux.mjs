@@ -831,10 +831,15 @@ async function runMixedWriterFifo(display, workDir) {
     assert.equal(claim.batch_id, prepared.rows[0].batchId);
     assert.equal(claim.operation, "glossary.add");
     assert.equal(claim.owner_process_id, owner.application.pid);
-    contender = await launchPackaged(display, prepared.config, prepared.project, {
-      OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "glossary.add",
-      OMEGAT_TEST_TRANSACTION_ACK_TRACE: droppedTrace,
-    });
+    contender = await launchPackagedRenderer(
+      display,
+      prepared.config,
+      prepared.project,
+      {
+        OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "glossary.add",
+        OMEGAT_TEST_TRANSACTION_ACK_TRACE: droppedTrace,
+      },
+    );
     await sleep(500);
     assert.equal(await pathExists(droppedTrace), false);
     assert.equal(
