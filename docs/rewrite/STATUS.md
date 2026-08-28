@@ -649,6 +649,15 @@ injection on both sides of that rename proves that the pre-publish candidate
 remains pending and is replayed once, while the post-publish result is rebound
 directly from the envelope without another `project.external-refresh`,
 `entry.list`, or `stats.get`.
+Refresh-journal compaction now archives terminal, renderer-acknowledged records
+before adopting a replacement process. It preserves both an unacknowledged
+`sidecar_committed` receipt and every pending FIFO tail, and it does not rewrite
+an old terminal record to the replacement renderer generation. Sidecar contract
+coverage injects an acknowledged old record ahead of an unacknowledged receipt
+and pending tail, then proves stale-generation and cross-project queues cannot
+be revived. The same product RPC rejects a version-1 envelope with an unknown
+payload field and a future version-2 envelope without modifying or archiving
+either invalid journal.
 Editor `entry.set`, explicit document save, and project-close TMX flush now use
 the same version-1 snapshot/receipt/recovery state machine as team writes.
 Every editor commit is keyed by the full six-field `EntryKey`; the TMX,
@@ -769,6 +778,15 @@ restores snapshots and compensates published repositories; recovery that sees
 the atomically published receipt removes only transaction state and preserves
 the committed TMX/conflict result. A real child-process abort immediately after
 receipt publication proves the resolution is neither rolled back nor replayed.
+The real Linux `linux-unpacked` path now also drives the visible `team.sync` and
+source `team.commit` controls against one main plus one mapped file repository.
+It SIGKILLs the Electron/sidecar process group on both sides of each receipt
+rename. Pre-rename recovery restores the user project tree and both remotes
+byte-for-byte and removes `active.json`; post-rename/pre-renderer-ack recovery
+preserves the one receipt-backed product without replaying remote writes. All
+four interruptions retain the wanted duplicate's six-field `EntryKey`, leave
+the same-source decoy untranslated, keep one `Document3` surface, and leave the
+active UTF-16 caret on that wanted segment. This remains Linux-only evidence.
 The suite is now **37 passed / 1 ignored**; the preserved SVN binary prerequisite
 remains the single ignore.
 
