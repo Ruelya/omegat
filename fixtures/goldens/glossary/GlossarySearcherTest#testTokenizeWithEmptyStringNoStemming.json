@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.glossary.GlossarySearcherTest#testTokenizeWithEmptyStringNoStemming",
+  "count": 0,
+  "keys": [
+    "org.omegat.gui.glossary.GlossarySearcherTest#testTokenizeWithEmptyStringNoStemming"
+  ]
+}

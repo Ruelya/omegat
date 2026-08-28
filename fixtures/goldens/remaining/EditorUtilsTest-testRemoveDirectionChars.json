@@ -1,0 +1,30 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.editor.EditorUtilsTest#testRemoveDirectionChars",
+  "cases": [
+    {
+      "input": "|",
+      "output": "|"
+    },
+    {
+      "input": "\u202a",
+      "output": ""
+    },
+    {
+      "input": "\u202b",
+      "output": ""
+    },
+    {
+      "input": "\u202c",
+      "output": ""
+    },
+    {
+      "input": "\u202az\u202bz\u202c",
+      "output": "zz"
+    },
+    {
+      "input": "zz",
+      "output": "zz"
+    }
+  ]
+}

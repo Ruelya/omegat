@@ -1,0 +1,144 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StaticUtilsTest#testGlobToRegex",
+  "cases": [
+    {
+      "glob": "ab?d",
+      "text": "abcd",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "ab?d",
+      "text": "abd",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "ab*d",
+      "text": "abcccccd",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "ab*d",
+      "text": "abd",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "ab*d",
+      "text": "abde",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "ab*",
+      "text": "abdefg",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "$a[b-c]!?*d{}",
+      "text": "$a[b-c]!?1234d{}",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "a?",
+      "text": "a b",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "a ?",
+      "text": "a b",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "a*",
+      "text": "a b",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "a* b",
+      "text": "a b",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "a* b",
+      "text": "a b",
+      "nbsp": true,
+      "hit": true
+    },
+    {
+      "glob": "a*b",
+      "text": "a b",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "a*b",
+      "text": "a b",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "a*b",
+      "text": "a b",
+      "nbsp": true,
+      "hit": false
+    },
+    {
+      "glob": "a b",
+      "text": "a b",
+      "nbsp": false,
+      "hit": true
+    },
+    {
+      "glob": "a b",
+      "text": "a b",
+      "nbsp": true,
+      "hit": true
+    },
+    {
+      "glob": "a b",
+      "text": "a b",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "a b",
+      "text": "a b",
+      "nbsp": true,
+      "hit": true
+    },
+    {
+      "glob": "a *",
+      "text": "a b",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "a *",
+      "text": "a b",
+      "nbsp": true,
+      "hit": true
+    },
+    {
+      "glob": "a ?",
+      "text": "a b",
+      "nbsp": false,
+      "hit": false
+    },
+    {
+      "glob": "a ?",
+      "text": "a b",
+      "nbsp": true,
+      "hit": true
+    }
+  ]
+}
