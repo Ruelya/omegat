@@ -57,9 +57,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
-**86 passed**, team **41 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **32 passed** plus sidecar journal/watcher unit
-**5 passed** and plugin filter **1 passed**, and desktop **24 files / 178 tests
+**86 passed**, team **46 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **34 passed** plus sidecar journal/watcher unit
+**6 passed** and plugin filter **1 passed**, and desktop **24 files / 178 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The raw NDJSON contract and real Linux packaged matrix also pass the
@@ -837,7 +837,8 @@ product receipt and then performs one clean project close/reopen. Project
 properties and mapping follow project rollback/commit, while the config-scoped
 filter and SRX preferences remain durable even when the following
 `project.reload` receipt rolls back. Windows and macOS package behavior are not
-claimed by this matrix.
+claimed by this matrix. The eight injected receipt boundaries plus close/reopen
+pass through `npm run test:e2e:config-receipt-recovery:linux`.
 Electron serializes all receipt-bearing RPCs and excludes active caller-managed
 receipts from the recovery channel. Recovery delivery is identity-deduplicated
 for one renderer lifecycle, but the delivery set is cleared when the renderer
