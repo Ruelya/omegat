@@ -669,12 +669,21 @@ durable boundaries and externally SIGKILLs Electron's entire process group. At
 the archive boundary the original acknowledged + unacknowledged + pending queue
 remains authoritative; at the queue-rename boundary the compacted
 unacknowledged + pending queue is already authoritative. In each scenario a
-second Electron instance simultaneously recovers a different project's
-`entry.set` receipt and remains responsive while the first is killed. Restarting
-the first package while the second stays live drains only its own receipt and
-FIFO tail, retains the exact six-field `EntryKey` and one `Document3`, and leaves
-both histories free of the other project's batch IDs. This is Linux-only
-evidence.
+second Electron instance, deliberately using the same OmegaT config directory,
+simultaneously recovers a different project's `entry.set` receipt and remains
+responsive while the first is killed. Chromium profiles and config-scoped
+active-project pointers are owner-isolated, so opening either root does not
+cancel or adopt the other owner's queue. Restarting the first package while the
+second stays live drains only its own receipt and FIFO tail, retains the exact
+six-field `EntryKey` and one `Document3`, and leaves both histories free of the
+other project's batch IDs.
+The same packaged matrix creates one real team commit, two ordered refreshes,
+and a trailing save in one project, then drops refresh acknowledgements until
+SIGKILL. Restart does not replay the acknowledged team receipt, dispatches the
+unacknowledged refresh plus its refresh/save tails in FIFO order, and archives
+each terminal batch exactly once. Refresh state transitions and event
+coalescing preserve the original cross-backend dispatch key while only each
+backend's local head competes for dispatch. This is Linux-only evidence.
 A separate contract keeps two replacement sidecars alive concurrently: project
 A recovers an `entry.set` receipt while project B recovers an external-refresh
 receipt from the other durable queue. Each response is re-stamped only to its
