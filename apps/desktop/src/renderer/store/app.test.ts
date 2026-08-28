@@ -13,7 +13,7 @@ import {
   resetAppState,
   useApp,
 } from "./app";
-import type { TransactionEnvelope } from "../lib/types";
+import type { TransactionEnvelope, TransactionOutcome } from "../lib/types";
 
 const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
@@ -51,6 +51,22 @@ function refreshEnvelope(event: ExternalChangeEvent): TransactionEnvelope {
       fingerprints: event.fingerprints,
       sources: event.sources,
       committed_result: event.committed_result,
+    },
+  };
+}
+
+async function transactionAck(
+  envelope: TransactionEnvelope,
+  _outcome?: TransactionOutcome,
+) {
+  return {
+    ack: {
+      version: 1,
+      project_root: envelope.project_root,
+      generation: envelope.generation,
+      batch_id: envelope.batch_id,
+      acknowledged: true,
+      already_acknowledged: false,
     },
   };
 }
@@ -1740,7 +1756,7 @@ describe("app store", () => {
 
   it("waits for an active long operation before draining fingerprint recovery", async () => {
     const root = "/active-operation-root";
-    const complete = vi.fn(async () => ({ remaining: [] }));
+    const complete = vi.fn(transactionAck);
     const refresh = vi.fn(async () => true);
     let notify: ((event: ExternalChangeEvent) => void) | undefined;
     window.omegat!.acknowledgeTransactionReceipt = complete;
@@ -1927,7 +1943,7 @@ describe("app store", () => {
 
   it("retries the durable FIFO head by batch id after a sidecar restart", async () => {
     const root = "/restart-root";
-    const complete = vi.fn(async () => ({ remaining: [] }));
+    const complete = vi.fn(transactionAck);
     window.omegat!.acknowledgeTransactionReceipt = complete;
     const refresh = vi.fn()
       .mockRejectedValueOnce(new Error("sidecar exited (SIGKILL)"))
@@ -2028,7 +2044,7 @@ describe("app store", () => {
       source_words: 2,
       target_words: 2,
     };
-    const complete = vi.fn(async () => ({ remaining: [] }));
+    const complete = vi.fn(transactionAck);
     let notify: ((event: ExternalChangeEvent) => void) | undefined;
     window.omegat!.acknowledgeTransactionReceipt = complete;
     window.omegat!.onTransactionEnvelope = (listener) => {
