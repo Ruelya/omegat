@@ -2516,15 +2516,11 @@ try {
       })()`);
       if (
         state.project === project
-        && state.operation === "externalRefresh"
-        && state.phase === "succeeded"
         && state.conflicts === 0
+        && !await pathExists(refreshJournal)
       ) return state;
       throw new Error(JSON.stringify(state));
     },
-  );
-  await waitFor("completed Electron-recovered refresh journal removal", async () =>
-    await pathExists(refreshJournal) ? undefined : true
   );
   const electronRestartRecovered = await client.evaluate(`(async () => {
     const app = document.querySelector(".app");
@@ -2553,8 +2549,12 @@ try {
     };
   })()`, true);
   assert.equal(electronRestartRecovered.project, project);
-  assert.equal(electronRestartRecovered.operation, "externalRefresh");
-  assert.equal(electronRestartRecovered.phase, "succeeded");
+  assert.equal(
+    electronRestartRecovered.operation,
+    "",
+    "cold checkpoint recovery must not synthesize a user-visible operation",
+  );
+  assert.equal(electronRestartRecovered.phase, "");
   assert.equal(
     electronRestartRecovered.entries,
     electronRestartBefore.entries + 1,
@@ -2595,6 +2595,7 @@ try {
     restartedSidecarPid: electronRestartNewSidecar.pid,
     journalPresentBeforeKill: true,
     journalRemovedAfterCommit: true,
+    rendererOperation: electronRestartRecovered.operation,
     entries: electronRestartRecovered.entries,
     completeEntryKeys: {
       wanted: electronRestartRecovered.wanted.key,
