@@ -1,0 +1,24 @@
+[package]
+name = "omegat-sidecar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JSON-RPC sidecar process for the Electron shell"
+
+[dependencies]
+omegat-ipc.workspace = true
+omegat-core.workspace = true
+omegat-filters.workspace = true
+omegat-plugin.workspace = true
+omegat-team.workspace = true
+omegat-script.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile = "=3.10.1"
+serde_json.workspace = true

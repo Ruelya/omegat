@@ -1,0 +1,42 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TagUtilTest#testTagType",
+  "cases": [
+    {
+      "tag": "<x0>",
+      "type": "START"
+    },
+    {
+      "tag": "<x10>",
+      "type": "START"
+    },
+    {
+      "tag": "</x0>",
+      "type": "END"
+    },
+    {
+      "tag": "<x0/>",
+      "type": "SINGLE"
+    },
+    {
+      "tag": "<x>",
+      "type": "SINGLE"
+    },
+    {
+      "tag": "<x/>",
+      "type": "SINGLE"
+    },
+    {
+      "tag": "</x>",
+      "type": "SINGLE"
+    },
+    {
+      "tag": "</x0/>",
+      "type": "SINGLE"
+    },
+    {
+      "tag": "foo",
+      "type": "SINGLE"
+    }
+  ]
+}

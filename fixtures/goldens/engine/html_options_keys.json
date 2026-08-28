@@ -1,0 +1,19 @@
+{
+  "java_test": "org.omegat.filters2.html2.HTMLOptions#getRewriteEncoding",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "keys": [
+    "compressWhitespace",
+    "ignoreTags",
+    "paragraphOnBr",
+    "removeComments",
+    "rewriteEncoding",
+    "skipMeta",
+    "skipRegExp",
+    "translateButtonValue",
+    "translateHref",
+    "translateHreflang",
+    "translateLang",
+    "translateSrc",
+    "translateValue"
+  ]
+}

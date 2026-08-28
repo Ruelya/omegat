@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TmxEscapingWriterTest#testNBSP",
+  "input": "[ ]",
+  "output": "[ ]",
+  "keys": [
+    "org.omegat.util.TmxEscapingWriterTest#testNBSP"
+  ]
+}

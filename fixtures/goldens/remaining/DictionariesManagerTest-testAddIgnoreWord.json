@@ -1,0 +1,6 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.dictionaries.DictionariesManagerTest#testAddIgnoreWord",
+  "word": "testudo",
+  "ignored": true
+}
