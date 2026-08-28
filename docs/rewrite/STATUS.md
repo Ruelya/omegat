@@ -48,7 +48,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - Java GUI: **297** files / **61510** lines vs desktop TS/TSX/CSS **22869**
 - Java `gui/editor`: **63** files / **14288** lines vs TS editor **9164**
 - Java `*Test` `public void test*` (`src/test` + `aligner/src/test`): **778**
-- Unique `java_test` goldens that match those methods: **817** (includes
+- Unique `java_test` goldens that match those methods: **818** (includes
   API-less product-class fixtures)
 - **In-scope missing goldens: 0.** Remaining **22** `missing` rows are
   the Java-runtime-only `EXCLUDED_TESTS` (JAR/LT smoke, plugin metadata,
@@ -56,8 +56,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-28 verification:** core selected suites **161 passed**, filters
-**86 passed**, team **50 passed / 1 ignored**, script **10 passed**, CLI
+**2026-08-28 verification:** core selected suites **173 passed**, filters
+**86 passed**, team **49 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
 **14 passed** and plugin filter **1 passed**, and desktop **26 files / 185 tests
 passed** after a clean TypeScript check.
@@ -146,15 +146,19 @@ gap, so React's closed-state unwatch effect cannot erase main-process scope
 first; a renderer regression test fixes that ordering.
 `crates/omegat-ipc/rpc-methods.json` is now the canonical RPC registry and
 26-writer catalog (**22 project / 4 config**). Its build script validates
-uniqueness and emits the strongly typed Rust registry; Electron imports the
-same source for project/config transaction scope, receipt ownership, and
-watcher suppression. `sys.rpc-registry` and `sys.writer-catalog` expose that
-generated view at runtime, and the raw sidecar contract invokes every generated
-method and compares the runtime writer rows exactly. The former handwritten
-method sets are removed. `prefs.set` records its normalized full request as the
-stable retry identity separately from the merge patch applied to the shared
-file, preserving stale-process field merging while making a cross-process exact
-retry byte- and mtime-stable.
+uniqueness and generated Rust-identifier collisions, then emits both the typed
+registry and an exhaustive `RpcMethod` enum. Main and durable-journal dispatch
+accept only that enum; adding a registry method without a dispatch arm is a
+compile error, while an unregistered string is rejected before dispatch. The
+contract also checks the generated enum in both directions against every
+registry row. Electron imports the same source for project/config transaction
+scope, receipt ownership, and watcher suppression. `sys.rpc-registry` and
+`sys.writer-catalog` expose that generated view at runtime, and the raw sidecar
+contract invokes every generated method and compares the runtime writer rows
+exactly. The former handwritten method sets are removed. `prefs.set` records
+its normalized full request as the stable retry identity separately from the
+merge patch applied to the shared file, preserving stale-process field merging
+while making a cross-process exact retry byte- and mtime-stable.
 The real Linux unpacked-package catalog matrix drives every catalog row through
 its actual product path. Each project writer is killed after durable product
 publication but before acknowledgement; each config writer is killed after its
@@ -167,7 +171,11 @@ project/config GC (observed generations **132 / 3**). A separate
 source bytes, publishes one `request_cancelled` terminal, and does not replay
 after another process death. No `.tmp` or `.candidate` transaction artifacts
 remain. This matrix was not run on Windows or macOS because this runner is
-Linux-only.
+Linux-only. Dedicated `windows-latest` and `macos-latest` CI jobs now build
+their native unpacked package and invoke the same matrix module, including its
+byte/mtime, terminal, zero-replay, lock-file, rename-candidate, and post-kill
+fsync evidence. Those two jobs were configured here but were not run or claimed
+green from this Linux environment.
 One phase model covers all **22 project** and **4 config** writers. Core property
 matrices run every writer through all three acknowledgement publication/
 compaction crash boundaries, all ten legacy-history migration/segmentation/GC
@@ -260,7 +268,11 @@ fails if that wave’s required `test*` set is incomplete. `SegmentEditor.tsx`
 must reference `Document3` (unconditional). P12 leftover English phrases
 (values equal a *different* `en.json` string) are **260** after Bundle
 migration. `P12_GATES_GREEN` is gone. Product rows stay `parity_gap`
-until R12 and the matching `assert_eq` set is complete.
+until R12 and the matching `assert_eq` set is complete. Engine-only export now
+restores the process-wide Java `FilterMaster` after its JUnit wave, so its
+subsequent HTML honesty export is repeatable. Team path maps use deterministic
+insertion order; all **12** team mapping/credential goldens changed in this
+wave regenerated byte-for-byte from a temporary Java export.
 
 **P1 engine:** Segmenter / FindMatches / Levenshtein / CalcMatchStatistics /
 TMXWriter / TagValidation method goldens exist. Rewrite-wave goldens now
@@ -1330,12 +1342,22 @@ flow is ported. GlossarySearcher remaining methods (Italian
 
 **P10 team:** GIT product path is `git2`. SVN checkout/update/commit is
 **1 `#[ignore]`** (needs `svn` + `svnadmin` — reason stays). HTTP
-two-client rebase uses `assert_eq` on conflict `ours`/`theirs`.
+two-client rebase uses `assert_eq` on conflict `ours`/`theirs`. Real local HTTP
+requests now persist ETags, send `If-None-Match`, atomically publish a `200`
+body, preserve exact bytes and mtime on `304`, and expose Java-compatible
+SHA-1 file versions.
 `RemoteRepositoryFactoryTest` detect-type **4/4** `assert_eq`.
-`RemoteRepositoryProvider2Test` slash / abs-local helpers and HTTP
+`RemoteRepositoryProviderTest` now drives all **10/10** Java methods through
+the observable copy product API and asserts exact destination sets, including
+single-file selection, overlapping mappings, renamed files, postfix writes,
+both exclusion dialects, and both directions.
+`RemoteRepositoryProvider2Test` **4/4** slash / abs-local helpers and HTTP
 `file://` retrieve, 304 skip-write, `switchToVersion` (`null` ok /
-non-null `"Not supported"`), and remaining copy/rename mapping
-goldens `assert_eq` Java cases. Mapping glob evaluation now distinguishes
+non-null `"Not supported"`) goldens `assert_eq` Java cases. The parameterized
+Java `GITCredentialsProviderTest#extractFingerprint` now has a regenerable
+method golden and product equality for legacy MD5, direct SHA-256, and EC
+dual-fingerprint prompts; unknown prompt shapes fail closed. Mapping glob
+evaluation now distinguishes
 slash-anchored exclusions from recursive unanchored exclusions using
 separator-aware matching. The two Java all-copy cases assert exact destination
 sets (**5** unanchored / **9** slash-anchored), through the same observable copy
@@ -1400,7 +1422,7 @@ preserves the one receipt-backed product without replaying remote writes. All
 four interruptions retain the wanted duplicate's six-field `EntryKey`, leave
 the same-source decoy untranslated, keep one `Document3` surface, and leave the
 active UTF-16 caret on that wanted segment. This remains Linux-only evidence.
-The suite is now **41 passed / 1 ignored**; the preserved SVN binary prerequisite
+The suite is now **49 passed / 1 ignored**; the preserved SVN binary prerequisite
 remains the single ignore.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
