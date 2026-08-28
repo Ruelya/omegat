@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-28 verification:** core selected suites **161 passed**, filters
 **86 passed**, team **50 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
-**13 passed** and plugin filter **1 passed**, and desktop **25 files / 183 tests
+**14 passed** and plugin filter **1 passed**, and desktop **26 files / 185 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 Project/team product transaction history now uses the shared immutable segmented
@@ -129,6 +129,12 @@ lock shim and private config lock shim are gone. A coordinator keyed by the
 canonical lock path fails same-thread re-entry before touching the OS lock, and
 the regression test proves that the outer callback completes, the inner
 callback never runs, and the coordinator can be reopened afterward.
+Direct production opening of a transaction workflow is no longer public.
+Legacy-aware opening requires a `DurableCoordinatorCapability` borrowed from
+the held FIFO lock and returns a `LockedDurableTransactionWorkflow` tied to that
+lock lifetime. Team product and shared-config migration/recovery entry points
+receive the capability from the coordinator instead of opening journal or
+history state independently; direct constructors remain test-only.
 Project/team phase transitions no longer reopen a workflow inside the locked
 operation. Snapshot capture, mutation checkpoints, product publication,
 renderer-receipt retention, terminal rollback, and cleanup now carry the one
@@ -138,6 +144,30 @@ publication-then-ack completion helper for every receipt-bearing operation.
 Synchronous close publication posts its acknowledgement without a microtask
 gap, so React's closed-state unwatch effect cannot erase main-process scope
 first; a renderer regression test fixes that ordering.
+`crates/omegat-ipc/rpc-methods.json` is now the canonical RPC registry and
+26-writer catalog (**22 project / 4 config**). Its build script validates
+uniqueness and emits the strongly typed Rust registry; Electron imports the
+same source for project/config transaction scope, receipt ownership, and
+watcher suppression. `sys.rpc-registry` and `sys.writer-catalog` expose that
+generated view at runtime, and the raw sidecar contract invokes every generated
+method and compares the runtime writer rows exactly. The former handwritten
+method sets are removed. `prefs.set` records its normalized full request as the
+stable retry identity separately from the merge patch applied to the shared
+file, preserving stale-process field merging while making a cross-process exact
+retry byte- and mtime-stable.
+The real Linux unpacked-package catalog matrix drives every catalog row through
+its actual product path. Each project writer is killed after durable product
+publication but before acknowledgement; each config writer is killed after its
+terminal and retried with the same batch. All **26** rows retain exact product
+bytes and mtimes after recovery, have one final terminal, perform zero replay,
+and remain sparse-history-addressable after project rename/reopen and forced
+project/config GC (observed generations **132 / 3**). A separate
+`project.import` cancellation observes
+`started → progress(snapshot/copy) → cancelling → cancelled (-32800)`, restores
+source bytes, publishes one `request_cancelled` terminal, and does not replay
+after another process death. No `.tmp` or `.candidate` transaction artifacts
+remain. This matrix was not run on Windows or macOS because this runner is
+Linux-only.
 One phase model covers all **22 project** and **4 config** writers. Core property
 matrices run every writer through all three acknowledgement publication/
 compaction crash boundaries, all ten legacy-history migration/segmentation/GC
