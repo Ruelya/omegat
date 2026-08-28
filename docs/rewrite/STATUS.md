@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **30 passed** plus sidecar journal/watcher unit
+**4 passed**, sidecar contract **31 passed** plus sidecar journal/watcher unit
 **7 passed** and plugin filter **1 passed**, and desktop **24 files / 175 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
@@ -904,11 +904,19 @@ rename. At every boundary the UI still says `cancelling` until protocol
 together. Three replacement Electron processes observe the restored
 conflict/TMX, but none receives the cancelled resolve envelope and exactly one
 durable dispatcher owner remains. The rollback-fsync case sends a second
-wave of **two packaged Electron processes concurrently** against the same
-`cancellation_pending` row. The product lock selects one durable cancellation
-owner while the loser waits; both receive protocol **-32800**, only one
-`renderer-rollback-durable` checkpoint and one terminal row exist, neither
-caller claims the resolve dispatcher, and both envelope traces stay empty.
+wave of **three packaged Electron processes concurrently** against the same
+`cancellation_pending` row. The first cancellation owner parks while holding
+the OS product lock; both losers emit their wait checkpoints before that
+owner's complete packaged process group is externally SIGKILLed. Kernel lock
+release lets exactly one of those already-running losers take over without a
+relaunch, while the other observes the idempotent terminal. Both survivors
+receive protocol **-32800**, only one `renderer-rollback-durable` checkpoint
+and one terminal row exist, neither caller claims the resolve dispatcher, and
+all envelope traces stay empty. The raw NDJSON contract independently kills
+its first sidecar owner only after the second caller has entered the lock wait;
+that same waiting process takes over, the killed logical caller retries the
+same idempotency key, both logical calls end at **-32800**, and the sidecar
+remains responsive with no resolve envelope or second rollback pass.
 The terminal-rename case also SIGKILLs packaged process groups at
 `after_archive_fsync` and `after_queue_rename`; restart sees one archived
 request-cancelled row and an empty compacted queue.
