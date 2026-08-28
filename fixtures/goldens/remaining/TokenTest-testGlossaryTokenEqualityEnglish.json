@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityEnglish",
+  "str": "source and target",
+  "glos": "target",
+  "str_len": 3,
+  "glos_len": 1,
+  "first_deep_eq": false,
+  "last_eq": true,
+  "keys": [
+    "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityEnglish"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "id": "text",
+  "fixture": "text/file-TextFilter-SMP.txt",
+  "java_test": "org.omegat.filters.TextFilterTest#testLineLengthLimit",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "lineLength": "8",
+    "maxLineLength": "10",
+    "segmentOn": "EMPTYLINES"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "ABC DEF GEH\n",
+    "ABC DEF GE\n",
+    "ABC DEF 𝐆𝐄𝐇\n",
+    "ABC DEF 𝐆𝐄\n",
+    "ABC     DEF \n"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "ABC DEF\nGEH\n\nABC DEF GE\n\nABC DEF\n𝐆𝐄𝐇\n\nABC DEF 𝐆𝐄\n\nABC\nDEF\n"
+}

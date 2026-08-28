@@ -1,0 +1,15 @@
+[package]
+name = "omegat-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JSON-RPC protocol types for the OmegaT rewrite"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+serde.workspace = true
+serde_json.workspace = true

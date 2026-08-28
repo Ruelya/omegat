@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ExternalTMFactoryTest#testLoadTMX",
+  "supported": true,
+  "count": 2,
+  "src0": "This is test.",
+  "tgt0": "Ceci est un test.",
+  "src1": "Just a test.",
+  "tgt1": "Juste un test.",
+  "keys": [
+    "org.omegat.core.data.ExternalTMFactoryTest#testLoadTMX"
+  ]
+}
