@@ -943,7 +943,7 @@ impl App {
                         params,
                     )
                     .map_err(|error| (error_code::IO, error))?;
-                    let preferences = result
+                    let preferences: Preferences = result
                         .as_object_mut()
                         .and_then(|object| object.remove("preferences"))
                         .ok_or((
