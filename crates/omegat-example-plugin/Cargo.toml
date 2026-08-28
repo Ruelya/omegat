@@ -1,0 +1,12 @@
+[package]
+name = "omegat-example-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Example cdylib that registers Filter and Marker implementations"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json.workspace = true

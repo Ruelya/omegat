@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.IssueProvidersTest#testGetEnabledProviders",
+  "ids": [
+    "tag",
+    "spell",
+    "terminology",
+    "languagetool"
+  ],
+  "keys": [
+    "org.omegat.gui.issues.IssueProvidersTest#testGetEnabledProviders"
+  ]
+}

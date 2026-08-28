@@ -1,0 +1,18 @@
+{
+  "id": "docbook",
+  "java_test": "org.omegat.filters.DocBookFilterTest#testIsSupported",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "supported": [
+    {
+      "fixture": "docBook/file-DocBookFilter.xml",
+      "ok": true
+    },
+    {
+      "fixture": "docBook/file-DocBookFilter-invalid.xml",
+      "ok": false
+    }
+  ]
+}

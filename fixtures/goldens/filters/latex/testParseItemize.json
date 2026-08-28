@@ -1,0 +1,36 @@
+{
+  "id": "latex",
+  "fixture": "Latex/file-latex-items.tex",
+  "java_test": "org.omegat.filters.LatexFilterTest#testParseItemize",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "LaTeX Itemize example",
+    "Itemize",
+    "<r0> INTERRUTTORE GENERALE ON/OFF (I/0) ",
+    "<r0> SPIA PRESENZA TENSIONE ",
+    "<r0> SPIA PREALLARME ",
+    "<r0> PULPITO/PANNELLO DI COMANDO"
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "\n\\documentclass{article} \n\\begin{document} \n\\title{LaTeX Itemize example} \n\n\n\\section {Itemize} \n\n\n\\begin{itemize} \n\\item INTERRUTTORE GENERALE ON/OFF (I/0) \n\\item SPIA PRESENZA TENSIONE \n\\item SPIA PREALLARME \n\\item PULPITO/PANNELLO DI COMANDO \n\\end{itemize} \n\n\n\\end{document} "
+}
