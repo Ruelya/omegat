@@ -673,6 +673,14 @@ const mainRemote = join(workDir, "main-file-remote");
 const mappingRemote = join(workDir, "mapping-file-remote");
 const conflictRemote = join(workDir, "complete-key-conflict-remote");
 await mkdir(configDir, { recursive: true });
+const preferences = await rpcOnce(configDir, "prefs.get", {});
+preferences.autosave_seconds = 0;
+const savedPreferences = await rpcOnce(configDir, "prefs.set", preferences);
+assert.equal(
+  savedPreferences.autosave_seconds,
+  0,
+  "packaged cancellation fixture must disable background autosave",
+);
 await rpcOnce(configDir, "project.create", {
   root: project,
   source_lang: "en",
