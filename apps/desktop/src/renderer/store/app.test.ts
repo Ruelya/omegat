@@ -303,6 +303,56 @@ describe("app store", () => {
     ]);
   });
 
+  it("posts a close acknowledgement before the closed-state unwatch effect", async () => {
+    const root = "/project-close-receipt-order";
+    projectEvents.publishProject("load", root);
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const receipt = productEnvelope(
+      root,
+      generation,
+      "close-before-unwatch",
+      "project.close",
+    );
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "project.close") return { ok: true, receipt };
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    const order: string[] = [];
+    acknowledgeTransactionReceipt.mockImplementationOnce(async (envelope, outcome) => {
+      order.push("ack-posted");
+      return transactionAck(envelope, outcome);
+    });
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        has_repositories: false,
+      },
+      screen: "workspace",
+      entries: [],
+      index: -1,
+    });
+    let scheduledUnwatch = false;
+    const unsubscribe = useApp.subscribe((state) => {
+      if (state.props === null && !scheduledUnwatch) {
+        scheduledUnwatch = true;
+        queueMicrotask(() => order.push("unwatch-effect"));
+      }
+    });
+
+    await useApp.getState().closeProject();
+    await Promise.resolve();
+    unsubscribe();
+
+    expect(order).toEqual(["ack-posted", "unwatch-effect"]);
+    expect(acknowledgeTransactionReceipt).toHaveBeenCalledWith(
+      receipt,
+      "succeeded",
+    );
+  });
+
   it("builds search RPC from the Search window form", async () => {
     rpc.mockResolvedValue([]);
     useApp.setState({

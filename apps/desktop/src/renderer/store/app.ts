@@ -1843,7 +1843,16 @@ async function completeCoordinatorTransaction<T>(
   allowClosedProject = false,
   deferAcknowledgementFailure = true,
 ): Promise<T> {
-  const published = await publish();
+  const publication = publish();
+  // Do not introduce a microtask between a synchronous closed-state publish
+  // and posting its acknowledgement. React's props=null effect unwatches the
+  // project; yielding here would clear the main-process receipt scope first.
+  const published = (
+    publication
+    && typeof (publication as PromiseLike<T>).then === "function"
+  )
+    ? await publication
+    : publication as T;
   if (receipt) {
     if (deferAcknowledgementFailure) {
       await acknowledgeTransactionEnvelopeOrDefer(
