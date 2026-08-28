@@ -581,6 +581,12 @@ async function prepareCompactionProject(configDir, project, label) {
     "transactions",
     "active.json",
   );
+  const journalRecoveryPath = join(
+    project,
+    ".repositories",
+    "transactions",
+    ".active.previous.json",
+  );
   const journal = JSON.parse(await readFile(journalPath, "utf8"));
   assert.equal(journal.batches[0].batch_id, receiptBatchId);
   assert.equal(journal.batches[0].status, "sidecar_committed");
@@ -591,6 +597,7 @@ async function prepareCompactionProject(configDir, project, label) {
   terminal.status = "completed";
   terminal.updated_unix_ms = Math.max(1, terminal.updated_unix_ms - 1_000);
   journal.batches.unshift(terminal);
+  await durableWriteJson(journalRecoveryPath, journal);
   await durableWriteJson(journalPath, journal);
   return {
     journalPath,
