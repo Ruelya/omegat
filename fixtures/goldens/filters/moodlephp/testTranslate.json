@@ -1,0 +1,33 @@
+{
+  "id": "moodlephp",
+  "fixture": "MoodlePHP/file.php",
+  "java_test": "org.omegat.filters.MoodlePHPFilterTest#testTranslate",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Accessibility",
+    "Accessibility help",
+    "Unrecognised options:\n  {$a}\nPlease use --help option.",
+    "You cannot uninstall the \\'{$a->filter}\\' because it is part of the \\'{$a->module}\\' module.",
+    "List of groups or contexts whose members are allowed to create attributes. Separate multiple groups with \\';\\'. Usually something like \\'cn=teachers,ou=staff,o=myorg\\'"
+  ],
+  "ids": [
+    "access",
+    "accesshelp",
+    "cliunknowoption",
+    "cannotdeletemodfilter",
+    "auth_ldap_attrcreators"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<?php\n\n// This file is part of Moodle - http://moodle.org/\n\n/**\n * Strings for component 'access', language 'en', branch 'MOODLE_36_STABLE'\n *\n * @package   access\n * @copyright 1999 onwards Martin Dougiamas  {@link http://moodle.com}\n * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later\n */\n\ndefined('MOODLE_INTERNAL') || die();\n\n$string['access'] = 'Accessibility';\n$string['accesshelp'] = 'Accessibility help';\n$string['cliunknowoption'] = 'Unrecognised options:\n  {$a}\nPlease use --help option.';\n$string['cannotdeletemodfilter'] = 'You cannot uninstall the \\'{$a->filter}\\' because it is part of the \\'{$a->module}\\' module.';\n$string['auth_ldap_attrcreators'] = 'List of groups or contexts whose members are allowed to create attributes. Separate multiple groups with \\';\\'. Usually something like \\'cn=teachers,ou=staff,o=myorg\\'';\n"
+}

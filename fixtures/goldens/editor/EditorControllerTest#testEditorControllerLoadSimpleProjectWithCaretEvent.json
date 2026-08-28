@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorControllerTest#testEditorControllerLoadSimpleProjectWithCaretEvent",
+  "translation_start": 4,
+  "translation_end": 4,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

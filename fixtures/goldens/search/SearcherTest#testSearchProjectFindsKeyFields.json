@@ -1,0 +1,14 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchProjectFindsKeyFields",
+  "needles": [
+    "chapter_one.html",
+    "MSG_GREETING_42",
+    "body/p[3]"
+  ],
+  "with_props": 1,
+  "without_props": 0,
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchProjectFindsKeyFields"
+  ]
+}
