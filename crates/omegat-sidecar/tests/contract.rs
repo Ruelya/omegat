@@ -3878,6 +3878,14 @@ fn resolve_receipt_surviving_losers_retry_after_first_replacement_owner_dies() {
     let first_winner_pid = replacements[first_winner_index].child.id();
     assert_eq!(first_owner["process_id"], first_winner_pid);
     assert_ne!(first_owner["claim_id"], old_owner["claim_id"]);
+    for index in (0..3).filter(|index| *index != first_winner_index) {
+        let wait: Value =
+            serde_json::from_slice(&std::fs::read(&wait_markers[index]).unwrap()).unwrap();
+        assert_eq!(
+            wait["previous_owner_process_id"], first_winner_pid,
+            "replacement {index} waited on a stale owner claim"
+        );
+    }
     let queue_before_first_kill = std::fs::read(&active_path).unwrap();
     replacements[first_winner_index].child.kill().unwrap();
     assert!(!replacements[first_winner_index]

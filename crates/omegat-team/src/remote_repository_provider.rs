@@ -1053,25 +1053,37 @@ pub fn wait_for_transaction_dispatch_owner_exit(
 ) -> Result<Option<u32>> {
     let path = renderer_owner_path(props);
     let deadline = Instant::now() + timeout;
-    while !path.is_file() {
+    let claim = loop {
+        match acquire_project_transaction_lock(props) {
+            Ok(_lock) => {
+                if path.is_file() {
+                    let claim: RendererOwnerClaim =
+                        serde_json::from_slice(&std::fs::read(&path)?).map_err(|error| {
+                            TeamError::Command(format!("renderer owner claim: {error}"))
+                        })?;
+                    if claim.version != TRANSACTION_ENVELOPE_VERSION
+                        || normalized(&claim.project_root) != normalized(&props.root)
+                    {
+                        return Err(TeamError::Command(format!(
+                            "invalid renderer owner claim at {}",
+                            path.display()
+                        )));
+                    }
+                    break claim;
+                }
+            }
+            Err(TeamError::Conflict(_)) => {}
+            Err(error) => return Err(error),
+        }
         if Instant::now() >= deadline {
             return Ok(None);
         }
-        // A competing claimant can hold operation.lock while its atomic owner
-        // file is still being published. Observe that claim instead of
-        // treating the lock race as a terminal rejection.
+        // A competing claimant can hold operation.lock while the previous
+        // dead owner file is still present. Wait until its atomic claim has
+        // been published, then observe that stable owner rather than retrying
+        // against a stale PID.
         std::thread::sleep(Duration::from_millis(25));
-    }
-    let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
-        .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
-    if claim.version != TRANSACTION_ENVELOPE_VERSION
-        || normalized(&claim.project_root) != normalized(&props.root)
-    {
-        return Err(TeamError::Command(format!(
-            "invalid renderer owner claim at {}",
-            path.display()
-        )));
-    }
+    };
     transaction_owner_retry_wait_checkpoint(props, claim.process_id)?;
     while process_is_alive(claim.process_id) {
         if Instant::now() >= deadline {
