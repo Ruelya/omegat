@@ -434,7 +434,27 @@ async function runFault(operation, point, markerName, drive, verify) {
     faultEnv(operation, point, marker),
   );
   await drive(launched.client);
-  await waitFor(markerName, () => pathExists(marker));
+  const markerOutcome = await waitFor(markerName, async () => {
+    if (await pathExists(marker)) return { reached: true };
+    const renderer = await launched.client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      const phase = app?.getAttribute("data-operation-phase") ?? "";
+      if (phase !== "failed") return null;
+      return {
+        operation: app?.getAttribute("data-operation") ?? "",
+        phase,
+        status: [...document.querySelectorAll(".status")]
+          .map((node) => node.textContent?.trim() ?? "")
+          .filter(Boolean),
+      };
+    })()`);
+    return renderer ? { reached: false, renderer } : undefined;
+  });
+  assert.equal(
+    markerOutcome.reached,
+    true,
+    `${markerName} failed before checkpoint: ${JSON.stringify(markerOutcome.renderer)}`,
+  );
   const status = point === "before_atomic_publish" ? "pending" : "sidecar_committed";
   const envelope = await activeEnvelope(active, status, operation);
   const killed = await killPackaged(launched);
