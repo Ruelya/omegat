@@ -2067,6 +2067,608 @@ mod tests {
         );
     }
 
+    #[test]
+    fn coordinator_execution_rejects_same_thread_reentry_without_deadlock() {
+        let temp = tempfile::tempdir().unwrap();
+        let scope = temp.path().join("scope");
+        std::fs::create_dir_all(&scope).unwrap();
+        let directory = scope.join("transactions");
+        let layout = DurableTransactionLayout::default();
+        let inner_ran = std::cell::Cell::new(false);
+        let outer: Result<(), DurableCoordinatorExecutionError<String>> =
+            DurableTransactionCoordinator::<Record>::execute(
+                &directory,
+                &scope,
+                layout.clone(),
+                options(),
+                DurableCoordinatorLockMode::Wait,
+                |_| {
+                    let inner: Result<(), DurableCoordinatorExecutionError<String>> =
+                        DurableTransactionCoordinator::<Record>::execute(
+                            &directory,
+                            &scope,
+                            layout.clone(),
+                            options(),
+                            DurableCoordinatorLockMode::Wait,
+                            |_| {
+                                inner_ran.set(true);
+                                Ok(())
+                            },
+                        );
+                    assert!(matches!(
+                        inner,
+                        Err(DurableCoordinatorExecutionError::Coordinator(
+                            DurableCoordinatorOpenError::Reentrant(_)
+                        ))
+                    ));
+                    Ok(())
+                },
+            );
+        assert_eq!(outer, Ok(()));
+        assert!(!inner_ran.get());
+
+        let reopened: Result<bool, DurableCoordinatorExecutionError<String>> =
+            DurableTransactionCoordinator::<Record>::execute(
+                &directory,
+                &scope,
+                layout,
+                options(),
+                DurableCoordinatorLockMode::Try,
+                |coordinator| Ok(coordinator.workflow().queue().batches.is_empty()),
+            );
+        assert_eq!(reopened, Ok(true));
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum ModelPhase {
+        Absent,
+        Pending,
+        CancellationPending,
+        Committed,
+        TerminalCancelled,
+        Archived,
+    }
+
+    #[derive(Clone, Debug)]
+    struct ModelRow {
+        id: String,
+        operation: &'static str,
+        root: usize,
+        cancel_lane: bool,
+        phase: ModelPhase,
+    }
+
+    #[derive(Clone, Copy)]
+    struct ModelRng(u64);
+
+    impl ModelRng {
+        fn new(seed: u64) -> Self {
+            Self(seed.max(1))
+        }
+
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+
+        fn index(&mut self, length: usize) -> usize {
+            (self.next() as usize) % length
+        }
+    }
+
+    fn model_record(root: &Path, row: &ModelRow, phase: &str) -> Record {
+        let mut record = record(root, &row.id, phase, 0);
+        record.value = serde_json::json!({
+            "operation": row.operation,
+            "lane": if row.cancel_lane { "cancel" } else { "commit" },
+        });
+        record
+    }
+
+    fn execute_model<R>(
+        root: &Path,
+        layout: &DurableTransactionLayout,
+        operation: impl FnOnce(&mut DurableTransactionCoordinator<Record>) -> Result<R, String>,
+    ) -> R {
+        let directory = root.join("transactions");
+        DurableTransactionCoordinator::<Record>::execute(
+            &directory,
+            root,
+            layout.clone(),
+            options(),
+            DurableCoordinatorLockMode::Wait,
+            operation,
+        )
+        .unwrap_or_else(|error| panic!("model coordinator failed for {}: {error}", root.display()))
+    }
+
+    fn validate_model_state(
+        seed: u64,
+        roots: &[PathBuf; 2],
+        rows: &[ModelRow],
+        layout: &DurableTransactionLayout,
+    ) {
+        for (root_index, root) in roots.iter().enumerate() {
+            execute_model(root, layout, |coordinator| {
+                let workflow = coordinator.workflow();
+                for row in rows.iter().filter(|row| row.root == root_index) {
+                    let queued = workflow
+                        .queue()
+                        .batches
+                        .iter()
+                        .find(|record| record.id == row.id);
+                    match row.phase {
+                        ModelPhase::Absent | ModelPhase::Archived => {
+                            assert_eq!(
+                                queued.map(|record| record.phase.as_str()),
+                                None,
+                                "seed {seed}: {} unexpectedly remained queued",
+                                row.id
+                            );
+                        }
+                        ModelPhase::Pending => {
+                            assert_eq!(queued.map(|record| record.phase.as_str()), Some("pending"));
+                        }
+                        ModelPhase::CancellationPending => {
+                            assert_eq!(
+                                queued.map(|record| record.phase.as_str()),
+                                Some("cancelling")
+                            );
+                        }
+                        ModelPhase::Committed => {
+                            assert_eq!(
+                                queued.map(|record| record.phase.as_str()),
+                                Some("committed")
+                            );
+                        }
+                        ModelPhase::TerminalCancelled => {
+                            assert_eq!(
+                                queued.map(|record| record.phase.as_str()),
+                                Some("cancelled")
+                            );
+                        }
+                    }
+                    let terminal = workflow.terminal_record(&row.id)?;
+                    if row.phase == ModelPhase::Archived {
+                        let terminal = terminal.unwrap_or_else(|| {
+                            panic!("seed {seed}: {} has no exact terminal", row.id)
+                        });
+                        assert_eq!(terminal.scope, normalized(root));
+                        assert_eq!(
+                            terminal.phase,
+                            if row.cancel_lane {
+                                "cancelled"
+                            } else {
+                                "acknowledged"
+                            }
+                        );
+                    } else {
+                        assert_eq!(
+                            terminal, None,
+                            "seed {seed}: {} published terminal too early",
+                            row.id
+                        );
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+
+    fn run_seeded_writer_model(seed: u64, random_steps: usize) {
+        const COVERAGE_ENQUEUE: usize = 0;
+        const COVERAGE_CANCEL: usize = 1;
+        const COVERAGE_COMMIT: usize = 2;
+        const COVERAGE_ACK: usize = 3;
+        const COVERAGE_GC: usize = 4;
+
+        let temp = tempfile::tempdir().unwrap();
+        let mut roots = [temp.path().join("root-a"), temp.path().join("root-b")];
+        for root in &roots {
+            std::fs::create_dir_all(root).unwrap();
+        }
+        let layout = DurableTransactionLayout::default();
+        let mut rows = all_writers()
+            .enumerate()
+            .flat_map(|(index, operation)| {
+                [false, true].map(|cancel_lane| ModelRow {
+                    id: format!(
+                        "{operation}-{}",
+                        if cancel_lane { "cancel" } else { "commit" }
+                    ),
+                    operation,
+                    root: index % roots.len(),
+                    cancel_lane,
+                    phase: ModelPhase::Absent,
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 52);
+        let mut coverage = all_writers()
+            .map(|operation| (operation, [0_u32; 5]))
+            .collect::<BTreeMap<_, _>>();
+        let mut rng = ModelRng::new(seed);
+        let mut last_served = [0_u128; 2];
+        let mut dispatch_tick = 1_u128;
+        let mut simultaneous_fair_dispatches = 0_usize;
+        let mut owner_generation = [0_u64; 2];
+        let mut owner_process = [0_u32; 2];
+        let mut owner_deaths = [0_usize; 2];
+        let mut moves = [0_usize; 2];
+
+        let replace_owner = |root_index: usize,
+                             roots: &[PathBuf; 2],
+                             owner_generation: &mut [u64; 2],
+                             owner_process: &mut [u32; 2],
+                             owner_deaths: &mut [usize; 2]| {
+            let previous = owner_process[root_index];
+            owner_generation[root_index] += 1;
+            let generation = owner_generation[root_index];
+            let process_id = 10_000 + root_index as u32 * 100 + generation as u32;
+            let checks = std::cell::Cell::new(0_u32);
+            let retry = (previous != 0).then_some(DurableOwnerRetry {
+                timeout: Duration::from_secs(1),
+                max_owner_deaths: 8,
+                poll_interval: Duration::from_millis(1),
+            });
+            let election = elect_owner_with_legacy(
+                &roots[root_index].join("transactions"),
+                &roots[root_index],
+                &layout.fifo,
+                &DurableOwnerIdentity::new(
+                    format!("model-{seed}-{root_index}-{generation}"),
+                    process_id,
+                    generation,
+                )
+                .unwrap(),
+                retry,
+                |_| Ok(None),
+                |pid| pid == previous && previous != 0 && checks.replace(checks.get() + 1) == 0,
+                || false,
+                || Ok(()),
+                |_| Ok(()),
+            )
+            .unwrap();
+            if previous == 0 {
+                assert_eq!(election.previous_owner_process_ids, Vec::<u32>::new());
+            } else {
+                assert_eq!(election.previous_owner_process_ids, vec![previous]);
+                owner_deaths[root_index] += 1;
+            }
+            assert_eq!(election.claim.generation, generation);
+            owner_process[root_index] = process_id;
+        };
+
+        let compact_root =
+            |root_index: usize,
+             roots: &[PathBuf; 2],
+             rows: &mut [ModelRow],
+             coverage: &mut BTreeMap<&'static str, [u32; 5]>| {
+                let terminal_ids = rows
+                    .iter()
+                    .filter(|row| {
+                        row.root == root_index && row.phase == ModelPhase::TerminalCancelled
+                    })
+                    .map(|row| row.id.clone())
+                    .collect::<BTreeSet<_>>();
+                let compacted = execute_model(&roots[root_index], &layout, |coordinator| {
+                    coordinator.workflow_mut().compact_terminals(
+                        |record| record.transaction_phase().is_terminal(),
+                        &mut |_| Ok(()),
+                        &mut |_| Ok(()),
+                    )
+                });
+                assert_eq!(compacted, terminal_ids.len());
+                for row in rows.iter_mut().filter(|row| terminal_ids.contains(&row.id)) {
+                    row.phase = ModelPhase::Archived;
+                    coverage.get_mut(row.operation).unwrap()[COVERAGE_GC] += 1;
+                }
+            };
+
+        let acknowledge_fair_head =
+            |roots: &[PathBuf; 2],
+             rows: &mut [ModelRow],
+             coverage: &mut BTreeMap<&'static str, [u32; 5]>,
+             last_served: &mut [u128; 2],
+             dispatch_tick: &mut u128,
+             simultaneous_fair_dispatches: &mut usize| {
+                let candidates = (0..roots.len())
+                    .filter(|root| {
+                        rows.iter()
+                            .any(|row| row.root == *root && row.phase == ModelPhase::Committed)
+                    })
+                    .collect::<Vec<_>>();
+                assert!(!candidates.is_empty());
+                if candidates.len() > 1 {
+                    *simultaneous_fair_dispatches += 1;
+                }
+                let ordered = fair_scope_order(
+                    candidates
+                        .iter()
+                        .map(|root| (roots[*root].clone(), last_served[*root])),
+                );
+                let root_index = candidates
+                    .into_iter()
+                    .find(|root| normalized(&roots[*root]) == ordered[0])
+                    .unwrap();
+                let acknowledged = execute_model(&roots[root_index], &layout, |coordinator| {
+                    let head = coordinator
+                        .workflow()
+                        .dispatch_head(|record| record.transaction_phase().is_dispatchable())
+                        .expect("model fair root lost its committed head");
+                    let terminal = model_record(
+                        &roots[root_index],
+                        rows.iter().find(|row| row.id == head.id).unwrap(),
+                        "acknowledged",
+                    );
+                    coordinator
+                        .workflow_mut()
+                        .acknowledge_head(
+                            &head.id,
+                            terminal,
+                            |record| record.transaction_phase().is_dispatchable(),
+                            &mut |_| Ok(()),
+                            &mut |_| Ok(()),
+                        )
+                        .map(|_| head.id)
+                });
+                let row = rows.iter_mut().find(|row| row.id == acknowledged).unwrap();
+                assert_eq!(row.phase, ModelPhase::Committed);
+                row.phase = ModelPhase::Archived;
+                coverage.get_mut(row.operation).unwrap()[COVERAGE_ACK] += 1;
+                last_served[root_index] = *dispatch_tick;
+                *dispatch_tick += 1;
+            };
+
+        for step in 0..random_steps {
+            if step % 64 == 31 {
+                let root = (step / 64) % roots.len();
+                replace_owner(
+                    root,
+                    &roots,
+                    &mut owner_generation,
+                    &mut owner_process,
+                    &mut owner_deaths,
+                );
+                continue;
+            }
+            if step == random_steps / 3 || step == random_steps * 2 / 3 {
+                let root = usize::from(step == random_steps * 2 / 3);
+                let moved = temp
+                    .path()
+                    .join(format!("root-{root}-move-{}", moves[root] + 1));
+                std::fs::rename(&roots[root], &moved).unwrap();
+                roots[root] = moved;
+                moves[root] += 1;
+                validate_model_state(seed, &roots, &rows, &layout);
+                continue;
+            }
+            if rng.next() % 7 == 0 {
+                let root = rng.index(roots.len());
+                compact_root(root, &roots, &mut rows, &mut coverage);
+                continue;
+            }
+            if rng.next() % 11 == 0 {
+                validate_model_state(seed, &roots, &rows, &layout);
+                continue;
+            }
+            let unfinished = rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.phase != ModelPhase::Archived)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if unfinished.is_empty() {
+                continue;
+            }
+            let row_index = unfinished[rng.index(unfinished.len())];
+            match rows[row_index].phase {
+                ModelPhase::Absent => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().upsert(model_record(
+                            &roots[row.root],
+                            row,
+                            "pending",
+                        ))?;
+                        coordinator.workflow_mut().persist_queue()
+                    });
+                    rows[row_index].phase = ModelPhase::Pending;
+                    coverage.get_mut(rows[row_index].operation).unwrap()[COVERAGE_ENQUEUE] += 1;
+                }
+                ModelPhase::Pending if rows[row_index].cancel_lane => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().persist_cancellation_intent(
+                            &row.id,
+                            model_record(&roots[row.root], row, "cancelling"),
+                        )
+                    });
+                    rows[row_index].phase = ModelPhase::CancellationPending;
+                    coverage.get_mut(rows[row_index].operation).unwrap()[COVERAGE_CANCEL] += 1;
+                }
+                ModelPhase::Pending => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().upsert(model_record(
+                            &roots[row.root],
+                            row,
+                            "committed",
+                        ))?;
+                        coordinator.workflow_mut().persist_queue()
+                    });
+                    rows[row_index].phase = ModelPhase::Committed;
+                    coverage.get_mut(rows[row_index].operation).unwrap()[COVERAGE_COMMIT] += 1;
+                }
+                ModelPhase::CancellationPending => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().upsert(model_record(
+                            &roots[row.root],
+                            row,
+                            "cancelled",
+                        ))?;
+                        coordinator.workflow_mut().persist_queue()
+                    });
+                    rows[row_index].phase = ModelPhase::TerminalCancelled;
+                }
+                ModelPhase::Committed => acknowledge_fair_head(
+                    &roots,
+                    &mut rows,
+                    &mut coverage,
+                    &mut last_served,
+                    &mut dispatch_tick,
+                    &mut simultaneous_fair_dispatches,
+                ),
+                ModelPhase::TerminalCancelled => {
+                    let root = rows[row_index].root;
+                    compact_root(root, &roots, &mut rows, &mut coverage);
+                }
+                ModelPhase::Archived => unreachable!(),
+            }
+        }
+
+        while rows.iter().any(|row| row.phase != ModelPhase::Archived) {
+            let row_index = rows
+                .iter()
+                .position(|row| row.phase != ModelPhase::Archived)
+                .unwrap();
+            match rows[row_index].phase {
+                ModelPhase::Absent => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().upsert(model_record(
+                            &roots[row.root],
+                            row,
+                            "pending",
+                        ))?;
+                        coordinator.workflow_mut().persist_queue()
+                    });
+                    rows[row_index].phase = ModelPhase::Pending;
+                    coverage.get_mut(rows[row_index].operation).unwrap()[COVERAGE_ENQUEUE] += 1;
+                }
+                ModelPhase::Pending if rows[row_index].cancel_lane => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().persist_cancellation_intent(
+                            &row.id,
+                            model_record(&roots[row.root], row, "cancelling"),
+                        )
+                    });
+                    rows[row_index].phase = ModelPhase::CancellationPending;
+                    coverage.get_mut(rows[row_index].operation).unwrap()[COVERAGE_CANCEL] += 1;
+                }
+                ModelPhase::Pending => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().upsert(model_record(
+                            &roots[row.root],
+                            row,
+                            "committed",
+                        ))?;
+                        coordinator.workflow_mut().persist_queue()
+                    });
+                    rows[row_index].phase = ModelPhase::Committed;
+                    coverage.get_mut(rows[row_index].operation).unwrap()[COVERAGE_COMMIT] += 1;
+                }
+                ModelPhase::CancellationPending => {
+                    let row = &rows[row_index];
+                    execute_model(&roots[row.root], &layout, |coordinator| {
+                        coordinator.workflow_mut().upsert(model_record(
+                            &roots[row.root],
+                            row,
+                            "cancelled",
+                        ))?;
+                        coordinator.workflow_mut().persist_queue()
+                    });
+                    rows[row_index].phase = ModelPhase::TerminalCancelled;
+                }
+                ModelPhase::Committed => acknowledge_fair_head(
+                    &roots,
+                    &mut rows,
+                    &mut coverage,
+                    &mut last_served,
+                    &mut dispatch_tick,
+                    &mut simultaneous_fair_dispatches,
+                ),
+                ModelPhase::TerminalCancelled => {
+                    let root = rows[row_index].root;
+                    compact_root(root, &roots, &mut rows, &mut coverage);
+                }
+                ModelPhase::Archived => unreachable!(),
+            }
+        }
+
+        for root in 0..roots.len() {
+            while owner_deaths[root] < 3 {
+                replace_owner(
+                    root,
+                    &roots,
+                    &mut owner_generation,
+                    &mut owner_process,
+                    &mut owner_deaths,
+                );
+            }
+        }
+        validate_model_state(seed, &roots, &rows, &layout);
+        assert!(
+            simultaneous_fair_dispatches > 0,
+            "seed {seed} never had both roots ready for fair dispatch"
+        );
+        assert_eq!(moves, [1, 1]);
+        for (operation, counts) in coverage {
+            assert_eq!(
+                counts,
+                [2, 1, 1, 1, 1],
+                "seed {seed}: incomplete lifecycle coverage for {operation}"
+            );
+        }
+        for (root, deaths) in roots.iter().zip(owner_deaths) {
+            assert!(deaths >= 3, "seed {seed}: fewer than three owner deaths");
+            let (released, generation) = execute_model(root, &layout, |coordinator| {
+                let generation = coordinator
+                    .load_owner_with_legacy(|_| Ok(None))?
+                    .expect("model owner disappeared before release")
+                    .generation;
+                let released = coordinator.release_idle_owner_with_legacy(|_| Ok(None))?;
+                Ok((released, generation))
+            });
+            assert!(released);
+            assert!(generation >= 4);
+            assert_eq!(
+                durable_fifo::load_owner(&root.join("transactions"), root, &layout.fifo).unwrap(),
+                None
+            );
+            let status = execute_model(root, &layout, |coordinator| {
+                Ok(coordinator.workflow().history_status())
+            });
+            assert!(status.generation > 0);
+        }
+    }
+
+    #[test]
+    fn seeded_writer_models_are_reproducible_and_prefix_shrinkable() {
+        let seeds = std::env::var("OMEGAT_DURABLE_MODEL_SEEDS")
+            .ok()
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(|seed| seed.trim().parse::<u64>().unwrap())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| vec![1, 6695, 0x5eed_cafe, 0xd15e_a5ed]);
+        let random_steps = std::env::var("OMEGAT_DURABLE_MODEL_STEPS")
+            .ok()
+            .map(|value| value.parse::<usize>().unwrap())
+            .unwrap_or(512);
+        assert!(random_steps >= 384);
+        for seed in seeds {
+            run_seeded_writer_model(seed, random_steps);
+        }
+    }
+
     #[derive(Debug, Deserialize)]
     struct DiscoveryRecord {
         root: PathBuf,
