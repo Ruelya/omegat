@@ -518,7 +518,7 @@ impl std::fmt::Display for DurableOwnerElectionError {
 /// Only coordinator/election code can construct this value. Legacy domain
 /// migration may use it to open the one workflow needed by a locked callback;
 /// ordinary callers must enter through [`DurableTransactionCoordinator`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct DurableCoordinatorCapability<'lock> {
     _lock: &'lock DurableFifoLock,
 }
