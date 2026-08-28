@@ -1368,9 +1368,7 @@ fn compact_archive_generation(
     history: &mut ConfigTransactionHistory,
     owner: Option<&ConfigTransactionEnvelope>,
 ) -> Result<bool, String> {
-    if history.manifest.segments.len() < archive_compaction_segment_limit()
-        || history.manifest.segments.len() < 2
-    {
+    if history.manifest.segments.len() < 2 {
         return Ok(false);
     }
 
@@ -1493,7 +1491,9 @@ fn compact_history_storage(
         persist_dedupe(config_dir, &mut history.dedupe)?;
     }
 
-    compact_archive_generation(config_dir, history, checkpoint_envelope.as_ref())?;
+    if history.manifest.segments.len() >= archive_compaction_segment_limit() {
+        compact_archive_generation(config_dir, history, checkpoint_envelope.as_ref())?;
+    }
     let expected_recent = canonical_recent(config_dir, history)?;
     if history.recent != expected_recent {
         history.recent = expected_recent;
