@@ -1,0 +1,22 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter-tags-optimization.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testTagOptimization",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "remove_tags": true,
+  "sources": [
+    "The text of a segment<b0>.",
+    "The text of a segment<b0>.",
+    "Link to a <a0>reference</a0>"
+  ],
+  "sources_remove_tags_false": [
+    "<b0>The text of a segment<b1>.<b2>",
+    "<b0>The text of a segment<b1>.<b2><b3><b4>",
+    "<b0>Link to a <a1>reference</a1></b0>"
+  ]
+}

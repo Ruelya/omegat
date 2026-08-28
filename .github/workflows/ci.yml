@@ -1,0 +1,98 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+      - name: fixtures and goldens present
+        run: |
+          test -d fixtures/filters
+          test -f fixtures/srx/defaultRules.srx
+          test -d reference/java/src/main/java
+          test -f fixtures/goldens/filters/text/file-TextFilter.empty-lines.json
+          test -f fixtures/goldens/filters/html/file-HTMLFilter2.json
+          test -f fixtures/goldens/filters/po/file-POFilter-multiple.json
+          test -f fixtures/goldens/engine/srx.json
+          test -f fixtures/plugin/sample.example
+          python3 tools/export_java_goldens/check_provenance.py
+          test ! -f tools/export_java_goldens/export.py
+      - name: honesty gates (P0 may be red)
+        run: bash tools/honesty/check.sh
+  desktop:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci || npm install
+      - run: npm run typecheck
+      - run: npm test
+  pack-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: sudo apt-get update && sudo apt-get install -y fakeroot rpm
+      - run: cargo build --release -p omegat-sidecar -p omegat-cli -p omegat-example-plugin
+      - working-directory: apps/desktop
+        run: |
+          npm ci || npm install
+          npm run build
+          npx electron-builder --linux dir tar.gz deb rpm --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegat-linux-unsigned
+          path: apps/desktop/release/**
+          if-no-files-found: warn
+  pack-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo build --release -p omegat-sidecar -p omegat-cli
+      - working-directory: apps/desktop
+        run: |
+          npm ci || npm install
+          npm run build
+          npx electron-builder --win nsis --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegat-windows-unsigned
+          path: apps/desktop/release/**
+          if-no-files-found: warn
+  pack-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo build --release -p omegat-sidecar -p omegat-cli
+      - working-directory: apps/desktop
+        run: |
+          npm ci || npm install
+          npm run build
+          npx electron-builder --mac dmg --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omegat-macos-unsigned
+          path: apps/desktop/release/**
+          if-no-files-found: warn

@@ -1,0 +1,29 @@
+{
+  "java_test": "org.omegat.gui.editor.history.WordCompleterTest#testWordCompletion",
+  "train": [
+    "foob",
+    "foobar",
+    "foobaz",
+    "foobiz"
+  ],
+  "complete": {
+    "foo": [
+      "foob",
+      "foobar",
+      "foobaz",
+      "foobiz"
+    ],
+    "foob": [
+      "foobar",
+      "foobaz",
+      "foobiz"
+    ],
+    "fooba": [
+      "foobar",
+      "foobaz"
+    ],
+    "Fooba": [],
+    "f": []
+  },
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

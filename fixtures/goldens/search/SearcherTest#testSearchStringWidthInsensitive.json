@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringWidthInsensitive",
+  "cases": [
+    {
+      "hit": true,
+      "text": "OmegaT is great"
+    },
+    {
+      "hit": true,
+      "text": "OmegaT is great"
+    }
+  ],
+  "type": "EXACT",
+  "query": "OmegaT is great"
+}

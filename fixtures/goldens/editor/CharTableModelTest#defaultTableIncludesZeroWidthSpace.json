@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.editor.chartable.CharTableModelTest#defaultTableIncludesZeroWidthSpace",
+  "glyph": "​",
+  "columns": 16,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
