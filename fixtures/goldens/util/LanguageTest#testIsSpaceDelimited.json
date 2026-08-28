@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.LanguageTest#testIsSpaceDelimited",
+  "bo": false,
+  "zh": false,
+  "ja": false,
+  "en": true,
+  "keys": [
+    "org.omegat.util.LanguageTest#testIsSpaceDelimited"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testHtmlEntityDecode",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "input": "foo &apos;bar&apos;",
+  "decoded": "foo 'bar'"
+}
