@@ -40,6 +40,18 @@ pub struct ProjectSession {
     dirty: bool,
 }
 
+/// Opaque in-memory rollback point for a durable product transaction.
+///
+/// The sidecar owns the disk/envelope rollback boundary. This checkpoint keeps
+/// its live `ProjectSession` on the same side of that decision when an atomic
+/// receipt cannot be published.
+pub struct ProjectSessionCheckpoint {
+    entries: Vec<Entry>,
+    tmx: ProjectTmx,
+    last_index: usize,
+    dirty: bool,
+}
+
 impl ProjectSession {
     pub fn create(params: &CreateProjectParams, prefs: Preferences) -> Result<Self> {
         let root = PathBuf::from(&params.root);
@@ -423,8 +435,33 @@ impl ProjectSession {
         )?;
         self.props.write()?;
         last_segment::save_last_index(&self.props.root, self.last_index)?;
+        sync_product_file(&self.props.save_tmx_path())?;
+        sync_product_file(&self.props.project_file())?;
+        sync_product_file(
+            &self
+                .props
+                .root
+                .join(DEFAULT_INTERNAL)
+                .join(LAST_ENTRY),
+        )?;
         self.dirty = false;
         Ok(())
+    }
+
+    pub fn checkpoint(&self) -> ProjectSessionCheckpoint {
+        ProjectSessionCheckpoint {
+            entries: self.entries.clone(),
+            tmx: self.tmx.clone(),
+            last_index: self.last_index,
+            dirty: self.dirty,
+        }
+    }
+
+    pub fn restore_checkpoint(&mut self, checkpoint: ProjectSessionCheckpoint) {
+        self.entries = checkpoint.entries;
+        self.tmx = checkpoint.tmx;
+        self.last_index = checkpoint.last_index;
+        self.dirty = checkpoint.dirty;
     }
 
     fn sync_tmx_from_entries(&mut self) {
@@ -1122,6 +1159,14 @@ fn sibling_compile_path(destination: &Path, id: &str, index: usize, kind: &str) 
         .and_then(|name| name.to_str())
         .unwrap_or("output");
     destination.with_file_name(format!(".{name}.omegat-compile-{kind}-{id}-{index}"))
+}
+
+fn sync_product_file(path: &Path) -> Result<()> {
+    File::open(path)?.sync_all()?;
+    if let Some(parent) = path.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    Ok(())
 }
 
 fn now_iso() -> String {

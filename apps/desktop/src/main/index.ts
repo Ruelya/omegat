@@ -20,6 +20,7 @@ import {
   ProjectFileWatcher,
   type ExternalProjectChange,
 } from "./project-file-watcher";
+import { scopeProductTransaction } from "./product-transaction-scope";
 import { SidecarRpcClient } from "./sidecar-rpc";
 
 let sidecar: ChildProcessWithoutNullStreams | null = null;
@@ -30,6 +31,7 @@ const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 const appInstance = randomUUID();
 let nextId = 1;
 const watchedProjectWriteMethods = new Set([
+  "entry.set",
   "project.save",
   "project.compile",
   "project.close",
@@ -366,12 +368,18 @@ async function rpc(
   // which in turn retains the cdylib crash/timeout worker boundary.
   if (method === "markers.query") return isolatedMarkerRpc(method, params);
   const client = await statefulClient();
-  const requestParams = method === "project.external-refresh"
+  let requestParams = method === "project.external-refresh"
       && params !== null
       && typeof params === "object"
       && "transaction_batch_id" in params
     ? { ...params, app_instance: appInstance }
     : params;
+  requestParams = scopeProductTransaction(
+    method,
+    requestParams,
+    projectFileWatcher.currentProject(),
+    randomUUID,
+  );
   const endWrite = watchedProjectWriteMethods.has(method)
     ? projectFileWatcher.beginWriteSource(method)
     : () => undefined;

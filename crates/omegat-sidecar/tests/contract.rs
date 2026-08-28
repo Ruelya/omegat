@@ -281,6 +281,173 @@ fn every_listed_method_is_known() {
 }
 
 #[test]
+fn editor_set_save_and_close_share_durable_product_receipts() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("sidecar");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("product-receipts");
+    rpc(
+        &mut stdin,
+        &mut stdout,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false
+        }),
+    );
+    std::fs::write(root.join("source/first.txt"), "Repeated source").unwrap();
+    std::fs::write(root.join("source/second.txt"), "Repeated source").unwrap();
+    rpc(&mut stdin, &mut stdout, 2, "project.reload", json!({}));
+    let listed = rpc(&mut stdin, &mut stdout, 3, "entry.list", json!({}));
+    let entries = listed["result"].as_array().unwrap();
+    let wanted = entries
+        .iter()
+        .find(|entry| entry["key"]["file"] == "second.txt")
+        .unwrap();
+    assert_eq!(
+        wanted["key"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["file", "id", "next", "path", "prev", "source_text"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    );
+    let set = rpc(
+        &mut stdin,
+        &mut stdout,
+        4,
+        "entry.set",
+        json!({
+            "index": wanted["index"],
+            "key": wanted["key"],
+            "translation": "Occurrence durable",
+            "note": "receipt-bound",
+            "revision": wanted["revision"],
+            "default_translation": false,
+            "transaction_project_root": root,
+            "transaction_generation": 23,
+            "transaction_batch_id": "editor-set-23"
+        }),
+    );
+    assert_eq!(set["result"]["entry"]["key"], wanted["key"]);
+    assert_eq!(set["result"]["entry"]["translation"], "Occurrence durable");
+
+    let history_path = root.join(".repositories/transactions/history.ndjson");
+    let history = std::fs::read_to_string(&history_path).unwrap();
+    let committed_set = history
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .filter(|row| row["batch_id"] == "editor-set-23")
+        .last()
+        .unwrap();
+    assert_eq!(committed_set["version"], 1);
+    assert_eq!(committed_set["generation"], 23);
+    assert_eq!(committed_set["status"], "completed");
+    assert_eq!(committed_set["payload"]["operation"], "entry.set");
+    assert_eq!(
+        committed_set["commit"]["manifest_sha256"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert!(committed_set["payload"]["product_manifest"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|file| file["path"] == "project/omegat/project_save.tmx"));
+    let key: omegat_ipc::EntryKeyDto = serde_json::from_value(wanted["key"].clone()).unwrap();
+    let saved =
+        omegat_core::tmx::ProjectTmx::load(&root.join("omegat/project_save.tmx"), "en", "fr")
+            .unwrap();
+    assert_eq!(
+        saved
+            .get_multiple_translation_for_key(&key)
+            .unwrap()
+            .translation,
+        "Occurrence durable"
+    );
+
+    let save = rpc(
+        &mut stdin,
+        &mut stdout,
+        5,
+        "project.save",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 23,
+            "transaction_batch_id": "document-save-23"
+        }),
+    );
+    assert_eq!(save["result"]["ok"], true);
+    let staged = rpc(
+        &mut stdin,
+        &mut stdout,
+        6,
+        "script.run",
+        json!({
+            "index": wanted["index"],
+            "source": "editor.setTranslation('Close durable');"
+        }),
+    );
+    assert_eq!(staged["result"]["translation"], "Close durable");
+    assert_eq!(staged["result"]["saved"], false);
+    let close = rpc(
+        &mut stdin,
+        &mut stdout,
+        7,
+        "project.close",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 23,
+            "transaction_batch_id": "project-close-23"
+        }),
+    );
+    assert_eq!(close["result"]["ok"], true);
+
+    let history = std::fs::read_to_string(history_path).unwrap();
+    for (batch, operation) in [
+        ("document-save-23", "project.save"),
+        ("project-close-23", "project.close"),
+    ] {
+        let committed = history
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|row| row["batch_id"] == batch)
+            .last()
+            .unwrap();
+        assert_eq!(committed["status"], "completed");
+        assert_eq!(committed["payload"]["operation"], operation);
+        assert!(committed["commit"].is_object());
+    }
+    let closed =
+        omegat_core::tmx::ProjectTmx::load(&root.join("omegat/project_save.tmx"), "en", "fr")
+            .unwrap();
+    assert_eq!(
+        closed
+            .get_default_translation("Repeated source")
+            .unwrap()
+            .translation,
+        "Close durable"
+    );
+    assert!(!root.join(".repositories/transactions/active.json").exists());
+    let _ = child.kill();
+}
+
+#[test]
 fn cancel_notification_stops_a_long_search_and_keeps_sidecar_responsive() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())

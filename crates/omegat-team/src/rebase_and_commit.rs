@@ -90,7 +90,7 @@ pub fn resolve_for_key_cancellable_scoped(
     generation: u64,
     batch_id: Option<&str>,
 ) -> Result<Vec<Conflict>> {
-    crate::remote_repository_provider::mutate_project_cancellable(
+    crate::remote_repository_provider::commit_product_transaction_cancellable(
         props,
         "resolve-conflict",
         cancellation,

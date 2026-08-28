@@ -126,6 +126,65 @@ describe("app store", () => {
     expect(prefsFromMarks(marks).whitespace).toBe(true);
   });
 
+  it("commits the sole Document3 before save and project-close checkpoints", async () => {
+    rpc.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === "entry.set") {
+        const input = params as {
+          translation: string;
+          note: string;
+          revision: number;
+        };
+        const entry = {
+          ...useApp.getState().entries[0]!,
+          translation: input.translation,
+          note: input.note,
+          revision: input.revision + 1,
+          translated: input.translation.length > 0,
+        };
+        return { entry, updated: [entry] };
+      }
+      if (method === "project.save" || method === "project.close") return { ok: true };
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    useApp.setState({
+      props: {
+        root: "/project",
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        has_repositories: false,
+      },
+      screen: "workspace",
+      entries: [sampleEntry],
+      index: 0,
+      prefs: defaultPreferences({ tag_validation: "none" }),
+      note: "save note",
+      document3: {
+        ...createDocument3(sampleEntry.source, "saved translation"),
+        dirty: true,
+      },
+    });
+
+    await useApp.getState().save();
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "entry.set",
+      "project.save",
+    ]);
+    expect(useApp.getState().entries[0]?.translation).toBe("saved translation");
+    expect(useApp.getState().document3.dirty).toBe(false);
+
+    useApp.getState().setDraft("closed translation");
+    await useApp.getState().closeProject();
+    expect(rpc.mock.calls.map(([method]) => method)).toEqual([
+      "entry.set",
+      "project.save",
+      "entry.set",
+      "project.close",
+    ]);
+    expect(useApp.getState().screen).toBe("welcome");
+    expect(useApp.getState().props).toBeNull();
+  });
+
   it("builds search RPC from the Search window form", async () => {
     rpc.mockResolvedValue([]);
     useApp.setState({

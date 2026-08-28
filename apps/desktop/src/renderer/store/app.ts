@@ -765,7 +765,25 @@ export const useApp = create<AppState>((set, get) => ({
     await get().open(root);
   },
   closeProject: async () => {
+    const before = get();
     dockLifecycle.beginProject(null, "close");
+    try {
+      const current = before.entries[before.index];
+      if (
+        current
+        && (
+          before.document3.translation !== current.translation
+          || before.note !== current.note
+        )
+      ) {
+        await get().commitCurrent();
+      }
+      await rpc("project.close");
+    } catch (error) {
+      dockLifecycle.beginProject(before.props?.root ?? null, "load");
+      set({ error: String(error) });
+      throw error;
+    }
     const { locale, theme, version } = get();
     set({
       ...initialState,
@@ -775,11 +793,6 @@ export const useApp = create<AppState>((set, get) => ({
       firstRun: false,
       screen: "welcome",
     });
-    try {
-      await rpc("project.close");
-    } catch {
-      /* ignore */
-    }
   },
   reloadProject: async () => {
     await get().rebindProjectEntries({ kind: "reload" });
@@ -1513,6 +1526,17 @@ export const useApp = create<AppState>((set, get) => ({
     await get().select(ni);
   },
   save: async () => {
+    const before = get();
+    const current = before.entries[before.index];
+    if (
+      current
+      && (
+        before.document3.translation !== current.translation
+        || before.note !== current.note
+      )
+    ) {
+      await get().commitCurrent();
+    }
     await rpc("project.save");
     const root = get().props?.root ?? "";
     const d = get().document3;

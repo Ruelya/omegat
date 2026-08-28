@@ -203,6 +203,7 @@ impl SyncSnapshot {
             });
         }
 
+        sync_snapshot_tree(&base)?;
         Ok(Self {
             base,
             project,
@@ -293,6 +294,28 @@ impl SyncSnapshot {
         }
         Ok(())
     }
+}
+
+fn sync_snapshot_tree(root: &Path) -> Result<()> {
+    let mut directories = Vec::new();
+    for entry in walkdir::WalkDir::new(root).follow_links(false) {
+        let entry = entry.map_err(|error| {
+            TeamError::Command(format!(
+                "walk transaction snapshot {}: {error}",
+                root.display()
+            ))
+        })?;
+        if entry.file_type().is_file() {
+            std::fs::File::open(entry.path())?.sync_all()?;
+        } else if entry.file_type().is_dir() {
+            directories.push(entry.path().to_path_buf());
+        }
+    }
+    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for directory in directories {
+        std::fs::File::open(directory)?.sync_all()?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -818,7 +841,9 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
     )))
 }
 
-pub(crate) fn mutate_project_cancellable<T>(
+/// Commit a local product mutation under the same snapshot, receipt, and
+/// restart-recovery state machine used by multi-repository team writes.
+pub fn commit_product_transaction_cancellable<T>(
     props: &ProjectProperties,
     operation: &str,
     cancellation: &CancellationToken,
@@ -850,11 +875,13 @@ pub(crate) fn mutate_project_cancellable<T>(
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
+            product_transaction_checkpoint(operation, "before_atomic_publish")?;
             if let Err(error) = journal.publish_product_commit(props, "committed") {
                 snapshot.restore_project_and_prep(props)?;
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
+            product_transaction_checkpoint(operation, "after_atomic_publish")?;
             journal.cleanup(props)?;
             Ok(value)
         }
@@ -869,6 +896,38 @@ pub(crate) fn mutate_project_cancellable<T>(
             journal.finish_for_error(props, "rolled-back", &error)?;
             Err(error)
         }
+    }
+}
+
+fn product_transaction_checkpoint(operation: &str, point: &str) -> Result<()> {
+    if std::env::var("OMEGAT_TEST_PRODUCT_TRANSACTION_OPERATION").as_deref() != Ok(operation)
+        || std::env::var("OMEGAT_TEST_PRODUCT_TRANSACTION_POINT").as_deref() != Ok(point)
+    {
+        return Ok(());
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_PRODUCT_TRANSACTION_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    writeln!(file, "{operation}:{point}")?;
+    file.sync_all()?;
+    if let Some(parent) = marker.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
     }
 }
 

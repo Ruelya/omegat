@@ -143,6 +143,61 @@ impl App {
         }
     }
 
+    fn save_product_transaction(
+        &mut self,
+        operation: &str,
+        params: &Value,
+        cancellation: &CancellationToken,
+    ) -> std::result::Result<(), (i32, String)> {
+        let root = self.session()?.props.root.clone();
+        let (generation, batch_id) = transaction_scope(params, &root)?;
+        let session = self.session_mut()?;
+        let checkpoint = session.checkpoint();
+        let props = session.props.clone();
+        let result = omegat_team::commit_product_transaction_cancellable(
+            &props,
+            operation,
+            cancellation,
+            "project.product.snapshot",
+            generation,
+            batch_id.as_deref(),
+            |_| session.save().map_err(core_product_err),
+        );
+        if let Err(error) = result {
+            session.restore_checkpoint(checkpoint);
+            return Err(product_transaction_err(error));
+        }
+        Ok(())
+    }
+
+    fn set_entry_product_transaction(
+        &mut self,
+        params: Value,
+        cancellation: &CancellationToken,
+    ) -> std::result::Result<Value, (i32, String)> {
+        let root = self.session()?.props.root.clone();
+        let (generation, batch_id) = transaction_scope(&params, &root)?;
+        let entry: SetEntryParams = serde_json::from_value(params).map_err(invalid)?;
+        let session = self.session_mut()?;
+        let checkpoint = session.checkpoint();
+        let updated = session.set_entry(&entry).map_err(core_err)?;
+        let props = session.props.clone();
+        let result = omegat_team::commit_product_transaction_cancellable(
+            &props,
+            "entry.set",
+            cancellation,
+            "entry.set.snapshot",
+            generation,
+            batch_id.as_deref(),
+            |_| session.save().map_err(core_product_err),
+        );
+        if let Err(error) = result {
+            session.restore_checkpoint(checkpoint);
+            return Err(product_transaction_err(error));
+        }
+        Ok(serde_json::to_value(updated).unwrap())
+    }
+
     fn dispatch(
         &mut self,
         method: &str,
@@ -223,14 +278,14 @@ impl App {
                 Ok(serde_json::to_value(dto).unwrap())
             }
             "project.close" => {
-                if let Some(s) = self.session.as_mut() {
-                    let _ = s.save();
+                if self.session.is_some() {
+                    self.save_product_transaction("project.close", &params, cancellation)?;
                 }
                 self.session = None;
                 Ok(json!({"ok": true}))
             }
             "project.save" => {
-                self.session_mut()?.save().map_err(core_err)?;
+                self.save_product_transaction("project.save", &params, cancellation)?;
                 Ok(json!({"ok": true}))
             }
             "project.compile" => {
@@ -308,11 +363,7 @@ impl App {
                     .ok_or((error_code::INVALID_PARAMS, "index".into()))?;
                 Ok(serde_json::to_value(e.to_dto(index)).unwrap())
             }
-            "entry.set" => {
-                let p: SetEntryParams = serde_json::from_value(params).map_err(invalid)?;
-                let e = self.session_mut()?.set_entry(&p).map_err(core_err)?;
-                Ok(serde_json::to_value(e).unwrap())
-            }
+            "entry.set" => self.set_entry_product_transaction(params, cancellation),
             "matches.query" => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 Ok(serde_json::to_value(self.session()?.matches_for(index)).unwrap())
@@ -1276,6 +1327,27 @@ fn core_err(e: omegat_core::CoreError) -> (i32, String) {
     (code, e.to_string())
 }
 
+fn core_product_err(error: omegat_core::CoreError) -> omegat_team::TeamError {
+    match error {
+        omegat_core::CoreError::Io(error) => omegat_team::TeamError::Io(error),
+        omegat_core::CoreError::Cancelled => omegat_team::TeamError::Cancelled,
+        other => omegat_team::TeamError::Command(other.to_string()),
+    }
+}
+
+fn product_transaction_err(error: omegat_team::TeamError) -> (i32, String) {
+    match error {
+        omegat_team::TeamError::Cancelled => {
+            (error_code::REQUEST_CANCELLED, "request cancelled".into())
+        }
+        omegat_team::TeamError::Io(error) => (error_code::IO, error.to_string()),
+        other => (
+            error_code::INTERNAL_ERROR,
+            format!("product transaction: {other}"),
+        ),
+    }
+}
+
 fn external_refresh_result(session: &ProjectSession) -> Value {
     let entry_list: Vec<EntryDto> = session
         .entries
@@ -1583,7 +1655,8 @@ fn request_key(id: &Value) -> String {
 fn writes_watched_project_input(method: &str) -> bool {
     matches!(
         method,
-        "project.save"
+        "entry.set"
+            | "project.save"
             | "project.compile"
             | "project.close"
             | "project.update"

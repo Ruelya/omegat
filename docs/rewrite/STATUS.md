@@ -649,6 +649,21 @@ injection on both sides of that rename proves that the pre-publish candidate
 remains pending and is replayed once, while the post-publish result is rebound
 directly from the envelope without another `project.external-refresh`,
 `entry.list`, or `stats.get`.
+Editor `entry.set`, explicit document save, and project-close TMX flush now use
+the same version-1 snapshot/receipt/recovery state machine as team writes.
+Every editor commit is keyed by the full six-field `EntryKey`; the TMX,
+`omegat.project`, and last-entry files are fsynced before the SHA-256 product
+manifest crosses the atomic envelope rename. A pre-receipt process death leaves
+a pending envelope and restores the prior project snapshot on open, while a
+post-receipt death verifies and preserves the committed product without
+replaying the write. Electron scopes all three methods to the watched project
+root/generation, suppresses their native watcher echoes, commits the sole live
+`Document3` before Save or Close, and does not report a failed close as
+successful. Sidecar contract coverage checks the complete-key alternative TMX
+and all three durable receipts. A separate Linux `linux-unpacked` E2E SIGKILLs
+the packaged Electron/sidecar process group before and after the receipt rename,
+then repeats the post-receipt kill during project close; restart rolls back only
+the pre-receipt translation and preserves each receipt-backed translation.
 A separate real Linux `linux-unpacked` E2E leaves both pending fingerprint and
 conflict envelopes in project A, SIGKILLs the packaged Electron process group
 including its sidecar, and starts project B with the same config. B exposes only
