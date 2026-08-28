@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.NBSPMarkerTest#testMarkerDisabled",
+  "enabled": false,
+  "source": "source text",
+  "translation": null,
+  "is_active": true,
+  "marks": null,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

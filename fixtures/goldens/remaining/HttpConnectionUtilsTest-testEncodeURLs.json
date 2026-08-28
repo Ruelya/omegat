@@ -1,0 +1,29 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.HttpConnectionUtilsTest#testEncodeURLs",
+  "cases": [
+    {
+      "in": "https://fr.wikipedia.org/",
+      "out": "https://fr.wikipedia.org/"
+    },
+    {
+      "in": "https://fr.wikipedia.org/wiki/Science_du_système_Terre",
+      "out": "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre"
+    },
+    {
+      "in": "https://fr.wikipedia.org/wiki/Science_du_système_Terre?query=search&lang=en",
+      "out": "https://fr.wikipedia.org/wiki/Science_du_syst%C3%A8me_Terre?query=search&lang=en"
+    },
+    {
+      "in": "https://fr.wikipedia.org/wiki/Doughnut_(modèle_économique)",
+      "out": "https://fr.wikipedia.org/wiki/Doughnut_%28mod%C3%A8le_%C3%A9conomique%29"
+    },
+    {
+      "in": "2. https://ja.wikipedia.org/wiki/2024年のカタールグランプリ_(ロードレース)",
+      "out": "2. https://ja.wikipedia.org/wiki/2024%E5%B9%B4%E3%81%AE%E3%82%AB%E3%82%BF%E3%83%BC%E3%83%AB%E3%82%B0%E3%83%A9%E3%83%B3%E3%83%97%E3%83%AA_%28%E3%83%AD%E3%83%BC%E3%83%89%E3%83%AC%E3%83%BC%E3%82%B9%29"
+    }
+  ],
+  "keys": [
+    "org.omegat.util.HttpConnectionUtilsTest#testEncodeURLs"
+  ]
+}

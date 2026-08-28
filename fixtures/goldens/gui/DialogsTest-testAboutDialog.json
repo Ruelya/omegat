@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testAboutDialog",
+  "window": "about",
+  "title": "About",
+  "constructs": true,
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testAboutDialog"
+  ]
+}

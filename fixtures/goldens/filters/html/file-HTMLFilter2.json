@@ -1,0 +1,25 @@
+{
+  "id": "html",
+  "fixture": "html/file-HTMLFilter2.html",
+  "java_test": "org.omegat.filters.HTMLFilter2Test#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "sources": [
+    "en",
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<html lang=\"en\">\n<body>\n<p>This is first line.</p>\n<p>This is second line.</p>\n</body>\n</html>",
+  "translated": {
+    "source": "This is first line.",
+    "translation": "Ceci est la premiere ligne."
+  },
+  "translated_write": "<html lang=\"en\">\n<body>\n<p>Ceci est la premiere ligne.</p>\n<p>This is second line.</p>\n</body>\n</html>"
+}

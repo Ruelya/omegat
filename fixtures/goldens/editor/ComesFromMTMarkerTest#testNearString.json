@@ -1,0 +1,8 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.ComesFromMTMarkerTest#testNearString",
+  "comes_from": "TM",
+  "tm_root": "src/test/resources/data/tmx",
+  "proj": "src/test/resources/data/tmx/mt/mt1.tmx",
+  "from_mt": true,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}
