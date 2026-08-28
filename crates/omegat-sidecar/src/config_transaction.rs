@@ -10,11 +10,12 @@
 //! retain their exact result.
 
 use omegat_core::durable_fifo::{
-    DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
+    DurableFifoEntry, DurableFifoLayout, DurableFifoState, LegacyFifoState,
 };
 use omegat_core::durable_transaction::{
-    DurableCoordinatorLockMode, DurableTransactionCoordinator, DurableTransactionLayout,
-    DurableTransactionPhase, DurableTransactionRecord, DurableTransactionWorkflow,
+    DurableCoordinatorExecutionError, DurableCoordinatorLockMode, DurableTransactionCoordinator,
+    DurableTransactionLayout, DurableTransactionPhase, DurableTransactionRecord,
+    DurableTransactionWorkflow,
 };
 use omegat_core::prefs::Preferences;
 use omegat_core::segmented_history::{
@@ -272,12 +273,6 @@ fn remove_durable(path: &Path) -> Result<(), String> {
             path.display()
         )),
     }
-}
-
-fn acquire_lock(config_dir: &Path) -> Result<DurableFifoLock, String> {
-    let directory = transaction_dir(config_dir);
-    DurableFifoLock::acquire(&directory, &fifo_layout().lock_file)
-        .map_err(|error| format!("lock shared config {}: {error}", directory.display()))
 }
 
 fn cleanup_interrupted_candidates(config_dir: &Path) -> Result<(), String> {
@@ -897,13 +892,17 @@ fn open_workflow_with_options(
     Ok(workflow)
 }
 
-fn open_config_coordinator(
+fn execute_config_coordinator<T, O>(
     config_dir: &Path,
     options: SegmentedHistoryOptions,
-) -> Result<DurableTransactionCoordinator<ConfigTransactionEnvelope>, String> {
+    operation: O,
+) -> Result<T, String>
+where
+    O: FnOnce(&mut DurableTransactionCoordinator<ConfigTransactionEnvelope>) -> Result<T, String>,
+{
     let directory = transaction_dir(config_dir);
     let had_legacy = legacy_history_exists(config_dir);
-    let coordinator = DurableTransactionCoordinator::open_with_legacy(
+    DurableTransactionCoordinator::execute_with_legacy(
         &directory,
         config_dir,
         config_workflow_layout(),
@@ -919,12 +918,19 @@ fn open_config_coordinator(
         },
         &mut || cleanup_interrupted_candidates(config_dir),
         &mut || Ok(()),
+        |coordinator| {
+            if had_legacy {
+                remove_legacy_history(config_dir)?;
+            }
+            operation(coordinator)
+        },
     )
-    .map_err(|error| format!("config transaction coordinator: {error}"))?;
-    if had_legacy {
-        remove_legacy_history(config_dir)?;
-    }
-    Ok(coordinator)
+    .map_err(|error| match error {
+        DurableCoordinatorExecutionError::Coordinator(error) => {
+            format!("config transaction coordinator: {error}")
+        }
+        DurableCoordinatorExecutionError::Operation(error) => error,
+    })
 }
 
 fn open_history_with_options(
@@ -1273,77 +1279,82 @@ pub fn execute(
     }
     std::fs::create_dir_all(config_dir)
         .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
-    let mut coordinator = open_config_coordinator(config_dir, history_options())?;
-    if let Some(existing) = find_terminal(coordinator.workflow(), batch_id)? {
-        validate_identity(&existing, operation, &payload)?;
-        return result_from_terminal(&existing);
-    }
-    if let Some(existing) = coordinator
-        .workflow()
-        .queue()
-        .batches
-        .iter()
-        .find(|row| row.batch_id == batch_id)
-    {
-        validate_identity(existing, operation, &payload)?;
-    } else {
-        let envelope = ConfigTransactionEnvelope {
-            version: CONFIG_TRANSACTION_VERSION,
-            config_dir: normalized(config_dir),
-            batch_id: batch_id.to_string(),
-            operation: operation.to_string(),
-            app_instance: app_instance.to_string(),
-            owner_process_id,
-            status: ConfigTransactionStatus::Pending,
-            payload,
-            result: None,
-            error: None,
-            updated_unix_ms: unix_ms(),
-        };
-        coordinator.workflow_mut().upsert(envelope.clone())?;
-        coordinator.workflow_mut().persist_queue()?;
-        checkpoint(operation, "after_enqueue", &envelope)?;
-    }
-    drain_locked(config_dir, coordinator.workflow_mut())?;
-    let terminal = find_terminal(coordinator.workflow(), batch_id)?
-        .ok_or_else(|| format!("config transaction {batch_id} did not reach history"))?;
-    result_from_terminal(&terminal)
+    execute_config_coordinator(config_dir, history_options(), move |coordinator| {
+        if let Some(existing) = find_terminal(coordinator.workflow(), batch_id)? {
+            validate_identity(&existing, operation, &payload)?;
+            return result_from_terminal(&existing);
+        }
+        if let Some(existing) = coordinator
+            .workflow()
+            .queue()
+            .batches
+            .iter()
+            .find(|row| row.batch_id == batch_id)
+        {
+            validate_identity(existing, operation, &payload)?;
+        } else {
+            let envelope = ConfigTransactionEnvelope {
+                version: CONFIG_TRANSACTION_VERSION,
+                config_dir: normalized(config_dir),
+                batch_id: batch_id.to_string(),
+                operation: operation.to_string(),
+                app_instance: app_instance.to_string(),
+                owner_process_id,
+                status: ConfigTransactionStatus::Pending,
+                payload,
+                result: None,
+                error: None,
+                updated_unix_ms: unix_ms(),
+            };
+            coordinator.workflow_mut().upsert(envelope.clone())?;
+            coordinator.workflow_mut().persist_queue()?;
+            checkpoint(operation, "after_enqueue", &envelope)?;
+        }
+        drain_locked(config_dir, coordinator.workflow_mut())?;
+        let terminal = find_terminal(coordinator.workflow(), batch_id)?
+            .ok_or_else(|| format!("config transaction {batch_id} did not reach history"))?;
+        result_from_terminal(&terminal)
+    })
 }
 
 /// Replay any pending config owner left by a terminated process.
 pub fn recover(config_dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(config_dir)
         .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
-    let mut coordinator = open_config_coordinator(config_dir, history_options())?;
-    drain_locked(config_dir, coordinator.workflow_mut())
+    execute_config_coordinator(config_dir, history_options(), |coordinator| {
+        drain_locked(config_dir, coordinator.workflow_mut())
+    })
 }
 
 /// Recover pending writes and read the latest process-shared preferences.
 pub fn load_preferences(config_dir: &Path) -> Result<Preferences, String> {
-    recover(config_dir)?;
-    let _lock = acquire_lock(config_dir)?;
-    let path = config_dir.join("omegat.prefs.json");
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            let preferences = Preferences::default_in(config_dir.to_path_buf());
-            preferences.save().map_err(|error| {
-                format!("create shared preferences {}: {error}", path.display())
-            })?;
-            return Ok(preferences);
-        }
-        Err(error) => {
-            return Err(format!(
-                "read shared preferences {}: {error}",
-                path.display()
-            ))
-        }
-    };
-    let mut preferences: Preferences = serde_json::from_str(&raw)
-        .map_err(|error| format!("parse shared preferences {}: {error}", path.display()))?;
-    preferences.config_dir = config_dir.to_path_buf();
-    preferences.normalize();
-    Ok(preferences)
+    std::fs::create_dir_all(config_dir)
+        .map_err(|error| format!("create config directory {}: {error}", config_dir.display()))?;
+    execute_config_coordinator(config_dir, history_options(), |coordinator| {
+        drain_locked(config_dir, coordinator.workflow_mut())?;
+        let path = config_dir.join("omegat.prefs.json");
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let preferences = Preferences::default_in(config_dir.to_path_buf());
+                preferences.save().map_err(|error| {
+                    format!("create shared preferences {}: {error}", path.display())
+                })?;
+                return Ok(preferences);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "read shared preferences {}: {error}",
+                    path.display()
+                ))
+            }
+        };
+        let mut preferences: Preferences = serde_json::from_str(&raw)
+            .map_err(|error| format!("parse shared preferences {}: {error}", path.display()))?;
+        preferences.config_dir = config_dir.to_path_buf();
+        preferences.normalize();
+        Ok(preferences)
+    })
 }
 
 #[cfg(test)]

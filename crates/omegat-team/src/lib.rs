@@ -1875,6 +1875,8 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
+        let active = props.root.join(".repositories/transactions/active.json");
+        let holder_state = std::fs::read(&active).unwrap();
         let locked = sync(&props).unwrap_err();
         assert_eq!(
             locked.to_string(),
@@ -1883,16 +1885,11 @@ mod tests {
                 props.root.display()
             )
         );
-        assert_eq!(
-            props
-                .root
-                .join(".repositories/transactions/active.json")
-                .exists(),
-            false
-        );
+        assert_eq!(std::fs::read(&active).unwrap(), holder_state);
 
         std::fs::write(&release, "").unwrap();
         assert_eq!(holder.wait().unwrap().success(), true);
+        assert!(!active.exists());
         let report = sync(&props).unwrap();
         assert_eq!(report.action, "local");
         assert_eq!(report.message, "no repositories");
@@ -1908,12 +1905,22 @@ mod tests {
             return;
         };
         let props = ProjectProperties::load(Path::new(&root)).unwrap();
-        let _lock =
-            crate::remote_repository_provider::acquire_project_transaction_lock(&props).unwrap();
-        std::fs::write(ready, "").unwrap();
-        while !Path::new(&release).is_file() {
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        crate::remote_repository_provider::commit_product_transaction_cancellable(
+            &props,
+            "test.lock-holder",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.lock-holder",
+            0,
+            None,
+            |_| {
+                std::fs::write(ready, "")?;
+                while !Path::new(&release).is_file() {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
     }
 
     #[test]

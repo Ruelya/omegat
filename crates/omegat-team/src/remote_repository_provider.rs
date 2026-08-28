@@ -10,16 +10,15 @@ use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::{team_enabled, SyncReport};
 use omegat_core::cancellation::CancellationToken;
 use omegat_core::durable_fifo::{
-    DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
-    LegacyOwnerClaim,
+    DurableFifoEntry, DurableFifoLayout, DurableFifoState, LegacyFifoState, LegacyOwnerClaim,
 };
 use omegat_core::durable_transaction::{
-    elect_owner_with_legacy, normalized, write_json_atomic, DurableCoordinatorLockMode,
-    DurableCoordinatorOpenError, DurableOwnerElectionError, DurableOwnerIdentity,
-    DurableOwnerRetry, DurableTransactionCoordinator, DurableTransactionLayout,
-    DurableTransactionPhase, DurableTransactionRecord, DurableTransactionWorkflow,
-    TransactionCommit, TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
-    TRANSACTION_ENVELOPE_VERSION,
+    elect_owner_with_legacy, normalized, write_json_atomic, DurableCoordinatorExecutionError,
+    DurableCoordinatorLockMode, DurableCoordinatorOpenError, DurableOwnerElectionError,
+    DurableOwnerIdentity, DurableOwnerRetry, DurableTransactionCoordinator,
+    DurableTransactionLayout, DurableTransactionPhase, DurableTransactionRecord,
+    DurableTransactionWorkflow, TransactionCommit, TransactionEnvelope, TransactionStatus,
+    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 use omegat_core::properties::ProjectProperties;
 use omegat_core::segmented_history::{
@@ -55,25 +54,6 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
     } else {
         Ok(())
     }
-}
-
-pub(crate) struct ProjectTransactionLock {
-    _lock: DurableFifoLock,
-}
-
-pub(crate) fn acquire_project_transaction_lock(
-    props: &ProjectProperties,
-) -> Result<ProjectTransactionLock> {
-    let dir = transaction_dir(props);
-    let lock = DurableFifoLock::try_acquire(&dir, &product_fifo_layout().lock_file)
-        .map_err(TeamError::Command)?
-        .ok_or_else(|| {
-            TeamError::Conflict(format!(
-                "team project is locked by another process: {}",
-                props.root.display()
-            ))
-        })?;
-    Ok(ProjectTransactionLock { _lock: lock })
 }
 
 #[cfg(test)]
@@ -1242,6 +1222,10 @@ fn coordinator_error(props: &ProjectProperties, error: DurableCoordinatorOpenErr
             "team project is locked by another process: {}",
             props.root.display()
         )),
+        DurableCoordinatorOpenError::Reentrant(path) => TeamError::Command(format!(
+            "nested team transaction coordinator for {}",
+            path.display()
+        )),
         DurableCoordinatorOpenError::Durable(error) => {
             TeamError::Command(format!("team transaction coordinator: {error}"))
         }
@@ -1276,6 +1260,33 @@ fn open_product_coordinator(
     lock_mode: DurableCoordinatorLockMode,
 ) -> Result<DurableTransactionCoordinator<SyncTransaction>> {
     open_product_coordinator_with_wait_hook(props, lock_mode, &mut || Ok(()))
+}
+
+fn execute_product_coordinator<T, O>(
+    props: &ProjectProperties,
+    lock_mode: DurableCoordinatorLockMode,
+    operation: O,
+) -> Result<T>
+where
+    O: FnOnce(&mut DurableTransactionCoordinator<SyncTransaction>) -> Result<T>,
+{
+    DurableTransactionCoordinator::execute_with_legacy(
+        &transaction_dir(props),
+        &props.root,
+        product_workflow_layout(),
+        product_history_options(),
+        lock_mode,
+        decode_legacy_product_journal,
+        || legacy_product_history(props).map_err(|error| error.to_string()),
+        &mut |_, point| product_history_checkpoint(point),
+        &mut || Ok(()),
+        &mut || Ok(()),
+        operation,
+    )
+    .map_err(|error| match error {
+        DurableCoordinatorExecutionError::Coordinator(error) => coordinator_error(props, error),
+        DurableCoordinatorExecutionError::Operation(error) => error,
+    })
 }
 
 fn product_history_checkpoint(point: &str) -> std::result::Result<(), String> {
@@ -2016,8 +2027,9 @@ fn rollback_repositories(
 /// Recover a persisted multi-repository transaction left by a terminated
 /// process before allowing another team operation to mutate the project.
 pub fn recover_interrupted_sync(props: &ProjectProperties) -> Result<bool> {
-    let _lock = acquire_project_transaction_lock(props)?;
-    recover_interrupted_sync_locked(props)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        recover_interrupted_sync_locked(props)
+    })
 }
 
 fn recover_pending_cancellation_locked(props: &ProjectProperties) -> Result<bool> {
@@ -2218,7 +2230,31 @@ pub fn commit_product_transaction_with_paths_cancellable<T>(
     mutation: impl FnOnce(&CancellationToken) -> Result<T>,
 ) -> Result<T> {
     check_cancelled(cancellation)?;
-    let _lock = acquire_project_transaction_lock(props)?;
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, move |_| {
+        commit_product_transaction_with_paths_cancellable_locked(
+            props,
+            operation,
+            cancellation,
+            checkpoint,
+            generation,
+            batch_id,
+            external_products,
+            mutation,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_product_transaction_with_paths_cancellable_locked<T>(
+    props: &ProjectProperties,
+    operation: &str,
+    cancellation: &CancellationToken,
+    checkpoint: &'static str,
+    generation: u64,
+    batch_id: Option<&str>,
+    external_products: &[PathBuf],
+    mutation: impl FnOnce(&CancellationToken) -> Result<T>,
+) -> Result<T> {
     check_cancelled(cancellation)?;
     recover_interrupted_sync_locked(props)?;
     check_cancelled(cancellation)?;
@@ -2320,7 +2356,17 @@ pub fn sync_cancellable_scoped(
     batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
-    let _lock = acquire_project_transaction_lock(props)?;
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        sync_cancellable_scoped_locked(props, cancellation, generation, batch_id)
+    })
+}
+
+fn sync_cancellable_scoped_locked(
+    props: &ProjectProperties,
+    cancellation: &CancellationToken,
+    generation: u64,
+    batch_id: Option<&str>,
+) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
     let recovered = recover_interrupted_sync_locked(props)?;
     check_cancelled(cancellation)?;
@@ -2533,7 +2579,24 @@ pub fn commit_project_files_cancellable_scoped(
     batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
-    let _lock = acquire_project_transaction_lock(props)?;
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        commit_project_files_cancellable_scoped_locked(
+            props,
+            which,
+            cancellation,
+            generation,
+            batch_id,
+        )
+    })
+}
+
+fn commit_project_files_cancellable_scoped_locked(
+    props: &ProjectProperties,
+    which: &str,
+    cancellation: &CancellationToken,
+    generation: u64,
+    batch_id: Option<&str>,
+) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
     let recovered = recover_interrupted_sync_locked(props)?;
     check_cancelled(cancellation)?;
@@ -2770,43 +2833,44 @@ pub fn migrate_refresh_transactions(
     if active.is_empty() && history.is_empty() {
         return Ok(());
     }
-    let _lock = acquire_project_transaction_lock(props)?;
-    recover_interrupted_sync_locked(props)?;
-    let mut journal = load_product_journal(props)?;
-    for envelope in active {
-        let transaction = refresh_transaction(props, envelope)?;
-        if let Some(existing) = journal
-            .batches
-            .iter()
-            .find(|existing| existing.0.batch_id == transaction.0.batch_id)
-        {
-            if serde_json::to_value(existing).ok() != serde_json::to_value(&transaction).ok() {
-                return Err(TeamError::Command(format!(
-                    "refresh migration batch {} conflicts with the shared journal",
-                    transaction.0.batch_id
-                )));
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        recover_interrupted_sync_locked(props)?;
+        let mut journal = load_product_journal(props)?;
+        for envelope in active {
+            let transaction = refresh_transaction(props, envelope)?;
+            if let Some(existing) = journal
+                .batches
+                .iter()
+                .find(|existing| existing.0.batch_id == transaction.0.batch_id)
+            {
+                if serde_json::to_value(existing).ok() != serde_json::to_value(&transaction).ok() {
+                    return Err(TeamError::Command(format!(
+                        "refresh migration batch {} conflicts with the shared journal",
+                        transaction.0.batch_id
+                    )));
+                }
+                continue;
             }
-            continue;
+            journal.batches.push(transaction);
         }
-        journal.batches.push(transaction);
-    }
-    journal.batches.sort_by(|left, right| {
-        left.0
-            .updated_unix_ms
-            .cmp(&right.0.updated_unix_ms)
-            .then_with(|| left.0.batch_id.cmp(&right.0.batch_id))
-            .then_with(|| left.operation.cmp(&right.operation))
-    });
-    write_product_journal(props, &mut journal)?;
+        journal.batches.sort_by(|left, right| {
+            left.0
+                .updated_unix_ms
+                .cmp(&right.0.updated_unix_ms)
+                .then_with(|| left.0.batch_id.cmp(&right.0.batch_id))
+                .then_with(|| left.operation.cmp(&right.operation))
+        });
+        write_product_journal(props, &mut journal)?;
 
-    let terminal = history
-        .into_iter()
-        .map(|envelope| refresh_transaction(props, envelope))
-        .collect::<Result<Vec<_>>>()?;
-    if !terminal.is_empty() {
-        archive_terminal_product_transactions(props, &terminal)?;
-    }
-    Ok(())
+        let terminal = history
+            .into_iter()
+            .map(|envelope| refresh_transaction(props, envelope))
+            .collect::<Result<Vec<_>>>()?;
+        if !terminal.is_empty() {
+            archive_terminal_product_transactions(props, &terminal)?;
+        }
+        Ok(())
+    })
 }
 
 /// Append or coalesce one pending refresh in the shared durable FIFO.
@@ -2831,47 +2895,48 @@ pub fn enqueue_refresh_transaction(
                 .into(),
         ));
     }
-    let _lock = acquire_project_transaction_lock(props)?;
-    recover_interrupted_sync_locked(props)?;
-    let journal = load_product_journal(props)?;
-    if let Some(existing) = journal.batches.into_iter().find(|transaction| {
-        transaction.is_refresh()
-            && transaction.0.status == TransactionStatus::Pending
-            && transaction
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        recover_interrupted_sync_locked(props)?;
+        let journal = load_product_journal(props)?;
+        if let Some(existing) = journal.batches.into_iter().find(|transaction| {
+            transaction.is_refresh()
+                && transaction.0.status == TransactionStatus::Pending
+                && transaction
+                    .refresh
+                    .as_ref()
+                    .is_some_and(|refresh| refresh.fingerprints == fingerprints)
+        }) {
+            let mut existing = existing;
+            let refresh = existing
                 .refresh
-                .as_ref()
-                .is_some_and(|refresh| refresh.fingerprints == fingerprints)
-    }) {
-        let mut existing = existing;
-        let refresh = existing
-            .refresh
-            .as_mut()
-            .expect("refresh transaction has refresh payload");
-        for source in sources {
-            if !refresh.sources.contains(&source) {
-                refresh.sources.push(source);
+                .as_mut()
+                .expect("refresh transaction has refresh payload");
+            for source in sources {
+                if !refresh.sources.contains(&source) {
+                    refresh.sources.push(source);
+                }
             }
+            refresh.sources.sort();
+            existing.persist_preserving_dispatch_order(props)?;
+            return refresh_envelope(&existing);
         }
-        refresh.sources.sort();
-        existing.persist_preserving_dispatch_order(props)?;
-        return refresh_envelope(&existing);
-    }
 
-    let envelope = TransactionEnvelope::pending(
-        &props.root,
-        generation,
-        batch_id,
-        TransactionRendererPayload {
-            operation: "project.external-refresh".into(),
-            paths,
-            fingerprints,
-            sources,
-            committed_result: None,
-        },
-    );
-    let mut transaction = refresh_transaction(props, envelope)?;
-    transaction.persist_preserving_dispatch_order(props)?;
-    refresh_envelope(&transaction)
+        let envelope = TransactionEnvelope::pending(
+            &props.root,
+            generation,
+            batch_id,
+            TransactionRendererPayload {
+                operation: "project.external-refresh".into(),
+                paths,
+                fingerprints,
+                sources,
+                committed_result: None,
+            },
+        );
+        let mut transaction = refresh_transaction(props, envelope)?;
+        transaction.persist_preserving_dispatch_order(props)?;
+        refresh_envelope(&transaction)
+    })
 }
 
 /// Publish the exact refresh result and receipt in the shared queue rename.
@@ -2881,42 +2946,43 @@ pub fn checkpoint_refresh_transaction(
     batch_id: &str,
     committed_result: &serde_json::Value,
 ) -> Result<TransactionRendererReceipt> {
-    let _lock = acquire_project_transaction_lock(props)?;
-    let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
-        return Err(TeamError::Conflict(format!(
-            "refresh batch {batch_id} is no longer pending"
-        )));
-    };
-    if transaction.0.batch_id != batch_id
-        || transaction.0.generation != generation
-        || !transaction.is_refresh()
-    {
-        return Err(TeamError::Conflict(format!(
-            "shared FIFO head is {}, not refresh {batch_id}",
-            transaction.0.batch_id
-        )));
-    }
-    if transaction.0.status == TransactionStatus::SidecarCommitted {
-        return refresh_envelope(&transaction);
-    }
-    let dispatch_unix_ms = transaction.0.updated_unix_ms;
-    transaction
-        .refresh
-        .as_mut()
-        .expect("refresh transaction has refresh payload")
-        .committed_result = Some(committed_result.clone());
-    transaction
-        .0
-        .commit_product(
-            TransactionStatus::SidecarCommitted,
-            committed_result,
-            refresh_result_items(committed_result),
-        )
-        .map_err(|error| TeamError::Command(format!("refresh transaction: {error}")))?;
-    transaction.0.updated_unix_ms = dispatch_unix_ms;
-    transaction.phase = "refresh-committed".into();
-    transaction.persist_preserving_dispatch_order(props)?;
-    refresh_envelope(&transaction)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        let Some(mut transaction) = SyncTransaction::load_dispatch_head(props)? else {
+            return Err(TeamError::Conflict(format!(
+                "refresh batch {batch_id} is no longer pending"
+            )));
+        };
+        if transaction.0.batch_id != batch_id
+            || transaction.0.generation != generation
+            || !transaction.is_refresh()
+        {
+            return Err(TeamError::Conflict(format!(
+                "shared FIFO head is {}, not refresh {batch_id}",
+                transaction.0.batch_id
+            )));
+        }
+        if transaction.0.status == TransactionStatus::SidecarCommitted {
+            return refresh_envelope(&transaction);
+        }
+        let dispatch_unix_ms = transaction.0.updated_unix_ms;
+        transaction
+            .refresh
+            .as_mut()
+            .expect("refresh transaction has refresh payload")
+            .committed_result = Some(committed_result.clone());
+        transaction
+            .0
+            .commit_product(
+                TransactionStatus::SidecarCommitted,
+                committed_result,
+                refresh_result_items(committed_result),
+            )
+            .map_err(|error| TeamError::Command(format!("refresh transaction: {error}")))?;
+        transaction.0.updated_unix_ms = dispatch_unix_ms;
+        transaction.phase = "refresh-committed".into();
+        transaction.persist_preserving_dispatch_order(props)?;
+        refresh_envelope(&transaction)
+    })
 }
 
 /// Complete a protocol-cancelled refresh without exposing it for replay.
@@ -2937,29 +3003,30 @@ pub fn cancel_refresh_transaction(
 
 /// Drop only refresh rows at a same-process project-generation boundary.
 pub fn discard_refresh_transactions(props: &ProjectProperties) -> Result<()> {
-    let _lock = acquire_project_transaction_lock(props)?;
-    let mut journal = load_product_journal(props)?;
-    let mut changed = false;
-    for transaction in &mut journal.batches {
-        if !transaction.is_refresh() || !transaction.0.status.is_recoverable() {
-            continue;
-        }
-        transaction.phase = "refresh-discarded".into();
-        match transaction.0.status {
-            TransactionStatus::Pending => {
-                transaction.0.transition(TransactionStatus::Cancelled, None)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        let mut journal = load_product_journal(props)?;
+        let mut changed = false;
+        for transaction in &mut journal.batches {
+            if !transaction.is_refresh() || !transaction.0.status.is_recoverable() {
+                continue;
             }
-            TransactionStatus::SidecarCommitted => {
-                transaction.0.transition(TransactionStatus::Completed, None)
+            transaction.phase = "refresh-discarded".into();
+            match transaction.0.status {
+                TransactionStatus::Pending => {
+                    transaction.0.transition(TransactionStatus::Cancelled, None)
+                }
+                TransactionStatus::SidecarCommitted => {
+                    transaction.0.transition(TransactionStatus::Completed, None)
+                }
+                _ => continue,
             }
-            _ => continue,
+            changed = true;
         }
-        changed = true;
-    }
-    if changed {
-        write_product_journal(props, &mut journal)?;
-    }
-    compact_terminal_product_transactions(props)
+        if changed {
+            write_product_journal(props, &mut journal)?;
+        }
+        compact_terminal_product_transactions(props)
+    })
 }
 
 fn acknowledged_receipt_in_workflow(
@@ -3519,13 +3586,14 @@ pub fn switch_to_version(
     repository_index: usize,
     version: Option<&str>,
 ) -> Result<()> {
-    let _lock = acquire_project_transaction_lock(props)?;
-    let repo = props.repositories.get(repository_index).ok_or_else(|| {
-        TeamError::Command(format!(
-            "repository index {repository_index} is out of range"
-        ))
-    })?;
-    remote_repository_factory::switch_to_version(props, repo, version)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        let repo = props.repositories.get(repository_index).ok_or_else(|| {
+            TeamError::Command(format!(
+                "repository index {repository_index} is out of range"
+            ))
+        })?;
+        remote_repository_factory::switch_to_version(props, repo, version)
+    })
 }
 
 pub fn commit_after_version(
@@ -3534,13 +3602,14 @@ pub fn commit_after_version(
     versions: &[Option<String>],
     comment: &str,
 ) -> Result<Option<String>> {
-    let _lock = acquire_project_transaction_lock(props)?;
-    let repo = props.repositories.get(repository_index).ok_or_else(|| {
-        TeamError::Command(format!(
-            "repository index {repository_index} is out of range"
-        ))
-    })?;
-    remote_repository_factory::commit_after_versions(props, repo, versions, comment)
+    execute_product_coordinator(props, DurableCoordinatorLockMode::Try, |_| {
+        let repo = props.repositories.get(repository_index).ok_or_else(|| {
+            TeamError::Command(format!(
+                "repository index {repository_index} is out of range"
+            ))
+        })?;
+        remote_repository_factory::commit_after_versions(props, repo, versions, comment)
+    })
 }
 
 #[cfg(test)]

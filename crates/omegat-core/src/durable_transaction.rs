@@ -19,7 +19,8 @@ use crate::segmented_history::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -627,6 +628,7 @@ pub enum DurableCoordinatorLockMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DurableCoordinatorOpenError {
     Locked,
+    Reentrant(PathBuf),
     Durable(String),
 }
 
@@ -634,8 +636,66 @@ impl std::fmt::Display for DurableCoordinatorOpenError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Locked => formatter.write_str("durable transaction coordinator is locked"),
+            Self::Reentrant(path) => write!(
+                formatter,
+                "durable transaction coordinator was re-entered on the same thread: {}",
+                path.display()
+            ),
             Self::Durable(error) => formatter.write_str(error),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DurableCoordinatorExecutionError<E> {
+    Coordinator(DurableCoordinatorOpenError),
+    Operation(E),
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for DurableCoordinatorExecutionError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Coordinator(error) => error.fmt(formatter),
+            Self::Operation(error) => error.fmt(formatter),
+        }
+    }
+}
+
+thread_local! {
+    static ACTIVE_COORDINATORS: RefCell<BTreeSet<PathBuf>> = RefCell::new(BTreeSet::new());
+}
+
+#[derive(Debug)]
+struct DurableCoordinatorReentryGuard {
+    key: PathBuf,
+}
+
+impl DurableCoordinatorReentryGuard {
+    fn enter(directory: &Path, lock_file: &str) -> Result<Self, DurableCoordinatorOpenError> {
+        let directory = if directory.is_absolute() {
+            directory.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|error| DurableCoordinatorOpenError::Durable(error.to_string()))?
+                .join(directory)
+        };
+        let key = directory
+            .canonicalize()
+            .unwrap_or(directory)
+            .join(lock_file);
+        let inserted = ACTIVE_COORDINATORS.with(|active| active.borrow_mut().insert(key.clone()));
+        if !inserted {
+            return Err(DurableCoordinatorOpenError::Reentrant(key));
+        }
+        Ok(Self { key })
+    }
+}
+
+impl Drop for DurableCoordinatorReentryGuard {
+    fn drop(&mut self) {
+        ACTIVE_COORDINATORS.with(|active| {
+            active.borrow_mut().remove(&self.key);
+        });
     }
 }
 
@@ -663,6 +723,7 @@ pub struct DurableTransactionCoordinator<T: DurableTransactionRecord> {
     _lock: DurableFifoLock,
     waited: bool,
     workflow: DurableTransactionWorkflow<T>,
+    _reentry: DurableCoordinatorReentryGuard,
 }
 
 impl<T: DurableTransactionRecord> DurableTransactionCoordinator<T> {
@@ -686,6 +747,7 @@ impl<T: DurableTransactionRecord> DurableTransactionCoordinator<T> {
         P: FnMut() -> Result<(), String>,
         W: FnMut() -> Result<(), String>,
     {
+        let reentry = DurableCoordinatorReentryGuard::enter(directory, &layout.fifo.lock_file)?;
         let (lock, waited) = match DurableFifoLock::try_acquire(directory, &layout.fifo.lock_file)
             .map_err(DurableCoordinatorOpenError::Durable)?
         {
@@ -720,6 +782,7 @@ impl<T: DurableTransactionRecord> DurableTransactionCoordinator<T> {
             _lock: lock,
             waited,
             workflow,
+            _reentry: reentry,
         })
     }
 
@@ -741,6 +804,70 @@ impl<T: DurableTransactionRecord> DurableTransactionCoordinator<T> {
             &mut |_, _| Ok(()),
             &mut || Ok(()),
             &mut || Ok(()),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_with_legacy<Q, H, C, P, W, O, R, E>(
+        directory: &Path,
+        scope: &Path,
+        layout: DurableTransactionLayout,
+        options: SegmentedHistoryOptions,
+        lock_mode: DurableCoordinatorLockMode,
+        decode_queue: Q,
+        legacy_history: H,
+        checkpoint: &mut C,
+        prepare_locked: &mut P,
+        wait_hook: &mut W,
+        operation: O,
+    ) -> Result<R, DurableCoordinatorExecutionError<E>>
+    where
+        Q: Fn(&[u8]) -> Result<Option<LegacyFifoState<T>>, String>,
+        H: FnOnce() -> Result<Vec<T>, String>,
+        C: FnMut(Option<&T>, &str) -> Result<(), String>,
+        P: FnMut() -> Result<(), String>,
+        W: FnMut() -> Result<(), String>,
+        O: FnOnce(&mut Self) -> Result<R, E>,
+    {
+        let mut coordinator = Self::open_with_legacy(
+            directory,
+            scope,
+            layout,
+            options,
+            lock_mode,
+            decode_queue,
+            legacy_history,
+            checkpoint,
+            prepare_locked,
+            wait_hook,
+        )
+        .map_err(DurableCoordinatorExecutionError::Coordinator)?;
+        operation(&mut coordinator).map_err(DurableCoordinatorExecutionError::Operation)
+    }
+
+    pub fn execute<O, R, E>(
+        directory: &Path,
+        scope: &Path,
+        layout: DurableTransactionLayout,
+        options: SegmentedHistoryOptions,
+        lock_mode: DurableCoordinatorLockMode,
+        operation: O,
+    ) -> Result<R, DurableCoordinatorExecutionError<E>>
+    where
+        O: FnOnce(&mut Self) -> Result<R, E>,
+    {
+        Self::execute_with_legacy(
+            directory,
+            scope,
+            layout,
+            options,
+            lock_mode,
+            |_| Ok(None),
+            || Ok(Vec::new()),
+            &mut |_, _| Ok(()),
+            &mut || Ok(()),
+            &mut || Ok(()),
+            operation,
         )
     }
 
@@ -1795,14 +1922,14 @@ mod tests {
 
                 let recovered: DurableTransactionWorkflow<Record> =
                     DurableTransactionWorkflow::open_with_legacy(
-                    &directory,
-                    &scope,
-                    layout,
-                    options(),
-                    |_| Ok(None),
-                    || panic!("durable migration seed did not suppress legacy rediscovery"),
-                    &mut |_, _| Ok(()),
-                )
+                        &directory,
+                        &scope,
+                        layout,
+                        options(),
+                        |_| Ok(None),
+                        || panic!("durable migration seed did not suppress legacy rediscovery"),
+                        &mut |_, _| Ok(()),
+                    )
                     .unwrap();
                 for expected in legacy {
                     assert_eq!(
