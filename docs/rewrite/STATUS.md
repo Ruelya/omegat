@@ -59,7 +59,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **2026-08-28 verification:** core selected suites **152 passed**, filters
 **86 passed**, team **46 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
-**15 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
+**19 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The raw NDJSON contract and real Linux packaged matrix also pass the
@@ -892,6 +892,26 @@ remains a bounded **64**-row diagnostic projection. Any archived batch can still
 return its exact original success or failure, while a reused identity with a
 different operation or payload is rejected before product mutation.
 
+Archive lookup no longer deserializes every historical terminal result at
+startup. The dual manifest carries a complete four-hex SHA-256 batch-prefix
+index whose entries select only candidate immutable segments; collisions can
+cause an extra segment read but cannot hide a batch. Older v2 manifests receive
+the index under the same process lock. Missing referenced segments fail before
+product mutation, while a selected segment's descriptor and content hash are
+verified during its streaming point query. Equal-revision manifest replicas
+with different contents are rejected instead of choosing one.
+
+Small immutable segments are merged into a new generation without modifying
+the predecessor. All replacement segments reach stable storage first, then the
+replacement manifest crosses both recovery and primary durable-replacement
+steps. Only after those replicas agree may predecessor files be unlinked and
+their directory fsynced. A death during staging discards only the unreferenced
+future generation; a death after either manifest replacement repairs the peer
+before GC; repeated deaths during GC resume from the remaining unreferenced
+predecessors. Moving the complete config directory rebases active, hot-index,
+history, manifest, and sidecar in-memory paths while leaving content-addressed
+archive bytes unchanged.
+
 The real Linux `linux-unpacked` evidence now covers the earlier **8**
 `active.json`/`history.ndjson` replacement boundaries plus **16** primary and
 recovery dedupe/manifest candidate-write, candidate-fsync, rename, and
@@ -909,6 +929,16 @@ old batch's exact result. The cross-platform packaged driver resolves Linux,
 Windows, and macOS layouts and process-tree termination, but Windows and macOS
 file-lock/replacement package evidence was **not run** because this runner is
 Linux-only.
+The same packaged command now additionally rejects a missing segment, selected
+segment hash tampering, and same-revision manifest conflict without changing
+the preferences product; it moves a populated config directory and returns an
+archived result exactly; and it SIGKILLs three consecutive GC owners after one
+predecessor unlink each. Every owner observes byte-identical generation-1
+manifest replicas before deletion, and the fourth process removes the final
+predecessor without replaying the product. This Linux matrix passes through
+`npm run test:e2e:shared-config-v2:linux`; corresponding Windows and macOS lock,
+rename, and directory-fsync evidence was not run because no such runner was
+available.
 A new real Linux `linux-unpacked` matrix drives project properties, repository
 mapping, file-filter options, and segmentation settings exclusively through
 visible controls. It externally SIGKILLs Electron at both sides of each relevant
