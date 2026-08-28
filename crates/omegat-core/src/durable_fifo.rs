@@ -828,7 +828,7 @@ mod tests {
         std::fs::write(directory.join(&layout.recovery_file), &bytes).unwrap();
         std::fs::rename(temp.path().join("old"), &new_scope).unwrap();
         let directory = new_scope.join("fifo");
-        let decode = |bytes: &[u8]| {
+        let decode = |bytes: &[u8]| -> Result<Option<LegacyFifoState<Entry>>, String> {
             let value: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
             if value.get("items").is_none() {
                 return Ok(None);

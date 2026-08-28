@@ -6461,6 +6461,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let config = temp.path().join("config");
         let root = temp.path().join(format!("product-{point}"));
         let active_path = root.join(".repositories/transactions/active.json");
+        let active_recovery_path = root.join(".repositories/transactions/.active.recovery.json");
         let owner_path = root.join(".repositories/transactions/renderer-owner.json");
         let history_path = root.join(".repositories/transactions/history.ndjson");
         let marker_path = temp.path().join(format!("product-{point}-checkpoint"));
@@ -6585,7 +6586,9 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             .as_array_mut()
             .unwrap()
             .insert(0, terminal);
-        std::fs::write(&active_path, serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
+        let seeded_queue = serde_json::to_vec_pretty(&journal).unwrap();
+        std::fs::write(&active_recovery_path, &seeded_queue).unwrap();
+        std::fs::write(&active_path, seeded_queue).unwrap();
         let original_queue = std::fs::read(&active_path).unwrap();
         let tmx_before = std::fs::read(&save_tmx).unwrap();
         let tmx_mtime_before = std::fs::metadata(&save_tmx).unwrap().modified().unwrap();
@@ -7156,6 +7159,9 @@ fn unified_journal_migrates_refresh_envelopes_and_compacts_only_acked_work() {
 
     let compact_config = temp.path().join("compact-config");
     let journal_path = compact_root.join(".repositories/transactions/active.json");
+    let journal_recovery_path = compact_root.join(
+        ".repositories/transactions/.active.recovery.json",
+    );
     let history_path = compact_root.join(".repositories/transactions/history.ndjson");
     let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config, None);
     rpc(
@@ -7229,7 +7235,9 @@ fn unified_journal_migrates_refresh_envelopes_and_compacts_only_acked_work() {
         .as_array_mut()
         .unwrap()
         .insert(0, acknowledged);
-    std::fs::write(&journal_path, serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
+    let seeded_journal = serde_json::to_vec_pretty(&journal).unwrap();
+    std::fs::write(&journal_recovery_path, &seeded_journal).unwrap();
+    std::fs::write(&journal_path, seeded_journal).unwrap();
 
     let journal_before_interrupted_compaction = std::fs::read(&journal_path).unwrap();
     let (mut interrupted_child, mut interrupted_in, mut interrupted_out) =
