@@ -173,7 +173,7 @@ class DevToolsClient {
     });
   }
 
-  command(method, params = {}) {
+  command(method, params = {}, timeoutMs = WAIT_MS) {
     const id = this.nextId++;
     return new Promise((resolveCommand, reject) => {
       const timeout = setTimeout(() => {
@@ -183,7 +183,7 @@ class DevToolsClient {
           ? `: ${params.expression.slice(0, 240)}`
           : "";
         reject(new Error(`DevTools command timed out: ${method}${expression}`));
-      }, WAIT_MS);
+      }, timeoutMs);
       timeout.unref();
       this.pending.set(id, {
         resolve: (value) => {
@@ -204,7 +204,7 @@ class DevToolsClient {
       expression,
       awaitPromise,
       returnByValue: true,
-    });
+    }, awaitPromise ? WAIT_MS * 3 : WAIT_MS);
     if (response.exceptionDetails) {
       throw new Error(
         response.exceptionDetails.exception?.description ?? "renderer evaluation failed",
