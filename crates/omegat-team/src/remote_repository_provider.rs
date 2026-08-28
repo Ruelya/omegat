@@ -1100,7 +1100,9 @@ pub fn sync_cancellable_scoped(
         )));
     }
 
-    if let Err(error) = journal.publish_product_commit(props, "committed") {
+    let publish_result = product_transaction_checkpoint("team.sync", "before_atomic_publish")
+        .and_then(|_| journal.publish_product_commit(props, "committed"));
+    if let Err(error) = publish_result {
         let mut rollback_failures = rollback_repositories(
             props,
             &snapshot,
@@ -1122,6 +1124,7 @@ pub fn sync_cancellable_scoped(
             rollback_failures.join(" | ")
         )));
     }
+    product_transaction_checkpoint("team.sync", "after_atomic_publish")?;
     journal.cleanup(props)?;
     for repo in &props.repositories {
         report
@@ -1264,7 +1267,9 @@ pub fn commit_project_files_cancellable_scoped(
                 rollback_failures.join(" | ")
             )));
         }
-        if let Err(error) = journal.publish_product_commit(props, "committed") {
+        let publish_result = product_transaction_checkpoint("team.commit", "before_atomic_publish")
+            .and_then(|_| journal.publish_product_commit(props, "committed"));
+        if let Err(error) = publish_result {
             let mut rollback_failures = rollback_repositories(
                 props,
                 &snapshot,
@@ -1291,6 +1296,7 @@ pub fn commit_project_files_cancellable_scoped(
                 rollback_failures.join(" | ")
             )));
         }
+        product_transaction_checkpoint("team.commit", "after_atomic_publish")?;
         journal.cleanup(props)?;
     }
     Ok(SyncReport {
