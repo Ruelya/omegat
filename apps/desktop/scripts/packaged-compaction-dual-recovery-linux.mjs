@@ -267,7 +267,7 @@ async function workspaceState(client) {
     const app = document.querySelector(".app");
     const segment = document.querySelector(".editor-segment.is-active");
     return {
-      project: app?.dataset.projectId ?? null,
+      project: app?.dataset.projectId || null,
       generation: Number(app?.dataset.projectGeneration ?? 0),
       welcome: document.querySelector(".welcome") !== null,
       source: segment?.querySelector(".src")?.textContent ?? null,
