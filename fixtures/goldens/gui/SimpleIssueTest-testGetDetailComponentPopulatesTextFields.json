@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentPopulatesTextFields",
+  "source": "Hello world!",
+  "translation": "Hallo Welt!",
+  "keys": [
+    "org.omegat.gui.issues.SimpleIssueTest#testGetDetailComponentPopulatesTextFields"
+  ]
+}
