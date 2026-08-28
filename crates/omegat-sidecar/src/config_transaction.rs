@@ -12,6 +12,7 @@ use fs2::FileExt;
 use omegat_core::prefs::Preferences;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CONFIG_TRANSACTION_VERSION: u8 = 1;
 const TRANSACTION_DIRECTORY: &str = "shared-config";
+const CONFIG_HISTORY_LIMIT: usize = 64;
 static BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -46,11 +48,13 @@ struct ConfigTransactionEnvelope {
     updated_unix_ms: u128,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigTransactionJournal {
     version: u8,
     config_dir: PathBuf,
+    #[serde(default)]
+    revision: u64,
     batches: Vec<ConfigTransactionEnvelope>,
     updated_unix_ms: u128,
 }
@@ -60,10 +64,42 @@ impl ConfigTransactionJournal {
         Self {
             version: CONFIG_TRANSACTION_VERSION,
             config_dir: normalized(config_dir),
+            revision: 0,
             batches: Vec::new(),
             updated_unix_ms: unix_ms(),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigTransactionDedupe {
+    version: u8,
+    config_dir: PathBuf,
+    #[serde(default)]
+    revision: u64,
+    batches: BTreeMap<String, ConfigTransactionEnvelope>,
+    #[serde(default)]
+    order: Vec<String>,
+    updated_unix_ms: u128,
+}
+
+impl ConfigTransactionDedupe {
+    fn empty(config_dir: &Path) -> Self {
+        Self {
+            version: CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(config_dir),
+            revision: 0,
+            batches: BTreeMap::new(),
+            order: Vec::new(),
+            updated_unix_ms: unix_ms(),
+        }
+    }
+}
+
+struct ConfigTransactionHistory {
+    recent: Vec<ConfigTransactionEnvelope>,
+    dedupe: ConfigTransactionDedupe,
 }
 
 struct ConfigTransactionLock {
@@ -89,8 +125,20 @@ fn active_path(config_dir: &Path) -> PathBuf {
     transaction_dir(config_dir).join("active.json")
 }
 
+fn active_recovery_path(config_dir: &Path) -> PathBuf {
+    transaction_dir(config_dir).join("active.recovery.json")
+}
+
 fn history_path(config_dir: &Path) -> PathBuf {
     transaction_dir(config_dir).join("history.ndjson")
+}
+
+fn dedupe_path(config_dir: &Path) -> PathBuf {
+    transaction_dir(config_dir).join("dedupe.json")
+}
+
+fn dedupe_recovery_path(config_dir: &Path) -> PathBuf {
+    transaction_dir(config_dir).join("dedupe.recovery.json")
 }
 
 fn sync_parent(path: &Path) -> Result<(), String> {
@@ -128,101 +176,304 @@ fn acquire_lock(config_dir: &Path) -> Result<ConfigTransactionLock, String> {
     Ok(ConfigTransactionLock { _file: file })
 }
 
-fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
-    let path = active_path(config_dir);
-    if !path.is_file() {
-        return Ok(ConfigTransactionJournal::empty(config_dir));
-    }
-    let bytes = std::fs::read(&path).map_err(|error| {
+fn cleanup_interrupted_candidates(config_dir: &Path) -> Result<(), String> {
+    let directory = transaction_dir(config_dir);
+    let prefixes = [
+        ".active.json.",
+        ".active.recovery.json.",
+        ".history.ndjson.",
+        ".dedupe.json.",
+        ".dedupe.recovery.json.",
+    ];
+    let mut removed = false;
+    for entry in std::fs::read_dir(&directory).map_err(|error| {
         format!(
-            "read config transaction journal {}: {error}",
-            path.display()
+            "read config transaction directory {}: {error}",
+            directory.display()
         )
-    })?;
-    let journal: ConfigTransactionJournal = serde_json::from_slice(&bytes).map_err(|error| {
-        format!(
-            "parse config transaction journal {}: {error}",
-            path.display()
-        )
-    })?;
-    if journal.version != CONFIG_TRANSACTION_VERSION
-        || normalized(&journal.config_dir) != normalized(config_dir)
-        || journal.batches.iter().any(|batch| {
-            batch.version != CONFIG_TRANSACTION_VERSION
-                || normalized(&batch.config_dir) != normalized(config_dir)
-                || batch.batch_id.is_empty()
-                || batch.operation.is_empty()
-                || batch.status != ConfigTransactionStatus::Pending
-        })
-    {
-        return Err(format!(
-            "invalid config transaction journal {}",
-            path.display()
-        ));
-    }
-    Ok(journal)
-}
-
-fn persist_journal(config_dir: &Path, journal: &ConfigTransactionJournal) -> Result<(), String> {
-    let path = active_path(config_dir);
-    if journal.batches.is_empty() {
-        match std::fs::remove_file(&path) {
-            Ok(()) => sync_parent(&path),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(format!(
-                "remove config transaction journal {}: {error}",
-                path.display()
-            )),
-        }
-    } else {
-        let bytes = serde_json::to_vec_pretty(journal)
-            .map_err(|error| format!("serialize config transaction journal: {error}"))?;
-        omegat_core::durable_file::replace(&path, &bytes).map_err(|error| {
+    })? {
+        let entry = entry.map_err(|error| {
             format!(
-                "publish config transaction journal {}: {error}",
-                path.display()
+                "read config transaction directory entry {}: {error}",
+                directory.display()
             )
-        })
+        })?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if entry
+            .file_type()
+            .map_err(|error| format!("inspect config transaction candidate: {error}"))?
+            .is_file()
+            && prefixes.iter().any(|prefix| name.starts_with(prefix))
+            && name.ends_with(".tmp")
+        {
+            std::fs::remove_file(entry.path()).map_err(|error| {
+                format!(
+                    "remove interrupted config transaction candidate {}: {error}",
+                    entry.path().display()
+                )
+            })?;
+            removed = true;
+        }
     }
+    if removed {
+        File::open(&directory)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| {
+                format!(
+                    "sync cleaned config transaction directory {}: {error}",
+                    directory.display()
+                )
+            })?;
+    }
+    Ok(())
 }
 
-fn read_history(config_dir: &Path) -> Result<Vec<ConfigTransactionEnvelope>, String> {
-    let path = history_path(config_dir);
-    let raw = match std::fs::read_to_string(&path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+fn valid_envelope(envelope: &ConfigTransactionEnvelope, config_dir: &Path, pending: bool) -> bool {
+    envelope.version == CONFIG_TRANSACTION_VERSION
+        && normalized(&envelope.config_dir) == normalized(config_dir)
+        && !envelope.batch_id.is_empty()
+        && !envelope.operation.is_empty()
+        && (envelope.status == ConfigTransactionStatus::Pending) == pending
+        && if pending {
+            envelope.result.is_none() && envelope.error.is_none()
+        } else {
+            match envelope.status {
+                ConfigTransactionStatus::Completed => {
+                    envelope.result.is_some() && envelope.error.is_none()
+                }
+                ConfigTransactionStatus::Failed => {
+                    envelope.result.is_none() && envelope.error.is_some()
+                }
+                ConfigTransactionStatus::Pending => false,
+            }
+        }
+}
+
+fn read_journal_replica(
+    path: &Path,
+    config_dir: &Path,
+) -> Result<(bool, Option<ConfigTransactionJournal>), String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, None)),
         Err(error) => {
             return Err(format!(
-                "read config transaction history {}: {error}",
+                "read config transaction journal replica {}: {error}",
                 path.display()
             ))
         }
     };
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .enumerate()
-        .map(|(index, line)| {
-            let envelope: ConfigTransactionEnvelope =
-                serde_json::from_str(line).map_err(|error| {
-                    format!(
-                        "parse config transaction history {} line {}: {error}",
-                        path.display(),
-                        index + 1
-                    )
-                })?;
-            if envelope.version != CONFIG_TRANSACTION_VERSION
-                || normalized(&envelope.config_dir) != normalized(config_dir)
-                || envelope.status == ConfigTransactionStatus::Pending
-            {
-                return Err(format!(
-                    "invalid config transaction history {} line {}",
-                    path.display(),
-                    index + 1
-                ));
-            }
-            Ok(envelope)
-        })
-        .collect()
+    let journal = serde_json::from_slice::<ConfigTransactionJournal>(&bytes)
+        .ok()
+        .filter(|journal| {
+            journal.version == CONFIG_TRANSACTION_VERSION
+                && normalized(&journal.config_dir) == normalized(config_dir)
+                && journal
+                    .batches
+                    .iter()
+                    .all(|batch| valid_envelope(batch, config_dir, true))
+        });
+    Ok((true, journal))
+}
+
+fn remove_durable(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => sync_parent(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "remove config transaction file {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn write_journal_replicas(
+    config_dir: &Path,
+    journal: &ConfigTransactionJournal,
+) -> Result<(), String> {
+    if journal.batches.is_empty() {
+        // The recovery copy disappears first. A crash between the removals can
+        // only expose the older primary; its terminal batch is already in the
+        // dedupe index and is therefore removed without replaying the product.
+        remove_durable(&active_recovery_path(config_dir))?;
+        return remove_durable(&active_path(config_dir));
+    }
+    let bytes = serde_json::to_vec_pretty(journal)
+        .map_err(|error| format!("serialize config transaction journal: {error}"))?;
+    for path in [active_recovery_path(config_dir), active_path(config_dir)] {
+        omegat_core::durable_file::replace(&path, &bytes).map_err(|error| {
+            format!(
+                "publish config transaction journal replica {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
+    cleanup_interrupted_candidates(config_dir)?;
+    let replicas = [
+        (
+            active_path(config_dir),
+            read_journal_replica(&active_path(config_dir), config_dir)?,
+        ),
+        (
+            active_recovery_path(config_dir),
+            read_journal_replica(&active_recovery_path(config_dir), config_dir)?,
+        ),
+    ];
+    let mut valid = replicas
+        .iter()
+        .filter_map(|(_, (_, journal))| journal.as_ref())
+        .collect::<Vec<_>>();
+    if valid.is_empty() {
+        if replicas.iter().any(|(_, (exists, _))| *exists) {
+            return Err(format!(
+                "both config transaction journal replicas are invalid in {}",
+                transaction_dir(config_dir).display()
+            ));
+        }
+        return Ok(ConfigTransactionJournal::empty(config_dir));
+    }
+    valid.sort_by_key(|journal| journal.revision);
+    let selected = (*valid.last().expect("non-empty journal replicas")).clone();
+    if valid
+        .iter()
+        .any(|journal| journal.revision == selected.revision && **journal != selected)
+    {
+        return Err(format!(
+            "config transaction journal replicas disagree at revision {}",
+            selected.revision
+        ));
+    }
+    let repair = replicas.iter().any(|(_, (_, journal))| {
+        journal
+            .as_ref()
+            .map(|journal| journal != &selected)
+            .unwrap_or(true)
+    });
+    if repair {
+        write_journal_replicas(config_dir, &selected)?;
+    }
+    Ok(selected)
+}
+
+fn persist_journal(
+    config_dir: &Path,
+    journal: &mut ConfigTransactionJournal,
+) -> Result<(), String> {
+    journal.revision = journal.revision.saturating_add(1);
+    journal.updated_unix_ms = unix_ms();
+    write_journal_replicas(config_dir, journal)
+}
+
+fn read_dedupe_replica(
+    path: &Path,
+    config_dir: &Path,
+) -> Result<(bool, Option<ConfigTransactionDedupe>), String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, None)),
+        Err(error) => {
+            return Err(format!(
+                "read config transaction dedupe replica {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let index = serde_json::from_slice::<ConfigTransactionDedupe>(&bytes)
+        .ok()
+        .filter(|index| {
+            index.version == CONFIG_TRANSACTION_VERSION
+                && normalized(&index.config_dir) == normalized(config_dir)
+                && index.batches.iter().all(|(batch_id, batch)| {
+                    batch_id == &batch.batch_id && valid_envelope(batch, config_dir, false)
+                })
+                && index.order.len() == index.batches.len()
+                && index
+                    .order
+                    .iter()
+                    .all(|batch_id| index.batches.contains_key(batch_id))
+                && index
+                    .order
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    == index.order.len()
+        });
+    Ok((true, index))
+}
+
+fn write_dedupe_replicas(
+    config_dir: &Path,
+    dedupe: &ConfigTransactionDedupe,
+) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(dedupe)
+        .map_err(|error| format!("serialize config transaction dedupe index: {error}"))?;
+    for path in [dedupe_recovery_path(config_dir), dedupe_path(config_dir)] {
+        omegat_core::durable_file::replace(&path, &bytes).map_err(|error| {
+            format!(
+                "publish config transaction dedupe replica {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn read_dedupe(config_dir: &Path) -> Result<ConfigTransactionDedupe, String> {
+    let replicas = [
+        (
+            dedupe_path(config_dir),
+            read_dedupe_replica(&dedupe_path(config_dir), config_dir)?,
+        ),
+        (
+            dedupe_recovery_path(config_dir),
+            read_dedupe_replica(&dedupe_recovery_path(config_dir), config_dir)?,
+        ),
+    ];
+    let mut valid = replicas
+        .iter()
+        .filter_map(|(_, (_, index))| index.as_ref())
+        .collect::<Vec<_>>();
+    if valid.is_empty() {
+        if replicas.iter().any(|(_, (exists, _))| *exists) {
+            return Err(format!(
+                "both config transaction dedupe replicas are invalid in {}",
+                transaction_dir(config_dir).display()
+            ));
+        }
+        return Ok(ConfigTransactionDedupe::empty(config_dir));
+    }
+    valid.sort_by_key(|index| index.revision);
+    let selected = (*valid.last().expect("non-empty dedupe replicas")).clone();
+    if valid
+        .iter()
+        .any(|index| index.revision == selected.revision && **index != selected)
+    {
+        return Err(format!(
+            "config transaction dedupe replicas disagree at revision {}",
+            selected.revision
+        ));
+    }
+    let repair = replicas.iter().any(|(_, (_, index))| {
+        index
+            .as_ref()
+            .map(|index| index != &selected)
+            .unwrap_or(true)
+    });
+    if repair {
+        write_dedupe_replicas(config_dir, &selected)?;
+    }
+    Ok(selected)
+}
+
+fn persist_dedupe(config_dir: &Path, dedupe: &mut ConfigTransactionDedupe) -> Result<(), String> {
+    dedupe.revision = dedupe.revision.saturating_add(1);
+    dedupe.updated_unix_ms = unix_ms();
+    write_dedupe_replicas(config_dir, dedupe)
 }
 
 fn persist_history(config_dir: &Path, history: &[ConfigTransactionEnvelope]) -> Result<(), String> {
@@ -239,6 +490,104 @@ fn persist_history(config_dir: &Path, history: &[ConfigTransactionEnvelope]) -> 
             path.display()
         )
     })
+}
+
+fn history_limit() -> usize {
+    std::env::var("OMEGAT_TEST_CONFIG_HISTORY_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(CONFIG_HISTORY_LIMIT)
+}
+
+fn read_history(config_dir: &Path) -> Result<ConfigTransactionHistory, String> {
+    let mut dedupe = read_dedupe(config_dir)?;
+    let path = history_path(config_dir);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            return Err(format!(
+                "read config transaction history {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let mut damaged = !bytes.is_empty() && !bytes.ends_with(b"\n");
+    let mut recent = Vec::<ConfigTransactionEnvelope>::new();
+    let mut recent_by_id = BTreeMap::<String, ConfigTransactionEnvelope>::new();
+    for line in bytes.split(|byte| *byte == b'\n').filter(|line| {
+        line.iter()
+            .any(|byte| !matches!(*byte, b' ' | b'\t' | b'\r'))
+    }) {
+        let Some(envelope) = serde_json::from_slice::<ConfigTransactionEnvelope>(line)
+            .ok()
+            .filter(|envelope| valid_envelope(envelope, config_dir, false))
+        else {
+            damaged = true;
+            continue;
+        };
+        if let Some(existing) = recent_by_id.get(&envelope.batch_id) {
+            if existing != &envelope {
+                return Err(format!(
+                    "conflicting config transaction history rows for batch {}",
+                    envelope.batch_id
+                ));
+            }
+            damaged = true;
+            continue;
+        }
+        recent_by_id.insert(envelope.batch_id.clone(), envelope.clone());
+        recent.push(envelope);
+    }
+
+    let mut dedupe_changed = false;
+    for envelope in &recent {
+        match dedupe.batches.get(&envelope.batch_id) {
+            Some(existing) if existing == envelope => {}
+            Some(existing) => {
+                validate_identity(existing, &envelope.operation, &envelope.payload)?;
+                return Err(format!(
+                    "config transaction terminal result disagrees for batch {}",
+                    envelope.batch_id
+                ));
+            }
+            None => {
+                dedupe
+                    .batches
+                    .insert(envelope.batch_id.clone(), envelope.clone());
+                dedupe.order.push(envelope.batch_id.clone());
+                dedupe_changed = true;
+            }
+        }
+    }
+    if dedupe_changed {
+        persist_dedupe(config_dir, &mut dedupe)?;
+    }
+
+    let limit = history_limit();
+    let expected_recent = dedupe
+        .order
+        .iter()
+        .rev()
+        .take(limit)
+        .rev()
+        .map(|batch_id| {
+            dedupe
+                .batches
+                .get(batch_id)
+                .expect("validated dedupe order")
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    if recent != expected_recent {
+        recent = expected_recent;
+        damaged = true;
+    }
+    if damaged {
+        persist_history(config_dir, &recent)?;
+    }
+    Ok(ConfigTransactionHistory { recent, dedupe })
 }
 
 fn checkpoint(
@@ -423,7 +772,7 @@ fn validate_identity(
         Ok(())
     } else {
         Err(format!(
-            "config transaction batch {} was reused for a different operation",
+            "config transaction batch {} was reused for a different operation or payload",
             existing.batch_id
         ))
     }
@@ -449,10 +798,10 @@ fn result_from_terminal(envelope: &ConfigTransactionEnvelope) -> Result<Value, S
 fn drain_locked(
     config_dir: &Path,
     journal: &mut ConfigTransactionJournal,
-    history: &mut Vec<ConfigTransactionEnvelope>,
+    history: &mut ConfigTransactionHistory,
 ) -> Result<(), String> {
     while let Some(pending) = journal.batches.first().cloned() {
-        if let Some(terminal) = history.iter().find(|row| row.batch_id == pending.batch_id) {
+        if let Some(terminal) = history.dedupe.batches.get(&pending.batch_id) {
             validate_identity(terminal, &pending.operation, &pending.payload)?;
         } else {
             let mut terminal = pending.clone();
@@ -469,12 +818,25 @@ fn drain_locked(
                 }
             }
             terminal.updated_unix_ms = unix_ms();
-            history.push(terminal.clone());
-            persist_history(config_dir, history)?;
+            history.recent.push(terminal.clone());
+            persist_history(config_dir, &history.recent)?;
             checkpoint(&pending.operation, "after_history_append", &terminal)?;
+            history
+                .dedupe
+                .batches
+                .insert(terminal.batch_id.clone(), terminal.clone());
+            history.dedupe.order.push(terminal.batch_id.clone());
+            persist_dedupe(config_dir, &mut history.dedupe)?;
+            if history.recent.len() > history_limit() {
+                checkpoint(&pending.operation, "before_history_compaction", &terminal)?;
+                history.recent = history
+                    .recent
+                    .split_off(history.recent.len() - history_limit());
+                persist_history(config_dir, &history.recent)?;
+                checkpoint(&pending.operation, "after_history_compaction", &terminal)?;
+            }
         }
         journal.batches.remove(0);
-        journal.updated_unix_ms = unix_ms();
         persist_journal(config_dir, journal)?;
     }
     Ok(())
@@ -532,7 +894,7 @@ pub fn execute(
     let _lock = acquire_lock(config_dir)?;
     let mut journal = read_journal(config_dir)?;
     let mut history = read_history(config_dir)?;
-    if let Some(existing) = history.iter().find(|row| row.batch_id == batch_id) {
+    if let Some(existing) = history.dedupe.batches.get(batch_id) {
         validate_identity(existing, operation, &payload)?;
         return result_from_terminal(existing);
     }
@@ -553,14 +915,14 @@ pub fn execute(
             updated_unix_ms: unix_ms(),
         };
         journal.batches.push(envelope.clone());
-        journal.updated_unix_ms = unix_ms();
-        persist_journal(config_dir, &journal)?;
+        persist_journal(config_dir, &mut journal)?;
         checkpoint(operation, "after_enqueue", &envelope)?;
     }
     drain_locked(config_dir, &mut journal, &mut history)?;
     let terminal = history
-        .iter()
-        .find(|row| row.batch_id == batch_id)
+        .dedupe
+        .batches
+        .get(batch_id)
         .ok_or_else(|| format!("config transaction {batch_id} did not reach history"))?;
     result_from_terminal(terminal)
 }
@@ -584,9 +946,9 @@ pub fn load_preferences(config_dir: &Path) -> Result<Preferences, String> {
         Ok(raw) => raw,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let preferences = Preferences::default_in(config_dir.to_path_buf());
-            preferences
-                .save()
-                .map_err(|error| format!("create shared preferences {}: {error}", path.display()))?;
+            preferences.save().map_err(|error| {
+                format!("create shared preferences {}: {error}", path.display())
+            })?;
             return Ok(preferences);
         }
         Err(error) => {
@@ -659,6 +1021,7 @@ mod tests {
         let history = read_history(&config).unwrap();
         assert_eq!(
             history
+                .recent
                 .iter()
                 .map(|row| row.batch_id.as_str())
                 .collect::<Vec<_>>(),
@@ -690,10 +1053,191 @@ mod tests {
         assert_eq!(
             read_history(&config)
                 .unwrap()
-                .iter()
+                .dedupe
+                .batches
+                .values()
                 .filter(|row| row.batch_id == "same")
                 .count(),
             1
         );
+    }
+
+    fn pending(config: &Path, batch_id: &str, payload: Value) -> ConfigTransactionEnvelope {
+        ConfigTransactionEnvelope {
+            version: CONFIG_TRANSACTION_VERSION,
+            config_dir: normalized(config),
+            batch_id: batch_id.into(),
+            operation: "prefs.patch".into(),
+            app_instance: "electron-owner".into(),
+            owner_process_id: 707,
+            status: ConfigTransactionStatus::Pending,
+            payload,
+            result: None,
+            error: None,
+            updated_unix_ms: unix_ms(),
+        }
+    }
+
+    #[test]
+    fn active_recovery_replica_repairs_truncation_before_replay() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        std::fs::create_dir_all(transaction_dir(&config)).unwrap();
+        let mut journal = ConfigTransactionJournal::empty(&config);
+        journal
+            .batches
+            .push(pending(&config, "recover-active", json!({"locale": "fr"})));
+        persist_journal(&config, &mut journal).unwrap();
+        let recovery_bytes = std::fs::read(active_recovery_path(&config)).unwrap();
+        std::fs::write(active_path(&config), b"{\"version\":").unwrap();
+
+        let repaired = read_journal(&config).unwrap();
+        assert_eq!(repaired.batches[0].batch_id, "recover-active");
+        assert_eq!(std::fs::read(active_path(&config)).unwrap(), recovery_bytes);
+        assert_eq!(
+            std::fs::read(active_recovery_path(&config)).unwrap(),
+            recovery_bytes
+        );
+
+        recover(&config).unwrap();
+        assert!(!active_path(&config).exists());
+        assert!(!active_recovery_path(&config).exists());
+        assert_eq!(Preferences::load_or_default(&config).locale, "fr");
+        let history = read_history(&config).unwrap();
+        assert_eq!(history.dedupe.order, vec!["recover-active"]);
+        assert_eq!(history.recent.len(), 1);
+    }
+
+    #[test]
+    fn two_corrupt_active_replicas_stop_before_product_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        std::fs::create_dir_all(transaction_dir(&config)).unwrap();
+        let mut journal = ConfigTransactionJournal::empty(&config);
+        journal
+            .batches
+            .push(pending(&config, "reject-active", json!({"locale": "fr"})));
+        persist_journal(&config, &mut journal).unwrap();
+        std::fs::write(active_path(&config), b"{").unwrap();
+        std::fs::write(active_recovery_path(&config), b"not-json").unwrap();
+
+        let error = recover(&config).unwrap_err();
+        assert!(error.contains("both config transaction journal replicas are invalid"));
+        assert!(!config.join("omegat.prefs.json").exists());
+        assert_eq!(std::fs::read(active_path(&config)).unwrap(), b"{");
+        assert_eq!(
+            std::fs::read(active_recovery_path(&config)).unwrap(),
+            b"not-json"
+        );
+    }
+
+    #[test]
+    fn bounded_history_repairs_damage_and_keeps_exact_retry_result() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let first = execute(
+            &config,
+            "electron-a",
+            "bounded-0",
+            808,
+            "prefs.patch",
+            json!({"theme": "theme-0"}),
+        )
+        .unwrap();
+        for index in 1..(CONFIG_HISTORY_LIMIT + 9) {
+            execute(
+                &config,
+                "electron-b",
+                &format!("bounded-{index}"),
+                909,
+                "prefs.patch",
+                json!({"theme": format!("theme-{index}")}),
+            )
+            .unwrap();
+        }
+
+        let state = read_history(&config).unwrap();
+        assert_eq!(state.recent.len(), CONFIG_HISTORY_LIMIT);
+        assert_eq!(state.dedupe.batches.len(), CONFIG_HISTORY_LIMIT + 9);
+        assert_eq!(state.dedupe.order.first().unwrap(), "bounded-0");
+        assert_eq!(
+            state.dedupe.order.last().unwrap(),
+            &format!("bounded-{}", CONFIG_HISTORY_LIMIT + 8)
+        );
+        let product_before_retry = std::fs::read(config.join("omegat.prefs.json")).unwrap();
+        assert_eq!(
+            execute(
+                &config,
+                "electron-retry",
+                "bounded-0",
+                1001,
+                "prefs.patch",
+                json!({"theme": "theme-0"}),
+            )
+            .unwrap(),
+            first
+        );
+        assert_eq!(
+            std::fs::read(config.join("omegat.prefs.json")).unwrap(),
+            product_before_retry
+        );
+        let conflict = execute(
+            &config,
+            "electron-conflict",
+            "bounded-0",
+            1002,
+            "prefs.patch",
+            json!({"theme": "conflict"}),
+        )
+        .unwrap_err();
+        assert!(conflict.contains("reused for a different operation"));
+        assert_eq!(
+            std::fs::read(config.join("omegat.prefs.json")).unwrap(),
+            product_before_retry
+        );
+
+        let history_path = history_path(&config);
+        let mut lines = std::fs::read_to_string(&history_path)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        lines[3] = "{\"truncated\":".into();
+        let mut damaged = lines.join("\n");
+        damaged.push_str("\n{\"unterminated\":");
+        std::fs::write(&history_path, damaged).unwrap();
+        recover(&config).unwrap();
+
+        let repaired = read_history(&config).unwrap();
+        assert_eq!(repaired.recent.len(), CONFIG_HISTORY_LIMIT);
+        assert_eq!(repaired.dedupe.batches.len(), CONFIG_HISTORY_LIMIT + 9);
+        assert_eq!(
+            std::fs::read_to_string(history_path)
+                .unwrap()
+                .lines()
+                .map(|line| {
+                    serde_json::from_str::<ConfigTransactionEnvelope>(line)
+                        .unwrap()
+                        .batch_id
+                })
+                .collect::<Vec<_>>(),
+            repaired
+                .dedupe
+                .order
+                .iter()
+                .rev()
+                .take(CONFIG_HISTORY_LIMIT)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            std::fs::read(dedupe_path(&config)).unwrap(),
+            std::fs::read(dedupe_recovery_path(&config)).unwrap()
+        );
+        assert!(std::fs::read_dir(transaction_dir(&config))
+            .unwrap()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")));
     }
 }

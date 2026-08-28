@@ -258,16 +258,16 @@ impl App {
                 Ok(json!({ "marks": marks }))
             }
             "prefs.get" => {
-                let preferences =
-                    match config_transaction::load_preferences(&self.prefs.config_dir) {
-                        Ok(preferences) => preferences,
-                        Err(error) => {
-                            log::warn!(
+                let preferences = match config_transaction::load_preferences(&self.prefs.config_dir)
+                {
+                    Ok(preferences) => preferences,
+                    Err(error) => {
+                        log::warn!(
                                 "cannot refresh process-shared preferences; retaining last valid snapshot: {error}"
                             );
-                            self.prefs.clone()
-                        }
-                    };
+                        self.prefs.clone()
+                    }
+                };
                 if let Some(session) = self.session.as_mut() {
                     session.prefs = preferences.clone();
                 }
@@ -300,12 +300,13 @@ impl App {
                     patch,
                 )
                 .map_err(|error| (error_code::IO, error))?;
-                preferences = serde_json::from_value(value).map_err(invalid)?;
+                preferences = config_transaction::load_preferences(&self.prefs.config_dir)
+                    .map_err(|error| (error_code::IO, error))?;
                 if let Some(session) = self.session.as_mut() {
                     session.prefs = preferences.clone();
                 }
                 self.prefs = preferences;
-                Ok(serde_json::to_value(&self.prefs).unwrap())
+                Ok(value)
             }
             "prefs.patch" => {
                 let mut patch = params;
@@ -323,12 +324,13 @@ impl App {
                     patch,
                 )
                 .map_err(|error| (error_code::IO, error))?;
-                let preferences: Preferences = serde_json::from_value(value).map_err(invalid)?;
+                let preferences = config_transaction::load_preferences(&self.prefs.config_dir)
+                    .map_err(|error| (error_code::IO, error))?;
                 if let Some(session) = self.session.as_mut() {
                     session.prefs = preferences.clone();
                 }
                 self.prefs = preferences;
-                Ok(serde_json::to_value(&self.prefs).unwrap())
+                Ok(value)
             }
             "project.create" => {
                 let p: CreateProjectParams = serde_json::from_value(params).map_err(invalid)?;
@@ -951,14 +953,15 @@ impl App {
                         params,
                     )
                     .map_err(|error| (error_code::IO, error))?;
-                    let preferences: Preferences = result
+                    result
                         .as_object_mut()
                         .and_then(|object| object.remove("preferences"))
                         .ok_or((
                             error_code::INTERNAL_ERROR,
                             "aligner config transaction omitted preferences".into(),
-                        ))
-                        .and_then(|value| serde_json::from_value(value).map_err(invalid))?;
+                        ))?;
+                    let preferences = config_transaction::load_preferences(&self.prefs.config_dir)
+                        .map_err(|error| (error_code::IO, error))?;
                     if let Some(session) = self.session.as_mut() {
                         session.prefs = preferences.clone();
                     }

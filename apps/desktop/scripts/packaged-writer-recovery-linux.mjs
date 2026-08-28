@@ -1243,7 +1243,20 @@ async function prepareSharedConfigProjects(workDir, label) {
     secondProject,
     prefsPath: join(config, "omegat.prefs.json"),
     activePath: join(config, "transactions", "shared-config", "active.json"),
+    activeRecoveryPath: join(
+      config,
+      "transactions",
+      "shared-config",
+      "active.recovery.json",
+    ),
     historyPath: join(config, "transactions", "shared-config", "history.ndjson"),
+    dedupePath: join(config, "transactions", "shared-config", "dedupe.json"),
+    dedupeRecoveryPath: join(
+      config,
+      "transactions",
+      "shared-config",
+      "dedupe.recovery.json",
+    ),
   };
 }
 
@@ -1663,6 +1676,348 @@ async function runSpellTerminationBoundary(display, workDir, point) {
   }
 }
 
+async function readAndAssertConfigIndex(prepared, expectedOrder, historyLimit) {
+  assert.equal(await pathExists(prepared.activePath), false);
+  assert.equal(await pathExists(prepared.activeRecoveryPath), false);
+  const [dedupeBytes, recoveryBytes] = await Promise.all([
+    readFile(prepared.dedupePath),
+    readFile(prepared.dedupeRecoveryPath),
+  ]);
+  assert.deepEqual(dedupeBytes, recoveryBytes);
+  const dedupe = JSON.parse(dedupeBytes.toString("utf8"));
+  assert.deepEqual(dedupe.order, expectedOrder);
+  assert.deepEqual(Object.keys(dedupe.batches).sort(), [...expectedOrder].sort());
+  for (const batchId of expectedOrder) {
+    assert.equal(dedupe.batches[batchId].batch_id, batchId);
+    assert.equal(dedupe.batches[batchId].status, "completed");
+  }
+  const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+  assert.deepEqual(
+    history.map((row) => row.batch_id),
+    expectedOrder.slice(-historyLimit),
+  );
+  assert(history.length <= historyLimit);
+  const transactionFiles = await readdir(dirname(prepared.activePath));
+  assert.deepEqual(
+    transactionFiles.filter((name) => name.endsWith(".tmp")),
+    [],
+  );
+  await assertProjectJournalsIsolated(
+    [prepared.firstProject, prepared.secondProject],
+    "config journal recovery",
+  );
+  return { dedupe, history, transactionFiles };
+}
+
+async function runConfigJournalTerminationMatrix(display, workDir) {
+  const evidence = [];
+  for (const file of ["active.json", "history.ndjson"]) {
+    for (const point of [
+      "after_candidate_write",
+      "after_candidate_fsync",
+      "after_rename",
+      "after_parent_fsync",
+    ]) {
+      const label = `config-${file.replace(".", "-")}-${point}`;
+      const prepared = await prepareSharedConfigProjects(workDir, label);
+      const marker = join(workDir, `${label}.marker`);
+      let owner = await launchPackaged(
+        display,
+        prepared.config,
+        prepared.firstProject,
+        {
+          OMEGAT_TEST_DURABLE_FILE_NAME: file,
+          OMEGAT_TEST_DURABLE_FILE_POINT: point,
+          OMEGAT_TEST_DURABLE_FILE_MARKER: marker,
+        },
+      );
+      let recovery;
+      try {
+        await openPrefsPage(owner.client, "general");
+        await setControl(
+          owner.client,
+          '[data-window-id="prefs"] [data-setting="locale"]',
+          "fr",
+        );
+        await savePrefsDraft(owner.client);
+        const durablePoint = await waitFor(`${label} checkpoint`, async () =>
+          await pathExists(marker)
+            ? JSON.parse(await readFile(marker, "utf8"))
+            : undefined
+        );
+        assert.equal(durablePoint.file, file);
+        assert.equal(durablePoint.point, point);
+        const pending = JSON.parse(
+          await readFile(prepared.activeRecoveryPath, "utf8"),
+        );
+        assert.equal(pending.batches.length, 1);
+        assert.equal(pending.batches[0].operation, "prefs.patch");
+        assert.equal(pending.batches[0].payload.locale, "fr");
+        assert.equal(
+          pending.batches[0].owner_process_id,
+          owner.application.pid,
+        );
+        const batchId = pending.batches[0].batch_id;
+        const killed = await killPackaged(owner);
+        owner = undefined;
+
+        recovery = await launchPackaged(
+          display,
+          prepared.config,
+          prepared.secondProject,
+        );
+        const product = await waitFor(`${label} recovered product`, async () => {
+          const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+          return prefs.locale === "fr" ? prefs : undefined;
+        });
+        assert.equal(product.locale, "fr");
+        await waitFor(`${label} active replica cleanup`, async () =>
+          !await pathExists(prepared.activePath)
+          && !await pathExists(prepared.activeRecoveryPath)
+        );
+        const state = await readAndAssertConfigIndex(
+          prepared,
+          [batchId],
+          64,
+        );
+        assert.equal(state.dedupe.batches[batchId].result.locale, "fr");
+        evidence.push({
+          file,
+          point,
+          batchId,
+          killed,
+          product: { locale: product.locale },
+          dedupeCount: state.dedupe.order.length,
+          residualCandidates: 0,
+        });
+      } finally {
+        await Promise.all([
+          terminatePackaged(owner),
+          terminatePackaged(recovery),
+        ]);
+      }
+    }
+  }
+  return evidence;
+}
+
+async function runConfigCompactionOwnerTakeover(display, workDir) {
+  const prepared = await prepareSharedConfigProjects(
+    workDir,
+    "config-compaction-takeover",
+  );
+  const historyLimit = 3;
+  const seedIds = Array.from(
+    { length: historyLimit },
+    (_, index) => `config-compaction-seed-${index}`,
+  );
+  const seed = new SidecarSession(prepared.config, {
+    OMEGAT_TEST_CONFIG_HISTORY_LIMIT: String(historyLimit),
+  });
+  for (const [index, batchId] of seedIds.entries()) {
+    const result = await seed.request("prefs.patch", {
+      theme: `seed-theme-${index}`,
+      config_transaction_app_instance: "seed-sidecar",
+      config_transaction_batch_id: batchId,
+      config_transaction_owner_process_id: 4242,
+    });
+    assert.equal(result.theme, `seed-theme-${index}`);
+  }
+  await seed.close();
+  assert.equal(
+    parseNdjson(await readFile(prepared.historyPath, "utf8")).length,
+    historyLimit,
+  );
+
+  const firstMarker = join(workDir, "config-compaction-first.marker");
+  const secondMarker = join(workDir, "config-compaction-second.marker");
+  const commonEnv = {
+    OMEGAT_TEST_CONFIG_HISTORY_LIMIT: String(historyLimit),
+  };
+  let owner;
+  let contender;
+  let recovery;
+  try {
+    [owner, contender] = await Promise.all([
+      launchPackaged(display, prepared.config, prepared.firstProject, {
+        ...commonEnv,
+        ...configFaultEnv(
+          "prefs.patch",
+          "before_history_compaction",
+          firstMarker,
+        ),
+      }),
+      launchPackaged(display, prepared.config, prepared.secondProject, {
+        ...commonEnv,
+        ...configFaultEnv(
+          "prefs.patch",
+          "after_history_compaction",
+          secondMarker,
+        ),
+      }),
+    ]);
+    await openPrefsPage(owner.client, "general");
+    await setControl(
+      owner.client,
+      '[data-window-id="prefs"] [data-setting="locale"]',
+      "fr",
+    );
+    const fontBefore = JSON.parse(
+      await readFile(prepared.prefsPath, "utf8"),
+    ).font_ui;
+    await openPrefsPage(contender.client, "fonts");
+    await setControl(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form label input',
+      "Compaction Handoff Font",
+    );
+
+    await savePrefsDraft(owner.client);
+    const firstClaim = await waitFor("first config compaction owner", async () =>
+      await pathExists(firstMarker)
+        ? JSON.parse(await readFile(firstMarker, "utf8"))
+        : undefined
+    );
+    assert.equal(firstClaim.operation, "prefs.patch");
+    assert.equal(firstClaim.owner_process_id, owner.application.pid);
+    assert.equal(
+      parseNdjson(await readFile(prepared.historyPath, "utf8")).length,
+      historyLimit + 1,
+    );
+
+    await savePrefsDraft(contender.client);
+    await sleep(150);
+    assert.equal(
+      JSON.parse(await readFile(prepared.prefsPath, "utf8")).font_ui,
+      fontBefore,
+      "contender bypassed the live compaction owner",
+    );
+    const firstKilled = await killPackaged(owner);
+    owner = undefined;
+
+    const secondClaim = await waitFor("second config compaction owner", async () =>
+      await pathExists(secondMarker)
+        ? JSON.parse(await readFile(secondMarker, "utf8"))
+        : undefined
+    );
+    assert.equal(secondClaim.operation, "prefs.patch");
+    assert.equal(secondClaim.owner_process_id, contender.application.pid);
+    assert.notEqual(secondClaim.owner_process_id, firstClaim.owner_process_id);
+    const activeAtSecondDeath = JSON.parse(
+      await readFile(prepared.activePath, "utf8"),
+    );
+    const activeRecoveryAtSecondDeath = JSON.parse(
+      await readFile(prepared.activeRecoveryPath, "utf8"),
+    );
+    assert.deepEqual(activeAtSecondDeath, activeRecoveryAtSecondDeath);
+    assert.deepEqual(
+      activeAtSecondDeath.batches.map((row) => row.batch_id),
+      [secondClaim.batch_id],
+    );
+    assert.equal(
+      parseNdjson(await readFile(prepared.historyPath, "utf8")).length,
+      historyLimit,
+    );
+    const secondKilled = await killPackaged(contender);
+    contender = undefined;
+
+    recovery = await launchPackaged(
+      display,
+      prepared.config,
+      prepared.firstProject,
+      commonEnv,
+    );
+    const product = await waitFor("config compaction final product", async () => {
+      const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+      return prefs.locale === "fr"
+          && prefs.font_ui === "Compaction Handoff Font"
+        ? prefs
+        : undefined;
+    });
+    await waitFor("config compaction active cleanup", async () =>
+      !await pathExists(prepared.activePath)
+      && !await pathExists(prepared.activeRecoveryPath)
+    );
+    const expectedOrder = [
+      ...seedIds,
+      firstClaim.batch_id,
+      secondClaim.batch_id,
+    ];
+    const finalState = await readAndAssertConfigIndex(
+      prepared,
+      expectedOrder,
+      historyLimit,
+    );
+    assert.equal(
+      finalState.dedupe.batches[firstClaim.batch_id].owner_process_id,
+      firstKilled.browserPid,
+    );
+    assert.equal(
+      finalState.dedupe.batches[secondClaim.batch_id].owner_process_id,
+      secondKilled.browserPid,
+    );
+
+    const productBeforeRetries = await snapshotFile(prepared.prefsPath);
+    const exactRetry = await invokeRpcResult(
+      recovery.client,
+      "prefs.patch",
+      {
+        locale: "fr",
+        config_transaction_retry_batch_id: firstClaim.batch_id,
+      },
+    );
+    assert.equal(exactRetry.resolved, true, exactRetry.error);
+    assert.equal(exactRetry.value.locale, "fr");
+    const liveAfterRetry = await invokeRpcResult(
+      recovery.client,
+      "prefs.get",
+      {},
+    );
+    assert.equal(liveAfterRetry.resolved, true, liveAfterRetry.error);
+    assert.equal(liveAfterRetry.value.font_ui, "Compaction Handoff Font");
+    const conflict = await invokeRpcResult(
+      recovery.client,
+      "prefs.patch",
+      {
+        locale: "de",
+        config_transaction_retry_batch_id: firstClaim.batch_id,
+      },
+    );
+    assert.equal(conflict.resolved, false);
+    assert.match(conflict.error, /reused for a different operation or payload/);
+    assert.deepEqual(
+      await snapshotFile(prepared.prefsPath),
+      productBeforeRetries,
+    );
+    const afterRetries = await readAndAssertConfigIndex(
+      prepared,
+      expectedOrder,
+      historyLimit,
+    );
+    assert.equal(afterRetries.dedupe.order.length, expectedOrder.length);
+    assert.equal(product.locale, "fr");
+    assert.equal(product.font_ui, "Compaction Handoff Font");
+    return {
+      firstClaim,
+      secondClaim,
+      firstKilled,
+      secondKilled,
+      fifo: expectedOrder,
+      boundedHistory: afterRetries.history.length,
+      exactRetryResult: true,
+      conflictingRetryRejected: true,
+      productBytesAndMtimeStableAcrossRetries: true,
+      residualCandidates: 0,
+    };
+  } finally {
+    await Promise.all([
+      terminatePackaged(owner),
+      terminatePackaged(contender),
+      terminatePackaged(recovery),
+    ]);
+  }
+}
+
 async function runSharedConfigTransactionMatrix(display, workDir) {
   const ownerDeath = await runConfigOwnerDeath(display, workDir);
   const lostAck = await runConfigLostAck(display, workDir);
@@ -1687,12 +2042,22 @@ async function runSharedConfigTransactionMatrix(display, workDir) {
       await runSpellTerminationBoundary(display, workDir, point),
     );
   }
+  const journalTermination = await runConfigJournalTerminationMatrix(
+    display,
+    workDir,
+  );
+  const compactionOwnerTakeover = await runConfigCompactionOwnerTakeover(
+    display,
+    workDir,
+  );
   return {
     ownerDeath,
     lostAck,
     concurrent,
     durableBoundaries,
     spellStaging,
+    journalTermination,
+    compactionOwnerTakeover,
   };
 }
 

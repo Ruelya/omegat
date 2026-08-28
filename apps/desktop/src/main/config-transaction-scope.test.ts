@@ -37,4 +37,22 @@ describe("scopeConfigTransaction", () => {
       () => "unused",
     )).toEqual({ persist: false });
   });
+
+  it("preserves an explicit retry identity without leaking the hint", () => {
+    expect(scopeConfigTransaction(
+      "prefs.patch",
+      {
+        locale: "fr",
+        config_transaction_retry_batch_id: "config-prefs.patch-original",
+      },
+      "electron-b",
+      5678,
+      () => "must-not-be-used",
+    )).toEqual({
+      locale: "fr",
+      config_transaction_app_instance: "electron-b",
+      config_transaction_batch_id: "config-prefs.patch-original",
+      config_transaction_owner_process_id: 5678,
+    });
+  });
 });

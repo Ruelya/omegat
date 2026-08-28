@@ -88,6 +88,7 @@ pub fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             .write(true)
             .open(&temporary)?;
         file.write_all(bytes)?;
+        checkpoint(path, "after_candidate_write")?;
         file.sync_all()
     })();
     if let Err(error) = candidate {
