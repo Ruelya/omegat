@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **27 passed** plus sidecar journal/watcher unit
+**4 passed**, sidecar contract **28 passed** plus sidecar journal/watcher unit
 **7 passed** and plugin filter **1 passed**, and desktop **24 files / 174 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
@@ -862,6 +862,21 @@ the exact Git HEAD, file-remote bytes and nanosecond mtime, TMX, six-field
 the team head. The close, file-team commit, and save election cases also run
 with three replacements. These are real Linux `linux-unpacked` assertions;
 Windows and macOS were not run.
+A further real Linux packaged election starts from the visible keep-theirs
+control for a `team.resolve` conflict backed by a real Git main repository and
+a separate file mapping. Four live replacement Electron processes compete for
+the committed resolve head. The first claim winner is SIGKILLed before renderer
+delivery; the three already-running losers observe that exact owner PID exit
+and retry without a process relaunch. Exactly one becomes the second owner,
+while the other two retries are rejected and every non-winner records zero
+envelopes. The single terminal history row, unchanged stable project tree and
+TMX mtime, unchanged Git HEAD, and unchanged file-remote bytes/mtime prove that
+recovery did not replay any committed product write. The winner rebinds the
+complete six-field wanted key to the theirs translation in one `Document3`
+surface, while the same-source decoy stays untranslated. The sidecar contract
+independently runs three replacements across the same first-owner death and
+asserts that both living losers wait on the first replacement PID rather than
+the stale predecessor claim; one wins the retry and the other is rejected.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
