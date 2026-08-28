@@ -840,6 +840,28 @@ prove no product or team write was replayed. A sidecar contract performs the
 same simultaneous two-process election for all three product-head classes.
 These assertions pass in the real Linux `linux-unpacked` package; Windows and
 macOS were not run.
+The product-compaction matrix now goes further at both `after_archive_fsync`
+and `after_queue_rename`: after confirming the old owner PID has exited, it
+starts **three** replacement Electron processes concurrently. Exactly one
+durable claim wins, both losers have pending and acknowledgement requests
+rejected, and no process has delivered an envelope when the winner is parked.
+That first winner is then SIGKILLed before renderer delivery; a second,
+independent wave of **three** replacements automatically elects exactly one new
+claim for the same product head. Only the second winner drains entry → team →
+save → refresh, with one terminal row per batch and no TMX/file-remote replay.
+The sidecar contract uses an earlier boundary immediately after the atomic
+owner claim but before compaction and FIFO-head lookup: it kills that first
+claimant before an NDJSON result exists, confirms the product queue is
+byte-identical, and performs the same three-way second election at both
+compaction checkpoints.
+A separate packaged election now uses a real Git main repository plus a file
+mapping for a committed `team.sync` product head. Three simultaneous
+replacements produce one claim and two zero-envelope losers; recovery preserves
+the exact Git HEAD, file-remote bytes and nanosecond mtime, TMX, six-field
+`EntryKey`, and sole `Document3`, then dispatches the refresh tail only after
+the team head. The close, file-team commit, and save election cases also run
+with three replacements. These are real Linux `linux-unpacked` assertions;
+Windows and macOS were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
