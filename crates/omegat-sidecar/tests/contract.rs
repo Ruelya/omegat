@@ -1974,6 +1974,7 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
         root: &std::path::Path,
         batch_id: &str,
         operation: &str,
+        outcome: &str,
     ) -> Value {
         rpc(
             input,
@@ -1986,7 +1987,7 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
                 "generation": 31,
                 "batch_id": batch_id,
                 "operation": operation,
-                "outcome": "coalesced",
+                "outcome": outcome,
             }),
         )
     }
@@ -2097,6 +2098,7 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
         &root,
         "fair-team-receipt",
         "commit-source",
+        "succeeded",
     );
     assert_eq!(premature_team_ack["error"]["code"], -32005);
     assert!(root.join(".repositories/transactions/active.json").exists());
@@ -2108,6 +2110,7 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
         &root,
         &old_refresh_id,
         "project.external-refresh",
+        "coalesced",
     );
     assert_eq!(old_refresh_ack["result"]["ack"]["acknowledged"], true);
     let team_head = pending(&mut input, &mut output, 9, &root);
@@ -2127,6 +2130,7 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
         &root,
         "fair-team-receipt",
         "commit-source",
+        "succeeded",
     );
     assert_eq!(team_ack["result"]["ack"]["acknowledged"], true);
     assert_eq!(
@@ -2236,7 +2240,15 @@ fn team_refresh_and_save_receipts_share_one_stable_fifo_dispatch() {
         } else {
             id + 1
         };
-        let ack = acknowledge(&mut input, &mut output, ack_id, &root, batch_id, operation);
+        let ack = acknowledge(
+            &mut input,
+            &mut output,
+            ack_id,
+            &root,
+            batch_id,
+            operation,
+            "succeeded",
+        );
         assert_eq!(ack["result"]["ack"]["acknowledged"], true);
     }
     let drained = pending(&mut input, &mut output, 24, &root);
@@ -5139,7 +5151,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
             "generation": 1,
             "batch_id": second_id,
             "operation": "project.external-refresh",
-            "outcome": "succeeded"
+            "outcome": "coalesced"
         }),
     );
     let completed_stays_gone = rpc(
@@ -6039,7 +6051,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let mut journal: Value =
             serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
         assert_eq!(journal["version"], 2);
-        assert_eq!(journal["batches"].as_array().unwrap().len(), 2);
+        assert_eq!(journal["batches"].as_array().unwrap().len(), 3);
         let mut terminal = journal["batches"][0].clone();
         terminal["batch_id"] = json!(terminal_batch);
         terminal["status"] = json!("completed");
@@ -6096,9 +6108,14 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
                 terminal_batch.as_str(),
                 receipt_batch.as_str(),
                 tail_batch.as_str(),
+                refresh_batch.as_str(),
             ]
         } else {
-            vec![receipt_batch.as_str(), tail_batch.as_str()]
+            vec![
+                receipt_batch.as_str(),
+                tail_batch.as_str(),
+                refresh_batch.as_str(),
+            ]
         };
         assert_eq!(
             queue_at_checkpoint["batches"]

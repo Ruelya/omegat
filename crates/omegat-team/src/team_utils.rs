@@ -115,9 +115,6 @@ pub fn copy_tree_cancellable(
 ) -> Result<()> {
     std::fs::create_dir_all(to)?;
     for ent in walkdir::WalkDir::new(from).into_iter().flatten() {
-        if !ent.file_type().is_file() {
-            continue;
-        }
         let rel = ent.path().strip_prefix(from).unwrap_or(ent.path());
         let unix = rel.to_string_lossy().replace('\\', "/");
         if skip_vcs
@@ -126,6 +123,13 @@ pub fn copy_tree_cancellable(
                 || unix.starts_with(".svn/")
                 || unix.starts_with(".repositories/"))
         {
+            continue;
+        }
+        if ent.file_type().is_dir() {
+            std::fs::create_dir_all(to.join(rel))?;
+            continue;
+        }
+        if !ent.file_type().is_file() {
             continue;
         }
         if checkpoint.map_or_else(
