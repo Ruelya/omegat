@@ -4182,7 +4182,7 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
             "transaction.receipt.pending",
             json!({
                 "root": root,
-                "app_instance": "raw-cancel-owner",
+                "app_instance": "raw-fifo-owner",
                 "owner_process_id": owner_retry.id(),
                 "generation": generation,
             }),
