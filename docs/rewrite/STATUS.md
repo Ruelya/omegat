@@ -56,8 +56,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-28 verification:** core selected suites **156 passed**, filters
-**86 passed**, team **49 passed / 1 ignored**, script **10 passed**, CLI
+**2026-08-28 verification:** core selected suites **160 passed**, filters
+**86 passed**, team **50 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
 **12 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
 passed** after a clean TypeScript check.
@@ -95,6 +95,23 @@ write/fsync/rename/parent-fsync kill points, and fail-closed dual corruption of
 both hot and both manifest replicas with no product mutation. Windows and macOS
 packaged locking, rename, and directory-persistence evidence was not run on this
 Linux-only runner.
+Config and project/team active transaction state now use one generic
+`omegat-core::durable_fifo` implementation for scoped dual replicas,
+monotonic revisions, OS locks, and dual-replica renderer-owner election;
+`omegat-core` remains independent of `omegat-team`. Both domains restartably
+import their former active and owner shapes, repair a stale/corrupt peer, and
+fail closed when equal revisions disagree. Per-root active ownership and stable
+detached generations provide cross-root round-robin dispatch without dropping
+refresh tails, while replacement waiters recover through consecutive dead
+owners.
+The real Linux packaged durable-FIFO stress runner passed both constituent
+multi-Electron drivers. It covers enqueue; all eight active recovery/primary
+write, fsync, rename, and parent-fsync boundaries; product publication; ten
+history/compaction kill points; sixteen history replica boundaries; renderer
+acknowledgement and compaction; cancellation before lock, after lock, and after
+rollback; cross-root order; and consecutive owner deaths. Windows and macOS
+packaged file-lock, atomic-rename, directory-fsync, and Electron concurrency
+were not run because this runner is Linux-only.
 The raw NDJSON contract and real Linux packaged matrix also pass the
 three-owner-death cancellation row: the third pre-existing waiter reads the
 already-published terminal, all four logical callers receive **-32800**, and
