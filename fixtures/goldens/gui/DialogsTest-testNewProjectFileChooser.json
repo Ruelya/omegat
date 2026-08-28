@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testNewProjectFileChooser",
+  "window": "project-new",
+  "title": "New Project",
+  "constructs": true,
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testNewProjectFileChooser"
+  ]
+}

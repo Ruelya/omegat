@@ -1,0 +1,20 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringExactWholeWordsOnly",
+  "cases": [
+    {
+      "hit": true,
+      "text": "the Netherlands"
+    },
+    {
+      "hit": false,
+      "text": "them"
+    },
+    {
+      "hit": false,
+      "text": "blithe"
+    }
+  ],
+  "type": "EXACT",
+  "query": "the"
+}

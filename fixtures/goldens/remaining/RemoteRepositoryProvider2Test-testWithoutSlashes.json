@@ -1,0 +1,26 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.team2.RemoteRepositoryProvider2Test#testWithoutSlashes",
+  "cases": [
+    [
+      "/aa/",
+      "aa"
+    ],
+    [
+      "aa",
+      "aa"
+    ],
+    [
+      "aa/",
+      "aa"
+    ],
+    [
+      "/aa",
+      "aa"
+    ],
+    [
+      "/a/b/c/d/",
+      "a/b/c/d"
+    ]
+  ]
+}

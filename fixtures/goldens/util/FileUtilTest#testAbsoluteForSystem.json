@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testAbsoluteForSystem",
+  "slash": "/zzz",
+  "converted": "/zzz",
+  "keys": [
+    "org.omegat.util.FileUtilTest#testAbsoluteForSystem"
+  ]
+}
