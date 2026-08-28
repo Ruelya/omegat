@@ -1212,6 +1212,428 @@ async function runDiskFaultMatrix(display, workDir) {
   return evidence;
 }
 
+async function prepareSharedConfigProjects(workDir, label) {
+  const config = join(workDir, `${label}-config`);
+  const firstProject = join(workDir, `${label}-first-project`);
+  const secondProject = join(workDir, `${label}-second-project`);
+  const session = new SidecarSession(config);
+  for (const [project, target, source] of [
+    [firstProject, "fr", `${label} first source`],
+    [secondProject, "de", `${label} second source`],
+  ]) {
+    await session.request("project.create", {
+      root: project,
+      source_lang: "en",
+      target_lang: target,
+      sentence_seg: false,
+    });
+    await writeFile(join(project, "source", "source.txt"), source, "utf8");
+    await session.request("project.reload", {});
+  }
+  await session.close();
+  return {
+    config,
+    firstProject,
+    secondProject,
+    prefsPath: join(config, "omegat.prefs.json"),
+    activePath: join(config, "transactions", "shared-config", "active.json"),
+    historyPath: join(config, "transactions", "shared-config", "history.ndjson"),
+  };
+}
+
+async function openPrefsPage(client, page) {
+  await click(client, ".topbar button[aria-label]");
+  await waitForSelector(client, '[data-window-id="prefs"]');
+  await click(client, `[data-window-id="prefs"] [data-pref-page="${page}"]`);
+}
+
+async function savePrefsDraft(client) {
+  await click(client, '[data-window-id="prefs"] [data-action="save-preferences"]');
+}
+
+function configFaultEnv(operation, point, marker) {
+  return {
+    OMEGAT_TEST_CONFIG_TRANSACTION_OPERATION: operation,
+    OMEGAT_TEST_CONFIG_TRANSACTION_POINT: point,
+    OMEGAT_TEST_CONFIG_TRANSACTION_MARKER: marker,
+  };
+}
+
+async function assertProjectJournalsIsolated(projects, label) {
+  for (const project of projects) {
+    assert.equal(
+      await pathExists(join(project, ".repositories", "transactions", "active.json")),
+      false,
+      `${label}: config write entered project active journal`,
+    );
+    assert.equal(
+      await pathExists(join(project, ".repositories", "transactions", "history.ndjson")),
+      false,
+      `${label}: config write entered project history`,
+    );
+  }
+}
+
+async function runConfigOwnerDeath(display, workDir) {
+  const prepared = await prepareSharedConfigProjects(workDir, "config-owner-death");
+  const marker = join(workDir, "config-owner-death.marker");
+  let owner;
+  let contender;
+  try {
+    [owner, contender] = await Promise.all([
+      launchPackaged(
+        display,
+        prepared.config,
+        prepared.firstProject,
+        configFaultEnv("prefs.patch", "after_enqueue", marker),
+      ),
+      launchPackaged(display, prepared.config, prepared.secondProject),
+    ]);
+    await openPrefsPage(owner.client, "general");
+    await setControl(
+      owner.client,
+      '[data-window-id="prefs"] [data-setting="locale"]',
+      "fr",
+    );
+    await savePrefsDraft(owner.client);
+    const claim = await waitFor("shared config owner checkpoint", async () =>
+      await pathExists(marker)
+        ? JSON.parse(await readFile(marker, "utf8"))
+        : undefined
+    );
+    assert.equal(claim.operation, "prefs.patch");
+    assert.equal(claim.owner_process_id, owner.application.pid);
+    const pending = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    assert.equal(pending.batches.length, 1);
+    assert.equal(pending.batches[0].payload.locale, "fr");
+
+    const killedOwner = await killPackaged(owner);
+    owner = undefined;
+    await openPrefsPage(contender.client, "fonts");
+    await setControl(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form label input',
+      "Shared Config Font",
+    );
+    await savePrefsDraft(contender.client);
+    const merged = await waitFor("owner-death field merge", async () => {
+      const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+      return prefs.locale === "fr" && prefs.font_ui === "Shared Config Font"
+        ? prefs
+        : undefined;
+    });
+    assert.equal(merged.locale, "fr");
+    assert.equal(merged.font_ui, "Shared Config Font");
+    await waitFor("owner-death config queue cleanup", async () =>
+      !await pathExists(prepared.activePath)
+    );
+    await assertProjectJournalsIsolated(
+      [prepared.firstProject, prepared.secondProject],
+      "owner death",
+    );
+    const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.deepEqual(
+      history.map((row) => row.payload.locale ?? row.payload.font_ui),
+      ["fr", "Shared Config Font"],
+    );
+    return {
+      killedOwner,
+      ownerBatch: claim.batch_id,
+      mergedFields: { locale: merged.locale, font_ui: merged.font_ui },
+      projectJournalsIsolated: true,
+    };
+  } finally {
+    await Promise.all([terminatePackaged(owner), terminatePackaged(contender)]);
+  }
+}
+
+async function runConfigLostAck(display, workDir) {
+  const prepared = await prepareSharedConfigProjects(workDir, "config-lost-ack");
+  const marker = join(workDir, "config-lost-ack.marker");
+  let owner;
+  let contender;
+  try {
+    [owner, contender] = await Promise.all([
+      launchPackaged(
+        display,
+        prepared.config,
+        prepared.firstProject,
+        configFaultEnv("prefs.patch", "after_history_append", marker),
+      ),
+      launchPackaged(display, prepared.config, prepared.secondProject),
+    ]);
+    await openPrefsPage(owner.client, "segmentation");
+    await setControl(
+      owner.client,
+      '[data-window-id="prefs"] .prefs-grid > .form label input',
+      "lost-ack-rules.srx",
+    );
+    await savePrefsDraft(owner.client);
+    const lostAck = await waitFor("shared config lost acknowledgement", async () =>
+      await pathExists(marker)
+        ? JSON.parse(await readFile(marker, "utf8"))
+        : undefined
+    );
+    const historyAtKill = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.equal(
+      historyAtKill.filter((row) => row.batch_id === lostAck.batch_id).length,
+      1,
+    );
+    assert.equal(historyAtKill.at(-1).status, "completed");
+    const killedLostAckOwner = await killPackaged(owner);
+    owner = undefined;
+
+    await openPrefsPage(contender.client, "filters");
+    await waitForSelector(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
+    );
+    await setControl(
+      contender.client,
+      '[data-window-id="prefs"] .prefs-grid > .form .hit input',
+      "lost-ack-filter",
+    );
+    await savePrefsDraft(contender.client);
+    const merged = await waitFor("lost-ack field merge", async () => {
+      const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+      const filterValue = Object.values(prefs.filter_options ?? {})
+        .flatMap((options) => Object.values(options ?? {}))
+        .find((value) => value === "lost-ack-filter");
+      return prefs.srx_path === "lost-ack-rules.srx" && filterValue
+        ? prefs
+        : undefined;
+    });
+    await waitFor("lost-ack config queue cleanup", async () =>
+      !await pathExists(prepared.activePath)
+    );
+    const finalHistory = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.equal(
+      finalHistory.filter((row) => row.batch_id === lostAck.batch_id).length,
+      1,
+    );
+    assert.equal(finalHistory.length, 2);
+    await assertProjectJournalsIsolated(
+      [prepared.firstProject, prepared.secondProject],
+      "lost acknowledgement",
+    );
+    return {
+      killedLostAckOwner,
+      batchId: lostAck.batch_id,
+      exactlyOnceHistory: true,
+      mergedSegmentationAndFilter: {
+        srx_path: merged.srx_path,
+        filter: "lost-ack-filter",
+      },
+      projectJournalsIsolated: true,
+    };
+  } finally {
+    await Promise.all([terminatePackaged(owner), terminatePackaged(contender)]);
+  }
+}
+
+async function runConfigConcurrentWriters(display, workDir) {
+  const prepared = await prepareSharedConfigProjects(workDir, "config-concurrent");
+  let first;
+  let second;
+  try {
+    [first, second] = await Promise.all([
+      launchPackaged(display, prepared.config, prepared.firstProject),
+      launchPackaged(display, prepared.config, prepared.secondProject),
+    ]);
+    const [aligner, spell] = await Promise.all([
+      invokeRpcResult(first.client, "aligner.configure", {
+        persist: true,
+        algo: "forward-backward",
+        calculator: "poisson",
+        source_lang: "en-US",
+        target_lang: "fr-FR",
+      }),
+      invokeRpcResult(second.client, "spell.install", { lang: "en" }),
+    ]);
+    assert.equal(aligner.resolved, true, aligner.error);
+    assert.equal(spell.resolved, true, spell.error);
+    assert.equal(aligner.value.algo, "forward-backward");
+    assert.equal(spell.value.ok, true);
+    const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+    assert.equal(prefs.aligner_algorithm, "forward-backward");
+    assert.equal(prefs.aligner_calculator, "poisson");
+    assert.equal(prefs.aligner_source_lang, "en-US");
+    assert.equal(prefs.aligner_target_lang, "fr-FR");
+    assert.equal(
+      await pathExists(join(prepared.config, "spell", "hunspell", "en.aff")),
+      true,
+    );
+    assert.equal(
+      await pathExists(join(prepared.config, "spell", "hunspell", "en.dic")),
+      true,
+    );
+    await assertProjectJournalsIsolated(
+      [prepared.firstProject, prepared.secondProject],
+      "concurrent aligner and spell",
+    );
+    const history = parseNdjson(await readFile(prepared.historyPath, "utf8"));
+    assert.deepEqual(
+      [...history.map((row) => row.operation)].sort(),
+      ["aligner.configure", "spell.install"],
+    );
+    return {
+      operations: history.map((row) => row.operation),
+      alignerAndSpellSerialized: true,
+      projectJournalsIsolated: true,
+    };
+  } finally {
+    await Promise.all([terminatePackaged(first), terminatePackaged(second)]);
+  }
+}
+
+async function runPreferenceTerminationBoundary(display, workDir, point) {
+  const label = `config-durable-${point}`;
+  const prepared = await prepareSharedConfigProjects(workDir, label);
+  const marker = join(workDir, `${label}.marker`);
+  let owner = await launchPackaged(display, prepared.config, prepared.firstProject, {
+    OMEGAT_TEST_DURABLE_FILE_NAME: "omegat.prefs.json",
+    OMEGAT_TEST_DURABLE_FILE_POINT: point,
+    OMEGAT_TEST_DURABLE_FILE_MARKER: marker,
+  });
+  let recovery;
+  try {
+    await openPrefsPage(owner.client, "general");
+    await setControl(
+      owner.client,
+      '[data-window-id="prefs"] [data-setting="locale"]',
+      "fr",
+    );
+    await savePrefsDraft(owner.client);
+    await waitFor(`${point} preference checkpoint`, () => pathExists(marker));
+    const beforeKillCandidates = (await readdir(prepared.config))
+      .filter((name) =>
+        name.startsWith(".omegat.prefs.json.") && name.endsWith(".tmp")
+      );
+    if (point === "after_candidate_fsync") {
+      assert.equal(beforeKillCandidates.length, 1);
+    } else {
+      assert.equal(beforeKillCandidates.length, 0);
+    }
+    const killed = await killPackaged(owner);
+    owner = undefined;
+    recovery = await launchPackaged(
+      display,
+      prepared.config,
+      prepared.secondProject,
+    );
+    const recovered = await waitFor(`${point} preference recovery`, async () => {
+      const prefs = JSON.parse(await readFile(prepared.prefsPath, "utf8"));
+      return prefs.locale === "fr" ? prefs : undefined;
+    });
+    assert.equal(recovered.locale, "fr");
+    await waitFor(`${point} config journal cleanup`, async () =>
+      !await pathExists(prepared.activePath)
+    );
+    const residualCandidates = (await readdir(prepared.config))
+      .filter((name) =>
+        name.startsWith(".omegat.prefs.json.") && name.endsWith(".tmp")
+      );
+    assert.deepEqual(residualCandidates, []);
+    await assertProjectJournalsIsolated(
+      [prepared.firstProject, prepared.secondProject],
+      point,
+    );
+    return {
+      point,
+      killed,
+      candidateBeforeRecovery: beforeKillCandidates.length,
+      residualCandidates: residualCandidates.length,
+      recoveredValue: recovered.locale,
+    };
+  } finally {
+    await Promise.all([terminatePackaged(owner), terminatePackaged(recovery)]);
+  }
+}
+
+async function runSpellTerminationBoundary(display, workDir, point) {
+  const label = `spell-staging-${point}`;
+  const prepared = await prepareSharedConfigProjects(workDir, label);
+  const marker = join(workDir, `${label}.marker`);
+  const spellDir = join(prepared.config, "spell", "hunspell");
+  let owner = await launchPackaged(display, prepared.config, prepared.firstProject, {
+    OMEGAT_TEST_SPELL_INSTALL_LANG: "en",
+    OMEGAT_TEST_SPELL_INSTALL_POINT: point,
+    OMEGAT_TEST_SPELL_INSTALL_MARKER: marker,
+  });
+  let recovery;
+  try {
+    const started = await owner.client.evaluate(
+      'window.omegat.rpc("spell.install", { lang: "en" }); true',
+    );
+    assert.equal(started, true);
+    await waitFor(`${point} spell staging checkpoint`, () => pathExists(marker));
+    const stagingBeforeKill = (await readdir(spellDir))
+      .filter((name) => name.startsWith(".en.") && name.endsWith(".staging"));
+    assert.equal(stagingBeforeKill.length, 1);
+    const killed = await killPackaged(owner);
+    owner = undefined;
+    recovery = await launchPackaged(
+      display,
+      prepared.config,
+      prepared.secondProject,
+    );
+    await waitFor(`${point} dictionary recovery`, async () =>
+      await pathExists(join(spellDir, "en.aff"))
+      && await pathExists(join(spellDir, "en.dic"))
+      && !await pathExists(prepared.activePath)
+    );
+    const residualStaging = (await readdir(spellDir))
+      .filter((name) => name.startsWith(".en.") && name.endsWith(".staging"));
+    assert.deepEqual(residualStaging, []);
+    await assertProjectJournalsIsolated(
+      [prepared.firstProject, prepared.secondProject],
+      point,
+    );
+    return {
+      point,
+      killed,
+      stagingBeforeRecovery: stagingBeforeKill.length,
+      residualStaging: residualStaging.length,
+      dictionaryPairComplete: true,
+    };
+  } finally {
+    await Promise.all([terminatePackaged(owner), terminatePackaged(recovery)]);
+  }
+}
+
+async function runSharedConfigTransactionMatrix(display, workDir) {
+  const ownerDeath = await runConfigOwnerDeath(display, workDir);
+  const lostAck = await runConfigLostAck(display, workDir);
+  const concurrent = await runConfigConcurrentWriters(display, workDir);
+  const durableBoundaries = [];
+  for (const point of [
+    "after_candidate_fsync",
+    "after_rename",
+    "after_parent_fsync",
+  ]) {
+    durableBoundaries.push(
+      await runPreferenceTerminationBoundary(display, workDir, point),
+    );
+  }
+  const spellStaging = [];
+  for (const point of [
+    "after_staging_fsync",
+    "after_aff_rename",
+    "after_parent_fsync",
+  ]) {
+    spellStaging.push(
+      await runSpellTerminationBoundary(display, workDir, point),
+    );
+  }
+  return {
+    ownerDeath,
+    lostAck,
+    concurrent,
+    durableBoundaries,
+    spellStaging,
+  };
+}
+
 if (process.platform !== "linux") {
   throw new Error("This E2E exercises visible writer recovery on Linux");
 }
@@ -1223,6 +1645,10 @@ try {
   const sigkill = await runWriterSigkillMatrix(xvfb.display, workDir);
   const fifo = await runMixedWriterFifo(xvfb.display, workDir);
   const diskFaults = await runDiskFaultMatrix(xvfb.display, workDir);
+  const sharedConfig = await runSharedConfigTransactionMatrix(
+    xvfb.display,
+    workDir,
+  );
   const leftovers = await readdir(workDir);
   console.log(JSON.stringify({
     result: "passed",
@@ -1235,10 +1661,14 @@ try {
       "scripts",
       "preferences",
       "spell issues",
+      "dual-project shared preferences",
+      "file filters",
+      "segmentation",
     ],
     sigkill,
     fifo,
     diskFaults,
+    sharedConfig,
     temporaryScenarioCount: leftovers.length,
     platformsNotRun: ["windows", "macos"],
   }));

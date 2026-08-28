@@ -22,7 +22,11 @@ import {
 } from "../lib/editor-doc";
 import { DEFAULT_DOCK_LAYOUT, layoutFromPrefs, layoutToPrefs, serializeDockLayout, type DockLayout } from "../lib/layout";
 import { DockProjectLifecycle, LatestDockRequest } from "../lib/dock-controllers";
-import { applyColorVars, defaultPreferences } from "../lib/preferences";
+import {
+  applyColorVars,
+  defaultPreferences,
+  preferenceMergePatch,
+} from "../lib/preferences";
 import { projectEvents, type ProjectEvent } from "../lib/project-events";
 import { defaultSearchForm, persistSearchForm, restoreSearchForm, type SearchForm } from "../lib/search-params";
 import type {
@@ -1090,7 +1094,9 @@ export const useApp = create<AppState>((set, get) => ({
     get().applyPrefs(prefs);
   },
   savePrefs: async (p) => {
-    const prefs = await rpc<Preferences>("prefs.set", p);
+    const current = get().prefs;
+    const patch = current ? preferenceMergePatch(current, p) : p;
+    const prefs = await rpc<Preferences>("prefs.patch", patch);
     get().applyPrefs(prefs && typeof prefs === "object" && "marks" in prefs ? prefs : p);
     get().logLine("saved preferences");
   },

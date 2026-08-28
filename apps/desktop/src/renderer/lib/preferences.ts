@@ -138,6 +138,41 @@ export function defaultPreferences(partial?: Partial<Preferences>): Preferences 
   };
 }
 
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Build the recursive merge patch for an edited preferences snapshot.
+ *
+ * Sending only changed leaves lets the sidecar merge against the latest
+ * process-shared file instead of replacing fields saved by another Electron.
+ */
+export function preferenceMergePatch(base: Preferences, desired: Preferences): JsonObject {
+  const diff = (before: unknown, after: unknown): unknown => {
+    if (isJsonObject(before) && isJsonObject(after)) {
+      const patch: JsonObject = {};
+      for (const [key, value] of Object.entries(after)) {
+        if (!(key in before)) {
+          patch[key] = value;
+        } else if (!Object.is(before[key], value)) {
+          const nested = diff(before[key], value);
+          if (!isJsonObject(nested) || Object.keys(nested).length > 0) patch[key] = nested;
+        }
+      }
+      for (const key of Object.keys(before)) {
+        if (!(key in after)) patch[key] = null;
+      }
+      return patch;
+    }
+    return Object.is(before, after) ? {} : after;
+  };
+  const patch = diff(base, desired);
+  return isJsonObject(patch) ? patch : {};
+}
+
 export function applyColorVars(colors: ColorPrefs) {
   if (typeof document === "undefined") return;
   const root = document.documentElement.style;

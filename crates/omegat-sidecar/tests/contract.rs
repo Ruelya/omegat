@@ -15,6 +15,7 @@ const METHODS: &[&str] = &[
     "markers.query",
     "prefs.get",
     "prefs.set",
+    "prefs.patch",
     "project.create",
     "project.open",
     "project.close",
@@ -859,6 +860,155 @@ fn global_prefs_and_spell_install_stay_outside_project_journal() {
     );
     assert!(!root.join(".repositories/transactions/active.json").exists());
     let _ = child.kill();
+}
+
+#[test]
+fn shared_config_fifo_merges_stale_sidecars_and_isolates_project_journals() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let first_root = temp.path().join("first-project");
+    let second_root = temp.path().join("second-project");
+    let (mut first, mut first_in, mut first_out) = spawn_sidecar(&config);
+    let (mut second, mut second_in, mut second_out) = spawn_sidecar(&config);
+
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.create",
+        json!({
+            "root": first_root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    rpc(
+        &mut second_in,
+        &mut second_out,
+        1,
+        "project.create",
+        json!({
+            "root": second_root,
+            "source_lang": "en",
+            "target_lang": "de",
+            "sentence_seg": false,
+        }),
+    );
+    let mut first_stale =
+        rpc(&mut first_in, &mut first_out, 2, "prefs.get", json!({}))["result"].clone();
+    let mut second_stale =
+        rpc(&mut second_in, &mut second_out, 2, "prefs.get", json!({}))["result"].clone();
+
+    first_stale["locale"] = json!("fr");
+    first_stale["filter_options"]["text"] =
+        json!({"preserve_spaces": "first", "file_context": "alpha"});
+    let first_saved = rpc(
+        &mut first_in,
+        &mut first_out,
+        3,
+        "prefs.set",
+        first_stale,
+    );
+    assert_eq!(first_saved["result"]["locale"], "fr");
+
+    // The second process deliberately submits the full snapshot it loaded
+    // before the first write. Only its changed leaves may be applied.
+    second_stale["theme"] = json!("dark");
+    second_stale["srx_path"] = json!("second-rules.srx");
+    let second_saved = rpc(
+        &mut second_in,
+        &mut second_out,
+        3,
+        "prefs.set",
+        second_stale,
+    );
+    assert_eq!(second_saved["result"]["locale"], "fr");
+    assert_eq!(second_saved["result"]["theme"], "dark");
+    assert_eq!(
+        second_saved["result"]["filter_options"]["text"]["preserve_spaces"],
+        "first"
+    );
+
+    let aligned = rpc(
+        &mut first_in,
+        &mut first_out,
+        4,
+        "aligner.configure",
+        json!({
+            "persist": true,
+            "algo": "forward-backward",
+            "source_lang": "en-US",
+            "target_lang": "fr-FR",
+        }),
+    );
+    assert_eq!(aligned["result"]["algo"], "forward-backward");
+    let installed = rpc(
+        &mut second_in,
+        &mut second_out,
+        4,
+        "spell.install",
+        json!({"lang": "en"}),
+    );
+    assert_eq!(installed["result"]["ok"], true);
+
+    let merged = rpc(&mut first_in, &mut first_out, 5, "prefs.get", json!({}));
+    assert_eq!(merged["result"]["locale"], "fr");
+    assert_eq!(merged["result"]["theme"], "dark");
+    assert_eq!(merged["result"]["srx_path"], "second-rules.srx");
+    assert_eq!(
+        merged["result"]["filter_options"]["text"]["file_context"],
+        "alpha"
+    );
+    assert_eq!(merged["result"]["aligner_algorithm"], "forward-backward");
+    assert_eq!(merged["result"]["aligner_source_lang"], "en-US");
+
+    let transaction_dir = config.join("transactions/shared-config");
+    assert!(!transaction_dir.join("active.json").exists());
+    let history = std::fs::read_to_string(transaction_dir.join("history.ndjson")).unwrap();
+    let history = history
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        history
+            .iter()
+            .map(|row| row["operation"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![
+            "prefs.patch",
+            "prefs.patch",
+            "aligner.configure",
+            "spell.install"
+        ]
+    );
+    assert!(history.iter().all(|row| row["status"] == "completed"));
+    for root in [&first_root, &second_root] {
+        assert!(!root.join(".repositories/transactions/active.json").exists());
+        assert!(!root.join(".repositories/transactions/history.ndjson").exists());
+    }
+
+    let _ = first.kill();
+    let _ = second.kill();
 }
 
 #[test]

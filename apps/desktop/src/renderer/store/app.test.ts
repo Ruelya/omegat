@@ -192,18 +192,21 @@ describe("app store", () => {
 
   it("persists view marks and dock layout as typed prefs fields", async () => {
     rpc.mockImplementation(async (method: string, params: unknown) => {
-      if (method === "prefs.set") return params;
+      if (method === "prefs.patch") return params;
       return {};
     });
     useApp.setState({ prefs: defaultPreferences() });
     await useApp.getState().toggleMark("whitespace");
-    const call = rpc.mock.calls.find((c) => c[0] === "prefs.set");
+    const call = rpc.mock.calls.find((c) => c[0] === "prefs.patch");
     expect(call).toBeTruthy();
-    const saved = call![1] as ReturnType<typeof defaultPreferences>;
+    const saved = call![1] as {
+      marks: { whitespace: boolean };
+      docking_layout?: unknown;
+    };
     expect(saved.marks.whitespace).toBe(true);
-    expect(saved.docking_layout.left).toBeDefined();
+    expect(saved.docking_layout).toBeUndefined();
     expect(saved).not.toHaveProperty("extra");
-    const marks = marksFromPrefs(saved.marks);
+    const marks = marksFromPrefs(defaultPreferences({ marks: saved.marks as never }).marks);
     expect(marks.whitespace).toBe(true);
     expect(prefsFromMarks(marks).whitespace).toBe(true);
   });
@@ -339,7 +342,7 @@ describe("app store", () => {
           docking_layout: { ...defaultPreferences().docking_layout, left: 0.3 },
         });
       }
-      if (method === "prefs.set") return params;
+      if (method === "prefs.patch") return params;
       if (method === "matches.query") return [{ source: "Hello", translation: "Bonjour", score: 100, comes_from: "tm" }];
       if (method === "glossary.query") return [];
       if (method === "issues.list") return [];
@@ -418,7 +421,7 @@ describe("app store", () => {
           mt_auto_fetch: false,
         });
       }
-      if (method === "prefs.set") return params;
+      if (method === "prefs.patch") return params;
       if (
         method === "matches.query"
         || method === "glossary.query"
@@ -626,7 +629,7 @@ describe("app store", () => {
           mt_auto_fetch: false,
         });
       }
-      if (method === "prefs.set") return params;
+      if (method === "prefs.patch") return params;
       if (method === "matches.query" || method === "glossary.query" || method === "issues.list") return [];
       if (method === "completer.query") return [];
       if (method === "mt.query" && params?.engine === "slow") return oldMt;
@@ -1683,7 +1686,7 @@ describe("app store", () => {
         || method === "glossary.query"
         || method === "issues.list"
       ) return [];
-      if (method === "prefs.set") return params;
+      if (method === "prefs.patch") return params;
       throw new Error(`unexpected RPC: ${method}`);
     });
     useApp.setState({
@@ -1728,7 +1731,7 @@ describe("app store", () => {
         "matches.query",
         "glossary.query",
         "issues.list",
-        "prefs.set",
+        "prefs.patch",
       ],
       index: 0,
       activeKey: wantedKey,
@@ -2252,7 +2255,7 @@ describe("app store", () => {
   it("resolves a team conflict through team.resolve", async () => {
     rpc.mockImplementation(async (method: string, params: unknown) => {
       if (method === "team.resolve") return { conflicts: [] };
-      if (method === "prefs.set") return params;
+      if (method === "prefs.patch") return params;
       return {};
     });
     useApp.setState({
@@ -2262,7 +2265,7 @@ describe("app store", () => {
     await useApp.getState().resolveConflict("theirs", "Hi");
     expect(rpc.mock.calls.some((c) => c[0] === "team.resolve")).toBe(true);
     expect(useApp.getState().teamConflicts).toEqual([]);
-    const saved = rpc.mock.calls.find((c) => c[0] === "prefs.set")![1] as { team_conflict_resolution: string };
+    const saved = rpc.mock.calls.find((c) => c[0] === "prefs.patch")![1] as { team_conflict_resolution: string };
     expect(saved.team_conflict_resolution).toBe("theirs");
   });
 
@@ -2881,7 +2884,7 @@ describe("app store", () => {
     await dispatchMenuAction("edit.select-source");
     expect(useApp.getState().selectedText).toBe("Hello <f0>world</f0>");
     await dispatchMenuAction("edit.export-selection");
-    expect(rpc.mock.calls.some((c) => c[0] === "prefs.set") || true).toBe(true);
+    expect(rpc.mock.calls.some((c) => c[0] === "prefs.patch") || true).toBe(true);
     await dispatchMenuAction("project.clear-recent");
     expect(JSON.parse(localStorage.getItem("omegat.recent") || "[]")).toEqual([]);
     await dispatchMenuAction("help.changes");

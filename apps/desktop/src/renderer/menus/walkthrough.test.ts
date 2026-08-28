@@ -150,7 +150,7 @@ describe("P8 keyboard walkthrough", () => {
       }
       if (method === "search.run") return [];
       if (method === "prefs.get") return prefs;
-      if (method === "prefs.set") {
+      if (method === "prefs.patch") {
         prefs = defaultPreferences(params as typeof prefs);
         log.push(`prefs.translated=${prefs.marks.translated}`);
         return prefs;

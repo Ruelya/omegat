@@ -20,6 +20,10 @@ import {
   type TransactionOutcome,
 } from "../shared/transaction-envelope";
 import {
+  isConfigTransactionMethod,
+  scopeConfigTransaction,
+} from "./config-transaction-scope";
+import {
   scopeProductTransaction,
   transactionEnvelopesForRenderer,
   transactionReceiptIdentity,
@@ -53,8 +57,9 @@ function enqueueTransactionRpc<T>(task: () => Promise<T>): Promise<T> {
   return result;
 }
 
-function serializesTransactionRpc(method: string): boolean {
+function serializesTransactionRpc(method: string, params: unknown): boolean {
   return isCallerManagedTransactionMethod(method)
+    || isConfigTransactionMethod(method, params)
     || method === "project.external-refresh"
     || method === "project.refresh.enqueue"
     || method === "transaction.receipt.pending"
@@ -746,6 +751,13 @@ async function rpc(
     projectFileWatcher.currentProject(),
     randomUUID,
   );
+  requestParams = scopeConfigTransaction(
+    method,
+    requestParams,
+    appInstance,
+    process.pid,
+    randomUUID,
+  );
   const endWrite = watchedProjectWriteMethods.has(method)
     ? projectFileWatcher.beginWriteSource(method)
     : () => undefined;
@@ -901,7 +913,7 @@ app.whenReady().then(() => {
         clientRequestId ?? null,
         callerManagesTransactionReceipt === true,
       );
-      return serializesTransactionRpc(method)
+      return serializesTransactionRpc(method, params)
         ? enqueueTransactionRpc(invoke)
         : invoke();
     },

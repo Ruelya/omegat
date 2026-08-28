@@ -1,5 +1,6 @@
 //! NDJSON JSON-RPC sidecar. One request per stdin line, one response per stdout line.
 
+mod config_transaction;
 mod project_watcher;
 mod refresh_journal;
 
@@ -82,6 +83,9 @@ struct App {
 impl App {
     fn new() -> Self {
         let config_dir = default_config_dir();
+        if let Err(error) = config_transaction::recover(&config_dir) {
+            log::warn!("cannot recover shared config transactions: {error}");
+        }
         let mut prefs = Preferences::load_or_default(&config_dir);
         let scripts = std::env::var_os("OMEGAT_SCRIPTS_DIR")
             .map(std::path::PathBuf::from)
@@ -253,8 +257,19 @@ impl App {
                         })?;
                 Ok(json!({ "marks": marks }))
             }
-            "prefs.get" => Ok(serde_json::to_value(&self.prefs).unwrap()),
+            "prefs.get" => {
+                let preferences = config_transaction::load_preferences(&self.prefs.config_dir)
+                    .map_err(|error| (error_code::IO, error))?;
+                if let Some(session) = self.session.as_mut() {
+                    session.prefs = preferences.clone();
+                }
+                self.prefs = preferences;
+                Ok(serde_json::to_value(&self.prefs).unwrap())
+            }
             "prefs.set" => {
+                let mut params = params;
+                let (app_instance, batch_id, owner_process_id) =
+                    config_transaction::take_scope(&mut params);
                 let mut preferences =
                     serde_json::from_value::<Preferences>(params).map_err(invalid)?;
                 if preferences.config_dir.as_os_str().is_empty() {
@@ -265,9 +280,42 @@ impl App {
                 // snapshot this config-scoped file.
                 preferences.config_dir = self.prefs.config_dir.clone();
                 preferences.normalize();
-                preferences
-                    .save()
-                    .map_err(|error| (error_code::IO, error.to_string()))?;
+                let base = serde_json::to_value(&self.prefs).unwrap();
+                let desired = serde_json::to_value(&preferences).unwrap();
+                let patch = config_transaction::preference_patch(&base, &desired);
+                let value = config_transaction::execute(
+                    &self.prefs.config_dir,
+                    &app_instance,
+                    &batch_id,
+                    owner_process_id,
+                    "prefs.patch",
+                    patch,
+                )
+                .map_err(|error| (error_code::IO, error))?;
+                preferences = serde_json::from_value(value).map_err(invalid)?;
+                if let Some(session) = self.session.as_mut() {
+                    session.prefs = preferences.clone();
+                }
+                self.prefs = preferences;
+                Ok(serde_json::to_value(&self.prefs).unwrap())
+            }
+            "prefs.patch" => {
+                let mut patch = params;
+                let (app_instance, batch_id, owner_process_id) =
+                    config_transaction::take_scope(&mut patch);
+                if let Some(object) = patch.as_object_mut() {
+                    object.remove("config_dir");
+                }
+                let value = config_transaction::execute(
+                    &self.prefs.config_dir,
+                    &app_instance,
+                    &batch_id,
+                    owner_process_id,
+                    "prefs.patch",
+                    patch,
+                )
+                .map_err(|error| (error_code::IO, error))?;
+                let preferences: Preferences = serde_json::from_value(value).map_err(invalid)?;
                 if let Some(session) = self.session.as_mut() {
                     session.prefs = preferences.clone();
                 }
@@ -878,46 +926,36 @@ impl App {
                 Ok(json!({"ok": true}))
             }
             "aligner.configure" => {
+                let mut params = params;
                 if params
                     .get("persist")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 {
-                    let mut preferences = self.prefs.clone();
-                    if let Some(algo) = params.get("algo").and_then(|v| v.as_str()) {
-                        preferences.aligner_algorithm = algo.to_string();
-                    }
-                    if let Some(calc) = params.get("calculator").and_then(|v| v.as_str()) {
-                        preferences.aligner_calculator = calc.to_string();
-                    }
-                    if let Some(counter) = params.get("counter").and_then(|v| v.as_str()) {
-                        preferences.aligner_counter = counter.to_string();
-                    }
-                    if let Some(seg) = params.get("segment").and_then(|v| v.as_bool()) {
-                        preferences.aligner_segment = seg;
-                    }
-                    if let Some(rt) = params.get("remove_tags").and_then(|v| v.as_bool()) {
-                        preferences.aligner_remove_tags = rt;
-                    }
-                    if let Some(sl) = params.get("source_lang").and_then(|v| v.as_str()) {
-                        preferences.aligner_source_lang = sl.to_string();
-                    }
-                    if let Some(tl) = params.get("target_lang").and_then(|v| v.as_str()) {
-                        preferences.aligner_target_lang = tl.to_string();
-                    }
-                    if let Some(d) = params.get("source_dir").and_then(|v| v.as_str()) {
-                        preferences.aligner_last_source_dir = d.to_string();
-                    }
-                    if let Some(d) = params.get("target_dir").and_then(|v| v.as_str()) {
-                        preferences.aligner_last_target_dir = d.to_string();
-                    }
-                    preferences
-                        .save()
-                        .map_err(|error| (error_code::IO, error.to_string()))?;
+                    let (app_instance, batch_id, owner_process_id) =
+                        config_transaction::take_scope(&mut params);
+                    let mut result = config_transaction::execute(
+                        &self.prefs.config_dir,
+                        &app_instance,
+                        &batch_id,
+                        owner_process_id,
+                        "aligner.configure",
+                        params,
+                    )
+                    .map_err(|error| (error_code::IO, error))?;
+                    let preferences = result
+                        .as_object_mut()
+                        .and_then(|object| object.remove("preferences"))
+                        .ok_or((
+                            error_code::INTERNAL_ERROR,
+                            "aligner config transaction omitted preferences".into(),
+                        ))
+                        .and_then(|value| serde_json::from_value(value).map_err(invalid))?;
                     if let Some(session) = self.session.as_mut() {
                         session.prefs = preferences.clone();
                     }
                     self.prefs = preferences;
+                    return Ok(result);
                 }
                 Ok(json!({
                     "modes":["heapwise","parsewise","id"],
@@ -1124,11 +1162,18 @@ impl App {
                 Ok(serde_json::to_value(self.session()?.completer(index, prefix, draft)).unwrap())
             }
             "spell.install" => {
-                let lang = params.get("lang").and_then(|v| v.as_str()).unwrap_or("en");
-                let dest = self.prefs.config_dir.join("spell").join("hunspell");
-                let ok = omegat_core::spell::install_lang(lang, &dest)
-                    .map_err(|error| (error_code::IO, error.to_string()))?;
-                Ok(json!({"ok": ok, "lang": lang, "dest": dest.display().to_string()}))
+                let mut params = params;
+                let (app_instance, batch_id, owner_process_id) =
+                    config_transaction::take_scope(&mut params);
+                config_transaction::execute(
+                    &self.prefs.config_dir,
+                    &app_instance,
+                    &batch_id,
+                    owner_process_id,
+                    "spell.install",
+                    params,
+                )
+                .map_err(|error| (error_code::IO, error))
             }
             "spell.learn" => {
                 let word = params

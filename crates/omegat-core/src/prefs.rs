@@ -738,7 +738,9 @@ impl JavaPreferences {
 
 pub fn default_config_dir() -> PathBuf {
     if let Some(p) = std::env::var_os("OMEGAT_CONFIG_DIR") {
-        return PathBuf::from(p);
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
     }
     dirs_config()
 }

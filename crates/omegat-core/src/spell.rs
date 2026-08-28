@@ -4,9 +4,15 @@
 //! Full language-module dictionaries stay in `reference/java` and are copied into
 //! `config/spell` on first use when that tree is present.
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use omegat_ipc::SpellTokenDto;
+use std::collections::{HashMap, HashSet};
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+static INSTALL_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpellBackend {
@@ -482,6 +488,7 @@ pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
     let tag = lang.replace('_', "-").to_lowercase();
     let stem = tag.split('-').next().unwrap_or(&tag);
     std::fs::create_dir_all(dest)?;
+    cleanup_install_staging(stem, dest)?;
     if dest.join(format!("{stem}.aff")).exists() && dest.join(format!("{stem}.dic")).exists() {
         return Ok(true);
     }
@@ -491,9 +498,100 @@ pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
     if !aff.exists() || !dic.exists() {
         return Ok(false);
     }
-    std::fs::copy(&aff, dest.join(format!("{stem}.aff")))?;
-    std::fs::copy(&dic, dest.join(format!("{stem}.dic")))?;
+    let sequence = INSTALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let staging = dest.join(format!(
+        ".{stem}.{}.{}.staging",
+        std::process::id(),
+        sequence
+    ));
+    std::fs::create_dir(&staging)?;
+    File::open(dest)?.sync_all()?;
+    let staged_aff = staging.join(format!("{stem}.aff"));
+    let staged_dic = staging.join(format!("{stem}.dic"));
+    let publish = (|| {
+        std::fs::copy(&aff, &staged_aff)?;
+        std::fs::copy(&dic, &staged_dic)?;
+        File::open(&staged_aff)?.sync_all()?;
+        File::open(&staged_dic)?.sync_all()?;
+        File::open(&staging)?.sync_all()?;
+        spell_install_checkpoint(stem, "after_staging_fsync")?;
+
+        let installed_aff = dest.join(format!("{stem}.aff"));
+        if installed_aff.exists() {
+            std::fs::remove_file(&staged_aff)?;
+        } else {
+            std::fs::rename(&staged_aff, &installed_aff)?;
+        }
+        spell_install_checkpoint(stem, "after_aff_rename")?;
+
+        let installed_dic = dest.join(format!("{stem}.dic"));
+        if installed_dic.exists() {
+            std::fs::remove_file(&staged_dic)?;
+        } else {
+            std::fs::rename(&staged_dic, &installed_dic)?;
+        }
+        File::open(dest)?.sync_all()?;
+        spell_install_checkpoint(stem, "after_parent_fsync")
+    })();
+    if let Err(error) = publish {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    std::fs::remove_dir(&staging)?;
+    File::open(dest)?.sync_all()?;
     Ok(dest.join(format!("{stem}.aff")).exists() && dest.join(format!("{stem}.dic")).exists())
+}
+
+fn cleanup_install_staging(stem: &str, dest: &Path) -> std::io::Result<()> {
+    let prefix = format!(".{stem}.");
+    let mut removed = false;
+    for entry in std::fs::read_dir(dest)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if entry.file_type()?.is_dir() && name.starts_with(&prefix) && name.ends_with(".staging") {
+            std::fs::remove_dir_all(entry.path())?;
+            removed = true;
+        }
+    }
+    if removed {
+        File::open(dest)?.sync_all()?;
+    }
+    Ok(())
+}
+
+fn spell_install_checkpoint(stem: &str, point: &str) -> std::io::Result<()> {
+    if std::env::var("OMEGAT_TEST_SPELL_INSTALL_LANG").as_deref() != Ok(stem)
+        || std::env::var("OMEGAT_TEST_SPELL_INSTALL_POINT").as_deref() != Ok(point)
+    {
+        return Ok(());
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_SPELL_INSTALL_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&marker)?;
+    writeln!(
+        file,
+        "{{\"lang\":{},\"point\":{},\"process_id\":{}}}",
+        serde_json::to_string(stem).unwrap(),
+        serde_json::to_string(point).unwrap(),
+        std::process::id()
+    )?;
+    file.sync_all()?;
+    if let Some(parent) = marker.parent() {
+        File::open(parent)?.sync_all()?;
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+    }
 }
 
 /// Java `SpellCheckerManager.getCurrentSpellChecker`: empty plugin list → dummy.
