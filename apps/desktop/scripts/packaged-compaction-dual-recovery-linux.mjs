@@ -4260,6 +4260,10 @@ try {
       const takeoverMarkers = waiterTraces.map((_, index) =>
         join(workDir, `${label}-waiting-cancel-${index}-takeover.json`)
       );
+      const consecutiveRollbackMarker = join(
+        workDir,
+        `${label}-waiting-cancel-rollback-owner.json`,
+      );
       const waitingCallers = await Promise.all(
         waiterTraces.map((trace, index) =>
           launchPackagedRenderer(xvfb.display, config, null, {
@@ -4267,6 +4271,14 @@ try {
             OMEGAT_TEST_RESOLVE_CANCELLATION_TAKEOVER_MARKER:
               takeoverMarkers[index],
             OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: trace,
+            ...(killBoundary === "after_intent_queue_rename"
+              ? {
+                OMEGAT_TEST_RESOLVE_CANCELLATION_POINT:
+                  "after_rollback_fsync",
+                OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER:
+                  consecutiveRollbackMarker,
+              }
+              : {}),
           })
         ),
       );
@@ -4331,12 +4343,77 @@ try {
           return present.length > 0 ? present : undefined;
         },
       );
+      let resultIndices = waitingCallers.map((_, index) => index);
+      let rollbackOwnerKill = null;
+      let rollbackOwnerIndex = null;
+      if (killBoundary === "after_intent_queue_rename") {
+        const rollbackOwner = await waitFor(
+          "first waiting loser durable rollback before second owner death",
+          async () =>
+            await pathExists(consecutiveRollbackMarker)
+              ? JSON.parse(await readFile(consecutiveRollbackMarker, "utf8"))
+              : undefined,
+        );
+        rollbackOwnerIndex = waiterSidecarPids.indexOf(
+          rollbackOwner.sidecar_process_id,
+        );
+        assert.notEqual(
+          rollbackOwnerIndex,
+          -1,
+          "durable rollback was not performed by an already-waiting loser",
+        );
+        assert.equal(
+          await pathExists(takeoverMarkers[rollbackOwnerIndex]),
+          true,
+          "durable rollback owner did not first take over the pending intent",
+        );
+        const terminalOwnerIndex = resultIndices.find(
+          (index) => index !== rollbackOwnerIndex,
+        );
+        assert.notEqual(terminalOwnerIndex, undefined);
+        assert.equal(
+          await pathExists(takeoverMarkers[terminalOwnerIndex]),
+          false,
+          "second waiting loser took the lock before rollback owner death",
+        );
+        const waitingTerminalState = await tracedRpcState(
+          waitingCallers[terminalOwnerIndex].client,
+          traceKeys[terminalOwnerIndex],
+        );
+        assert.equal(waitingTerminalState.started, true);
+        assert.equal(waitingTerminalState.settled, false);
+        const rollbackQueue = JSON.parse(
+          await readFile(prepared.activePath, "utf8"),
+        );
+        const rollbackRow = productJournalBatches(rollbackQueue).find(
+          (row) => row.batch_id === resolveBatchId,
+        );
+        assert(rollbackRow);
+        assert.equal(rollbackRow.status, "cancellation_pending");
+        assert.equal(rollbackRow.payload.phase, "renderer-rollback-durable");
+        assert.deepEqual(await readFile(tmxPath), tmxBefore);
+        assert.deepEqual(await readFile(conflictsPath), conflictsBefore);
+
+        rollbackOwnerKill = await killPackaged(
+          waitingCallers[rollbackOwnerIndex],
+        );
+        assert.equal(
+          rollbackOwnerKill.sidecarPid,
+          rollbackOwner.sidecar_process_id,
+        );
+        resultIndices = [terminalOwnerIndex];
+        quorumReplacements = resultIndices.map(
+          (index) => waitingCallers[index],
+        );
+      }
       const waiterResults = await waitFor(
         `${killBoundary} waiting FIFO cancellation results`,
         async () => {
-          const states = await Promise.all(waitingCallers.map(
-            (caller, index) => tracedRpcState(caller.client, traceKeys[index]),
-          ));
+          const states = await Promise.all(
+            resultIndices.map((index) =>
+              tracedRpcState(waitingCallers[index].client, traceKeys[index])
+            ),
+          );
           return states.every((state) => state?.settled) ? states : undefined;
         },
       );
@@ -4355,17 +4432,55 @@ try {
       }
       assert.equal(
         takeoverIndices.length,
-        1,
+        killBoundary === "after_intent_queue_rename" ? 2 : 1,
         "OS lock release selected more than one waiting FIFO cancellation owner",
       );
+      const terminalTakeoverIndex =
+        killBoundary === "after_intent_queue_rename"
+          ? resultIndices[0]
+          : takeoverIndices[0];
       const takeover = JSON.parse(
-        await readFile(takeoverMarkers[takeoverIndices[0]], "utf8"),
+        await readFile(takeoverMarkers[terminalTakeoverIndex], "utf8"),
       );
       assert.equal(takeover.point, "took-over-pending-cancellation");
       assert.equal(
         takeover.sidecar_process_id,
-        waiterSidecarPids[takeoverIndices[0]],
+        waiterSidecarPids[terminalTakeoverIndex],
       );
+      const retryErrorCodes = [];
+      if (killBoundary === "after_intent_queue_rename") {
+        const terminalCaller = waitingCallers[terminalTakeoverIndex];
+        for (const retry of [
+          {
+            appInstance: `${label}-first-cancel`,
+            ownerProcessId: killed.browserPid,
+          },
+          {
+            appInstance: traceKeys[rollbackOwnerIndex],
+            ownerProcessId: rollbackOwnerKill.browserPid,
+          },
+        ]) {
+          const result = await invokeRpcResult(
+            terminalCaller.client,
+            "transaction.receipt.ack",
+            {
+              root: project,
+              app_instance: retry.appInstance,
+              owner_process_id: retry.ownerProcessId,
+              generation: prepared.fifoGeneration,
+              batch_id: resolveBatchId,
+              operation: "resolve-conflict",
+              outcome: "cancelled",
+            },
+          );
+          assert.equal(result.resolved, false);
+          assert.equal(
+            result.error,
+            "Error: Error invoking remote method 'rpc': AbortError: request cancelled",
+          );
+          retryErrorCodes.push(-32800);
+        }
+      }
       for (const trace of waiterTraces) {
         assert.equal(
           await pathExists(trace)
@@ -4417,12 +4532,26 @@ try {
           waitingCallers.map((caller) => caller.application.pid),
         waitingCallerSidecarPids: waiterSidecarPids,
         takeoverOwnerSidecarPid: takeover.sidecar_process_id,
+        firstTakeoverOwnerSidecarPid:
+          rollbackOwnerIndex === null
+            ? takeover.sidecar_process_id
+            : waiterSidecarPids[rollbackOwnerIndex],
+        firstTakeoverKilledAfterDurableRollback:
+          rollbackOwnerKill?.sidecarPid ?? null,
+        terminalTakeoverWasAlreadyWaiting:
+          killBoundary === "after_intent_queue_rename",
         takeoverPerformedProductRollback:
           killBoundary === "after_intent_queue_rename",
         takeoverSkippedDurableRollback:
           killBoundary === "after_rollback_fsync",
-        protocolErrorCodes: waiterResults.map((state) => state.errorCode),
+        terminalTakeoverSkippedDurableRollback:
+          killBoundary === "after_intent_queue_rename",
+        protocolErrorCodes: [
+          ...waiterResults.map((state) => state.errorCode),
+          ...retryErrorCodes,
+        ],
         durableRollbackCount: 1,
+        terminalCount: 1,
         resolveEnvelopeCount: 0,
       };
       await Promise.all(

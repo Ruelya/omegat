@@ -3798,7 +3798,7 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
+fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() {
     fn spawn_sidecar(
         config: &std::path::Path,
         checkpoint: Option<(&str, &std::path::Path)>,
@@ -3851,14 +3851,66 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
         panic!("timed out waiting for {}", path.display());
     }
 
+    fn start_cancel_call(
+        mut input: std::process::ChildStdin,
+        mut output: BufReader<std::process::ChildStdout>,
+        id: i64,
+        root: std::path::PathBuf,
+        app_instance: String,
+        owner_process_id: u32,
+        generation: u64,
+        batch_id: String,
+    ) -> std::thread::JoinHandle<(
+        Option<Value>,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    )> {
+        std::thread::spawn(move || {
+            writeln!(
+                input,
+                "{}",
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "transaction.receipt.ack",
+                    "params": {
+                        "root": root,
+                        "app_instance": app_instance,
+                        "owner_process_id": owner_process_id,
+                        "generation": generation,
+                        "batch_id": batch_id,
+                        "operation": "resolve-conflict",
+                        "outcome": "cancelled",
+                    },
+                })
+            )
+            .unwrap();
+            input.flush().unwrap();
+            let response = loop {
+                let mut line = String::new();
+                match output.read_line(&mut line) {
+                    Ok(0) | Err(_) => break None,
+                    Ok(_) => {
+                        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+                            break None;
+                        };
+                        if value.get("id").and_then(Value::as_i64) == Some(id) {
+                            break Some(value);
+                        }
+                    }
+                }
+            };
+            (response, input, output)
+        })
+    }
+
     for point in ["after_intent_queue_rename", "after_rollback_fsync"] {
         let temp = tempfile::tempdir().unwrap();
         let config = temp.path().join("config");
         let root = temp.path().join("raw-cancel-owner-takeover");
         let remote = temp.path().join("raw-cancel-owner-remote");
         let owner_marker = temp.path().join("cancel-owner.json");
-        let wait_marker = temp.path().join("cancel-waiter.json");
-        let takeover_marker = temp.path().join("cancel-takeover.json");
+        let rollback_owner_marker = temp.path().join("cancel-rollback-owner.json");
         let save_tmx = root.join("omegat/project_save.tmx");
         let prep = root.join(".repositories/prep");
         let conflicts_path = prep.join("conflicts.json");
@@ -4028,39 +4080,116 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
             assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
         }
 
-        let (mut waiter, mut waiter_in, mut waiter_out) =
-            spawn_sidecar(&config, None, Some(&wait_marker), Some(&takeover_marker));
-        let waiter_pid = waiter.id();
-        let waiter_root = root.clone();
-        let waiter_call = std::thread::spawn(move || {
-            let response = rpc(
-                &mut waiter_in,
-                &mut waiter_out,
-                5,
-                "transaction.receipt.ack",
-                json!({
-                    "root": waiter_root,
-                    "app_instance": "raw-cancel-waiter",
-                    "owner_process_id": waiter_pid,
-                    "generation": generation,
-                    "batch_id": batch_id,
-                    "operation": "resolve-conflict",
-                    "outcome": "cancelled",
-                }),
+        let waiter_count = if point == "after_intent_queue_rename" {
+            2
+        } else {
+            1
+        };
+        let mut waiters = Vec::new();
+        for index in 0..waiter_count {
+            let wait_marker = temp.path().join(format!("cancel-waiter-{index}.json"));
+            let takeover_marker = temp.path().join(format!("cancel-takeover-{index}.json"));
+            let checkpoint = (point == "after_intent_queue_rename")
+                .then_some(("after_rollback_fsync", rollback_owner_marker.as_path()));
+            let (child, input, output) = spawn_sidecar(
+                &config,
+                checkpoint,
+                Some(&wait_marker),
+                Some(&takeover_marker),
             );
-            (response, waiter_in, waiter_out)
-        });
-        wait_for_file(&wait_marker, &mut waiter);
-        let waiting: Value = serde_json::from_slice(&std::fs::read(&wait_marker).unwrap()).unwrap();
-        assert_eq!(waiting["point"], "waiting-for-owner-lock");
-        assert_eq!(waiting["sidecar_process_id"], waiter_pid);
-        assert!(!takeover_marker.exists());
+            let pid = child.id();
+            let call = start_cancel_call(
+                input,
+                output,
+                5 + index as i64,
+                root.clone(),
+                format!("raw-cancel-waiter-{index}"),
+                pid,
+                generation,
+                batch_id.to_string(),
+            );
+            waiters.push((
+                child,
+                pid,
+                Some(call),
+                wait_marker,
+                takeover_marker,
+            ));
+        }
+        for (waiter, pid, _, wait_marker, takeover_marker) in &mut waiters {
+            wait_for_file(wait_marker, waiter);
+            let waiting: Value =
+                serde_json::from_slice(&std::fs::read(wait_marker).unwrap()).unwrap();
+            assert_eq!(waiting["point"], "waiting-for-owner-lock");
+            assert_eq!(waiting["sidecar_process_id"], *pid);
+            assert!(!takeover_marker.exists());
+        }
 
         // SIGKILL releases operation.lock in the kernel. The already-blocked raw
         // caller, rather than a newly launched recovery process, must acquire it.
         owner.kill().unwrap();
         owner.wait().unwrap();
-        let (waiter_response, mut waiter_in, mut waiter_out) = waiter_call.join().unwrap();
+        let mut rollback_owner_pid = None;
+        let survivor_index = if point == "after_intent_queue_rename" {
+            wait_for_file(&rollback_owner_marker, &mut waiters[0].0);
+            let rollback_owner: Value =
+                serde_json::from_slice(&std::fs::read(&rollback_owner_marker).unwrap()).unwrap();
+            let rollback_index = waiters
+                .iter()
+                .position(|(_, pid, _, _, _)| {
+                    rollback_owner["sidecar_process_id"].as_u64() == Some(u64::from(*pid))
+                })
+                .expect("rollback owner was not an already-waiting caller");
+            assert!(waiters[rollback_index].4.exists());
+            let terminal_index = 1 - rollback_index;
+            assert!(
+                !waiters[terminal_index].4.exists(),
+                "second waiter took over before rollback owner death"
+            );
+            assert!(waiters[terminal_index].0.try_wait().unwrap().is_none());
+            let rollback_queue: Value =
+                serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
+            let rollback_row = rollback_queue["batches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["batch_id"] == batch_id)
+                .unwrap();
+            assert_eq!(rollback_row["status"], "cancellation_pending");
+            assert_eq!(
+                rollback_row["payload"]["phase"],
+                "renderer-rollback-durable"
+            );
+            assert_eq!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
+            assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
+
+            rollback_owner_pid = Some(waiters[rollback_index].1);
+            waiters[rollback_index].0.kill().unwrap();
+            waiters[rollback_index].0.wait().unwrap();
+            let (killed_response, _, _) = waiters[rollback_index]
+                .2
+                .take()
+                .unwrap()
+                .join()
+                .unwrap();
+            assert!(
+                killed_response.is_none(),
+                "rollback owner published a response before its second SIGKILL"
+            );
+            terminal_index
+        } else {
+            0
+        };
+        let (
+            mut waiter,
+            waiter_pid,
+            waiter_call,
+            _wait_marker,
+            takeover_marker,
+        ) = waiters.swap_remove(survivor_index);
+        let (waiter_response, mut waiter_in, mut waiter_out) =
+            waiter_call.unwrap().join().unwrap();
+        let waiter_response = waiter_response.expect("surviving waiter response");
         assert_eq!(
             waiter_response["error"],
             json!({"code": -32800, "message": "request cancelled"})
@@ -4069,6 +4198,19 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
             serde_json::from_slice(&std::fs::read(&takeover_marker).unwrap()).unwrap();
         assert_eq!(takeover["point"], "took-over-pending-cancellation");
         assert_eq!(takeover["sidecar_process_id"], waiter_pid);
+        assert_eq!(
+            waiters
+                .iter()
+                .filter(|(_, _, _, _, marker)| marker.exists())
+                .count()
+                + usize::from(takeover_marker.exists()),
+            if point == "after_intent_queue_rename" {
+                2
+            } else {
+                1
+            },
+            "each dead owner must be followed by exactly one waiting takeover"
+        );
         assert_eq!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
         assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
         let remaining_queue: Value =
@@ -4109,6 +4251,27 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
             owner_retry_response["error"],
             json!({"code": -32800, "message": "request cancelled"})
         );
+        if let Some(rollback_owner_pid) = rollback_owner_pid {
+            let rollback_owner_retry = rpc(
+                &mut retry_in,
+                &mut retry_out,
+                7,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": "raw-cancel-waiter-retry",
+                    "owner_process_id": rollback_owner_pid,
+                    "generation": generation,
+                    "batch_id": batch_id,
+                    "operation": "resolve-conflict",
+                    "outcome": "cancelled",
+                }),
+            );
+            assert_eq!(
+                rollback_owner_retry["error"],
+                json!({"code": -32800, "message": "request cancelled"})
+            );
+        }
 
         for (offset, (head_batch_id, operation)) in fifo_heads.iter().enumerate() {
             let pending = rpc(

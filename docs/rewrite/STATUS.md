@@ -920,13 +920,20 @@ remains responsive with no resolve envelope or second rollback pass.
 The FIFO-tail intent and rollback rows now also keep two packaged cancellation
 callers blocked on the original owner's OS lock before that owner is killed.
 At `after_intent_queue_rename`, the one already-waiting loser selected by kernel
-lock release performs the sole real TMX/conflict rollback and publishes the
-terminal; at `after_rollback_fsync`, the selected loser publishes only the
-terminal without rewriting the already durable rollback. Both callers receive
-**-32800**, exactly one takeover marker, rollback-durable row, and terminal
-exist, and neither caller emits a resolve envelope. The raw NDJSON contract
-runs both unfinished boundaries against the same nonempty sync → save → close
-prefix and independently proves the same takeover split and protocol result.
+lock release performs the sole real TMX/conflict rollback, then parks before
+publishing the terminal. That first takeover owner is also SIGKILLed while the
+second loser is still blocked in its original RPC; kernel lock release lets
+that same already-running second loser observe `renderer-rollback-durable` and
+publish the sole terminal without another rollback or process launch. Retrying
+the two killed logical calls and the surviving call all produce protocol
+**-32800**. At the direct `after_rollback_fsync` row, the selected loser still
+publishes only the terminal without rewriting the already durable rollback.
+The consecutive row has two ordered takeover markers but exactly one
+rollback-durable row and one terminal, and every cancellation caller emits zero
+resolve envelopes. The raw NDJSON contract runs the same nonempty sync → save
+→ close prefix and independently performs both owner deaths, proving the
+second pre-existing waiter completes the terminal while all three logical
+cancellation calls converge on **-32800**.
 The terminal-rename case also SIGKILLs packaged process groups at
 `after_archive_fsync` and `after_queue_rename`; restart sees one archived
 request-cancelled row and an empty compacted queue.
