@@ -57,9 +57,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
-**86 passed**, team **43 passed / 1 ignored**, script **10 passed**, CLI
+**86 passed**, team **41 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **32 passed** plus sidecar journal/watcher unit
-**5 passed** and plugin filter **1 passed**, and desktop **24 files / 177 tests
+**5 passed** and plugin filter **1 passed**, and desktop **24 files / 178 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The raw NDJSON contract and real Linux packaged matrix also pass the
@@ -656,15 +656,16 @@ injection on both sides of that rename proves that the pre-publish candidate
 remains pending and is replayed once, while the post-publish result is rebound
 directly from the envelope without another `project.external-refresh`,
 `entry.list`, or `stats.get`.
-Refresh-journal compaction now archives terminal, renderer-acknowledged records
-before adopting a replacement process. It preserves both an unacknowledged
+Shared transaction-journal compaction now archives terminal,
+renderer-acknowledged records before adopting a replacement process. It
+preserves both an unacknowledged
 `sidecar_committed` receipt and every pending FIFO tail, and it does not rewrite
 an old terminal record to the replacement renderer generation. Sidecar contract
 coverage injects an acknowledged old record ahead of an unacknowledged receipt
 and pending tail, then proves stale-generation and cross-project queues cannot
-be revived. The same product RPC rejects a version-1 envelope with an unknown
-payload field and a future version-2 envelope without modifying or archiving
-either invalid journal.
+be revived. Legacy-refresh migration rejects a version-1 envelope with an
+unknown payload field and a future version-2 envelope without modifying or
+archiving either invalid input.
 The compaction fault matrix now terminates separate sidecar processes after the
 terminal archive fsync and after the compacted queue's atomic rename. The first
 failure leaves the original queue authoritative; the second leaves the compacted
@@ -689,8 +690,8 @@ and a trailing save in one project, then drops refresh acknowledgements until
 SIGKILL. Restart does not replay the acknowledged team receipt, dispatches the
 unacknowledged refresh plus its refresh/save tails in FIFO order, and archives
 each terminal batch exactly once. Refresh state transitions and event
-coalescing preserve the original cross-backend dispatch key while only each
-backend's local head competes for dispatch. This is Linux-only evidence.
+coalescing preserve the original dispatch key, and only the single shared
+journal head may compete for dispatch. This is Linux-only evidence.
 The matrix now repeats the lost-ack boundary separately for all three receipt
 classes. For **team**, it first acknowledges an older refresh, drops the team
 ack, SIGKILLs the package, then proves restart omits that older refresh and
@@ -753,12 +754,13 @@ A separate real Linux `linux-unpacked` E2E leaves both pending fingerprint and
 conflict envelopes in project A, SIGKILLs the packaged Electron process group
 including its sidecar, and starts project B with the same config. B exposes only
 its own complete `EntryKey`, sole `Document3`, and empty conflict list; A's
-fingerprint is cancelled without entering B and A's conflict journal remains
-untouched. After a second packaged SIGKILL, reopening A recovers only A's
-snapshot and complete-key conflict, while the stale fingerprint stays terminal.
-This is Linux-only evidence.
-Save, close, external refresh, `team.sync`, `team.commit`, and `team.resolve`
-now expose the same renderer receipt fields and use only
+pending FIFO and conflict journal remain byte-identical and never enter B.
+After a second packaged SIGKILL, reopening A drains A's refresh to completed
+and recovers only A's snapshot and complete-key conflict. This is Linux-only
+evidence.
+Entry write, save, close, reload, compile, import, project update, team mapping,
+team sync/commit/resolve, align run/write, and external refresh now expose the
+same renderer receipt fields and use only
 `transaction.receipt.pending` / `transaction.receipt.ack` over NDJSON.
 Electron routes direct replies and restart recovery through one
 `transaction:envelope` dispatcher and one preload acknowledgement API, scoped
@@ -793,8 +795,8 @@ still publishes only the close head before that save and any refresh tail.
 Dispatch ownership is persisted separately under the same project transaction
 lock with canonical root, Electron app instance, process ID, renderer
 generation, and claim ID. On Linux, another replacement cannot read or
-acknowledge either backend's head while that owner PID is live; it can take over
-only after the owner exits.
+acknowledge the shared head while that owner PID is live; it can take over only
+after the owner exits.
 `project.reload`, `project.compile`, `project.import`, `project.update`,
 `team.mapping`, and `align.write` now use the same local product transaction
 state machine as save/close/editor writes. Their project and external product
@@ -810,6 +812,14 @@ matrix queues all six operations between an entry receipt and team/save/refresh
 tails, kills two successive elected owners before delivery, then drains the
 exact FIFO once. Stable project bytes, TMX and align-output bytes/mtimes, and the
 file remote prove receipt recovery did not replay a committed write.
+Electron serializes all receipt-bearing RPCs and excludes active caller-managed
+receipts from the recovery channel. Recovery delivery is identity-deduplicated
+for one renderer lifecycle, but the delivery set is cleared when the renderer
+reloads or the stateful sidecar exits. A durable head delivered immediately
+before sidecar death is therefore republished by the replacement sidecar and
+cannot permanently stall its FIFO tail. `project.open` and
+`project.recovery.detach` also participate in watcher-write suppression, so
+their `.lock` changes cannot synthesize a duplicate external refresh.
 A Linux packaged owner-takeover matrix now SIGKILLs the entire Electron process
 group after its durable close-head claim but before
 `transaction:envelope` delivery. A single replacement Electron process adopts
@@ -826,10 +836,10 @@ and TMX mtimes through replacement ownership. The complete package, owner, and
 compaction matrix passes through
 `npm run test:e2e:compaction-dual-recovery:linux`. Windows and macOS owner
 liveness/package behavior were not run.
-Product `active.json` v2 compaction now has its own durable fault boundaries,
-independent of the refresh journal. It idempotently archives each acknowledged
-terminal row and fsyncs `history.ndjson` plus its parent before changing the
-queue; it then atomically renames and parent-fsyncs the compacted product queue.
+Shared `active.json` v2 compaction retains the durable product fault boundaries
+after refresh migration. It idempotently archives each acknowledged terminal
+row and fsyncs `history.ndjson` plus its parent before changing the queue; it
+then atomically renames and parent-fsyncs the compacted shared queue.
 At `after_archive_fsync`, SIGKILL leaves the original terminal → unacknowledged
 entry receipt → team receipt → save receipt queue authoritative. At
 `after_queue_rename`, the compacted unacknowledged entry → team → save queue is
@@ -839,7 +849,7 @@ from the dead durable owner. The real Linux packaged matrix independently parks
 and SIGKILLs the Electron process group at both product boundaries, then proves
 that, while the original owner PID is still alive, a simultaneous same-root
 contender receives neither the envelope nor an acknowledgement: both pending
-and ack requests are rejected and leave the product queue, refresh tail, and
+and ack requests are rejected and leave the shared queue, refresh tail, and
 durable claim unchanged. Only after external SIGKILL and confirmed
 owner exit does one replacement claim take over. The matrix keeps a pending
 refresh behind the product head and proves the shared global FIFO drains entry
@@ -1092,7 +1102,7 @@ preserves the one receipt-backed product without replaying remote writes. All
 four interruptions retain the wanted duplicate's six-field `EntryKey`, leave
 the same-source decoy untranslated, keep one `Document3` surface, and leave the
 active UTF-16 caret on that wanted segment. This remains Linux-only evidence.
-The suite is now **37 passed / 1 ignored**; the preserved SVN binary prerequisite
+The suite is now **41 passed / 1 ignored**; the preserved SVN binary prerequisite
 remains the single ignore.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
