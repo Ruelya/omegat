@@ -1051,6 +1051,16 @@ async function prepareDiskFaultProject(workDir, label) {
     "utf8",
   );
   await session.request("project.reload", {});
+  const [entry] = await session.request("entry.list", {});
+  assert(entry);
+  await session.request("entry.set", {
+    index: 0,
+    key: entry.key,
+    translation: `misspelled${label.replaceAll("-", "")}`,
+    note: "",
+    revision: entry.revision,
+    default_translation: true,
+  });
   await session.close();
   return {
     config,
