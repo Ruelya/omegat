@@ -56,6 +56,19 @@ async function pathExists(path) {
   }
 }
 
+async function requestAfterTransactionLock(session, method, params) {
+  return waitFor(`${method} transaction lock`, async () => {
+    try {
+      return await session.request(method, params);
+    } catch (error) {
+      if (String(error).includes("team project is locked by another process")) {
+        return undefined;
+      }
+      throw error;
+    }
+  });
+}
+
 async function durableWriteJson(path, value) {
   const handle = await open(path, "w");
   try {
@@ -2696,14 +2709,18 @@ try {
   assert.equal(closeBatches[0].payload.operation, "project.close");
 
   const closeTailSession = new SidecarSession(closeConfig);
-  await closeTailSession.request("project.open", { root: closeProject });
+  await requestAfterTransactionLock(
+    closeTailSession,
+    "project.open",
+    { root: closeProject },
+  );
   const closeTeamBatchId = "lost-close-team-tail";
   await writeFile(
     join(closeProject, "target", "takeover.txt"),
     "close tail committed exactly once",
     "utf8",
   );
-  const closeTeam = await closeTailSession.request("team.commit", {
+  const closeTeam = await requestAfterTransactionLock(closeTailSession, "team.commit", {
     which: "target",
     transaction_project_root: closeProject,
     transaction_generation: closeBatches[0].generation,
@@ -2712,7 +2729,7 @@ try {
   assert.equal(closeTeam.receipt.batch_id, closeTeamBatchId);
   assert.equal(closeTeam.receipt.payload.operation, "commit-target");
   const closeSaveBatchId = "lost-close-save-tail";
-  const closeSave = await closeTailSession.request("project.save", {
+  const closeSave = await requestAfterTransactionLock(closeTailSession, "project.save", {
     transaction_project_root: closeProject,
     transaction_generation: closeBatches[0].generation,
     transaction_batch_id: closeSaveBatchId,
@@ -2740,14 +2757,18 @@ try {
     "after close source\tafter close target\n",
     "utf8",
   );
-  const closeTail = await closeTailSession.request("project.refresh.enqueue", {
-    root: closeProject,
-    app_instance: "lost-close-tail-setup",
-    generation: closeBatches[0].generation,
-    paths: [closeTailPath],
-    fingerprints: { [closeTailPath]: "lost-close-refresh-tail" },
-    sources: ["native"],
-  });
+  const closeTail = await requestAfterTransactionLock(
+    closeTailSession,
+    "project.refresh.enqueue",
+    {
+      root: closeProject,
+      app_instance: "lost-close-tail-setup",
+      generation: closeBatches[0].generation,
+      paths: [closeTailPath],
+      fingerprints: { [closeTailPath]: "lost-close-refresh-tail" },
+      sources: ["native"],
+    },
+  );
   const closeTailBatchId = closeTail.batch.batch_id;
   await closeTailSession.close();
   const closeQueueBeforeKill = JSON.parse(
