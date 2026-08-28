@@ -594,7 +594,7 @@ try {
     const wanted = entries.find((entry) => entry.key.file === "a-wanted.txt");
     const decoy = entries.find((entry) => entry.key.file === "b-decoy.txt");
     if (!wanted || !decoy) throw new Error("duplicate setup entries missing");
-    await window.omegat.rpc("entry.set", {
+    const set = await window.omegat.rpc("entry.set", {
       index: wanted.index,
       key: wanted.key,
       translation: ${JSON.stringify(wantedTranslation)},
@@ -602,15 +602,29 @@ try {
       revision: wanted.revision,
       default_translation: false,
     });
-    await window.omegat.rpc("project.save", {});
-    const mapping = await window.omegat.rpc(
+    return { wanted: wanted.key, decoy: decoy.key, set };
+  })()`, true);
+  assert.equal(setup.set.receipt.payload.operation, "entry.set");
+  await waitFor("entry.set renderer acknowledgement", async () =>
+    await pathExists(active) ? undefined : true
+  );
+  const saved = await launched.client.evaluate(
+    'window.omegat.rpc("project.save", {})',
+    true,
+  );
+  assert.equal(saved.receipt.payload.operation, "project.save");
+  await waitFor("project.save renderer acknowledgement", async () =>
+    await pathExists(active) ? undefined : true
+  );
+  const mapping = await launched.client.evaluate(
+    `window.omegat.rpc(
       "team.mapping",
       ${JSON.stringify({ repositories })}
-    );
-    return { wanted: wanted.key, decoy: decoy.key, mapping };
-  })()`, true);
-  assert.equal(setup.mapping.ok, true);
-  assert.equal(setup.mapping.repositories.length, 2);
+    )`,
+    true,
+  );
+  assert.equal(mapping.ok, true);
+  assert.equal(mapping.repositories.length, 2);
   assert.equal(setup.wanted.source_text, setup.decoy.source_text);
   assert.notDeepEqual(setup.wanted, setup.decoy);
   assert.deepEqual(
