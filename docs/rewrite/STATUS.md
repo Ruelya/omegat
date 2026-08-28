@@ -820,9 +820,13 @@ checkpointed with the entry list; project and external output paths are restored
 on cancellation or pre-receipt failure. Each scoped success returns the exact
 shared-journal receipt, and Electron suppresses watcher echoes, serializes the
 caller-managed reply, refreshes affected renderer state, and acknowledges only
-after publication. Global `prefs.set`, aligner preferences, and
-`spell.install` remain config-scoped: write failures are surfaced without
-changing the live preferences, and these calls do not create a project journal.
+after publication. Global preferences (including filter and segmentation
+fields), persisted aligner settings, and `spell.install` now use a separate
+config-scoped `transactions/shared-config` FIFO and OS lock. Recursive merge
+patches apply only leaves changed from each renderer's loaded snapshot, so a
+stale process cannot erase an unrelated field committed by another process.
+Failures retain the last valid in-memory preferences, and no config batch is
+written to either project's journal.
 The shared journal keeps an atomically written same-value recovery copy. A
 corrupt `active.json` is repaired only from a valid copy; two corrupt copies are
 rejected without product mutation, while a failed post-mutation active publish
@@ -851,6 +855,24 @@ terminates the real sidecar process at each point, and proves the final
 migration has one copy of every legacy batch/history row and the expected
 per-app owners. This evidence was run on Linux only; Windows and macOS packages
 were not run.
+A real dual-Electron/dual-project Linux matrix now holds that config FIFO at a
+durable owner checkpoint, queues a second visible preferences write, SIGKILLs
+the first process group, and verifies locale plus font fields merge in FIFO
+order. It separately kills the owner after terminal history is durable but
+before response cleanup; a visible segmentation edit and a concurrent visible
+file-filter edit survive with one history row for the lost response. Concurrent
+persisted aligner settings and spell installation share the same config queue,
+while exact batch/operation assertions keep all config rows out of both project
+journals.
+The same packaged run terminates real processes after the preferences
+candidate fsync, destination rename, and parent-directory fsync. Recovery
+replays the pending merge and removes the one pre-rename candidate without
+leaving hidden temporaries. Spell installation stages and fsyncs the `.aff`/
+`.dic` pair, then the matrix terminates after staging fsync, the first rename,
+and destination-directory fsync; each restart repairs a complete pair and
+removes every staging directory. The full old+new writer matrix passes through
+`npm run test:e2e:writer-recovery:linux`. Windows and macOS runners were not
+available and those package paths were not run.
 A new real Linux `linux-unpacked` matrix drives project properties, repository
 mapping, file-filter options, and segmentation settings exclusively through
 visible controls. It externally SIGKILLs Electron at both sides of each relevant
