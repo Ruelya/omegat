@@ -10,7 +10,7 @@ use crate::team_settings::{clear_resolved, save_conflicts};
 use crate::{team_enabled, SyncReport};
 use omegat_core::cancellation::CancellationToken;
 use omegat_core::durable_fifo::{
-    self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
+    DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
     LegacyOwnerClaim,
 };
 use omegat_core::durable_transaction::{
@@ -1589,7 +1589,7 @@ fn product_owner_claim_checkpoint(
 }
 
 fn compact_terminal_product_transactions_in(
-    props: &ProjectProperties,
+    _props: &ProjectProperties,
     workflow: &mut DurableTransactionWorkflow<SyncTransaction>,
 ) -> Result<()> {
     workflow
@@ -1759,7 +1759,11 @@ pub fn claim_transaction_dispatch_with_retry_cancellable(
         decode_legacy_renderer_owner,
         process_is_alive,
         || cancellation.is_cancelled(),
-        || recover_pending_cancellation_locked(props).map_err(|error| error.to_string()),
+        || {
+            recover_pending_cancellation_locked(props)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        },
         |claim| {
             transaction_owner_retry_wait_checkpoint(props, claim.process_id)
                 .map_err(|error| error.to_string())
