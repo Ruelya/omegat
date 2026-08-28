@@ -345,8 +345,10 @@ async function verifyLegacyMigrationAndPrefixCollision(display, workDir) {
     limits,
   );
   try {
-    const prefs = await rpc(launched.client, "prefs.get");
-    assert.equal(prefs.locale, "fr");
+    const prefs = await waitFor("legacy config transaction recovery", async () => {
+      const current = await rpc(launched.client, "prefs.get");
+      return current.locale === "fr" ? current : undefined;
+    });
     const exactRetry = await rpc(launched.client, "prefs.patch", {
       theme: "legacy-0",
       config_transaction_retry_batch_id: "legacy-0",
