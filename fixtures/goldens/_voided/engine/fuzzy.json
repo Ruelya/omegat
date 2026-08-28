@@ -1,0 +1,24 @@
+{
+  "java_source": "org.omegat.core.matching.FuzzyMatcher.calcSimilarity + LevenshteinDistance on tokens",
+  "cases": [
+    {
+      "lang": "en",
+      "query": "Hello world",
+      "candidate": "Hello world",
+      "score": 100
+    },
+    {
+      "lang": "en",
+      "query": "Hello world",
+      "candidate": "Hello word",
+      "score": 50,
+      "note": "token lists [hello,world] vs [hello,word]: 1 substitution / 2 tokens = 50"
+    },
+    {
+      "lang": "en",
+      "query": "Hello world",
+      "candidate": "Goodbye",
+      "score": 0
+    }
+  ]
+}

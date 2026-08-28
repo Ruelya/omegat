@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringNoMatch",
+  "cases": [
+    {
+      "hit": false,
+      "text": "OmegaT is fantastic"
+    }
+  ],
+  "type": "EXACT",
+  "query": "awesome"
+}

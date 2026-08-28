@@ -1,0 +1,21 @@
+{
+  "id": "magento",
+  "fixture": "magento/MagentoFilterAlign.csv",
+  "java_test": "org.omegat.filters.MagentoFilterTest#testAlign",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "original"
+  ],
+  "ids": [
+    "code"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "\"code\",\"original\"\n"
+}

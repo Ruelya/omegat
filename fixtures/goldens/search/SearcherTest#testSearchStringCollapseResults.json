@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringCollapseResults",
+  "hit": true,
+  "count": 3,
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchStringCollapseResults"
+  ]
+}

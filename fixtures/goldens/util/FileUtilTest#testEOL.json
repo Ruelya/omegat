@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testEOL",
+  "crlf": "\r\n",
+  "lf": "\n",
+  "cr": "\r",
+  "keys": [
+    "org.omegat.util.FileUtilTest#testEOL"
+  ]
+}

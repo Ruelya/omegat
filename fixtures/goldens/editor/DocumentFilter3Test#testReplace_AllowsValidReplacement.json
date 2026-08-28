@@ -1,0 +1,11 @@
+{
+  "java_test": "org.omegat.gui.editor.DocumentFilter3Test#testReplace_AllowsValidReplacement",
+  "edit_mode": true,
+  "translation_start": 0,
+  "translation_end": 10,
+  "offset": 2,
+  "length": 3,
+  "text": "new text",
+  "applied": true,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

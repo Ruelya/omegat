@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringUnicodeWholeWordsOnly",
+  "cases": [
+    {
+      "hit": true,
+      "text": "слово и дело"
+    },
+    {
+      "hit": false,
+      "text": "словообразование"
+    }
+  ],
+  "type": "EXACT",
+  "query": "слово"
+}

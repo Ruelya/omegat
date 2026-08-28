@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.segmentation.SRXTest#testSrxComparison",
+  "copy_equal": true,
+  "shallow_unequal": true,
+  "keys": [
+    "org.omegat.core.segmentation.SRXTest#testSrxComparison"
+  ]
+}
