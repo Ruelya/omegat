@@ -1,0 +1,15 @@
+{
+  "id": "relaxng",
+  "fixture": "relaxng/simple.rng",
+  "java_test": "org.omegat.filters dialect/table for relaxng",
+  "options": {},
+  "sources": [
+    "RELAX NG is a schema language for XML."
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "RELAX NG is a schema language for XML.",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

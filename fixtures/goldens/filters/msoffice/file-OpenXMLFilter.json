@@ -1,0 +1,23 @@
+{
+  "id": "msoffice",
+  "fixture": "openXML/file-OpenXMLFilter.docx",
+  "java_test": "org.omegat.filters4.MsOfficeFileFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    ""
+  ]
+}

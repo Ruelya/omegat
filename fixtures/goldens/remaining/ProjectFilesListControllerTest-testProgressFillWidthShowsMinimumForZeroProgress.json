@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.filelist.ProjectFilesListControllerTest#testProgressFillWidthShowsMinimumForZeroProgress",
+  "zero_of_ten": 3,
+  "zero_of_zero": 0,
+  "full": 100,
+  "keys": [
+    "org.omegat.gui.filelist.ProjectFilesListControllerTest#testProgressFillWidthShowsMinimumForZeroProgress"
+  ]
+}

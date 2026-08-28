@@ -1,0 +1,27 @@
+{
+  "id": "text",
+  "fixture": "text/file-TextFilter.txt",
+  "java_test": "org.omegat.filters.TextFilterTest#testParseLinesBreak",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "segmentOn": "BREAKS"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "This test file for test TextFilter.",
+    "It should be second entry for empty-line separator or third line for line-break separator.",
+    "It should be third entry for empty-line separator or fifth line for line-break separator."
+  ],
+  "ids": [
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "This test file for test TextFilter.\r\n\r\nIt should be second entry for empty-line separator or third line for line-break separator.\r\n\r\nIt should be third entry for empty-line separator or fifth line for line-break separator.\r\n"
+}

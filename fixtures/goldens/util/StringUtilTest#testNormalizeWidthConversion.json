@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testNormalizeWidthConversion",
+  "abc": "ABC123",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testNormalizeWidthConversion"
+  ]
+}
