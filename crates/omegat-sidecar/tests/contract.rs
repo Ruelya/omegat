@@ -1426,6 +1426,361 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
 }
 
 #[test]
+fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_work() {
+    fn create_project(root: &std::path::Path, source: &str) {
+        let props = omegat_core::properties::ProjectProperties::create(
+            root.to_path_buf(),
+            "en".into(),
+            "fr".into(),
+            false,
+        );
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        std::fs::write(props.source_dir.join("source.txt"), source).unwrap();
+    }
+
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    fn refresh_scope(root: &std::path::Path, app: &str, generation: u64) -> Value {
+        json!({
+            "root": root,
+            "app_instance": app,
+            "generation": generation,
+        })
+    }
+
+    fn raw_journal(root: &std::path::Path, envelope_version: u8, unknown_payload: bool) -> Value {
+        let mut payload = json!({
+            "paths": [root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "terminal" },
+            "sources": ["native"],
+        });
+        if unknown_payload {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("future_receipt_state".into(), json!("pending"));
+        }
+        json!({
+            "version": 2,
+            "project_root": root.canonicalize().unwrap(),
+            "app_instance": "malformed-writer",
+            "generation": 41,
+            "batches": [{
+                "version": envelope_version,
+                "project_root": root.canonicalize().unwrap(),
+                "generation": 41,
+                "batch_id": "old-terminal-must-not-revive",
+                "status": "completed",
+                "error_code": null,
+                "updated_unix_ms": 1,
+                "payload": payload,
+            }],
+            "updated_unix_ms": 1,
+        })
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let compact_root = temp.path().join("compact");
+    let other_root = temp.path().join("other");
+    let unknown_root = temp.path().join("unknown");
+    let future_root = temp.path().join("future");
+    for (root, source) in [
+        (&compact_root, "compact source"),
+        (&other_root, "other source"),
+        (&unknown_root, "unknown source"),
+        (&future_root, "future source"),
+    ] {
+        create_project(root, source);
+    }
+
+    let compact_config = temp.path().join("compact-config");
+    let journal_path = compact_root.join(".repositories/transactions/external-refresh.json");
+    let history_path =
+        compact_root.join(".repositories/transactions/external-refresh-history.ndjson");
+    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&compact_config);
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.open",
+        json!({ "root": compact_root }),
+    );
+    let first = rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "project.refresh.enqueue",
+        json!({
+            "root": compact_root,
+            "app_instance": "electron-before-compaction",
+            "generation": 8,
+            "paths": [compact_root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "unacked-receipt" },
+            "sources": ["native"],
+        }),
+    );
+    let receipt_batch = first["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let refreshed = rpc(
+        &mut first_in,
+        &mut first_out,
+        3,
+        "project.external-refresh",
+        json!({
+            "transaction_project_root": compact_root,
+            "transaction_generation": 8,
+            "transaction_batch_id": receipt_batch,
+            "app_instance": "electron-before-compaction",
+        }),
+    );
+    assert_eq!(refreshed["error"], Value::Null);
+    let second = rpc(
+        &mut first_in,
+        &mut first_out,
+        4,
+        "project.refresh.enqueue",
+        json!({
+            "root": compact_root,
+            "app_instance": "electron-before-compaction",
+            "generation": 8,
+            "paths": [compact_root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "pending-tail" },
+            "sources": ["sidecar"],
+        }),
+    );
+    let pending_batch = second["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    first_child.kill().unwrap();
+    first_child.wait().unwrap();
+
+    let mut journal: Value =
+        serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
+    assert_eq!(journal["batches"][0]["status"], "sidecar_committed");
+    assert_eq!(journal["batches"][1]["status"], "pending");
+    let receipt = journal["batches"][0]["commit"].clone();
+    let mut acknowledged = journal["batches"][0].clone();
+    acknowledged["batch_id"] = json!("acked-old-before-compaction");
+    acknowledged["status"] = json!("completed");
+    journal["batches"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, acknowledged);
+    std::fs::write(&journal_path, serde_json::to_vec_pretty(&journal).unwrap()).unwrap();
+
+    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&compact_config);
+    rpc(
+        &mut second_in,
+        &mut second_out,
+        5,
+        "project.open",
+        json!({ "root": compact_root }),
+    );
+    let compacted = rpc(
+        &mut second_in,
+        &mut second_out,
+        6,
+        "project.refresh.pending",
+        refresh_scope(&compact_root, "electron-after-compaction", 1),
+    );
+    assert_eq!(
+        compacted["result"]["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|batch| batch["batch_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![receipt_batch.as_str(), pending_batch.as_str()]
+    );
+    assert_eq!(
+        compacted["result"]["batches"][0]["status"],
+        "sidecar_committed"
+    );
+    assert_eq!(compacted["result"]["batches"][0]["commit"], receipt);
+    assert_eq!(compacted["result"]["batches"][1]["status"], "pending");
+    assert_eq!(
+        compacted["result"]["batches"][1].get("commit"),
+        None,
+        "pending FIFO tail gained a receipt during compaction"
+    );
+    assert!(compacted["result"]["batches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|batch| batch["generation"] == 1));
+    let compacted_on_disk: Value =
+        serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
+    assert_eq!(compacted_on_disk["batches"], compacted["result"]["batches"]);
+    let history: Vec<Value> = std::fs::read_to_string(&history_path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let old = history
+        .iter()
+        .find(|row| row["batch_id"] == "acked-old-before-compaction")
+        .unwrap();
+    assert_eq!(old["generation"], 8);
+    assert_eq!(old["status"], "completed");
+
+    let acknowledged_receipt = rpc(
+        &mut second_in,
+        &mut second_out,
+        7,
+        "project.refresh.complete",
+        json!({
+            "root": compact_root,
+            "app_instance": "electron-after-compaction",
+            "generation": 1,
+            "batch_id": receipt_batch,
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(
+        acknowledged_receipt["result"]["remaining"][0]["batch_id"],
+        pending_batch
+    );
+    let stale_generation = rpc(
+        &mut second_in,
+        &mut second_out,
+        8,
+        "project.refresh.pending",
+        refresh_scope(&compact_root, "electron-after-compaction", 2),
+    );
+    assert_eq!(stale_generation["result"]["batches"], json!([]));
+
+    let cross_project = rpc(
+        &mut second_in,
+        &mut second_out,
+        9,
+        "project.refresh.enqueue",
+        json!({
+            "root": compact_root,
+            "app_instance": "electron-after-compaction",
+            "generation": 2,
+            "paths": [compact_root.join("source/source.txt")],
+            "fingerprints": { "source/source.txt": "cross-project-stale" },
+            "sources": ["native"],
+        }),
+    );
+    let cross_project_batch = cross_project["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    rpc(
+        &mut second_in,
+        &mut second_out,
+        10,
+        "project.open",
+        json!({ "root": other_root }),
+    );
+    let other_pending = rpc(
+        &mut second_in,
+        &mut second_out,
+        11,
+        "project.refresh.pending",
+        refresh_scope(&other_root, "electron-after-compaction", 3),
+    );
+    assert_eq!(other_pending["result"]["batches"], json!([]));
+    rpc(
+        &mut second_in,
+        &mut second_out,
+        12,
+        "project.open",
+        json!({ "root": compact_root }),
+    );
+    let not_revived = rpc(
+        &mut second_in,
+        &mut second_out,
+        13,
+        "project.refresh.pending",
+        refresh_scope(&compact_root, "electron-after-compaction", 4),
+    );
+    assert_eq!(not_revived["result"]["batches"], json!([]));
+    let terminal_history = std::fs::read_to_string(&history_path).unwrap();
+    assert!(terminal_history.lines().any(|line| {
+        let row: Value = serde_json::from_str(line).unwrap();
+        row["batch_id"] == cross_project_batch && row["status"] == "cancelled"
+    }));
+    second_child.kill().unwrap();
+    second_child.wait().unwrap();
+
+    for (root, config, envelope_version, unknown_payload, expected) in [
+        (
+            &unknown_root,
+            temp.path().join("unknown-config"),
+            1,
+            true,
+            "unknown field",
+        ),
+        (
+            &future_root,
+            temp.path().join("future-config"),
+            2,
+            false,
+            "unsupported transaction envelope version 2",
+        ),
+    ] {
+        let malformed_path = root.join(".repositories/transactions/external-refresh.json");
+        std::fs::create_dir_all(malformed_path.parent().unwrap()).unwrap();
+        let malformed =
+            serde_json::to_vec_pretty(&raw_journal(root, envelope_version, unknown_payload))
+                .unwrap();
+        std::fs::write(&malformed_path, &malformed).unwrap();
+        let (mut child, mut child_in, mut child_out) = spawn_sidecar(&config);
+        rpc(
+            &mut child_in,
+            &mut child_out,
+            20,
+            "project.open",
+            json!({ "root": root }),
+        );
+        let rejected = rpc(
+            &mut child_in,
+            &mut child_out,
+            21,
+            "project.refresh.pending",
+            refresh_scope(root, "malformed-reader", 1),
+        );
+        assert_eq!(rejected["error"]["code"], -32603);
+        assert!(
+            rejected["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(expected),
+            "{rejected}"
+        );
+        assert_eq!(std::fs::read(&malformed_path).unwrap(), malformed);
+        assert!(!root
+            .join(".repositories/transactions/external-refresh-history.ndjson")
+            .exists());
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+}
+
+#[test]
 fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
     fn spawn_sidecar(
         config: &std::path::Path,

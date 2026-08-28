@@ -141,6 +141,25 @@ fn append_history(root: &Path, envelope: &RefreshEnvelope) -> Result<(), String>
         .map_err(|error| format!("write refresh history {}: {error}", path.display()))
 }
 
+fn compact_acknowledged_batches(root: &Path, journal: &mut RefreshJournal) -> Result<bool, String> {
+    let terminal = journal
+        .batches
+        .iter()
+        .filter(|envelope| !envelope.status.is_recoverable())
+        .cloned()
+        .collect::<Vec<_>>();
+    for envelope in &terminal {
+        append_history(root, envelope)?;
+    }
+    if terminal.is_empty() {
+        return Ok(false);
+    }
+    journal
+        .batches
+        .retain(|envelope| envelope.status.is_recoverable());
+    Ok(true)
+}
+
 fn load_journal(root: &Path) -> Result<Option<RefreshJournal>, String> {
     let Some(journal) = read_json::<RefreshJournal>(&journal_path(root))? else {
         return Ok(None);
@@ -217,7 +236,7 @@ fn cancel_queue(root: &Path) -> Result<(), String> {
                 envelope.transition(TransactionStatus::Completed, None);
                 append_history(root, envelope)?;
             }
-            _ => {}
+            _ => append_history(root, envelope)?,
         }
     }
     remove_file(&journal_path(root))
@@ -251,6 +270,18 @@ pub fn pending(
     let Some(mut journal) = load_journal(root)? else {
         return Ok(Vec::new());
     };
+    // Compact only terminal renderer-acknowledged records. Persist that
+    // compaction before adopting a replacement process so an unacknowledged
+    // sidecar receipt or a pending FIFO tail can never be dropped or have an
+    // old terminal generation rewritten as current.
+    if compact_acknowledged_batches(root, &mut journal)? {
+        if journal.batches.is_empty() {
+            remove_file(&journal_path(root))?;
+            return Ok(Vec::new());
+        }
+        journal.updated_unix_ms = unix_ms();
+        write_json(&journal_path(root), &journal)?;
+    }
     if journal.app_instance == app_instance && journal.generation != generation {
         // The same Electron process advanced its project generation.  This is
         // a reload/open boundary, not crash recovery.
@@ -267,26 +298,6 @@ pub fn pending(
         }
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
-    }
-    let terminal = journal
-        .batches
-        .iter()
-        .filter(|envelope| !envelope.status.is_recoverable())
-        .cloned()
-        .collect::<Vec<_>>();
-    if !terminal.is_empty() {
-        for envelope in &terminal {
-            append_history(root, envelope)?;
-        }
-        journal
-            .batches
-            .retain(|envelope| envelope.status.is_recoverable());
-        if journal.batches.is_empty() {
-            remove_file(&journal_path(root))?;
-        } else {
-            journal.updated_unix_ms = unix_ms();
-            write_json(&journal_path(root), &journal)?;
-        }
     }
     Ok(journal.batches)
 }
