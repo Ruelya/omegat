@@ -3522,54 +3522,69 @@ try {
     assert.equal(killed.browserPid, oldOwner.owner_process_id);
     assert.equal(await pathExists(`/proc/${killed.browserPid}`), false);
 
-    launchedA = await launchPackaged(
-      xvfb.display,
-      config,
-      project,
-      { OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: replacementTracePaths[0] },
+    const replacements = await Promise.all(
+      replacementTracePaths.map((tracePath) =>
+        launchPackagedRenderer(xvfb.display, config, project, {
+          OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
+        })
+      ),
     );
+    quorumReplacements = replacements;
     await waitFor("cancelled resolve rollback recovered", async () =>
       !await pathExists(prepared.activePath) ? true : undefined
     );
-    const firstReplacementOwner = JSON.parse(
-      await readFile(prepared.ownerPath, "utf8"),
+    const firstReplacementOwner = await waitFor(
+      "sole owner after cancelled resolve rollback",
+      async () => {
+        if (!await pathExists(prepared.ownerPath)) return undefined;
+        const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+        return claim.claim_id !== durableOldOwner.claim_id
+            && replacements.some((replacement) =>
+              replacement.application.pid === claim.process_id
+            )
+          ? claim
+          : undefined;
+      },
     );
-    assert.equal(firstReplacementOwner.process_id, launchedA.application.pid);
+    const winnerIndex = replacements.findIndex((replacement) =>
+      replacement.application.pid === firstReplacementOwner.process_id
+    );
+    assert.notEqual(winnerIndex, -1);
+    const winner = replacements[winnerIndex];
+    const losers = replacements.filter((_, index) => index !== winnerIndex);
     assert.notEqual(firstReplacementOwner.claim_id, durableOldOwner.claim_id);
-    const replacements = [launchedA];
-    launchedA = undefined;
-    for (let index = 1; index < replacementTracePaths.length; index += 1) {
-      replacements.push(await launchPackaged(
-        xvfb.display,
-        config,
-        project,
-        { OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: replacementTracePaths[index] },
-      ));
-    }
-    quorumReplacements = replacements;
+
+    const winnerState = await waitFor(
+      "winning cancellation replacement workspace",
+      async () => {
+        const state = await workspaceState(winner.client);
+        return state.project === project
+            && state.translation === prepared.ours
+            && state.activeSurfaces === 1
+            && state.key
+          ? state
+          : undefined;
+      },
+    );
+    assert.deepEqual(JSON.parse(winnerState.key), prepared.wantedKey);
+    const entries = await winner.client.evaluate(
+      'window.omegat.rpc("entry.list", {})',
+      true,
+    );
+    const wanted = entries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(prepared.wantedKey)
+    );
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(prepared.decoyKey)
+    );
+    assert(wanted);
+    assert(decoy);
+    assertCompleteEntryKey(wanted.key);
+    assertCompleteEntryKey(decoy.key);
+    assert.equal(wanted.translation, prepared.ours);
+    assert.equal(decoy.translation, "");
 
     for (const [index, replacement] of replacements.entries()) {
-      const state = await workspaceState(replacement.client);
-      assert.equal(state.project, project);
-      assert.equal(state.translation, prepared.ours);
-      assert.equal(state.activeSurfaces, 1);
-      assert.deepEqual(JSON.parse(state.key), prepared.wantedKey);
-      const entries = await replacement.client.evaluate(
-        'window.omegat.rpc("entry.list", {})',
-        true,
-      );
-      const wanted = entries.find((entry) =>
-        JSON.stringify(entry.key) === JSON.stringify(prepared.wantedKey)
-      );
-      const decoy = entries.find((entry) =>
-        JSON.stringify(entry.key) === JSON.stringify(prepared.decoyKey)
-      );
-      assert(wanted);
-      assert(decoy);
-      assertCompleteEntryKey(wanted.key);
-      assertCompleteEntryKey(decoy.key);
-      assert.equal(wanted.translation, prepared.ours);
-      assert.equal(decoy.translation, "");
       assert.equal(
         await pathExists(replacementTracePaths[index])
           ? parseNdjson(await readFile(replacementTracePaths[index], "utf8")).length
@@ -3577,8 +3592,16 @@ try {
         0,
         "a replacement delivered the cancelled resolve receipt",
       );
+      assert.equal(
+        await replacement.client.evaluate(
+          'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+          true,
+        ),
+        "6.2.0",
+        "a post-cancellation replacement stopped responding",
+      );
     }
-    for (const [index, replacement] of replacements.slice(1).entries()) {
+    for (const [index, replacement] of losers.entries()) {
       const rejected = await invokeRpcResult(
         replacement.client,
         "transaction.receipt.pending",
@@ -3591,6 +3614,24 @@ try {
       );
       assert.equal(rejected.resolved, false);
       assert.match(rejected.error, /locked by another process|owned by live app/);
+      const rejectedAck = await invokeRpcResult(
+        replacement.client,
+        "transaction.receipt.ack",
+        {
+          root: project,
+          app_instance: `${label}-loser-${index}`,
+          owner_process_id: replacement.application.pid,
+          generation: oldOwner.generation,
+          batch_id: oldOwner.batch_id,
+          operation: "resolve-conflict",
+          outcome: "succeeded",
+        },
+      );
+      assert.equal(rejectedAck.resolved, false);
+      assert.match(
+        rejectedAck.error,
+        /locked by another process|owned by live app/,
+      );
     }
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
@@ -3598,12 +3639,12 @@ try {
       "a losing process replaced the sole post-cancellation owner",
     );
     const protocolCancellation = await invokeRpcResult(
-      replacements[0].client,
+      winner.client,
       "transaction.receipt.ack",
       {
         root: project,
         app_instance: `${label}-recovery`,
-        owner_process_id: replacements[0].application.pid,
+        owner_process_id: winner.application.pid,
         generation: oldOwner.generation,
         batch_id: oldOwner.batch_id,
         operation: "resolve-conflict",
@@ -3654,7 +3695,7 @@ try {
       gitHeadWrite: false,
       completeEntryKey: prepared.wantedKey,
       decoyEntryKey: prepared.decoyKey,
-      document3Surfaces: replacements[0].workspace.activeSurfaces,
+      document3Surfaces: winnerState.activeSurfaces,
     });
     await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
     quorumReplacements = [];
