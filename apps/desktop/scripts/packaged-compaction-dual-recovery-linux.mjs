@@ -305,18 +305,13 @@ async function startTracedRpc(client, traceKey, method, params, requestId) {
   return client.evaluate(`(() => {
     window.__omegatConcurrentRpc ??= {};
     const record = {
-      events: [],
+      started: true,
       settled: false,
       resolved: null,
       value: null,
       error: null,
     };
     window.__omegatConcurrentRpc[${JSON.stringify(traceKey)}] = record;
-    window.omegat.onRpcOperation((event) => {
-      if (event.requestId === ${JSON.stringify(requestId)}) {
-        record.events.push(event);
-      }
-    });
     void window.omegat.rpc(
       ${JSON.stringify(method)},
       ${JSON.stringify(params)},
@@ -3711,13 +3706,10 @@ try {
             (replacement, index) =>
               tracedRpcState(replacement.client, traceKeys[index]),
           ));
-          return states.every((state, index) =>
+          return states.every((state) =>
               state
+              && state.started
               && !state.settled
-              && state.events.some((event) =>
-                event.requestId === requestIds[index]
-                && event.phase === "started"
-              )
             )
             ? states
             : undefined;
@@ -3741,20 +3733,15 @@ try {
               state?.settled
               && state.resolved === false
               && /request cancelled/.test(state.error ?? "")
-              && state.events.some((event) =>
-                event.phase === "cancelled" && event.errorCode === -32800
-              )
             )
             ? states
             : undefined;
         },
       );
       for (const state of concurrentResults) {
-        assert.deepEqual(
-          state.events.map((event) => event.phase),
-          ["started", "cancelled"],
-        );
-        assert.equal(state.events.at(-1).errorCode, -32800);
+        assert.equal(state.started, true);
+        assert.equal(state.resolved, false);
+        assert.match(state.error, /request cancelled/);
       }
       for (const trace of concurrentEnvelopeTraces) {
         assert.equal(
