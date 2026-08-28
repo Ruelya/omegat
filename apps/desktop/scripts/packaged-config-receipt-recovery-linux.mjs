@@ -334,11 +334,13 @@ async function closeWindow(client, windowId) {
 }
 
 async function openProperties(client) {
+  await waitForSelector(client, '[data-operation-action="project-properties"]');
   await click(client, '[data-operation-action="project-properties"]');
   await waitForSelector(client, '[data-window-id="project-edit"]');
 }
 
 async function openMapping(client) {
+  await waitForSelector(client, '[data-operation-action="team-window"]');
   await click(client, '[data-operation-action="team-window"]');
   await waitForSelector(client, '[data-window-id="team"]');
   await click(client, '[data-window-id="team"] [data-action="open-repository-mapping"]');
@@ -346,6 +348,7 @@ async function openMapping(client) {
 }
 
 async function openPreferenceEditor(client, page, action, windowId) {
+  await waitForSelector(client, ".topbar button[aria-label]");
   await click(client, ".topbar button[aria-label]");
   await waitForSelector(client, ".prefs-grid");
   await click(client, `[data-pref-page="${page}"]`);
@@ -373,6 +376,7 @@ function faultEnv(operation, point, marker) {
 }
 
 async function closeAndReopen(launched, display, configDir, project, verify) {
+  await waitForSelector(launched.client, '[data-operation-action="project-close"]');
   await click(launched.client, '[data-operation-action="project-close"]');
   await waitFor("visible closed workspace", () =>
     launched.client.evaluate(`(() => ({
