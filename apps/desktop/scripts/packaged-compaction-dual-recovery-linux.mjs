@@ -5718,6 +5718,11 @@ try {
   if (keepWorkDir) {
     process.stderr.write(`Retained packaged E2E work directory: ${workDir}\n`);
   } else {
-    await rm(workDir, { recursive: true, force: true });
+    await rm(workDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
   }
 }
