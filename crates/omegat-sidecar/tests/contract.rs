@@ -1,6 +1,6 @@
 //! Contract tests: every exposed sidecar method has a stable request/response shape.
 
-use omegat_ipc::{RPC_METHOD_REGISTRY, RPC_REGISTRY_VERSION, WRITER_CATALOG};
+use omegat_ipc::{RpcMethod, RPC_METHOD_REGISTRY, RPC_REGISTRY_VERSION, WRITER_CATALOG};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -187,6 +187,13 @@ fn blocking_http_endpoint() -> (String, mpsc::Receiver<()>, std::thread::JoinHan
 
 #[test]
 fn every_listed_method_is_known() {
+    assert_eq!(RpcMethod::ALL.len(), RPC_METHOD_REGISTRY.len());
+    for (dispatch, registry) in RpcMethod::ALL.iter().zip(RPC_METHOD_REGISTRY) {
+        assert_eq!(dispatch.as_str(), registry.method);
+        assert_eq!(RpcMethod::from_name(registry.method), Some(*dispatch));
+    }
+    assert_eq!(RpcMethod::from_name("unregistered.writer"), None);
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -240,20 +240,28 @@ impl App {
         if cancellation.is_cancelled() {
             return Err((error_code::REQUEST_CANCELLED, "request cancelled".into()));
         }
+        let Some(method) = RpcMethod::from_name(method) else {
+            return Err((
+                error_code::METHOD_NOT_FOUND,
+                format!("unknown method {method}"),
+            ));
+        };
         match method {
-            "sys.version" => Ok(serde_json::to_value(version()).unwrap()),
-            "sys.capabilities" => Ok(serde_json::to_value(capabilities()).unwrap()),
-            "sys.rpc-registry" => Ok(json!({
+            RpcMethod::SysVersion => Ok(serde_json::to_value(version()).unwrap()),
+            RpcMethod::SysCapabilities => Ok(serde_json::to_value(capabilities()).unwrap()),
+            RpcMethod::SysRpcRegistry => Ok(json!({
                 "version": RPC_REGISTRY_VERSION,
                 "methods": RPC_METHOD_REGISTRY,
             })),
-            "sys.writer-catalog" => Ok(json!({
+            RpcMethod::SysWriterCatalog => Ok(json!({
                 "version": RPC_REGISTRY_VERSION,
                 "writers": WRITER_CATALOG,
             })),
-            "sys.plugins" => Ok(serde_json::to_value(self.plugins.list(None)).unwrap()),
-            "markers.list" => Ok(serde_json::to_value(self.plugins.registered_markers()).unwrap()),
-            "markers.query" => {
+            RpcMethod::SysPlugins => Ok(serde_json::to_value(self.plugins.list(None)).unwrap()),
+            RpcMethod::MarkersList => {
+                Ok(serde_json::to_value(self.plugins.registered_markers()).unwrap())
+            }
+            RpcMethod::MarkersQuery => {
                 let id = params
                     .get("id")
                     .and_then(Value::as_str)
@@ -270,7 +278,7 @@ impl App {
                         })?;
                 Ok(json!({ "marks": marks }))
             }
-            "prefs.get" => {
+            RpcMethod::PrefsGet => {
                 let preferences = match config_transaction::load_preferences(&self.prefs.config_dir)
                 {
                     Ok(preferences) => preferences,
@@ -287,7 +295,7 @@ impl App {
                 self.prefs = preferences;
                 Ok(serde_json::to_value(&self.prefs).unwrap())
             }
-            "prefs.set" => {
+            RpcMethod::PrefsSet => {
                 let mut params = params;
                 let (app_instance, batch_id, owner_process_id) =
                     config_transaction::take_scope(&mut params);
@@ -322,7 +330,7 @@ impl App {
                 self.prefs = preferences;
                 Ok(value)
             }
-            "prefs.patch" => {
+            RpcMethod::PrefsPatch => {
                 let mut patch = params;
                 let (app_instance, batch_id, owner_process_id) =
                     config_transaction::take_scope(&mut patch);
@@ -346,7 +354,7 @@ impl App {
                 self.prefs = preferences;
                 Ok(value)
             }
-            "project.create" => {
+            RpcMethod::ProjectCreate => {
                 let p: CreateProjectParams = serde_json::from_value(params).map_err(invalid)?;
                 let s = ProjectSession::create_with_filters(
                     &p,
@@ -358,7 +366,7 @@ impl App {
                 self.session = Some(s);
                 Ok(serde_json::to_value(dto).unwrap())
             }
-            "project.open" => {
+            RpcMethod::ProjectOpen => {
                 let p: OpenProjectParams = serde_json::from_value(params).map_err(invalid)?;
                 let recovery_props =
                     omegat_core::properties::ProjectProperties::load(std::path::Path::new(&p.root))
@@ -379,7 +387,7 @@ impl App {
                 self.session = Some(s);
                 Ok(serde_json::to_value(dto).unwrap())
             }
-            "project.close" => {
+            RpcMethod::ProjectClose => {
                 let receipt = if self.session.is_some() {
                     self.save_product_transaction("project.close", &params, cancellation)?
                 } else {
@@ -388,7 +396,7 @@ impl App {
                 self.session = None;
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
-            "project.recovery.detach" => {
+            RpcMethod::ProjectRecoveryDetach => {
                 let root = params
                     .get("root")
                     .and_then(Value::as_str)
@@ -415,12 +423,12 @@ impl App {
                 self.session = None;
                 Ok(json!({"ok": true}))
             }
-            "project.save" => {
+            RpcMethod::ProjectSave => {
                 let receipt =
                     self.save_product_transaction("project.save", &params, cancellation)?;
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
-            "project.compile" => {
+            RpcMethod::ProjectCompile => {
                 let file = params
                     .get("file")
                     .and_then(Value::as_str)
@@ -455,7 +463,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"files": n, "receipt": receipt}))
             }
-            "project.reload" => {
+            RpcMethod::ProjectReload => {
                 let root = self.session()?.props.root.clone();
                 let (generation, batch_id) = transaction_scope(&params, &root)?;
                 let session = self.session_mut()?;
@@ -489,14 +497,16 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            "project.external-refresh" => {
+            RpcMethod::ProjectExternalRefresh => {
                 self.session_mut()?
                     .refresh_external_cancellable(cancellation)
                     .map_err(core_err)?;
                 Ok(external_refresh_result(self.session()?))
             }
-            "project.props" => Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap()),
-            "project.update" => {
+            RpcMethod::ProjectProps => {
+                Ok(serde_json::to_value(self.session()?.props.to_dto()).unwrap())
+            }
+            RpcMethod::ProjectUpdate => {
                 let root = self.session()?.props.root.clone();
                 let (generation, batch_id) = transaction_scope(&params, &root)?;
                 let session = self.session_mut()?;
@@ -525,7 +535,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"props": session.props.to_dto(), "receipt": receipt}))
             }
-            "team.mapping" => {
+            RpcMethod::TeamMapping => {
                 let repos = params
                     .get("repositories")
                     .cloned()
@@ -565,7 +575,7 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            "entry.list" => {
+            RpcMethod::EntryList => {
                 let s = self.session()?;
                 let list: Vec<EntryDto> = s
                     .entries
@@ -575,7 +585,7 @@ impl App {
                     .collect();
                 Ok(serde_json::to_value(list).unwrap())
             }
-            "entry.get" => {
+            RpcMethod::EntryGet => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let s = self.session()?;
                 let e = s
@@ -584,16 +594,16 @@ impl App {
                     .ok_or((error_code::INVALID_PARAMS, "index".into()))?;
                 Ok(serde_json::to_value(e.to_dto(index)).unwrap())
             }
-            "entry.set" => self.set_entry_product_transaction(params, cancellation),
-            "matches.query" => {
+            RpcMethod::EntrySet => self.set_entry_product_transaction(params, cancellation),
+            RpcMethod::MatchesQuery => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 Ok(serde_json::to_value(self.session()?.matches_for(index)).unwrap())
             }
-            "glossary.query" => {
+            RpcMethod::GlossaryQuery => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 Ok(serde_json::to_value(self.session()?.glossary_for(index)).unwrap())
             }
-            "glossary.add" => {
+            RpcMethod::GlossaryAdd => {
                 let source = params
                     .get("source")
                     .and_then(|value| value.as_str())
@@ -645,7 +655,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
-            "search.run" => {
+            RpcMethod::SearchRun => {
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
                 let hits = self
                     .session()?
@@ -653,7 +663,7 @@ impl App {
                     .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(hits).unwrap())
             }
-            "search.replace" => {
+            RpcMethod::SearchReplace => {
                 let root = self.session()?.props.root.clone();
                 let (generation, batch_id) = transaction_scope(&params, &root)?;
                 let p: SearchParams = serde_json::from_value(params).map_err(invalid)?;
@@ -688,7 +698,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"replaced": replaced, "receipt": receipt}))
             }
-            "spell.ignore" => {
+            RpcMethod::SpellIgnore => {
                 let word = params
                     .get("word")
                     .and_then(|value| value.as_str())
@@ -723,11 +733,11 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
-            "spell.check" => {
+            RpcMethod::SpellCheck => {
                 let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 Ok(serde_json::to_value(self.session()?.spell.misspelled_tokens(text)).unwrap())
             }
-            "tmx.export" => {
+            RpcMethod::TmxExport => {
                 let level = params
                     .get("level")
                     .and_then(|v| v.as_str())
@@ -768,7 +778,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"xml": xml, "level": level, "receipt": receipt}))
             }
-            "languagetool.check" => {
+            RpcMethod::LanguagetoolCheck => {
                 let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 let url = (!self.prefs.languagetool_url.is_empty())
                     .then(|| self.prefs.languagetool_url.clone());
@@ -787,7 +797,7 @@ impl App {
                 .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(issues).unwrap())
             }
-            "finder.run" => {
+            RpcMethod::FinderRun => {
                 let xml = params
                     .get("xml")
                     .and_then(|v| v.as_str())
@@ -816,11 +826,11 @@ impl App {
                 }
                 Ok(json!({"urls": urls, "commands": commands, "items": items.len()}))
             }
-            "team.conflicts" => {
+            RpcMethod::TeamConflicts => {
                 let s = self.session()?;
                 Ok(json!({"conflicts": omegat_team::list_conflicts(&s.props)}))
             }
-            "team.resolve" => {
+            RpcMethod::TeamResolve => {
                 let (transaction_generation, transaction_batch_id) =
                     transaction_scope(&params, &self.session()?.props.root)?;
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -880,7 +890,7 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            "wiki.import" => {
+            RpcMethod::WikiImport => {
                 let source = params
                     .get("source")
                     .and_then(|value| value.as_str())
@@ -922,14 +932,14 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"files": files, "receipt": receipt}))
             }
-            "med.open" => {
+            RpcMethod::MedOpen => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
                 omegat_core::wiki::open_med(std::path::Path::new(src), std::path::Path::new(dest))
                     .map_err(core_err)?;
                 Ok(json!({"ok": true}))
             }
-            "project.convert" => {
+            RpcMethod::ProjectConvert => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
                 let sl = params
@@ -949,7 +959,7 @@ impl App {
                 .map_err(core_err)?;
                 Ok(json!({"ok": true}))
             }
-            "aligner.configure" => {
+            RpcMethod::AlignerConfigure => {
                 let mut params = params;
                 if params
                     .get("persist")
@@ -998,15 +1008,15 @@ impl App {
                     "target_dir": self.prefs.aligner_last_target_dir
                 }))
             }
-            "stats.get" => Ok(serde_json::to_value(self.session()?.stats()).unwrap()),
-            "issues.list" => {
+            RpcMethod::StatsGet => Ok(serde_json::to_value(self.session()?.stats()).unwrap()),
+            RpcMethod::IssuesList => {
                 let issues = self
                     .session()?
                     .issues_cancellable(cancellation)
                     .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(issues).unwrap())
             }
-            "filters.options" => {
+            RpcMethod::FiltersOptions => {
                 let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let reg = self.plugins.filter_registry();
                 let Some(f) = reg.by_id(id) else {
@@ -1024,14 +1034,14 @@ impl App {
                     }
                 }))
             }
-            "script.slots" => {
+            RpcMethod::ScriptSlots => {
                 let root = params
                     .get("root")
                     .and_then(|v| v.as_str())
                     .unwrap_or(self.prefs.script_dir.as_str());
                 Ok(json!({ "slots": omegat_script::list_slots(std::path::Path::new(root)) }))
             }
-            "script.slot" => {
+            RpcMethod::ScriptSlot => {
                 let slot = params.get("slot").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let root = std::path::Path::new(&self.prefs.script_dir);
@@ -1062,7 +1072,7 @@ impl App {
                 }
                 self.dispatch("script.run", run_params, cancellation)
             }
-            "project.import" => {
+            RpcMethod::ProjectImport => {
                 let files = params
                     .get("files")
                     .and_then(|v| v.as_array())
@@ -1116,7 +1126,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({ "copied": copied, "receipt": receipt }))
             }
-            "filters.list" => {
+            RpcMethod::FiltersList => {
                 let list: Vec<FilterInfoDto> = self
                     .plugins
                     .filter_registry()
@@ -1131,7 +1141,7 @@ impl App {
                     .collect();
                 Ok(serde_json::to_value(list).unwrap())
             }
-            "filters.parse" => {
+            RpcMethod::FiltersParse => {
                 let path = params.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 let id = params.get("id").and_then(|v| v.as_str());
                 let reg = self.plugins.filter_registry();
@@ -1160,7 +1170,7 @@ impl App {
                     .collect();
                 Ok(json!({"id": filter.id(), "segments": segments}))
             }
-            "mt.query" => {
+            RpcMethod::MtQuery => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let engine = params
                     .get("engine")
@@ -1172,7 +1182,7 @@ impl App {
                     .map_err(core_err)?;
                 Ok(serde_json::to_value(r).unwrap())
             }
-            "dict.query" => {
+            RpcMethod::DictQuery => {
                 let word = params.get("word").and_then(|v| v.as_str()).unwrap_or("");
                 let hits = self
                     .session()?
@@ -1180,13 +1190,13 @@ impl App {
                     .ok_or((error_code::REQUEST_CANCELLED, "request cancelled".into()))?;
                 Ok(serde_json::to_value(hits).unwrap())
             }
-            "completer.query" => {
+            RpcMethod::CompleterQuery => {
                 let index = params.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let prefix = params.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
                 let draft = params.get("text").and_then(|v| v.as_str());
                 Ok(serde_json::to_value(self.session()?.completer(index, prefix, draft)).unwrap())
             }
-            "spell.install" => {
+            RpcMethod::SpellInstall => {
                 let mut params = params;
                 let (app_instance, batch_id, owner_process_id) =
                     config_transaction::take_scope(&mut params);
@@ -1200,7 +1210,7 @@ impl App {
                 )
                 .map_err(|error| (error_code::IO, error))
             }
-            "spell.learn" => {
+            RpcMethod::SpellLearn => {
                 let word = params
                     .get("word")
                     .and_then(|value| value.as_str())
@@ -1235,7 +1245,7 @@ impl App {
                 let receipt = scoped_product_receipt(&props, generation, batch_id.as_deref())?;
                 Ok(json!({"ok": true, "receipt": receipt}))
             }
-            "team.sync" => {
+            RpcMethod::TeamSync => {
                 let (transaction_generation, transaction_batch_id) =
                     transaction_scope(&params, &self.session()?.props.root)?;
                 let s = self.session()?;
@@ -1274,7 +1284,7 @@ impl App {
                     Err(e) => Err((error_code::INTERNAL_ERROR, e.to_string())),
                 }
             }
-            "team.commit" => {
+            RpcMethod::TeamCommit => {
                 let (transaction_generation, transaction_batch_id) =
                     transaction_scope(&params, &self.session()?.props.root)?;
                 let which = params
@@ -1312,7 +1322,7 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            "script.run" => {
+            RpcMethod::ScriptRun => {
                 let src = params
                     .get("source")
                     .and_then(|v| v.as_str())
@@ -1390,7 +1400,7 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            "align.run" => {
+            RpcMethod::AlignRun => {
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let target = params.get("target").and_then(|v| v.as_str()).unwrap_or("");
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
@@ -1524,7 +1534,7 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            "align.edit" => {
+            RpcMethod::AlignEdit => {
                 let action = params
                     .get("action")
                     .and_then(|v| v.as_str())
@@ -1785,7 +1795,7 @@ impl App {
                     "pairs": next.iter().map(|(s,t)| json!({"source": s, "target": t})).collect::<Vec<_>>()
                 }))
             }
-            "align.write" => {
+            RpcMethod::AlignWrite => {
                 let dest = params.get("dest").and_then(|v| v.as_str()).unwrap_or("");
                 if dest.is_empty() {
                     return Err((-32602, "align.write requires dest".into()));
@@ -1877,9 +1887,16 @@ impl App {
                     "receipt": receipt,
                 }))
             }
-            other => Err((
-                error_code::METHOD_NOT_FOUND,
-                format!("unknown method {other}"),
+            RpcMethod::ProjectRefreshEnqueue
+            | RpcMethod::ProjectRefreshDiscard
+            | RpcMethod::TransactionReceiptDiscover
+            | RpcMethod::TransactionReceiptPending
+            | RpcMethod::TransactionReceiptAck => Err((
+                error_code::INTERNAL_ERROR,
+                format!(
+                    "registered method {} bypassed its durable journal dispatcher",
+                    method.as_str()
+                ),
             )),
         }
     }
@@ -2409,19 +2426,32 @@ fn refresh_scope(
 }
 
 fn dispatch_refresh_journal(
-    method: &str,
+    method: Option<RpcMethod>,
     params: Value,
     config_dir: &std::path::Path,
     open_root: Option<&std::path::Path>,
     owner_prepared_and_claimed: bool,
     cancellation: &CancellationToken,
 ) -> Option<std::result::Result<Value, (i32, String)>> {
-    if !method.starts_with("project.refresh.") && !method.starts_with("transaction.receipt.") {
+    let method = method?;
+    if !matches!(
+        method,
+        RpcMethod::ProjectRefreshEnqueue
+            | RpcMethod::ProjectRefreshDiscard
+            | RpcMethod::TransactionReceiptDiscover
+            | RpcMethod::TransactionReceiptPending
+            | RpcMethod::TransactionReceiptAck
+    ) {
         return None;
     }
     Some((|| {
-        if method.starts_with("transaction.receipt.") {
-            if method == "transaction.receipt.discover" {
+        if matches!(
+            method,
+            RpcMethod::TransactionReceiptDiscover
+                | RpcMethod::TransactionReceiptPending
+                | RpcMethod::TransactionReceiptAck
+        ) {
+            if method == RpcMethod::TransactionReceiptDiscover {
                 let mut projects = Vec::new();
                 for root in refresh_journal::active_project_roots(config_dir)
                     .map_err(refresh_journal_err)?
@@ -2443,13 +2473,13 @@ fn dispatch_refresh_journal(
                 }
                 return Ok(json!({ "projects": projects }));
             }
-            let require_batch_id = method == "transaction.receipt.ack";
+            let require_batch_id = method == RpcMethod::TransactionReceiptAck;
             let (root, app_instance, owner_process_id, generation, batch_id, operation) =
                 transaction_receipt_scope(&params, open_root, require_batch_id)?;
             let props =
                 omegat_core::properties::ProjectProperties::load(&root).map_err(core_err)?;
             return match method {
-                "transaction.receipt.pending" => {
+                RpcMethod::TransactionReceiptPending => {
                     let owner_retry_timeout = transaction_owner_retry_timeout(&params)?;
                     let owner_retry_attempts = transaction_owner_retry_attempts(&params)?;
                     let (mut envelopes, previous_owner_process_ids) =
@@ -2474,7 +2504,7 @@ fn dispatch_refresh_journal(
                             .then(|| owner_retry_json(&previous_owner_process_ids)),
                     }))
                 }
-                "transaction.receipt.ack" => {
+                RpcMethod::TransactionReceiptAck => {
                     let batch_id = batch_id.as_deref().expect("required transaction batch id");
                     let operation = operation
                         .as_deref()
@@ -2537,15 +2567,12 @@ fn dispatch_refresh_journal(
                     })?;
                     Ok(json!({ "ack": ack }))
                 }
-                _ => Err((
-                    error_code::METHOD_NOT_FOUND,
-                    format!("unknown method {method}"),
-                )),
+                _ => unreachable!("transaction receipt routing was checked above"),
             };
         }
         let (root, app_instance, generation) = refresh_scope(&params, open_root)?;
         match method {
-            "project.refresh.enqueue" => {
+            RpcMethod::ProjectRefreshEnqueue => {
                 let paths = params
                     .get("paths")
                     .cloned()
@@ -2591,15 +2618,12 @@ fn dispatch_refresh_journal(
                 .map_err(refresh_journal_err)?;
                 Ok(json!({ "batch": batch }))
             }
-            "project.refresh.discard" => {
+            RpcMethod::ProjectRefreshDiscard => {
                 refresh_journal::discard(config_dir, &root, &app_instance)
                     .map_err(refresh_journal_err)?;
                 Ok(json!({ "discarded": true }))
             }
-            _ => Err((
-                error_code::METHOD_NOT_FOUND,
-                format!("unknown method {method}"),
-            )),
+            _ => unreachable!("project refresh routing was checked above"),
         }
     })())
 }
@@ -2877,7 +2901,7 @@ fn main() {
                     let _journal = refresh_journal_lock.lock().unwrap();
                     let active = open_project.lock().unwrap();
                     dispatch_refresh_journal(
-                        &req.method,
+                        RpcMethod::from_name(&req.method),
                         refresh_params,
                         &refresh_config_dir,
                         active.as_deref(),

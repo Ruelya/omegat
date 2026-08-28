@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
@@ -36,6 +36,25 @@ fn enum_variant(value: &str, allowed: &[(&str, &'static str)], field: &str) -> &
         .unwrap_or_else(|| panic!("unsupported {field} {value:?} in rpc-methods.json"))
 }
 
+fn method_variant(method: &str) -> String {
+    let mut variant = String::new();
+    for part in method.split(|character: char| !character.is_ascii_alphanumeric()) {
+        if part.is_empty() {
+            continue;
+        }
+        let mut characters = part.chars();
+        if let Some(first) = characters.next() {
+            variant.extend(first.to_uppercase());
+            variant.push_str(characters.as_str());
+        }
+    }
+    assert!(
+        !variant.is_empty(),
+        "RPC method {method:?} has no enum variant"
+    );
+    variant
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=rpc-methods.json");
     let bytes = std::fs::read("rpc-methods.json").expect("read rpc-methods.json");
@@ -44,6 +63,7 @@ fn main() {
     assert_eq!(registry.version, 1, "unsupported RPC registry version");
 
     let mut methods = BTreeSet::new();
+    let mut variants = BTreeMap::new();
     let mut writer_methods = BTreeSet::new();
     let mut project_writers = 0;
     let mut config_writers = 0;
@@ -53,6 +73,11 @@ fn main() {
             methods.insert(entry.method.as_str()),
             "duplicate RPC method {}",
             entry.method
+        );
+        let variant = method_variant(&entry.method);
+        assert!(
+            variants.insert(variant.clone(), entry.method.as_str()).is_none(),
+            "RPC methods generate duplicate enum variant {variant}"
         );
         if let Some(writer) = &entry.writer {
             assert!(
@@ -162,6 +187,53 @@ fn main() {
         .unwrap();
     }
     generated.push_str("];\n");
+    generated.push_str(
+        "#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]\n\
+         pub enum RpcMethod {\n",
+    );
+    for entry in &registry.methods {
+        writeln!(&mut generated, "    {},", method_variant(&entry.method)).unwrap();
+    }
+    generated.push_str("}\n");
+    generated.push_str("impl RpcMethod {\n");
+    generated.push_str("    pub const ALL: &'static [Self] = &[\n");
+    for entry in &registry.methods {
+        writeln!(
+            &mut generated,
+            "        Self::{},",
+            method_variant(&entry.method)
+        )
+        .unwrap();
+    }
+    generated.push_str("    ];\n");
+    generated.push_str("    pub const fn as_str(self) -> &'static str {\n");
+    generated.push_str("        match self {\n");
+    for entry in &registry.methods {
+        writeln!(
+            &mut generated,
+            "            Self::{} => {:?},",
+            method_variant(&entry.method),
+            entry.method
+        )
+        .unwrap();
+    }
+    generated.push_str("        }\n");
+    generated.push_str("    }\n");
+    generated.push_str("    pub fn from_name(method: &str) -> Option<Self> {\n");
+    generated.push_str("        match method {\n");
+    for entry in &registry.methods {
+        writeln!(
+            &mut generated,
+            "            {:?} => Some(Self::{}),",
+            entry.method,
+            method_variant(&entry.method)
+        )
+        .unwrap();
+    }
+    generated.push_str("            _ => None,\n");
+    generated.push_str("        }\n");
+    generated.push_str("    }\n");
+    generated.push_str("}\n");
     generated.push_str("pub const WRITER_CATALOG: &[WriterCatalogEntry] = &[\n");
     for entry in registry
         .methods
