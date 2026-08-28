@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import {
   access,
   mkdir,
@@ -16,6 +16,7 @@ import {
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 const WAIT_MS = 60_000;
 const desktopDir = resolve(import.meta.dirname, "..");
@@ -27,6 +28,7 @@ const sidecar =
   ?? resolve(desktopDir, "..", "..", "target", "release", "omegat-sidecar");
 const keepWorkDir = process.env.OMEGAT_KEEP_E2E_WORKDIR === "1";
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+const execFile = promisify(execFileCallback);
 
 async function waitFor(label, check, timeoutMs = WAIT_MS) {
   const deadline = Date.now() + timeoutMs;
@@ -82,6 +84,15 @@ async function unusedPort() {
     server.close((error) => error ? reject(error) : resolveClose())
   );
   return address.port;
+}
+
+async function git(args, cwd) {
+  const result = await execFile("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  return result.stdout.trim();
 }
 
 async function startXvfb() {
@@ -927,6 +938,8 @@ async function prepareAtomicElectionProject(
   });
   let remotePath = null;
   let remoteContent = null;
+  let gitRemote = null;
+  let gitHead = null;
   if (headKind === "team") {
     remotePath = join(remote, "target", "atomic.txt");
     await mkdir(dirname(remotePath), { recursive: true });
@@ -939,6 +952,53 @@ async function prepareAtomicElectionProject(
         mappings: [{
           local: "/target/atomic.txt",
           repository: "/target/atomic.txt",
+          includes: [],
+          excludes: [],
+        }],
+      }],
+    });
+    await session.request("team.sync", {});
+  } else if (headKind === "team-sync") {
+    gitRemote = join(remote, "main.git");
+    const gitSeed = join(remote, "main-seed");
+    const fileRemote = join(remote, "file-remote");
+    remotePath = join(fileRemote, "mapping.marker");
+    await Promise.all([
+      mkdir(gitSeed, { recursive: true }),
+      mkdir(fileRemote, { recursive: true }),
+    ]);
+    await git(["init", "--bare", gitRemote], remote);
+    await git(["init", "-b", "main"], gitSeed);
+    await git(["config", "user.name", "OmegaT E2E"], gitSeed);
+    await git(["config", "user.email", "omegat-e2e@example.invalid"], gitSeed);
+    await writeFile(join(gitSeed, "main-seed.keep"), "main seed\n", "utf8");
+    await git(["add", "-A"], gitSeed);
+    await git(["commit", "-m", "seed atomic team sync remote"], gitSeed);
+    await git(["remote", "add", "origin", gitRemote], gitSeed);
+    await git(["push", "-u", "origin", "HEAD:refs/heads/main"], gitSeed);
+    await Promise.all([
+      writeFile(join(project, "team-main.marker"), `${label} main v1\n`, "utf8"),
+      writeFile(join(project, "team-mapping.marker"), `${label} mapping v1\n`, "utf8"),
+      writeFile(join(fileRemote, "mapping-seed.keep"), "mapping seed\n", "utf8"),
+    ]);
+    await session.request("team.mapping", {
+      repositories: [{
+        repo_type: "git",
+        url: gitRemote,
+        branch: "main",
+        mappings: [{
+          local: "/team-main.marker",
+          repository: "/main.marker",
+          includes: [],
+          excludes: [],
+        }],
+      }, {
+        repo_type: "file",
+        url: fileRemote,
+        branch: null,
+        mappings: [{
+          local: "/team-mapping.marker",
+          repository: "/mapping.marker",
           includes: [],
           excludes: [],
         }],
@@ -1002,6 +1062,26 @@ async function prepareAtomicElectionProject(
     operation = "commit-target";
     assert.equal(head.receipt.payload.operation, operation);
     assert.equal(await readFile(remotePath, "utf8"), remoteContent);
+  } else if (headKind === "team-sync") {
+    remoteContent = `${label} mapping committed exactly once\n`;
+    await Promise.all([
+      writeFile(join(project, "team-main.marker"), `${label} main v2\n`, "utf8"),
+      writeFile(join(project, "team-mapping.marker"), remoteContent, "utf8"),
+    ]);
+    const head = await session.request("team.sync", {
+      transaction_project_root: project,
+      transaction_generation: 131,
+      transaction_batch_id: headBatchId,
+    });
+    operation = "sync";
+    assert.equal(head.receipt.payload.operation, operation);
+    assert.equal(await readFile(remotePath, "utf8"), remoteContent);
+    gitHead = await git([
+      "--git-dir",
+      gitRemote,
+      "rev-parse",
+      "refs/heads/main",
+    ]);
   } else if (headKind === "save") {
     const head = await session.request("project.save", {
       transaction_project_root: project,
@@ -1055,6 +1135,8 @@ async function prepareAtomicElectionProject(
     refreshHistoryPath: join(transactions, "external-refresh-history.ndjson"),
     remotePath,
     remoteContent,
+    gitRemote,
+    gitHead,
   };
 }
 
@@ -2695,7 +2777,7 @@ try {
   await terminatePackaged(launchedA);
   launchedA = undefined;
 
-  for (const headKind of ["close", "team", "save"]) {
+  for (const headKind of ["close", "team", "team-sync", "save"]) {
     const label = `atomic-${headKind}`;
     const config = join(workDir, `${label}-config`);
     const project = join(workDir, `${label}-project`);
@@ -2705,10 +2787,10 @@ try {
     const preKillTracePath = join(workDir, `${label}-pre-kill-trace.ndjson`);
     const electionMarkerPath = join(workDir, `${label}-winner.json`);
     const electionReleasePath = join(workDir, `${label}-winner-release`);
-    const replacementTracePaths = [
-      join(workDir, `${label}-replacement-a-trace.ndjson`),
-      join(workDir, `${label}-replacement-b-trace.ndjson`),
-    ];
+    const replacementTracePaths = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${label}-replacement-${index}-trace.ndjson`),
+    );
     const prepared = await prepareAtomicElectionProject(
       config,
       project,
@@ -2799,6 +2881,15 @@ try {
     const remoteMtimeBeforeElection = prepared.remotePath
       ? (await stat(prepared.remotePath, { bigint: true })).mtimeNs
       : null;
+    const gitHeadBeforeElection = prepared.gitRemote
+      ? await git([
+          "--git-dir",
+          prepared.gitRemote,
+          "rev-parse",
+          "refs/heads/main",
+        ])
+      : null;
+    if (prepared.gitHead) assert.equal(gitHeadBeforeElection, prepared.gitHead);
 
     const killedOldOwner = await killPackaged(launchedA);
     launchedA = undefined;
@@ -2809,7 +2900,7 @@ try {
       `${headKind} old owner PID remained live before replacement launch`,
     );
 
-    [launchedA, launchedB] = await Promise.all(
+    const replacements = await Promise.all(
       replacementTracePaths.map((tracePath) =>
         launchPackagedRenderer(xvfb.display, config, startupProject, {
           OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
@@ -2819,6 +2910,7 @@ try {
         })
       ),
     );
+    quorumReplacements = replacements;
     const electionMarker = await waitFor(
       `${headKind} simultaneous replacement winner`,
       async () =>
@@ -2829,15 +2921,13 @@ try {
     assert.equal(electionMarker.batch_id, prepared.headBatchId);
     assert.equal(electionMarker.operation, prepared.operation);
     assert.notEqual(electionMarker.owner_process_id, killedOldOwner.browserPid);
-    const replacements = [launchedA, launchedB];
     const winnerIndex = replacements.findIndex(
       (replacement) =>
         replacement.application.pid === electionMarker.owner_process_id,
     );
     assert.notEqual(winnerIndex, -1);
-    const loserIndex = 1 - winnerIndex;
     const winner = replacements[winnerIndex];
-    const loser = replacements[loserIndex];
+    const losers = replacements.filter((_, index) => index !== winnerIndex);
     const durableWinner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
     assert.equal(durableWinner.process_id, winner.application.pid);
     assert.equal(durableWinner.app_instance, electionMarker.app_instance);
@@ -2855,39 +2945,41 @@ try {
         `${headKind} replacement delivered before the winner release`,
       );
     }
-    const loserScope = {
-      root: project,
-      app_instance: `${label}-simultaneous-loser`,
-      owner_process_id: loser.application.pid,
-      generation: electionMarker.generation + 1,
-    };
-    const loserPending = await invokeRpcResult(
-      loser.client,
-      "transaction.receipt.pending",
-      loserScope,
-    );
-    assert.equal(
-      loserPending.resolved,
-      false,
-      `${headKind} losing replacement obtained the product head`,
-    );
-    assert.match(loserPending.error, /locked by another process|owned by live app/);
-    const loserAck = await invokeRpcResult(
-      loser.client,
-      "transaction.receipt.ack",
-      {
-        ...loserScope,
-        batch_id: prepared.headBatchId,
-        operation: prepared.operation,
-        outcome: "succeeded",
-      },
-    );
-    assert.equal(
-      loserAck.resolved,
-      false,
-      `${headKind} losing replacement acknowledged the product head`,
-    );
-    assert.match(loserAck.error, /locked by another process|owned by live app/);
+    for (const [index, loser] of losers.entries()) {
+      const loserScope = {
+        root: project,
+        app_instance: `${label}-simultaneous-loser-${index}`,
+        owner_process_id: loser.application.pid,
+        generation: electionMarker.generation + index + 1,
+      };
+      const loserPending = await invokeRpcResult(
+        loser.client,
+        "transaction.receipt.pending",
+        loserScope,
+      );
+      assert.equal(
+        loserPending.resolved,
+        false,
+        `${headKind} losing replacement obtained the product head`,
+      );
+      assert.match(loserPending.error, /locked by another process|owned by live app/);
+      const loserAck = await invokeRpcResult(
+        loser.client,
+        "transaction.receipt.ack",
+        {
+          ...loserScope,
+          batch_id: prepared.headBatchId,
+          operation: prepared.operation,
+          outcome: "succeeded",
+        },
+      );
+      assert.equal(
+        loserAck.resolved,
+        false,
+        `${headKind} losing replacement acknowledged the product head`,
+      );
+      assert.match(loserAck.error, /locked by another process|owned by live app/);
+    }
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
       durableWinner,
@@ -2914,15 +3006,16 @@ try {
       1,
       `${headKind} winner received the product head more than once`,
     );
-    assert.equal(
-      await pathExists(replacementTracePaths[loserIndex])
-        ? parseNdjson(
-            await readFile(replacementTracePaths[loserIndex], "utf8"),
-          ).length
-        : 0,
-      0,
-      `${headKind} loser received a renderer envelope`,
-    );
+    for (const [index, tracePath] of replacementTracePaths.entries()) {
+      if (index === winnerIndex) continue;
+      assert.equal(
+        await pathExists(tracePath)
+          ? parseNdjson(await readFile(tracePath, "utf8")).length
+          : 0,
+        0,
+        `${headKind} loser received a renderer envelope`,
+      );
+    }
 
     const productHistory = parseNdjson(await readFile(prepared.historyPath, "utf8"));
     assert.equal(
@@ -2966,6 +3059,18 @@ try {
       assert.equal(
         await readFile(prepared.remotePath, "utf8"),
         prepared.remoteContent,
+      );
+    }
+    if (prepared.gitRemote) {
+      assert.equal(
+        await git([
+          "--git-dir",
+          prepared.gitRemote,
+          "rev-parse",
+          "refs/heads/main",
+        ]),
+        gitHeadBeforeElection,
+        "team.sync election replayed the Git publication",
       );
     }
 
@@ -3018,8 +3123,8 @@ try {
         selectedBatchId: electionMarker.batch_id,
         dispatchOrder: [prepared.headBatchId, prepared.refreshBatchId],
       },
-      loser: {
-        browserPid: loser.application.pid,
+      losers: {
+        browserPids: losers.map((loser) => loser.application.pid),
         deliveredEnvelopes: 0,
         pendingRejected: true,
         acknowledgementRejected: true,
@@ -3033,15 +3138,14 @@ try {
       terminalRefreshCount: 1,
       tmxWriteReplayed: false,
       teamRemoteWriteReplayed: false,
+      gitHeadReplayed: false,
       completeEntryKey: prepared.key,
       decoyEntryKey: prepared.decoyKey,
       winnerDocument3Surfaces: winnerWorkspace.activeSurfaces,
     });
 
-    await terminatePackaged(launchedA);
-    launchedA = undefined;
-    await terminatePackaged(launchedB);
-    launchedB = undefined;
+    await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [];
 
     if (headKind === "close") {
       launchedA = await launchPackaged(xvfb.display, config, project);

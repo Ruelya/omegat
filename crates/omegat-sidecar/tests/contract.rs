@@ -3835,7 +3835,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             .map(|index| {
                 let app_instance = format!("replacement-{point}-first-{index}");
                 let generation = (20 + index) as u64;
-                let (mut child, mut input, mut output) = spawn_sidecar(
+                let (child, mut input, mut output) = spawn_sidecar(
                     &config,
                     None,
                     Some((&first_claim_marker, &first_claim_release)),
@@ -3934,7 +3934,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             .map(|index| {
                 let app_instance = format!("replacement-{point}-second-{index}");
                 let generation = (30 + index) as u64;
-                let (mut child, mut input, mut output) = spawn_sidecar(
+                let (child, mut input, mut output) = spawn_sidecar(
                     &config,
                     None,
                     Some((&second_claim_marker, &second_claim_release)),
