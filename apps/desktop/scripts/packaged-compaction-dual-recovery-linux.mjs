@@ -3246,7 +3246,11 @@ try {
       label,
       headKind,
     );
-    const startupProject = headKind === "close" ? null : project;
+    // Every contender starts detached. Concurrently opening the same project
+    // would exercise the project-session lock instead of the transaction owner
+    // election and can prevent a real Electron process from entering its
+    // bounded owner wait.
+    const startupProject = null;
 
     launchedA = await launchPackaged(xvfb.display, config, startupProject, {
       OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: prepared.operation,
@@ -3576,35 +3580,34 @@ try {
       `${headKind} winning replacement renderer publication`,
       async () => {
         const state = await workspaceState(winner.client);
-        if (headKind === "close") {
-          return state.project === null
-              && state.welcome
-              && state.activeSurfaces === 0
-            ? state
-            : undefined;
-        }
-        return state.project === project
-            && state.source === prepared.source
-            && state.translation === prepared.translation
-            && state.activeSurfaces === 1
-            && state.key
+        return state.project === null
+            && state.welcome
+            && state.activeSurfaces === 0
           ? state
           : undefined;
       },
     );
-    if (headKind !== "close") {
-      assert.deepEqual(JSON.parse(winnerWorkspace.key), prepared.key);
-      const entries = await winner.client.evaluate(
-        'window.omegat.rpc("entry.list", {})',
-        true,
-      );
-      const wanted = entries.find((entry) => entry.key.file === prepared.key.file);
-      const decoy = entries.find((entry) => entry.key.file === prepared.decoyKey.file);
-      assert.deepEqual(wanted.key, prepared.key);
-      assert.equal(wanted.translation, prepared.translation);
-      assert.deepEqual(decoy.key, prepared.decoyKey);
-      assert.equal(decoy.translation, "");
-    }
+
+    await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [];
+
+    launchedA = await launchPackaged(xvfb.display, config, project);
+    const reopened = await workspaceState(launchedA.client);
+    assert.equal(reopened.project, project);
+    assert.equal(reopened.source, prepared.source);
+    assert.equal(reopened.translation, prepared.translation);
+    assert.equal(reopened.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(reopened.key), prepared.key);
+    const entries = await launchedA.client.evaluate(
+      'window.omegat.rpc("entry.list", {})',
+      true,
+    );
+    const wanted = entries.find((entry) => entry.key.file === prepared.key.file);
+    const decoy = entries.find((entry) => entry.key.file === prepared.decoyKey.file);
+    assert.deepEqual(wanted.key, prepared.key);
+    assert.equal(wanted.translation, prepared.translation);
+    assert.deepEqual(decoy.key, prepared.decoyKey);
+    assert.equal(decoy.translation, "");
 
     atomicReplacementElectionResults.push({
       headKind,
@@ -3641,25 +3644,12 @@ try {
       gitHeadReplayed: false,
       completeEntryKey: prepared.key,
       decoyEntryKey: prepared.decoyKey,
-      winnerDocument3Surfaces: winnerWorkspace.activeSurfaces,
+      detachedWinnerDocument3Surfaces: winnerWorkspace.activeSurfaces,
+      winnerDocument3Surfaces: reopened.activeSurfaces,
+      winnerDocument3SurfacesAfterExplicitReopen: reopened.activeSurfaces,
     });
-
-    await Promise.all(replacements.map((replacement) => terminatePackaged(replacement)));
-    quorumReplacements = [];
-
-    if (headKind === "close") {
-      launchedA = await launchPackaged(xvfb.display, config, project);
-      const reopened = await workspaceState(launchedA.client);
-      assert.equal(reopened.project, project);
-      assert.equal(reopened.source, prepared.source);
-      assert.equal(reopened.translation, prepared.translation);
-      assert.equal(reopened.activeSurfaces, 1);
-      assert.deepEqual(JSON.parse(reopened.key), prepared.key);
-      const result = atomicReplacementElectionResults.at(-1);
-      result.winnerDocument3SurfacesAfterExplicitReopen = reopened.activeSurfaces;
-      await terminatePackaged(launchedA);
-      launchedA = undefined;
-    }
+    await terminatePackaged(launchedA);
+    launchedA = undefined;
   }
 
   for (const cancellationPoint of [
