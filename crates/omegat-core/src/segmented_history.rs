@@ -766,7 +766,7 @@ impl<T: SegmentedHistoryRecord> SegmentedHistory<T> {
 
     fn read_segment(&self, expected: &SegmentDescriptor) -> Result<ArchiveSegment<T>, String> {
         #[cfg(test)]
-        SEGMENT_READS.fetch_add(1, Ordering::Relaxed);
+        SEGMENT_READS.with(|reads| reads.set(reads.get() + 1));
         let path = self.archive_directory().join(&expected.file);
         let bytes = std::fs::read(&path).map_err(|error| {
             format!("read segmented history segment {}: {error}", path.display())
@@ -1255,7 +1255,9 @@ fn sha256(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-static SEGMENT_READS: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static SEGMENT_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 mod tests {
@@ -1324,9 +1326,9 @@ mod tests {
             3
         );
         assert!(store.status().generation >= 1);
-        SEGMENT_READS.store(0, Ordering::Relaxed);
+        SEGMENT_READS.with(|reads| reads.set(0));
         assert_eq!(store.records_for("batch-0").unwrap()[0].sequence, 0);
-        assert_eq!(SEGMENT_READS.load(Ordering::Relaxed), 1);
+        SEGMENT_READS.with(|reads| assert_eq!(reads.get(), 1));
         assert_eq!(store.append(record(&scope, "batch-0", 0)).unwrap(), false);
     }
 
