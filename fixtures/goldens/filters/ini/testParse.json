@@ -1,0 +1,54 @@
+{
+  "id": "ini",
+  "fixture": "ini/file-INIFilter.ini",
+  "java_test": "org.omegat.filters.INIFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Value",
+    "Value",
+    "Value2",
+    "Value3",
+    "Value4",
+    "Continued Value4",
+    "Value5",
+    "Continued Value5 start with space",
+    "More Continued Value5",
+    "Value6",
+    "Value7 # not comment",
+    "Value without ID"
+  ],
+  "ids": [
+    "nsID",
+    "Section/ID",
+    "Section/ID2",
+    "Section/ID3",
+    "Section/ID4",
+    "Section/ID4/#1",
+    "Section/ID5",
+    "Section/ID5/#1",
+    "Section/ID5/#2",
+    "Section/[ID6]",
+    "Section/ID7",
+    "Section/#L31"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "nsID=Value\r\n\r\n[Section]\r\nID=Value\r\n\r\nID2=Value2\r\n\r\n; quote\r\n\r\nID3=\"Value3\"\r\n\r\n; Continuous lines\r\n\r\nID4=Value4\r\nContinued Value4\r\nID5=Value5\r\n Continued Value5 start with space\r\nMore Continued Value5\r\n\r\n# corner cases\r\n\r\n[ID6]=Value6\r\n\r\n;1;=NotValue\r\n\r\n#2#=NotValue\r\n #3#=NotValue\r\n\r\nID7=Value7 # not comment\r\n\r\nValue without ID\r\n"
+}

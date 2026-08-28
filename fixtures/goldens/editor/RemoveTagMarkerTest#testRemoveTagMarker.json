@@ -1,0 +1,14 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.RemoveTagMarkerTest#testRemoveTagMarker",
+  "source": "source %remove",
+  "translation": null,
+  "marks": [
+    {
+      "startOffset": 7,
+      "endOffset": 14,
+      "toolTipText": "Text to remove",
+      "entryPart": "SOURCE"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

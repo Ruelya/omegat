@@ -1,0 +1,10 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter-invalid-content.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testInvalidXMLOnWeirdPath",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "expect_error": true
+}
