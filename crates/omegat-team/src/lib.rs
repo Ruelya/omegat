@@ -1095,6 +1095,8 @@ mod tests {
         std::fs::write(props.source_dir.join("first.txt"), "local first").unwrap();
         std::fs::write(props.source_dir.join("second.txt"), "local second").unwrap();
 
+        let _fault_lock =
+            crate::remote_repository_provider::lock_commit_fault_injection();
         crate::remote_repository_provider::fail_next_commit_for(1);
         let error = sync(&props).unwrap_err();
         assert!(matches!(error, TeamError::Command(_)), "{error:?}");
@@ -1329,6 +1331,8 @@ mod tests {
         std::fs::write(props.source_dir.join("file.txt"), "file-candidate").unwrap();
         std::fs::write(props.source_dir.join("block.txt"), "block-candidate").unwrap();
 
+        let _fault_lock =
+            crate::remote_repository_provider::lock_commit_fault_injection();
         crate::remote_repository_provider::fail_next_commit_for(2);
         let failed = commit_project_files_cancellable_scoped(
             &props,

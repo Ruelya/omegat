@@ -22,12 +22,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
+#[cfg(test)]
+static COMMIT_FAULT_INJECTION_LOCK: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 static CRASH_AFTER_PUBLISH_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
 #[cfg(test)]
@@ -72,6 +76,11 @@ pub(crate) fn acquire_project_transaction_lock(
 #[cfg(test)]
 pub(crate) fn fail_next_commit_for(repository_index: usize) {
     FAIL_COMMIT_REPOSITORY.store(repository_index, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn lock_commit_fault_injection() -> MutexGuard<'static, ()> {
+    COMMIT_FAULT_INJECTION_LOCK.lock().unwrap()
 }
 
 #[cfg(test)]
