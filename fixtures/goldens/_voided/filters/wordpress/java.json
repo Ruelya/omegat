@@ -1,0 +1,15 @@
+{
+  "id": "wordpress",
+  "fixture": "wordpress/simple.xml",
+  "java_test": "org.omegat.filters dialect/table for wordpress",
+  "options": {},
+  "sources": [
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Hello",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.cli.CommandCommonTest#testParseCommonParamsAppliesSubCommandOptions",
+  "project_locking": false,
+  "location_save": false,
+  "no_team": true,
+  "tokenizer_source": "org.omegat.tokenizer.LuceneEnglishTokenizer",
+  "tokenizer_target": "org.omegat.tokenizer.LuceneGermanTokenizer",
+  "argv": [
+    "start",
+    "--no-project-locking",
+    "--no-location-save",
+    "--no-team",
+    "--ITokenizer",
+    "org.omegat.tokenizer.LuceneEnglishTokenizer",
+    "--ITokenizerTarget",
+    "org.omegat.tokenizer.LuceneGermanTokenizer"
+  ]
+}

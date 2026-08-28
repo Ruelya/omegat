@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringWholeWordsOnlyIgnoredForRegex",
+  "cases": [
+    {
+      "hit": true,
+      "text": "Netherlands"
+    }
+  ],
+  "type": "REGEXP",
+  "query": "the"
+}

@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.dictionaries.LingvoDSLTest#testReadFileDict",
+  "word": "space",
+  "article": "<div style=\"text-indent: 30px\">Only a single white space on first character</div>",
+  "keys": [
+    "org.omegat.core.dictionaries.LingvoDSLTest#testReadFileDict"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testFilePatterns",
+  "cases": [
+    {
+      "match": true,
+      "mask": "*.txt",
+      "path": "/foo.txt"
+    },
+    {
+      "match": true,
+      "mask": "*.txt",
+      "path": "/bar/foo.txt"
+    },
+    {
+      "match": false,
+      "mask": "*.txt",
+      "path": "/foo.txty"
+    },
+    {
+      "match": true,
+      "mask": "/*.txt",
+      "path": "/foo.txt"
+    },
+    {
+      "match": false,
+      "mask": "/*.txt",
+      "path": "/bar/foo.txt"
+    },
+    {
+      "match": true,
+      "mask": "**/test/**",
+      "path": "test"
+    },
+    {
+      "match": false,
+      "mask": "**/test/**",
+      "path": "/foo/tests/bar"
+    },
+    {
+      "match": false,
+      "mask": "foo/**/bar",
+      "path": "foobar"
+    }
+  ]
+}
