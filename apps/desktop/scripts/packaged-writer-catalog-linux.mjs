@@ -956,7 +956,7 @@ async function runCancellation(launched, fixture) {
     });
     window.__catalogCancellationResult = window.omegat.rpcWithTransactionReceipt(
       "project.import",
-      ${JSON.stringify({ files })},
+      ${JSON.stringify({ files, progress_token: requestId })},
       ${JSON.stringify(requestId)}
     ).then(
       (value) => ({ resolved: true, value }),
