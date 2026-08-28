@@ -4184,7 +4184,7 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
                 "root": root,
                 "app_instance": "raw-cancel-owner",
                 "owner_process_id": owner_retry.id(),
-                "generation": generation + 1,
+                "generation": generation,
             }),
         );
         assert_eq!(no_resolve_envelope["result"]["envelopes"], json!([]));
