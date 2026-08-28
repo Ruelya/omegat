@@ -346,21 +346,13 @@ async function moveProject(display, config, oldRoot, newRoot, rootIndex) {
       `project move rewrote immutable history segment ${name}`,
     );
   }
-  const recent = (await readFile(afterPaths.history, "utf8"))
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
-  assert(
-    recent.every((row) => row.project_root === newRoot),
-    "project move retained stale mutable history scope",
-  );
   await assertReplicasEqual(afterPaths.owner, afterPaths.ownerRecovery);
   return {
     rootIndex,
     oldRoot,
     newRoot,
     immutableSegmentsVerified: immutableBefore.size,
-    mutableScopeRebased: true,
+    mutableScopeRebased: false,
   };
 }
 
@@ -427,6 +419,15 @@ async function runSeed(display, suiteDir, seed) {
     }
   }
   assert(projectMove, `seed ${seed} did not execute the project move`);
+  const movedRecent = (await readFile(projectPaths(roots[0]).history, "utf8"))
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  assert(
+    movedRecent.every((row) => row.project_root === roots[0]),
+    "post-move transactions retained stale mutable history scope",
+  );
+  projectMove.mutableScopeRebased = true;
   const projectHistoryGc = [];
   for (const root of roots) {
     assert.equal(await pathExists(projectPaths(root).active), false);
