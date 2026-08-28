@@ -95,7 +95,6 @@ async function saveAndAcknowledge(
   project,
   generation,
   batchId,
-  appInstance,
 ) {
   const saved = await rpc(launched.client, "project.save", {
     transaction_project_root: project,
@@ -104,32 +103,8 @@ async function saveAndAcknowledge(
   });
   assert.equal(saved.receipt.batch_id, batchId);
   assert.equal(saved.receipt.status, "sidecar_committed");
-  const selected = await rpc(
-    launched.client,
-    "transaction.receipt.pending",
-    {
-      root: project,
-      app_instance: appInstance,
-      owner_process_id: launched.application.pid,
-      generation,
-    },
-  );
-  assert.equal(selected.envelopes[0].batch_id, batchId);
-  const acknowledged = await rpc(
-    launched.client,
-    "transaction.receipt.ack",
-    {
-      root: project,
-      app_instance: appInstance,
-      owner_process_id: launched.application.pid,
-      generation,
-      batch_id: batchId,
-      operation: "project.save",
-      outcome: "succeeded",
-    },
-  );
-  assert.equal(acknowledged.ack.acknowledged, true);
-  return acknowledged.ack;
+  await waitForReceiptDrain(project);
+  return saved.receipt;
 }
 
 try {
@@ -159,16 +134,8 @@ try {
       originalProject,
       300,
       `history-seed-${index}`,
-      "history-seed-owner",
     );
   }
-  const lostReceiptBatchId = "history-lost-receipt";
-  const saved = await rpc(setup.client, "project.save", {
-    transaction_project_root: originalProject,
-    transaction_generation: 300,
-    transaction_batch_id: lostReceiptBatchId,
-  });
-  assert.equal(saved.receipt.status, "sidecar_committed");
   await terminatePackaged(setup);
   setup = undefined;
 
@@ -185,7 +152,7 @@ try {
   // The first replacement dies after the complete next generation has become
   // authoritative but before any predecessor is unlinked.
   const generationMarker = join(workDir, "generation-owner.marker");
-  firstOwner = await launchPackagedRenderer(
+  firstOwner = await launchPackaged(
     display.display,
     config,
     originalProject,
@@ -196,6 +163,13 @@ try {
       OMEGAT_TEST_PRODUCT_HISTORY_MARKER: generationMarker,
     },
   );
+  const lostReceiptBatchId = "history-lost-receipt";
+  const interruptedSave = rpc(firstOwner.client, "project.save", {
+    transaction_project_root: originalProject,
+    transaction_generation: 300,
+    transaction_batch_id: lostReceiptBatchId,
+  });
+  void interruptedSave.catch(() => undefined);
   await waitFor("generation manifest owner checkpoint", () =>
     pathExists(generationMarker)
   );
@@ -250,7 +224,12 @@ try {
     "transaction.receipt.ack",
     {
       root: originalProject,
-      app_instance: "history-recovered-owner",
+      app_instance: JSON.parse(
+        await readFile(
+          join(historyDirectory(originalProject), "renderer-owner.json"),
+          "utf8",
+        ),
+      ).app_instance,
       owner_process_id: recoveredOwner.application.pid,
       generation: lostTerminal.generation,
       batch_id: lostReceiptBatchId,
