@@ -1,0 +1,422 @@
+//! Mapping include/exclude used by `RemoteRepositoryProvider`.
+
+use crate::error::{Result, TeamError};
+use crate::project_team_settings::repo_work_dir;
+use crate::team_utils::{join_mapped, join_rel, rel_unix, strip_slash};
+use omegat_core::cancellation::CancellationToken;
+use omegat_core::properties::{ProjectProperties, RepositoryDef, RepositoryMapping};
+use std::path::{Component, Path};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CopyDir {
+    RepoToProject,
+    ProjectToRepo,
+}
+
+pub fn default_mapping() -> RepositoryMapping {
+    RepositoryMapping {
+        local: "/".into(),
+        repository: "/".into(),
+        includes: vec![],
+        excludes: vec![],
+    }
+}
+
+pub fn effective_mappings(repo: &RepositoryDef) -> Vec<RepositoryMapping> {
+    if repo.mappings.is_empty() {
+        vec![default_mapping()]
+    } else {
+        repo.mappings.clone()
+    }
+}
+
+pub fn file_name_from_url(url: &str) -> String {
+    url.rsplit(['/', '\\'])
+        .find(|s| !s.is_empty())
+        .unwrap_or("download.bin")
+        .to_string()
+}
+
+pub fn mapping_allows(rel: &str, mapping: &RepositoryMapping) -> bool {
+    let r = strip_slash(rel);
+    for ex in &mapping.excludes {
+        if glob_match(ex, r) {
+            return false;
+        }
+    }
+    if mapping.includes.is_empty() {
+        return true;
+    }
+    mapping.includes.iter().any(|inc| glob_match(inc, r))
+}
+
+pub fn glob_match(pat: &str, path: &str) -> bool {
+    let anchored = pat.starts_with('/') || pat.starts_with('\\');
+    let pat = pat.trim_matches(['/', '\\']);
+    let path = strip_slash(path);
+    let matches = |pattern: &str| {
+        globset::GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+            .is_ok_and(|glob| glob.compile_matcher().is_match(path))
+    };
+    if matches(pat) {
+        return true;
+    }
+    if !anchored && !pat.starts_with("**") && matches(&format!("**/{pat}")) {
+        return true;
+    }
+    path == pat
+}
+
+pub fn skip_copy(props: &ProjectProperties, rel: &str, dir: CopyDir) -> bool {
+    let r = strip_slash(rel);
+    if r.starts_with(".git/")
+        || r == ".git"
+        || r.starts_with(".svn/")
+        || r == ".svn"
+        || r.starts_with(".repositories/")
+        || r == ".repositories"
+    {
+        return true;
+    }
+    if matches!(dir, CopyDir::ProjectToRepo) {
+        return false;
+    }
+    if r == "omegat.project" || r.ends_with("project_save.tmx") || r.starts_with("target/") {
+        return true;
+    }
+    let grel = props
+        .glossary_file
+        .strip_prefix(&props.root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    if !grel.is_empty() && r == grel {
+        return true;
+    }
+    false
+}
+
+pub fn copy_mapped(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+) -> Result<Vec<String>> {
+    copy_mapped_cancellable(props, repo, dir, &CancellationToken::default())
+}
+
+pub fn copy_mapped_path(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+) -> Result<Vec<String>> {
+    copy_mapped_path_cancellable(
+        props,
+        repo,
+        dir,
+        local_path,
+        postfix,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn copy_mapped_path_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    let wc = repo_work_dir(props, repo);
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        &wc,
+        dir,
+        local_path,
+        postfix,
+        cancellation,
+    )
+}
+
+pub fn copy_mapped_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    copy_mapped_path_cancellable(props, repo, dir, "", "", cancellation)
+}
+
+/// Execute repository mappings against an already prepared worktree.
+///
+/// The returned paths are relative to the destination root. Keeping the
+/// operation observable makes the same product path useful to sync/commit and
+/// to callers that need Java `RemoteRepositoryProvider`-style copy reporting.
+pub fn copy_mapped_from_worktree(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+) -> Result<Vec<String>> {
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        wc,
+        dir,
+        "",
+        "",
+        &CancellationToken::default(),
+    )
+}
+
+pub fn copy_mapped_from_worktree_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        wc,
+        dir,
+        "",
+        "",
+        cancellation,
+    )
+}
+
+pub fn copy_mapped_path_from_worktree(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+) -> Result<Vec<String>> {
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        wc,
+        dir,
+        local_path,
+        postfix,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn copy_mapped_path_from_worktree_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    let mut copied = Vec::new();
+    if !wc.exists() {
+        return Ok(copied);
+    }
+    let requested = strip_slash(local_path);
+    if !safe_relative(requested) {
+        return Err(TeamError::Command(format!(
+            "mapped local path is not relative: {local_path}"
+        )));
+    }
+    for mapping in effective_mappings(repo) {
+        check_cancelled(cancellation)?;
+        let Some(selection) = local_selection(requested, strip_slash(&mapping.local)) else {
+            continue;
+        };
+        let (from_root, from_rel, to_root, to_rel) = match dir {
+            CopyDir::RepoToProject => (
+                wc,
+                &mapping.repository,
+                props.root.as_path(),
+                &mapping.local,
+            ),
+            CopyDir::ProjectToRepo => (
+                props.root.as_path(),
+                &mapping.local,
+                wc,
+                &mapping.repository,
+            ),
+        };
+        let from_base = join_mapped(from_root, from_rel);
+        let to_base = join_mapped(to_root, to_rel);
+        let from = join_mapped(&from_base, selection);
+        let mut to = join_mapped(&to_base, selection);
+        if from.is_file() {
+            let mapping_relative = rel_unix(&from, &from_base);
+            if mapping_allows(&mapping_relative, &mapping)
+                && !skip_copy_for_request(
+                    props,
+                    &rel_unix(&from, from_root),
+                    dir,
+                    requested.is_empty(),
+                )
+            {
+                if !postfix.is_empty() {
+                    let mut name = to.as_os_str().to_os_string();
+                    name.push(postfix);
+                    to = name.into();
+                }
+                if let Some(p) = to.parent() {
+                    std::fs::create_dir_all(p)?;
+                }
+                std::fs::copy(&from, &to)?;
+                copied.push(rel_unix(&to, to_root));
+                check_copy_checkpoint(cancellation)?;
+            }
+            continue;
+        }
+        if !from.is_dir() {
+            continue;
+        }
+        for ent in walkdir::WalkDir::new(&from).into_iter().flatten() {
+            check_cancelled(cancellation)?;
+            if !ent.file_type().is_file() {
+                continue;
+            }
+            let rel = ent
+                .path()
+                .strip_prefix(&from)
+                .unwrap_or(ent.path())
+                .to_string_lossy()
+                .replace('\\', "/");
+            let mapping_relative = join_rel(selection, &rel);
+            let from_project_rel = join_rel(from_rel, &mapping_relative);
+            if skip_copy_for_request(props, &from_project_rel, dir, requested.is_empty()) {
+                continue;
+            }
+            if !mapping_allows(&mapping_relative, &mapping)
+                && !mapping_allows(&from_project_rel, &mapping)
+            {
+                continue;
+            }
+            let dest = to.join(&rel);
+            if let Some(p) = dest.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            std::fs::copy(ent.path(), &dest)?;
+            copied.push(rel_unix(&dest, to_root));
+            check_copy_checkpoint(cancellation)?;
+        }
+    }
+    Ok(copied)
+}
+
+fn local_selection<'a>(requested: &'a str, mapped: &'a str) -> Option<&'a str> {
+    if requested.is_empty() || requested == mapped {
+        return Some("");
+    }
+    if mapped.is_empty() {
+        return Some(requested);
+    }
+    if let Some(selection) = requested
+        .strip_prefix(mapped)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+    {
+        return Some(selection);
+    }
+    mapped
+        .strip_prefix(requested)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .map(|_| "")
+}
+
+fn skip_copy_for_request(
+    props: &ProjectProperties,
+    rel: &str,
+    dir: CopyDir,
+    full_project: bool,
+) -> bool {
+    let r = strip_slash(rel);
+    if r.starts_with(".git/")
+        || r == ".git"
+        || r.starts_with(".svn/")
+        || r == ".svn"
+        || r.starts_with(".repositories/")
+        || r == ".repositories"
+    {
+        return true;
+    }
+    full_project && skip_copy(props, rel, dir)
+}
+
+fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(TeamError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+fn check_copy_checkpoint(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.checkpoint("team.mapping.copy") {
+        Err(TeamError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+/// Propagate repository deletions through the same mapping/include/exclude
+/// rules used for copies. Returned paths are project-relative and observable by
+/// the provider, as in Java `Mapping.propagateDeletes`.
+pub fn propagate_deleted(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    deleted: &[String],
+) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for mapping in effective_mappings(repo) {
+        let repository_root = strip_slash(&mapping.repository);
+        let local_root = join_mapped(&props.root, &mapping.local);
+        for remote in deleted {
+            let remote = strip_slash(remote);
+            let relative = if repository_root.is_empty() {
+                remote
+            } else if remote == repository_root {
+                ""
+            } else if let Some(relative) = remote.strip_prefix(&format!("{repository_root}/")) {
+                relative
+            } else {
+                continue;
+            };
+            if !safe_relative(relative)
+                || !mapping_allows(relative, &mapping)
+                || skip_copy(props, remote, CopyDir::RepoToProject)
+            {
+                continue;
+            }
+            let target = if relative.is_empty() {
+                local_root.clone()
+            } else {
+                local_root.join(relative)
+            };
+            if target.is_file() || target.is_symlink() {
+                std::fs::remove_file(&target)?;
+            } else if target.is_dir() {
+                std::fs::remove_dir_all(&target)?;
+            } else {
+                continue;
+            }
+            removed.push(rel_unix(&target, &props.root));
+        }
+    }
+    removed.sort();
+    removed.dedup();
+    Ok(removed)
+}
+
+fn safe_relative(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+}

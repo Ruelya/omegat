@@ -1,0 +1,18 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.TMXDateParserTest#testParseDate",
+  "format": "yyyyMMdd'T'HHmmss'Z'",
+  "roundtrip": [
+    "19971116T192059Z",
+    "19970716T192059Z"
+  ],
+  "invalid": [
+    "19971116T192059+00:00",
+    "19971116T",
+    "",
+    null
+  ],
+  "keys": [
+    "org.omegat.util.TMXDateParserTest#testParseDate"
+  ]
+}

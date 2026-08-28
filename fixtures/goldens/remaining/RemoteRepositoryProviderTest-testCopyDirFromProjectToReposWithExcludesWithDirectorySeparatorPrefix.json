@@ -1,0 +1,15 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix",
+  "copied": [
+    "primary:source/3.jpg",
+    "primary:source/4.png",
+    "primary:source/asubdir/subdir/3.jpg",
+    "primary:source/file1.txt",
+    "primary:source/otherproject/file.txt",
+    "primary:source/subdir/3.jpg",
+    "primary:source/subdir/4.png",
+    "primary:source/subdir/file2.txt",
+    "secondary:file.txt"
+  ]
+}

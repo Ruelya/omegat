@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "methods": [
+    { "method": "sys.version" },
+    { "method": "sys.capabilities" },
+    { "method": "sys.rpc-registry" },
+    { "method": "sys.writer-catalog" },
+    { "method": "sys.plugins" },
+    { "method": "markers.list" },
+    { "method": "markers.query" },
+    {
+      "method": "prefs.get"
+    },
+    {
+      "method": "prefs.set",
+      "writer": {
+        "scope": "config",
+        "activation": "always",
+        "receipt_route": "config",
+        "journal_operation": "prefs.set",
+        "watches_project_inputs": false
+      }
+    },
+    {
+      "method": "prefs.patch",
+      "writer": {
+        "scope": "config",
+        "activation": "always",
+        "receipt_route": "config",
+        "journal_operation": "prefs.patch",
+        "watches_project_inputs": false
+      }
+    },
+    { "method": "project.create" },
+    { "method": "project.open" },
+    {
+      "method": "project.close",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "project.close",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "project.recovery.detach" },
+    {
+      "method": "project.save",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "project.save",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "project.compile",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "project.compile",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "project.reload",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "project.reload",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "project.external-refresh",
+      "writer": {
+        "scope": "project",
+        "activation": "recovery",
+        "receipt_route": "recovery",
+        "journal_operation": "project.external-refresh",
+        "watches_project_inputs": false
+      }
+    },
+    { "method": "project.refresh.enqueue" },
+    { "method": "project.refresh.discard" },
+    { "method": "transaction.receipt.discover" },
+    { "method": "transaction.receipt.pending" },
+    { "method": "transaction.receipt.ack" },
+    { "method": "project.props" },
+    { "method": "entry.list" },
+    { "method": "entry.get" },
+    {
+      "method": "entry.set",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "entry.set",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "matches.query" },
+    { "method": "glossary.query" },
+    {
+      "method": "glossary.add",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "glossary.add",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "search.run" },
+    {
+      "method": "search.replace",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "search.replace",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "stats.get" },
+    { "method": "issues.list" },
+    { "method": "filters.list" },
+    { "method": "filters.options" },
+    { "method": "filters.parse" },
+    { "method": "script.slots" },
+    { "method": "mt.query" },
+    { "method": "dict.query" },
+    { "method": "completer.query" },
+    { "method": "spell.check" },
+    {
+      "method": "spell.learn",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "spell.learn",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "spell.ignore",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "spell.ignore",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "spell.install",
+      "writer": {
+        "scope": "config",
+        "activation": "always",
+        "receipt_route": "config",
+        "journal_operation": "spell.install",
+        "watches_project_inputs": false
+      }
+    },
+    {
+      "method": "tmx.export",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "tmx.export",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "languagetool.check" },
+    { "method": "finder.run" },
+    {
+      "method": "team.sync",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "sync",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "team.commit",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "commit-{which}",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "team.conflicts" },
+    {
+      "method": "team.resolve",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "resolve-conflict",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "team.mapping",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "team.mapping",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "project.update",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "project.update",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "script.run",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "script.run",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "align.run",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "align.run",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "align.edit" },
+    {
+      "method": "align.write",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "align.write",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "aligner.configure",
+      "writer": {
+        "scope": "config",
+        "activation": "persist_true",
+        "receipt_route": "config",
+        "journal_operation": "aligner.configure",
+        "watches_project_inputs": false
+      }
+    },
+    {
+      "method": "wiki.import",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "wiki.import",
+        "watches_project_inputs": true
+      }
+    },
+    { "method": "med.open" },
+    { "method": "project.convert" },
+    {
+      "method": "project.import",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "project.import",
+        "watches_project_inputs": true
+      }
+    },
+    {
+      "method": "script.slot",
+      "writer": {
+        "scope": "project",
+        "activation": "always",
+        "receipt_route": "caller",
+        "journal_operation": "script.run",
+        "watches_project_inputs": true
+      }
+    }
+  ]
+}

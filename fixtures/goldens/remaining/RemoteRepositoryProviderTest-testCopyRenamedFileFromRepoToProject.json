@@ -1,0 +1,7 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyRenamedFileFromRepoToProject",
+  "copied": [
+    "source/otherproject/file.txt"
+  ]
+}
