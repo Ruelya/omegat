@@ -598,6 +598,9 @@ async function runRealPermissionFailure(display, workDir) {
     storageEnv(),
   );
   try {
+    const productBefore = await snapshot(
+      join(seeded.config, "omegat.prefs.json"),
+    );
     await chmod(seeded.paths.directory, 0o555);
     const failed = await invokeRpcResult(owner.client, "prefs.patch", {
       locale: "must-not-publish",
@@ -605,9 +608,9 @@ async function runRealPermissionFailure(display, workDir) {
     });
     assert.equal(failed.resolved, false);
     assert.match(failed.error, /permission|os error 13/i);
-    assert.equal(
-      await pathExists(join(seeded.config, "omegat.prefs.json")),
-      false,
+    assert.deepEqual(
+      await snapshot(join(seeded.config, "omegat.prefs.json")),
+      productBefore,
     );
     return { realDirectoryMode: "0555", productMutation: false };
   } finally {
