@@ -1,0 +1,36 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.MixedEolHandlingReaderTest#testReadLine",
+  "cases": [
+    {
+      "text": "a\rb\rc",
+      "eol": "\r",
+      "lines": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "text": "a\nb\nc",
+      "eol": "\n",
+      "lines": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "text": "a\r\nb\r\nc",
+      "eol": "\r\n",
+      "lines": [
+        "a",
+        "b",
+        "c"
+      ]
+    }
+  ],
+  "keys": [
+    "org.omegat.util.MixedEolHandlingReaderTest#testReadLine"
+  ]
+}

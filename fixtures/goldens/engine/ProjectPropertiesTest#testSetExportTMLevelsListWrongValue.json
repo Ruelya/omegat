@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsListWrongValue",
+  "levels": [
+
+  ],
+  "keys": [
+    "org.omegat.core.data.ProjectPropertiesTest#testSetExportTMLevelsListWrongValue"
+  ]
+}

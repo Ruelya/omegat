@@ -1,0 +1,15 @@
+{
+  "id": "docbook",
+  "fixture": "docBook/simple.xml",
+  "java_test": "org.omegat.filters dialect/table for docbook",
+  "options": {},
+  "sources": [
+    "Introduction to Linux"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Introduction to Linux",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}

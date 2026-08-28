@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testIsMixedCase",
+  "Abc": false,
+  "braced": true,
+  "ABc": true,
+  "keys": [
+    "org.omegat.util.StringUtilTest#testIsMixedCase"
+  ]
+}
