@@ -58,8 +58,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **22 passed** plus sidecar journal/watcher unit
-**4 passed** and plugin filter **1 passed**, and desktop **24 files / 173 tests
+**4 passed**, sidecar contract **23 passed** plus sidecar journal/watcher unit
+**6 passed** and plugin filter **1 passed**, and desktop **24 files / 173 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E, including atomic refresh receipt
@@ -684,6 +684,29 @@ unacknowledged refresh plus its refresh/save tails in FIFO order, and archives
 each terminal batch exactly once. Refresh state transitions and event
 coalescing preserve the original cross-backend dispatch key while only each
 backend's local head competes for dispatch. This is Linux-only evidence.
+The matrix now repeats the lost-ack boundary separately for all three receipt
+classes. For **team**, it first acknowledges an older refresh, drops the team
+ack, SIGKILLs the package, then proves restart omits that older refresh and
+dispatches team → refresh → refresh; the file-remote bytes and nanosecond mtime
+stay unchanged, proving the committed team write was not replayed. For
+**refresh**, the acknowledged team receipt stays absent while the exact
+unacknowledged refresh → refresh → save sequence drains. For **save**, an
+acknowledged team plus two acknowledged refreshes stay absent while the
+unacknowledged save remains ahead of a later real glossary-watcher refresh.
+Every named terminal receipt occurs exactly once in its backend history, all
+three runs retain one `Document3` and the complete six-field `EntryKey`, and no
+tail is starved. These are real Linux `linux-unpacked` assertions; Windows and
+macOS were not run.
+A fourth Linux packaged scenario injects SIGKILL after
+`transaction.receipt.pending` has selected the unified team head but before
+that envelope is delivered to the renderer. A marker records the selected
+batch and old sidecar PID; the same Electron/renderer observes a distinct
+replacement sidecar PID, whose first dispatched envelope is the same team
+batch. Its refresh tails remain behind it, the team terminal ack occurs once,
+and unchanged file-remote bytes/mtime prove recovery did not repeat product
+write-back. The sidecar NDJSON contract independently performs the same
+select-head → kill → reopen boundary and verifies the later refresh is still
+pending until the recovered head is acknowledged.
 A separate contract keeps two replacement sidecars alive concurrently: project
 A recovers an `entry.set` receipt while project B recovers an external-refresh
 receipt from the other durable queue. Each response is re-stamped only to its
