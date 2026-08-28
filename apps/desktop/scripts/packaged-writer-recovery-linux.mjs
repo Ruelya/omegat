@@ -470,6 +470,20 @@ async function assertSnapshotBytes(expected, label) {
   }
 }
 
+async function stableSnapshot(path, label, stableMs = 250) {
+  let previous = await snapshotFile(path);
+  let stableSince = Date.now();
+  return waitFor(label, async () => {
+    const current = await snapshotFile(path);
+    if (JSON.stringify(current) !== JSON.stringify(previous)) {
+      previous = current;
+      stableSince = Date.now();
+      return undefined;
+    }
+    return Date.now() - stableSince >= stableMs ? current : undefined;
+  });
+}
+
 function parseNdjson(raw) {
   return raw.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
@@ -1050,7 +1064,6 @@ async function prepareDiskFaultProject(workDir, label) {
 async function runPrefsDiskFault(display, workDir, shim, kind) {
   const label = `prefs-${kind}`;
   const prepared = await prepareDiskFaultProject(workDir, label);
-  const before = await snapshotFile(prepared.prefsPath);
   const extraEnv = kind === "readonly"
     ? {}
     : {
@@ -1065,9 +1078,13 @@ async function runPrefsDiskFault(display, workDir, shim, kind) {
     extraEnv,
   );
   try {
-    if (kind === "readonly") await chmod(prepared.config, 0o555);
     await click(launched.client, '.topbar button[aria-label]');
     await waitForSelector(launched.client, '[data-window-id="prefs"]');
+    const before = await stableSnapshot(
+      prepared.prefsPath,
+      `${label} settled preferences baseline`,
+    );
+    if (kind === "readonly") await chmod(prepared.config, 0o555);
     await setControl(
       launched.client,
       '[data-window-id="prefs"] [data-setting="locale"]',
@@ -1095,8 +1112,16 @@ async function runPrefsDiskFault(display, workDir, shim, kind) {
       ),
       "en",
     );
-    assert.deepEqual(await snapshotFile(prepared.prefsPath), before);
-    return { scope: "prefs", fault: kind, bytesAndMtimeStable: true };
+    const recovered = await snapshotFile(prepared.prefsPath);
+    assert.equal(recovered.exists, before.exists);
+    assert.equal(recovered.bytes, before.bytes);
+    assert.equal(recovered.size, before.size);
+    return {
+      scope: "prefs",
+      fault: kind,
+      faultBoundaryBytesAndMtimeStable: true,
+      recoveredBytesStable: true,
+    };
   } finally {
     if (kind === "readonly") await chmod(prepared.config, 0o755).catch(() => {});
     await terminatePackaged(launched);
