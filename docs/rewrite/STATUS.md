@@ -56,12 +56,11 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-27 verification:** core selected suites **148 passed**, filters
-**86 passed**, team **34 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, plugin registry **4 passed**, sidecar contract **15 passed** plus
-sidecar journal/watcher unit **4 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 167
-tests passed** after a clean TypeScript check.
+**2026-08-28 verification:** core selected suites **148 passed**, filters
+**86 passed**, team **35 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **16 passed** plus sidecar journal/watcher unit
+**4 passed** and plugin filter **1 passed**, and desktop **23 files / 168 tests
+passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
