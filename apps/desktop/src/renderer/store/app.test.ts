@@ -1443,7 +1443,7 @@ describe("app store", () => {
     });
   });
 
-  it("reloads team/filesystem state before rebinding the active Document3", async () => {
+  it("publishes the atomic refresh result before rebinding the active Document3", async () => {
     const props = {
       root: "/watched",
       source_lang: "en",
@@ -1472,9 +1472,9 @@ describe("app store", () => {
       target_words: 2,
     };
     rpc.mockImplementation(async (method: string) => {
-      if (method === "project.external-refresh") return { props, entries: 1 };
-      if (method === "entry.list") return [refreshed];
-      if (method === "stats.get") return stats;
+      if (method === "project.external-refresh") {
+        return { entry_list: [refreshed], props, stats };
+      }
       if (
         method === "matches.query"
         || method === "glossary.query"
@@ -1500,8 +1500,6 @@ describe("app store", () => {
 
     expect(rpc.mock.calls.map(([method]) => method)).toEqual([
       "project.external-refresh",
-      "entry.list",
-      "stats.get",
       "matches.query",
       "glossary.query",
       "issues.list",
@@ -1677,9 +1675,9 @@ describe("app store", () => {
         });
         return { conflicts: [], rebind_key: wantedKey };
       }
-      if (method === "project.external-refresh") return { props, entries: 2 };
-      if (method === "entry.list") return [resolvedWanted, decoy];
-      if (method === "stats.get") return stats;
+      if (method === "project.external-refresh") {
+        return { entry_list: [resolvedWanted, decoy], props, stats };
+      }
       if (
         method === "matches.query"
         || method === "glossary.query"
@@ -1727,8 +1725,6 @@ describe("app store", () => {
       methods: [
         "team.resolve",
         "project.external-refresh",
-        "entry.list",
-        "stats.get",
         "matches.query",
         "glossary.query",
         "issues.list",

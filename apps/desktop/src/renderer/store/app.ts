@@ -858,7 +858,7 @@ export const useApp = create<AppState>((set, get) => ({
         if (committedResult) {
           refreshedProps = committedResult.props;
         } else {
-          const result = await get().runLongOperation<{ props?: ProjectPropsDto }>(
+          const result = await get().runLongOperation<CommittedRefreshResult>(
             "externalRefresh",
             transaction
               ? {
@@ -868,7 +868,8 @@ export const useApp = create<AppState>((set, get) => ({
                 }
               : {},
           );
-          refreshedProps = result.props ?? before.props;
+          committedResult = result;
+          refreshedProps = result.props;
         }
       }
     } catch (error) {
