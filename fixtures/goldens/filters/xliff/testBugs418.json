@@ -1,0 +1,24 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter-cdata-bugs418.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testBugs418",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "tr1=This is <test",
+    "tr2=test2"
+  ],
+  "ids": [
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xliff version=\"1.2\" xmlns=\"urn:oasis:names:tc:xliff:document:1.2\">\n    <file target-language=\"be\" source-language=\"en\" original=\"text3.txt\" datatype=\"plaintext\">\n        <body>\n            <trans-unit id=\"id1\">\n                <source>This is test2</source>\n            </trans-unit>\n            <trans-unit id=\"id2\">\n                <source>test21</source>\n            </trans-unit>\n        </body>\n    </file>\n    <file target-language=\"be\" source-language=\"en\" original=\"text.txt\" datatype=\"plaintext\">\n        <body>\n            <trans-unit id=\"id3\">\n                <source><![CDATA[This is <test]]></source>\n                <target><![CDATA[tr1=This is <test]]></target>\n            </trans-unit>\n            <trans-unit id=\"id4\">\n                <source>test2</source>\n                <target>tr2=test2</target>\n            </trans-unit>\n        </body>\n    </file>\n</xliff>"
+}

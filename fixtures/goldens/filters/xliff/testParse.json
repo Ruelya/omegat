@@ -1,0 +1,24 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "tr1=This is test",
+    "tr2=test2"
+  ],
+  "ids": [
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.1\">\r\n    <file target-language=\"be\" source-language=\"en\" original=\"text3.txt\">\r\n        <body>\r\n            <trans-unit>\r\n                <source>This is test2</source>\r\n            </trans-unit>\r\n            <trans-unit>\r\n                <source>test21</source>\r\n            </trans-unit>\r\n        </body>\r\n    </file>\r\n    <file target-language=\"be\" source-language=\"en\" original=\"text2.txt\">\r\n        <body>\r\n            <trans-unit>\r\n                <source>This is test2</source>\r\n            </trans-unit>\r\n            <trans-unit>\r\n                <source>test21</source>\r\n            </trans-unit>\r\n        </body>\r\n    </file>\r\n    <file target-language=\"be\" source-language=\"en\" original=\"text.txt\">\r\n        <body>\r\n            <trans-unit>\r\n                <source>This is test</source>\r\n                <target>tr1=This is test</target>\r\n            </trans-unit>\r\n            <trans-unit>\r\n                <source>test2</source>\r\n                <target>tr2=test2</target>\r\n            </trans-unit>\r\n        </body>\r\n    </file>\r\n</xliff>"
+}

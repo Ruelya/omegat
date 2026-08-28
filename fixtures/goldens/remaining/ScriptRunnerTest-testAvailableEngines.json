@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.scripting.ScriptRunnerTest#testAvailableEngines",
+  "java_extensions": ["js", "groovy"],
+  "rewrite_extensions": ["js"],
+  "parity_gap": "Groovy is replaced by the embedded Boa JavaScript engine",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptRunnerTest#testAvailableEngines"
+  ]
+}

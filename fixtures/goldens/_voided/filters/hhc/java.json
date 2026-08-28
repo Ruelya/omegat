@@ -1,0 +1,15 @@
+{
+  "id": "hhc",
+  "fixture": "hhc/simple.hhc",
+  "java_test": "org.omegat.filters dialect/table for hhc",
+  "options": {},
+  "sources": [
+    "Hello"
+  ],
+  "empty_write": "preserve_source",
+  "translated": {
+    "source": "Hello",
+    "translation": "GOLDEN_T",
+    "must_contain": "GOLDEN_T"
+  }
+}
