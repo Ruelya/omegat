@@ -1,0 +1,15 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithUnicode",
+  "input": "こんにちは 世界 🌏",
+  "tokens": [
+    "こんにちは",
+    " ",
+    "世界",
+    " ",
+    "🌏"
+  ],
+  "keys": [
+    "org.omegat.tokenizer.BaseTokenizerTest#testTokenizeVerbatimWithUnicode"
+  ]
+}

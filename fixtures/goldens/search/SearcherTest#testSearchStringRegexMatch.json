@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringRegexMatch",
+  "cases": [
+    {
+      "hit": true,
+      "text": "OmegaT version 4.3.2"
+    },
+    {
+      "hit": false,
+      "text": "OmegaT version 4.3"
+    }
+  ],
+  "type": "REGEXP",
+  "query": "version \\d+\\.\\d+\\.\\d+"
+}

@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityJapanese",
+  "bug": "1034",
+  "expected": "AssertionError",
+  "str": "場所",
+  "glos": "塗布",
+  "keys": [
+    "org.omegat.core.data.TokenTest#testGlossaryTokenEqualityJapanese"
+  ]
+}

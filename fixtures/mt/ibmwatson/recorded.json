@@ -1,0 +1,13 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://api.us-south.language-translator.watson.cloud.ibm.com/v3/translate?version=2018-05-01",
+    "headers": {
+      "Authorization": "Basic REDACTED",
+      "X-Watson-Learning-Opt-Out": "true",
+      "Accept": "application/json"
+    },
+    "body": "{\"text\":[\"Hello\"],\"source\":\"EN\",\"target\":\"FR\"}"
+  },
+  "response": { "translations": [{ "translation": "Bonjour" }] }
+}

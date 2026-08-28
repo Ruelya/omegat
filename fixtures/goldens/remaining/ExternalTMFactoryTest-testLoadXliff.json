@@ -1,0 +1,15 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.data.ExternalTMFactoryTest#testLoadXliff",
+  "supported": true,
+  "count": 3,
+  "src0": "This is a test",
+  "tgt0": "Això és una prova",
+  "src1": "This is another test",
+  "tgt1": "Això és una altra prova",
+  "src2": "This is a house",
+  "tgt2": "Això és una casa",
+  "keys": [
+    "org.omegat.core.data.ExternalTMFactoryTest#testLoadXliff"
+  ]
+}

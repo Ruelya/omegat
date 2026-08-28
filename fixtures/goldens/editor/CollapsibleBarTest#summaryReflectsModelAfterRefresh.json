@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.editor.CollapsibleBarTest#summaryReflectsModelAfterRefresh",
+  "initial": "empty",
+  "after": "src:foo AND tgt:bar",
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

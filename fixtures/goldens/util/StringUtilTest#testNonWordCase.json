@@ -1,0 +1,11 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testNonWordCase",
+  "title": false,
+  "lower": false,
+  "upper": false,
+  "mixed": false,
+  "keys": [
+    "org.omegat.util.StringUtilTest#testNonWordCase"
+  ]
+}

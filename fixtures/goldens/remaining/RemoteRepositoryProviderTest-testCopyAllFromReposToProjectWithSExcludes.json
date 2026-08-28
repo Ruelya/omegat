@@ -1,0 +1,20 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithSExcludes",
+  "excludes": [
+    "**/*.bak",
+    "/*.png",
+    "/subdir/3.jpg"
+  ],
+  "copied": [
+    "glossary/sub/myglossary.txt",
+    "source/3.jpg",
+    "source/4.png",
+    "source/asubdir/subdir/3.jpg",
+    "source/file1.txt",
+    "source/otherproject/otherprojectfile.txt",
+    "source/subdir/3.jpg",
+    "source/subdir/4.png",
+    "source/subdir/file2.txt"
+  ]
+}
