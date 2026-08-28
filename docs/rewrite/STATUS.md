@@ -60,7 +60,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **86 passed**, team **34 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, plugin registry **4 passed**, sidecar contract **15 passed** plus
 sidecar journal/watcher unit **4 passed**, native plugin RPC/fault isolation **1
-passed**, and desktop **23 files / 166
+passed**, and desktop **23 files / 167
 tests passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The real Linux unpacked package restart E2E also passes; Windows and macOS
@@ -619,7 +619,10 @@ during an external refresh while two complete-key conflicts remain visible,
 then verifies the replacement sidecar refreshes and rebinds both conflict rows.
 It separately kills Electron and its sidecar during another persisted refresh,
 relaunches the package, and verifies same-project recovery without reviving
-completed conflicts. This remains Linux-only evidence.
+completed conflicts. Fingerprint replay also waits behind an active long
+operation, and Team actions remain disabled until that operation is terminal,
+so a delayed watcher batch cannot cancel or replace `team.resolve`. This remains
+Linux-only evidence.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
