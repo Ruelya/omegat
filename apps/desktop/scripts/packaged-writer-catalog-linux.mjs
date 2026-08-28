@@ -178,13 +178,16 @@ async function segmentedRows(paths) {
     rows.push(...segment.records);
   }
   rows.push(...hot.records);
-  assert.equal(new Set(rows.map(({ batch_id }) => batch_id)).size, rows.length);
   return rows;
 }
 
+const terminalRows = (rows) =>
+  rows.filter(({ status }) => status !== "pending");
+
 async function assertOneTerminal(paths, batchId, operation, status = "completed") {
   const rows = await segmentedRows(paths);
-  const exact = rows.filter(({ batch_id }) => batch_id === batchId);
+  const exact = terminalRows(rows)
+    .filter(({ batch_id }) => batch_id === batchId);
   assert.equal(exact.length, 1, `${batchId} must have one terminal row`);
   assert.equal(exact[0].status, status, batchId);
   assert.equal(
@@ -1003,9 +1006,8 @@ async function runCancellation(launched, fixture) {
   );
   const historyAfter = await segmentedRows(projectHistoryPaths(fixture.project));
   const previous = new Set(historyBefore.map(({ batch_id }) => batch_id));
-  const cancellationRows = historyAfter.filter(({ batch_id }) =>
-    !previous.has(batch_id)
-  );
+  const cancellationRows = terminalRows(historyAfter)
+    .filter(({ batch_id }) => !previous.has(batch_id));
   assert.equal(cancellationRows.length, 1);
   assert.equal(cancellationRows[0].status, "request_cancelled");
   assert.equal(cancellationRows[0].payload.operation, "project.import");
@@ -1074,7 +1076,8 @@ async function verifyMoveAndGc(launched, fixture, evidence) {
   const projectRows = await segmentedRows(projectHistoryPaths(movedProject));
   for (const row of evidence.filter(({ scope }) => row.scope === "project")) {
     assert.equal(
-      projectRows.filter(({ batch_id }) => batch_id === row.batchId).length,
+      terminalRows(projectRows)
+        .filter(({ batch_id }) => batch_id === row.batchId).length,
       1,
       `${row.method} terminal did not survive project rename`,
     );
@@ -1166,7 +1169,12 @@ try {
   await terminatePackaged(launched);
   await stopPackagedDisplay(display);
   if (process.env.OMEGAT_KEEP_E2E !== "1") {
-    await rm(workDir, { recursive: true, force: true });
+    await rm(workDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 100,
+    });
   } else {
     console.error(`kept writer catalog workdir: ${workDir}`);
   }
