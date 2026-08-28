@@ -7528,37 +7528,37 @@ fn legacy_journal_and_config_owner_migration_survive_real_process_kills() {
     )
     .unwrap();
 
+    let owner_marker = temp.path().join("owner-published.marker");
+    let (mut owner_process, mut owner_in, _owner_out) =
+        spawn_faulted(&config, Some("after_config_owner_publish"), &owner_marker);
+    start_pending(&mut owner_in, &root, "replacement-one", 30);
+    wait_for_marker(&mut owner_process, &owner_marker);
+    assert!(!transactions.join("active.json").exists());
+    assert!(!transactions.join("history.ndjson").exists());
+    assert!(legacy_journal.is_file());
+    assert!(legacy_history.is_file());
+    assert!(legacy_owner.is_file());
+    let migrated_owners = config.join("transactions/external-refresh-active");
+    assert_eq!(std::fs::read_dir(&migrated_owners).unwrap().count(), 1);
+    owner_process.kill().unwrap();
+    owner_process.wait().unwrap();
+
     let journal_marker = temp.path().join("journal-published.marker");
     let (mut journal_process, mut journal_in, _journal_out) = spawn_faulted(
         &config,
         Some("after_shared_journal_publish"),
         &journal_marker,
     );
-    start_pending(&mut journal_in, &root, "replacement-one", 30);
+    start_pending(&mut journal_in, &root, "replacement-two", 31);
     wait_for_marker(&mut journal_process, &journal_marker);
     assert!(transactions.join("active.json").is_file());
     assert!(transactions.join("history.ndjson").is_file());
     assert!(legacy_journal.is_file());
     assert!(legacy_history.is_file());
-    assert!(legacy_owner.is_file());
+    assert!(!legacy_owner.exists());
+    assert_eq!(std::fs::read_dir(&migrated_owners).unwrap().count(), 1);
     journal_process.kill().unwrap();
     journal_process.wait().unwrap();
-
-    let owner_marker = temp.path().join("owner-published.marker");
-    let (mut owner_process, mut owner_in, _owner_out) = spawn_faulted(
-        &config,
-        Some("after_config_owner_publish"),
-        &owner_marker,
-    );
-    start_pending(&mut owner_in, &root, "replacement-two", 31);
-    wait_for_marker(&mut owner_process, &owner_marker);
-    assert!(!legacy_journal.exists());
-    assert!(!legacy_history.exists());
-    assert!(legacy_owner.is_file());
-    let migrated_owners = config.join("transactions/external-refresh-active");
-    assert_eq!(std::fs::read_dir(&migrated_owners).unwrap().count(), 1);
-    owner_process.kill().unwrap();
-    owner_process.wait().unwrap();
 
     let unused_marker = temp.path().join("unused.marker");
     let (mut recovered, mut recovered_in, mut recovered_out) =
@@ -7580,7 +7580,20 @@ fn legacy_journal_and_config_owner_migration_survive_real_process_kills() {
     );
     assert_eq!(selected["result"]["envelopes"][0]["status"], "pending");
     assert!(!legacy_owner.exists());
-    assert_eq!(std::fs::read_dir(&migrated_owners).unwrap().count(), 1);
+    let owner_values = std::fs::read_dir(&migrated_owners)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| {
+            serde_json::from_slice::<Value>(&std::fs::read(entry.path()).unwrap()).unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(owner_values.len(), 2);
+    assert!(owner_values
+        .iter()
+        .any(|owner| owner["app_instance"] == "legacy-process-owner"));
+    assert!(owner_values
+        .iter()
+        .any(|owner| owner["app_instance"] == "replacement-three"));
 
     let active: Value =
         serde_json::from_slice(&std::fs::read(transactions.join("active.json")).unwrap()).unwrap();

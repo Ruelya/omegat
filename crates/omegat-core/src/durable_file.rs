@@ -27,10 +27,7 @@ pub fn replace(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .and_then(|value| value.to_str())
         .unwrap_or("file");
     let sequence = REPLACEMENT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let temporary = parent.join(format!(
-        ".{filename}.{}.{sequence}.tmp",
-        std::process::id()
-    ));
+    let temporary = parent.join(format!(".{filename}.{}.{sequence}.tmp", std::process::id()));
 
     let candidate = (|| {
         let mut file = OpenOptions::new()
