@@ -25,6 +25,7 @@
     "test:e2e:segmented-history-gc:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-segmented-history-gc-linux.mjs",
     "test:e2e:writer-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-writer-recovery-linux.mjs",
     "test:e2e:shared-config-v2:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-shared-config-v2.mjs",
+    "test:e2e:unified-persistence-mixed:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-unified-persistence-mixed-linux.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },

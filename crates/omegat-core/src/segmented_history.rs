@@ -276,6 +276,7 @@ impl<T: SegmentedHistoryRecord> SegmentedHistory<T> {
             options,
         };
         store.manifest = store.read_manifest(checkpoint)?;
+        store.recover_recent(checkpoint)?;
         store.coalesce_hot_archive_duplicates()?;
         store.repair_recent()?;
         Ok(store)
@@ -317,6 +318,17 @@ impl<T: SegmentedHistoryRecord> SegmentedHistory<T> {
         {
             return Ok(false);
         }
+        // The bounded recent projection is also the write-ahead observation
+        // path. Publishing the complete terminal row here means a process
+        // death during either hot replica replacement can recover the exact
+        // record instead of asking the product operation to run again.
+        let mut recent = self.recent();
+        recent.push(record.clone());
+        if recent.len() > self.options.recent_limit {
+            recent.drain(..recent.len() - self.options.recent_limit);
+        }
+        self.persist_recent_records(&recent)?;
+        checkpoint("after_recent_append")?;
         self.hot.records.push(record);
         self.persist_hot()?;
         checkpoint("after_hot_append")?;
@@ -452,9 +464,13 @@ impl<T: SegmentedHistoryRecord> SegmentedHistory<T> {
     }
 
     fn persist_recent(&self) -> Result<(), String> {
+        self.persist_recent_records(&self.recent())
+    }
+
+    fn persist_recent_records(&self, records: &[T]) -> Result<(), String> {
         let mut bytes = Vec::new();
-        for record in self.recent() {
-            serde_json::to_writer(&mut bytes, &record)
+        for record in records {
+            serde_json::to_writer(&mut bytes, record)
                 .map_err(|error| format!("serialize segmented history recent row: {error}"))?;
             bytes.push(b'\n');
         }
@@ -464,6 +480,44 @@ impl<T: SegmentedHistoryRecord> SegmentedHistory<T> {
                 self.recent_path().display()
             )
         })
+    }
+
+    fn recover_recent<F>(&mut self, checkpoint: &mut F) -> Result<(), String>
+    where
+        F: FnMut(&str) -> Result<(), String>,
+    {
+        let bytes = match std::fs::read(self.recent_path()) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(format!(
+                    "read segmented history recent recovery window {}: {error}",
+                    self.recent_path().display()
+                ))
+            }
+        };
+        let Some(records) = parse_recent::<T>(&bytes, &self.scope) else {
+            return Ok(());
+        };
+        let mut recovered = false;
+        for record in records {
+            if self.hot.records.iter().any(|existing| existing == &record)
+                || self
+                    .archived_for(record.history_partition())?
+                    .iter()
+                    .any(|existing| existing == &record)
+            {
+                continue;
+            }
+            self.hot.records.push(record);
+            recovered = true;
+        }
+        if recovered {
+            self.persist_hot()?;
+            checkpoint("after_recent_recovery")?;
+            self.compact(checkpoint)?;
+        }
+        Ok(())
     }
 
     fn repair_recent(&self) -> Result<(), String> {
@@ -1392,5 +1446,35 @@ mod tests {
             .join(&layout.archive_directory)
             .join(future.file)
             .exists());
+    }
+
+    #[test]
+    fn recent_write_ahead_window_recovers_a_terminal_missing_from_both_hot_replicas() {
+        let temp = tempfile::tempdir().unwrap();
+        let scope = temp.path().join("project");
+        std::fs::create_dir_all(&scope).unwrap();
+        let directory = scope.join("transactions");
+        let layout = SegmentedHistoryLayout::default();
+        let options = small_options();
+        let mut store =
+            SegmentedHistory::open(&directory, &scope, layout.clone(), options.clone()).unwrap();
+        store.append(record(&scope, "durable-terminal", 1)).unwrap();
+        drop(store);
+
+        // Model a process death while publishing a terminal to the replicated
+        // hot index: the prior replicas remain valid but do not contain the
+        // row, while the write-ahead recent projection is already durable.
+        let empty = HotIndex::<Record>::empty(&scope);
+        let bytes = serde_json::to_vec_pretty(&empty).unwrap();
+        std::fs::write(directory.join(&layout.hot_file), &bytes).unwrap();
+        std::fs::write(directory.join(&layout.hot_recovery_file), &bytes).unwrap();
+
+        let recovered =
+            SegmentedHistory::<Record>::open(&directory, &scope, layout, options).unwrap();
+        assert_eq!(
+            recovered.records_for("durable-terminal").unwrap(),
+            vec![record(&scope, "durable-terminal", 1)]
+        );
+        assert_eq!(recovered.status().hot_records, 1);
     }
 }
