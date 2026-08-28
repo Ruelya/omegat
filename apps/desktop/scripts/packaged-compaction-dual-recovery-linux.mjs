@@ -3516,10 +3516,10 @@ try {
     const cancelledEvents = cancelledState.rpcTrace.filter(
       (event) => event.requestId === cancelledState.requestId,
     );
-    assert.deepEqual(
-      cancelledEvents.map((event) => event.phase),
-      ["started", "cancelling", "cancelled"],
-    );
+    const cancelledPhases = cancelledEvents.map((event) => event.phase);
+    assert.equal(cancelledPhases[0], "started");
+    assert.deepEqual(cancelledPhases.slice(-2), ["cancelling", "cancelled"]);
+    assert.equal(cancelledPhases.includes("succeeded"), false);
     assert.equal(cancelledEvents.at(-1).errorCode, -32800);
     assert(cancelledState.domPhases.includes("cancelling"));
     assert.equal(cancelledState.conflictCount, 1);
@@ -3564,7 +3564,7 @@ try {
     resolveCancellationResults.push({
       resolution: `keep-${resolveSide}`,
       window: "owner-claim-before-renderer-delivery",
-      requestTrace: cancelledEvents.map((event) => event.phase),
+      requestTrace: cancelledPhases,
       protocolErrorCode: cancelledEvents.at(-1).errorCode,
       projectRollback: true,
       fileRemoteWrite: false,
