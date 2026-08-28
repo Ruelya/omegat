@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -9,6 +10,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
   writeFile,
@@ -222,6 +224,8 @@ async function inspectV2(paths, expectedIds, hotLimit) {
   const manifest = JSON.parse(manifestBytes);
   assert.equal(dedupe.version, 2);
   assert.equal(manifest.version, 2);
+  assert.equal(manifest.batch_index_complete, true);
+  assert(Number.isSafeInteger(manifest.generation));
   assert(dedupe.order.length <= hotLimit);
   assert.deepEqual(Object.keys(dedupe.batches).sort(), [...dedupe.order].sort());
   const archived = [];
@@ -233,7 +237,18 @@ async function inspectV2(paths, expectedIds, hotLimit) {
     const segment = JSON.parse(bytes);
     assert.equal(segment.version, 2);
     assert.equal(segment.id, descriptor.id);
+    assert.equal(segment.generation ?? 0, descriptor.generation ?? 0);
     assert.equal(segment.batches.length, descriptor.batch_count);
+    for (const row of segment.batches) {
+      const prefix = createHash("sha256")
+        .update(row.batch_id)
+        .digest("hex")
+        .slice(0, 4);
+      assert(
+        manifest.batch_index[prefix].includes(descriptor.id),
+        `manifest index does not locate ${row.batch_id}`,
+      );
+    }
     archived.push(...segment.batches);
   }
   const all = [
@@ -466,6 +481,230 @@ async function runArchiveBoundary(display, workDir, point, sequence) {
   }
 }
 
+async function createArchivedConfig(display, workDir, name) {
+  const seeded = await seedV2(join(workDir, name), 2);
+  const batchId = `${name}-terminal`;
+  const owner = await launchPackagedRenderer(
+    display,
+    seeded.config,
+    null,
+    storageEnv(),
+  );
+  try {
+    const result = await invokeRpcResult(owner.client, "prefs.patch", {
+      locale: name,
+      config_transaction_retry_batch_id: batchId,
+    });
+    assert.equal(result.resolved, true, result.error);
+  } finally {
+    await terminatePackaged(owner);
+  }
+  const manifest = JSON.parse(await readFile(seeded.paths.manifest, "utf8"));
+  assert(manifest.segments.length > 0);
+  return {
+    ...seeded,
+    batchId,
+    expectedIds: [...seeded.rows.map((row) => row.batch_id), batchId],
+    manifest,
+  };
+}
+
+async function runArchiveIntegrityMatrix(display, workDir) {
+  const outcomes = [];
+  for (const fault of ["missing-segment", "hash-tamper", "manifest-conflict"]) {
+    const seeded = await createArchivedConfig(
+      display,
+      workDir,
+      `integrity-${fault}`,
+    );
+    const productBefore = await snapshot(join(seeded.config, "omegat.prefs.json"));
+    if (fault === "missing-segment") {
+      await rm(join(
+        seeded.paths.archive,
+        seeded.manifest.segments[0].file,
+      ));
+    } else if (fault === "hash-tamper") {
+      const segmentPath = join(
+        seeded.paths.archive,
+        seeded.manifest.segments[0].file,
+      );
+      await writeFile(
+        segmentPath,
+        Buffer.concat([await readFile(segmentPath), Buffer.from(" ")]),
+      );
+    } else {
+      const conflicting = structuredClone(seeded.manifest);
+      conflicting.updated_unix_ms += 1;
+      await writeJson(seeded.paths.manifestRecovery, conflicting);
+    }
+
+    const recovery = await launchPackagedRenderer(
+      display,
+      seeded.config,
+      null,
+      storageEnv(),
+    );
+    try {
+      const failed = await invokeRpcResult(recovery.client, "prefs.patch", {
+        theme: "legacy-theme-0",
+        config_transaction_retry_batch_id: "v2-seed-0",
+      });
+      assert.equal(failed.resolved, false);
+      if (fault === "missing-segment") {
+        assert.match(failed.error, /missing segment/);
+      } else if (fault === "hash-tamper") {
+        assert.match(failed.error, /digest mismatch|descriptor disagrees/);
+      } else {
+        assert.match(failed.error, /replicas disagree at revision/);
+      }
+      assert.deepEqual(
+        await snapshot(join(seeded.config, "omegat.prefs.json")),
+        productBefore,
+      );
+      outcomes.push({ fault, failedClosed: true, productMutation: false });
+    } finally {
+      await terminatePackaged(recovery);
+    }
+  }
+  return outcomes;
+}
+
+async function runConfigRelocation(display, workDir) {
+  const seeded = await createArchivedConfig(
+    display,
+    workDir,
+    "relocation-before",
+  );
+  const immutable = Object.fromEntries(await Promise.all(
+    seeded.manifest.segments.map(async (descriptor) => [
+      descriptor.file,
+      await readFile(join(seeded.paths.archive, descriptor.file)),
+    ]),
+  ));
+  const movedPath = join(workDir, "relocation-after");
+  await rename(seeded.config, movedPath);
+  const config = await realpath(movedPath);
+  const paths = transactionPaths(config);
+  const recovery = await launchPackagedRenderer(
+    display,
+    config,
+    null,
+    storageEnv(),
+  );
+  try {
+    const retry = await invokeRpcResult(recovery.client, "prefs.patch", {
+      theme: "legacy-theme-0",
+      config_transaction_retry_batch_id: "v2-seed-0",
+    });
+    assert.deepEqual(retry, {
+      resolved: true,
+      value: { legacy_result: 0 },
+    });
+    const state = await inspectV2(paths, seeded.expectedIds, 2);
+    assert.equal(state.dedupe.config_dir, config);
+    assert.equal(state.manifest.config_dir, config);
+    for (const [file, bytes] of Object.entries(immutable)) {
+      assert.deepEqual(await readFile(join(paths.archive, file)), bytes);
+    }
+    return {
+      exactArchivedRetry: true,
+      mutableMetadataRebased: true,
+      immutableSegmentsRewritten: false,
+    };
+  } finally {
+    await terminatePackaged(recovery);
+  }
+}
+
+async function runConsecutiveGcOwnerDeaths(display, workDir) {
+  const seeded = await seedV2(join(workDir, "generation-gc"), 5);
+  const batchId = "generation-gc-terminal";
+  const environment = {
+    ...storageEnv(),
+    OMEGAT_TEST_CONFIG_ARCHIVE_COMPACTION_SEGMENT_LIMIT: "4",
+    OMEGAT_TEST_CONFIG_ARCHIVE_COMPACTION_BATCH_LIMIT: "16",
+    OMEGAT_TEST_CONFIG_TRANSACTION_OPERATION: "prefs.patch",
+    OMEGAT_TEST_CONFIG_TRANSACTION_POINT: "after_archive_gc_delete",
+  };
+  const killedOwners = [];
+
+  for (let ownerIndex = 0; ownerIndex < 3; ownerIndex += 1) {
+    const marker = join(workDir, `generation-gc-owner-${ownerIndex}.marker`);
+    const owner = await launchPackagedRenderer(
+      display,
+      seeded.config,
+      null,
+      {
+        ...environment,
+        OMEGAT_TEST_CONFIG_TRANSACTION_MARKER: marker,
+      },
+    );
+    if (ownerIndex === 0) {
+      await startRpc(owner.client, "prefs.patch", {
+        locale: "generation-gc",
+        config_transaction_retry_batch_id: batchId,
+      });
+    } else {
+      await startRpc(owner.client, "prefs.get", {});
+    }
+    await waitFor(`generation GC owner ${ownerIndex}`, () => pathExists(marker));
+    const manifestBytes = await readFile(seeded.paths.manifest);
+    assert.deepEqual(
+      manifestBytes,
+      await readFile(seeded.paths.manifestRecovery),
+      "predecessor GC began before both replacement manifests were durable",
+    );
+    const manifest = JSON.parse(manifestBytes);
+    assert.equal(manifest.generation, 1);
+    killedOwners.push(await killPackaged(owner));
+  }
+
+  const productAtLastKill = await snapshot(
+    join(seeded.config, "omegat.prefs.json"),
+  );
+  const recovery = await launchPackagedRenderer(
+    display,
+    seeded.config,
+    null,
+    {
+      ...storageEnv(),
+      OMEGAT_TEST_CONFIG_ARCHIVE_COMPACTION_SEGMENT_LIMIT: "4",
+      OMEGAT_TEST_CONFIG_ARCHIVE_COMPACTION_BATCH_LIMIT: "16",
+    },
+  );
+  try {
+    const prefs = await invokeRpcResult(recovery.client, "prefs.get", {});
+    assert.equal(prefs.resolved, true, prefs.error);
+    assert.equal(prefs.value.locale, "generation-gc");
+    assert.deepEqual(
+      await snapshot(join(seeded.config, "omegat.prefs.json")),
+      productAtLastKill,
+    );
+    const state = await inspectV2(
+      seeded.paths,
+      [...seeded.rows.map((row) => row.batch_id), batchId],
+      2,
+    );
+    assert.equal(state.manifest.generation, 1);
+    assert.equal(state.manifest.segments.length, 1);
+    assert.deepEqual(
+      (await readdir(seeded.paths.archive))
+        .filter((name) => name.startsWith("segment-"))
+        .sort(),
+      state.manifest.segments.map((descriptor) => descriptor.file).sort(),
+    );
+    return {
+      killedOwners,
+      replacementGeneration: state.manifest.generation,
+      predecessorSegmentsAfterRecovery: 0,
+      productReplayed: false,
+      exactBatchCount: seeded.rows.length + 1,
+    };
+  } finally {
+    await terminatePackaged(recovery);
+  }
+}
+
 async function compileIoFaultShim(workDir) {
   const source = join(workDir, "config-v2-io-fault.c");
   const library = join(workDir, "config-v2-io-fault.so");
@@ -634,6 +873,15 @@ const workDir = await mkdtemp(join(tmpdir(), "omegat-shared-config-v2-e2e-"));
 const display = await startPackagedDisplay();
 try {
   const rollingMigration = await runRollingMigration(display.display, workDir);
+  const archiveIntegrity = await runArchiveIntegrityMatrix(
+    display.display,
+    workDir,
+  );
+  const configRelocation = await runConfigRelocation(display.display, workDir);
+  const consecutiveGcOwnerDeaths = await runConsecutiveGcOwnerDeaths(
+    display.display,
+    workDir,
+  );
   const durableBoundaries = [];
   let sequence = 0;
   for (const file of [
@@ -694,6 +942,9 @@ try {
     platform: process.platform,
     driver: "scripts/packaged-driver.mjs",
     rollingMigration,
+    archiveIntegrity,
+    configRelocation,
+    consecutiveGcOwnerDeaths,
     durableBoundaries,
     archiveBoundaries,
     failures,
