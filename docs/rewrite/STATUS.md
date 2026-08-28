@@ -57,12 +57,13 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
   R1–R10. Unassigned in-scope classes: **0**.
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
-**86 passed**, team **35 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **16 passed** plus sidecar journal/watcher unit
+**86 passed**, team **37 passed / 1 ignored**, script **10 passed**, CLI
+**4 passed**, sidecar contract **17 passed** plus sidecar journal/watcher unit
 **4 passed** and plugin filter **1 passed**, and desktop **23 files / 168 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
-The real Linux unpacked package restart E2E also passes; Windows and macOS
+The real Linux unpacked package restart E2E, including atomic refresh receipt
+recovery and cross-project transaction isolation, also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
 Linux packaged aligner E2E now passes with XTEST pointer input through the
 native application menu, renderer drag events, stationary edge autoscroll, and
@@ -631,14 +632,23 @@ semantics. Load paths reject a mismatched version/root and never revive
 terminal envelopes; generation rollover cancels stale fingerprints.
 `project.external-refresh` now persists a `sidecar_committed` checkpoint before
 its successful response reaches Electron. If Electron dies before its ack, the
-replacement renderer performs only an in-memory six-field rebind against the
-reopened sidecar and then completes the durable head, rather than replaying the
-already successful refresh. Sidecar and renderer fault-injection tests cover
+replacement renderer performs only a six-field rebind from the exact durable
+result and then completes the durable head, rather than replaying the already
+successful refresh or re-listing sidecar state. Sidecar and renderer fault-injection tests cover
 this exact response/ack gap. The Linux package run also changes a watched
 source, SIGKILLs Electron from the main-process boundary immediately after the
 successful sidecar response, verifies the durable `sidecar_committed` head,
 then restarts and observes the new `Document3` plus one completed batch with
 exactly one `project.external-refresh` request.
+The narrower product-result/checkpoint window is now closed by a shared atomic
+JSON publisher: the exact refreshed entry list, project properties, statistics,
+SHA-256 product receipt, and `sidecar_committed` state cross one file
+fsync/rename plus parent-directory fsync while the sidecar session lock remains
+held. A publish failure restores the prior in-memory session. Process-abort
+injection on both sides of that rename proves that the pre-publish candidate
+remains pending and is replayed once, while the post-publish result is rebound
+directly from the envelope without another `project.external-refresh`,
+`entry.list`, or `stats.get`.
 A separate real Linux `linux-unpacked` E2E leaves both pending fingerprint and
 conflict envelopes in project A, SIGKILLs the packaged Electron process group
 including its sidecar, and starts project B with the same config. B exposes only
@@ -717,8 +727,7 @@ An advisory exclusive `operation.lock` now serializes recovery, sync,
 project-file commits, guarded commits, and version switches for the same
 project across processes. A real child process holds the product lock while a
 second sync receives an exact conflict without creating `active.json`; sync
-continues after the holder exits. The suite is **30 passed / 1 ignored** (the
-preserved SVN binary prerequisite).
+continues after the holder exits.
 Sync and project-file commit now check the shared cancellation token before and
 between prepare, mapped copy/delete propagation, rebase, and publication
 phases. Cancellation exits through `TeamError::Cancelled`, preserving the
@@ -737,6 +746,16 @@ only that opened project generation's persisted conflict queue. The Linux
 packaged product path kills the sidecar during the real snapshot checkpoint,
 restarts Electron, and verifies same-project queue recovery before completing
 both visible resolutions. The P10 row remains `parity_gap`.
+All transactional `team.resolve`, mapped multi-repository `team.sync`, and
+`team.commit` paths now publish a SHA-256 manifest of the committed project
+tree, prep state, file remotes, Git versions, and root-Git HEAD inside the same
+version-1 envelope as the terminal commit decision. Pending recovery still
+restores snapshots and compensates published repositories; recovery that sees
+the atomically published receipt removes only transaction state and preserves
+the committed TMX/conflict result. A real child-process abort immediately after
+receipt publication proves the resolution is neither rolled back nor replayed.
+The suite is now **37 passed / 1 ignored**; the preserved SVN binary prerequisite
+remains the single ignore.
 
 **P11 aligner:** `AlignerTest` + prefs + Bundle **18/18** unit goldens
 exist (HEAPWISE / PARSEWISE / ID). `AlignerWindowTest` merge/split/move
