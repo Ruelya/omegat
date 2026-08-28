@@ -1,0 +1,9 @@
+{
+  "mode": "heapwise",
+  "pairs": [
+    ["This is sentence one.", "これが1つ目のセンテンス。"],
+    ["Short sentence.", "短い文。"],
+    ["And then this is a very, very, very long sentence. Where shall it end?", "続いてはとても長くてなが〜い長蛇の怪物センテンスだが、いつ終わるのだろうか？"],
+    ["No one knows.", "誰も知らない。"]
+  ]
+}

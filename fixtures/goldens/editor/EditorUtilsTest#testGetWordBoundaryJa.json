@@ -1,0 +1,28 @@
+{
+  "java_test": "org.omegat.gui.editor.EditorUtilsTest#testGetWordBoundaryJa",
+  "text": "太平寺の中心的なペン塔",
+  "locale": "ja",
+  "cases": [
+    {
+      "offset": 2,
+      "forward": false,
+      "expect": 0
+    },
+    {
+      "offset": 2,
+      "forward": true,
+      "expect": 3
+    },
+    {
+      "offset": 5,
+      "forward": false,
+      "expect": 4
+    },
+    {
+      "offset": 5,
+      "forward": true,
+      "expect": 6
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

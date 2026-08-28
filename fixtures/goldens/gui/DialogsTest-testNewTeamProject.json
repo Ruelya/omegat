@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.dialogs.DialogsTest#testNewTeamProject",
+  "window": "team-new",
+  "title": "Download Team Project",
+  "constructs": true,
+  "keys": [
+    "org.omegat.gui.dialogs.DialogsTest#testNewTeamProject"
+  ]
+}

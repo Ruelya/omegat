@@ -1,0 +1,10 @@
+{
+  "id": "xliff1",
+  "fixture": "xliff/filters3/file-XLIFFFilter.xlf",
+  "java_test": "org.omegat.filters4.Xliff1FilterTest#testParseMissingId",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "expect_error": true
+}
