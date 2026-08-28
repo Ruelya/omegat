@@ -811,10 +811,18 @@ already authoritative. The sidecar contract kills a separate process at each
 boundary, verifies one terminal archive row, FIFO-head retention, and takeover
 from the dead durable owner. The real Linux packaged matrix independently parks
 and SIGKILLs the Electron process group at both product boundaries, then proves
-one replacement claim drains entry → team → save exactly once without changing
-TMX or file-remote bytes/mtime. Both paths retain the exact six-field duplicate
-`EntryKey`, one `Document3` translation surface, and an untranslated same-source
-decoy. This is Linux-only evidence; Windows and macOS were not run.
+that, while the original owner PID is still alive, a simultaneous same-root
+contender receives neither the envelope nor an acknowledgement: both pending
+and ack requests are rejected and leave the product queue, refresh tail, and
+durable claim unchanged. Only after external SIGKILL and confirmed
+owner exit does one replacement claim take over. The matrix keeps a pending
+refresh behind the product head and proves the shared global FIFO drains entry
+→ team → save → refresh exactly once without changing TMX or file-remote
+bytes/mtime. The sidecar contract applies the same pre-kill pending/ack rejection
+at both checkpoints and retains its contender while the replacement claims.
+Both paths retain the exact six-field duplicate `EntryKey`, one `Document3`
+translation surface, and an untranslated same-source decoy. This is Linux-only
+evidence; Windows and macOS were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and

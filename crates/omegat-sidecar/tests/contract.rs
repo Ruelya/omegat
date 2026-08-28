@@ -3020,7 +3020,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
 fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() {
     fn spawn_sidecar(
         config: &std::path::Path,
-        abort_compaction: Option<&str>,
+        compaction_checkpoint: Option<(&str, &std::path::Path)>,
     ) -> (
         std::process::Child,
         std::process::ChildStdin,
@@ -3028,17 +3028,15 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
     ) {
         let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
         command.env("OMEGAT_CONFIG_DIR", config);
-        match abort_compaction {
-            Some("archive") => {
-                command.env("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_ARCHIVE", "1");
-            }
-            Some("queue-rename") => {
-                command.env(
-                    "OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME",
-                    "1",
-                );
-            }
-            _ => {}
+        if let Some((point, marker)) = compaction_checkpoint {
+            let point = match point {
+                "archive" => "after_archive_fsync",
+                "queue-rename" => "after_queue_rename",
+                other => panic!("unknown product compaction checkpoint {other}"),
+            };
+            command
+                .env("OMEGAT_TEST_PRODUCT_COMPACTION_POINT", point)
+                .env("OMEGAT_TEST_PRODUCT_COMPACTION_MARKER", marker);
         }
         let mut child = command
             .stdin(Stdio::piped())
@@ -3049,6 +3047,21 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let input = child.stdin.take().unwrap();
         let output = BufReader::new(child.stdout.take().unwrap());
         (child, input, output)
+    }
+
+    fn wait_for_marker(path: &std::path::Path, child: &mut std::process::Child) {
+        for _ in 0..1_000 {
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "compaction owner exited before checkpoint {}",
+                path.display()
+            );
+            if path.is_file() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("timed out waiting for compaction checkpoint {}", path.display());
     }
 
     fn receipt_scope(root: &std::path::Path, app: &str, generation: u64) -> Value {
@@ -3066,6 +3079,11 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let active_path = root.join(".repositories/transactions/active.json");
         let owner_path = root.join(".repositories/transactions/renderer-owner.json");
         let history_path = root.join(".repositories/transactions/history.ndjson");
+        let refresh_journal_path = root
+            .join(".repositories/transactions/external-refresh.json");
+        let refresh_history_path = root
+            .join(".repositories/transactions/external-refresh-history.ndjson");
+        let marker_path = temp.path().join(format!("product-{point}-checkpoint"));
         let save_tmx = root.join("omegat/project_save.tmx");
         let receipt_batch = format!("product-{point}-receipt");
         let tail_batch = format!("product-{point}-save-tail");
@@ -3145,6 +3163,26 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             saved["result"]["receipt"]["payload"]["operation"],
             "project.save"
         );
+        std::thread::sleep(Duration::from_millis(5));
+        let refresh = rpc(
+            &mut setup_in,
+            &mut setup_out,
+            6,
+            "project.refresh.enqueue",
+            json!({
+                "root": root,
+                "app_instance": format!("setup-{point}"),
+                "generation": 8,
+                "paths": [root.join("source/source.txt")],
+                "fingerprints": { "source/source.txt": format!("{point}-refresh-tail") },
+                "sources": ["native"],
+            }),
+        );
+        let refresh_batch = refresh["result"]["batch"]["batch_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(refresh["result"]["batch"]["status"], "pending");
         setup.kill().unwrap();
         setup.wait().unwrap();
 
@@ -3173,11 +3211,11 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         let tmx_mtime_before = std::fs::metadata(&save_tmx).unwrap().modified().unwrap();
 
         let (mut interrupted, mut interrupted_in, mut interrupted_out) =
-            spawn_sidecar(&config, Some(point));
+            spawn_sidecar(&config, Some((point, &marker_path)));
         rpc(
             &mut interrupted_in,
             &mut interrupted_out,
-            6,
+            7,
             "project.open",
             json!({ "root": root }),
         );
@@ -3186,23 +3224,23 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             "{}",
             json!({
                 "jsonrpc": "2.0",
-                "id": 7,
+                "id": 8,
                 "method": "transaction.receipt.pending",
                 "params": receipt_scope(&root, &format!("interrupted-{point}"), 9),
             })
         )
         .unwrap();
         interrupted_in.flush().unwrap();
-        drop(interrupted_in);
-        assert!(!interrupted.wait().unwrap().success());
+        wait_for_marker(&marker_path, &mut interrupted);
 
-        let dead_owner: Value =
+        let live_owner: Value =
             serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
-        assert_eq!(dead_owner["app_instance"], format!("interrupted-{point}"));
-        assert_eq!(dead_owner["process_id"], interrupted.id());
-        assert_eq!(dead_owner["generation"], 9);
-        let queue_after_interrupt: Value =
-            serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
+        assert_eq!(live_owner["app_instance"], format!("interrupted-{point}"));
+        assert_eq!(live_owner["process_id"], interrupted.id());
+        assert_eq!(live_owner["generation"], 9);
+        let queue_at_checkpoint_bytes = std::fs::read(&active_path).unwrap();
+        let queue_at_checkpoint: Value =
+            serde_json::from_slice(&queue_at_checkpoint_bytes).unwrap();
         let expected_batches = if point == "archive" {
             vec![
                 terminal_batch.as_str(),
@@ -3213,7 +3251,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             vec![receipt_batch.as_str(), tail_batch.as_str()]
         };
         assert_eq!(
-            queue_after_interrupt["batches"]
+            queue_at_checkpoint["batches"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -3224,9 +3262,9 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
         if point == "archive" {
             assert_eq!(std::fs::read(&active_path).unwrap(), original_queue);
         }
-        let archived = std::fs::read_to_string(&history_path).unwrap();
+        let archived_at_checkpoint = std::fs::read_to_string(&history_path).unwrap();
         assert_eq!(
-            archived
+            archived_at_checkpoint
                 .lines()
                 .map(|line| serde_json::from_str::<Value>(line).unwrap())
                 .filter(|row| { row["batch_id"] == terminal_batch && row["status"] == "completed" })
@@ -3234,6 +3272,65 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             1
         );
 
+        let (mut contender, mut contender_in, mut contender_out) =
+            spawn_sidecar(&config, None);
+        let contender_pending = rpc(
+            &mut contender_in,
+            &mut contender_out,
+            9,
+            "transaction.receipt.pending",
+            receipt_scope(&root, &format!("contender-{point}"), 10),
+        );
+        assert_eq!(contender_pending["error"]["code"], -32005);
+        assert!(contender_pending["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("locked by another process"));
+        assert_eq!(contender_pending["result"], Value::Null);
+        let contender_ack = rpc(
+            &mut contender_in,
+            &mut contender_out,
+            10,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": format!("contender-{point}"),
+                "generation": 10,
+                "batch_id": receipt_batch,
+                "operation": "entry.set",
+                "outcome": "succeeded",
+            }),
+        );
+        assert_eq!(contender_ack["error"]["code"], -32005);
+        assert!(contender_ack["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("locked by another process"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&owner_path).unwrap()).unwrap(),
+            live_owner,
+            "rejected contender replaced the live durable owner"
+        );
+        assert_eq!(
+            std::fs::read(&active_path).unwrap(),
+            queue_at_checkpoint_bytes,
+            "rejected contender changed the product queue at {point}"
+        );
+        assert!(
+            interrupted.try_wait().unwrap().is_none(),
+            "checkpoint owner exited before the external kill"
+        );
+        let interrupted_pid = interrupted.id();
+        interrupted.kill().unwrap();
+        assert!(
+            !interrupted.wait().unwrap().success(),
+            "checkpoint owner unexpectedly exited successfully"
+        );
+        drop(interrupted_in);
+
+        let dead_owner: Value =
+            serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
+        assert_eq!(dead_owner["process_id"], interrupted_pid);
         let (mut replacement, mut replacement_in, mut replacement_out) =
             spawn_sidecar(&config, None);
         rpc(
@@ -3313,7 +3410,50 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
             }),
         );
         assert_eq!(tail_ack["result"]["ack"]["acknowledged"], true);
+        let recovered_refresh_tail = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            13,
+            "transaction.receipt.pending",
+            receipt_scope(&root, &format!("replacement-{point}"), 10),
+        );
+        assert_eq!(
+            recovered_refresh_tail["result"]["envelopes"][0]["batch_id"],
+            refresh_batch
+        );
+        assert_eq!(
+            recovered_refresh_tail["result"]["envelopes"][0]["payload"]["operation"],
+            "project.external-refresh"
+        );
+        assert_eq!(
+            recovered_refresh_tail["result"]["envelopes"][0]["status"],
+            "pending"
+        );
+        let refresh_ack = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            14,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": format!("replacement-{point}"),
+                "generation": 10,
+                "batch_id": refresh_batch,
+                "operation": "project.external-refresh",
+                "outcome": "coalesced",
+            }),
+        );
+        assert_eq!(refresh_ack["result"]["ack"]["acknowledged"], true);
+        let drained = rpc(
+            &mut replacement_in,
+            &mut replacement_out,
+            15,
+            "transaction.receipt.pending",
+            receipt_scope(&root, &format!("replacement-{point}"), 10),
+        );
+        assert_eq!(drained["result"]["envelopes"], json!([]));
         assert!(!active_path.exists());
+        assert!(!refresh_journal_path.exists());
         assert_eq!(std::fs::read(&save_tmx).unwrap(), tmx_before);
         assert_eq!(
             std::fs::metadata(&save_tmx).unwrap().modified().unwrap(),
@@ -3334,6 +3474,20 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
                 "product terminal history duplicated {batch} at {point}"
             );
         }
+        let refresh_history = std::fs::read_to_string(&refresh_history_path).unwrap();
+        assert_eq!(
+            refresh_history
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .filter(|row| {
+                    row["batch_id"] == refresh_batch && row["status"] == "completed"
+                })
+                .count(),
+            1,
+            "refresh tail terminal history duplicated at {point}"
+        );
+        contender.kill().unwrap();
+        contender.wait().unwrap();
         replacement.kill().unwrap();
         replacement.wait().unwrap();
     }

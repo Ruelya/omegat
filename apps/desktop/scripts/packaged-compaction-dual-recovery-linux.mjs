@@ -280,6 +280,16 @@ async function workspaceState(client) {
   })()`);
 }
 
+async function invokeRpcResult(client, method, params) {
+  return client.evaluate(`(() => window.omegat.rpc(
+    ${JSON.stringify(method)},
+    ${JSON.stringify(params)}
+  ).then(
+    (value) => ({ resolved: true, value }),
+    (error) => ({ resolved: false, error: String(error) })
+  ))()`, true);
+}
+
 async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const port = await unusedPort();
   let stderr = "";
@@ -615,6 +625,19 @@ async function prepareProductCompactionProject(
   });
   assert.equal(save.receipt.status, "sidecar_committed");
   assert.equal(save.receipt.payload.operation, "project.save");
+  await sleep(5);
+  const refresh = await session.request("project.refresh.enqueue", {
+    root: project,
+    app_instance: `${label}-setup`,
+    generation: 121,
+    paths: [join(project, "source", "a-wanted.txt")],
+    fingerprints: {
+      [join(project, "source", "a-wanted.txt")]: `${label}-refresh-tail`,
+    },
+    sources: ["native"],
+  });
+  assert.equal(refresh.batch.status, "pending");
+  assert.equal(refresh.batch.payload.operation, "project.external-refresh");
   await session.close();
 
   const transactions = join(project, ".repositories", "transactions");
@@ -647,11 +670,14 @@ async function prepareProductCompactionProject(
   return {
     activePath,
     historyPath,
+    refreshJournalPath: join(transactions, "external-refresh.json"),
+    refreshHistoryPath: join(transactions, "external-refresh-history.ndjson"),
     ownerPath,
     remotePath,
     receiptBatchId,
     teamBatchId,
     saveBatchId,
+    refreshBatchId: refresh.batch.batch_id,
     terminalBatchId,
     source,
     translation,
@@ -953,6 +979,9 @@ try {
     assert(durableOwner.claim_id.length > 0);
 
     const queueAtBoundary = JSON.parse(await readFile(prepared.activePath, "utf8"));
+    const refreshAtBoundary = JSON.parse(
+      await readFile(prepared.refreshJournalPath, "utf8"),
+    );
     const expectedQueue = point === "after_archive_fsync"
       ? [
           prepared.terminalBatchId,
@@ -980,6 +1009,15 @@ try {
         assert.equal(row.commit.manifest_sha256.length, 64);
       }
     }
+    assert.deepEqual(
+      refreshAtBoundary.batches.map((row) => [
+        row.batch_id,
+        row.status,
+        row.payload.operation,
+      ]),
+      [[prepared.refreshBatchId, "pending", "project.external-refresh"]],
+      "refresh tail did not remain behind the parked product head",
+    );
     const archivedAtBoundary = parseNdjson(
       await readFile(prepared.historyPath, "utf8"),
     );
@@ -990,6 +1028,65 @@ try {
       1,
       `product ${point} archive is not idempotent`,
     );
+
+    launchedB = await launchPackaged(xvfb.display, config, null);
+    const contenderScope = {
+      root: project,
+      app_instance: `${scenario}-pre-kill-contender`,
+      owner_process_id: launchedB.application.pid,
+      generation: parked.generation + 1,
+    };
+    const contenderPending = await invokeRpcResult(
+      launchedB.client,
+      "transaction.receipt.pending",
+      contenderScope,
+    );
+    assert.equal(
+      contenderPending.resolved,
+      false,
+      `product ${point} contender obtained an envelope before owner SIGKILL`,
+    );
+    assert.match(contenderPending.error, /locked by another process|owned by live app/);
+    const contenderAck = await invokeRpcResult(
+      launchedB.client,
+      "transaction.receipt.ack",
+      {
+        ...contenderScope,
+        batch_id: prepared.receiptBatchId,
+        operation: "entry.set",
+        outcome: "succeeded",
+      },
+    );
+    assert.equal(
+      contenderAck.resolved,
+      false,
+      `product ${point} contender acknowledged the live owner's head`,
+    );
+    assert.match(contenderAck.error, /locked by another process|owned by live app/);
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      durableOwner,
+      "pre-kill contender replaced the durable product owner",
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.activePath, "utf8")),
+      queueAtBoundary,
+      "pre-kill contender changed the product queue",
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.refreshJournalPath, "utf8")),
+      refreshAtBoundary,
+      "pre-kill contender changed the refresh tail",
+    );
+    assert.equal(
+      await launchedB.client.evaluate(
+        'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+        true,
+      ),
+      "6.2.0",
+      "rejected pre-kill contender did not remain responsive",
+    );
+
     const stableTreeBeforeRecovery = await snapshotStableProjectTree(project);
     const tmxPath = join(project, "omegat", "project_save.tmx");
     const tmxBeforeRecovery = await readFile(tmxPath);
@@ -1001,7 +1098,10 @@ try {
       OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: restartTracePath,
     });
     await waitFor(`${point} product FIFO drain`, async () =>
-      await pathExists(prepared.activePath) ? undefined : true
+      !await pathExists(prepared.activePath)
+        && !await pathExists(prepared.refreshJournalPath)
+        ? true
+        : undefined
     );
     const recovered = await workspaceState(launchedA.client);
     assert.equal(recovered.project, project);
@@ -1023,7 +1123,12 @@ try {
     const restartTrace = parseNdjson(await readFile(restartTracePath, "utf8"));
     assertOrderedDispatch(
       restartTrace,
-      [prepared.receiptBatchId, prepared.teamBatchId, prepared.saveBatchId],
+      [
+        prepared.receiptBatchId,
+        prepared.teamBatchId,
+        prepared.saveBatchId,
+        prepared.refreshBatchId,
+      ],
       `product ${point} recovery`,
     );
     assert.equal(
@@ -1046,6 +1151,16 @@ try {
         `product ${point} duplicated terminal history for ${batchId}`,
       );
     }
+    const refreshHistory = parseNdjson(
+      await readFile(prepared.refreshHistoryPath, "utf8"),
+    );
+    assert.equal(
+      refreshHistory.filter((row) =>
+        row.batch_id === prepared.refreshBatchId && row.status === "completed"
+      ).length,
+      1,
+      `product ${point} duplicated refresh-tail terminal history`,
+    );
     assert.deepEqual(
       await snapshotStableProjectTree(project),
       stableTreeBeforeRecovery,
@@ -1077,8 +1192,15 @@ try {
         prepared.receiptBatchId,
         prepared.teamBatchId,
         prepared.saveBatchId,
+        prepared.refreshBatchId,
       ],
       archivedTerminalCount: 1,
+      preKillContender: {
+        browserPid: launchedB.application.pid,
+        pendingRejected: true,
+        acknowledgementRejected: true,
+        remainedResponsive: true,
+      },
       completeEntryKey: prepared.key,
       document3Surfaces: recovered.activeSurfaces,
       productTmxReplayed: false,
@@ -1087,6 +1209,8 @@ try {
     });
     await terminatePackaged(launchedA);
     launchedA = undefined;
+    await terminatePackaged(launchedB);
+    launchedB = undefined;
   }
 
   for (const point of ["after_archive_fsync", "after_queue_rename"]) {
