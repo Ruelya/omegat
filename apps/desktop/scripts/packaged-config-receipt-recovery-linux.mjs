@@ -275,12 +275,25 @@ async function killPackaged(launched) {
 
 async function terminatePackaged(launched) {
   if (!launched?.application?.pid) return;
+  const processIds = [
+    launched.application.pid,
+    ...(await descendants(launched.application.pid)).map(({ pid }) => pid),
+  ];
   launched.client?.close();
   try {
     process.kill(-launched.application.pid, "SIGTERM");
   } catch (error) {
     if (error.code !== "ESRCH") throw error;
   }
+  await waitFor(
+    "terminated packaged process group",
+    async () => {
+      const alive = await Promise.all(
+        processIds.map((pid) => pathExists(`/proc/${pid}`)),
+      );
+      return alive.every((value) => !value);
+    },
+  );
 }
 
 async function setInput(client, selector, value) {
