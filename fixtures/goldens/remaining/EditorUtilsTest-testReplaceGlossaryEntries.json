@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.editor.EditorUtilsTest#testReplaceGlossaryEntries",
+  "src": "Snowman Bob went to the snowman party. SnOwMaN!",
+  "out": "Sneeuwpop Blub went to the sneeuwpop party. sneeuwpop!",
+  "multi_src": "Snowman Bob went to the snowman party. SnOwMaN!",
+  "multi_out": "Sneeuwpop Blub went to the sneeuwpop parti. sneeuwpop!",
+  "final_src": "Snowman Bob went to the snowman party. SnOwMaN",
+  "final_out": "Sneeuwpop Blub went to the sneeuwpop parti. sneeuwpop"
+}

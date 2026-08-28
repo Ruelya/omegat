@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.scripting.ScriptRunnerTest#testCompileScripts",
+  "javascript_files": [
+    "check_same_segments.js",
+    "switch_colour_theme.js"
+  ],
+  "rewrite_engine": "boa",
+  "unsupported_extension": "groovy",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptRunnerTest#testCompileScripts"
+  ]
+}

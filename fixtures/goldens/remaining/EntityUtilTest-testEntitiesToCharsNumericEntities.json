@@ -1,0 +1,18 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsNumericEntities",
+  "cases": [
+    {
+      "input": "&#34;",
+      "output": "\""
+    },
+    {
+      "input": "&#x22;",
+      "output": "\""
+    },
+    {
+      "input": "&#169;",
+      "output": "©"
+    }
+  ]
+}
