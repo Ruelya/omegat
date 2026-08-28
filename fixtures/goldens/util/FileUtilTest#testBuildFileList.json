@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.FileUtilTest#testBuildFileList",
+  "non_recursive": 0,
+  "recursive": [
+    "a/bar",
+    "a/foo"
+  ],
+  "keys": [
+    "org.omegat.util.FileUtilTest#testBuildFileList"
+  ]
+}

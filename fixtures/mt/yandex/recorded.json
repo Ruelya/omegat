@@ -1,0 +1,9 @@
+{
+  "request": {
+    "method": "POST",
+    "url": "https://translate.api.cloud.yandex.net/translate/v2/translate",
+    "headers": { "Authorization": "Bearer REDACTED" },
+    "body": "{\"texts\":[\"Hello\"],\"sourceLanguageCode\":\"en\",\"targetLanguageCode\":\"fr\"}"
+  },
+  "response": { "translations": [{ "text": "Bonjour" }] }
+}

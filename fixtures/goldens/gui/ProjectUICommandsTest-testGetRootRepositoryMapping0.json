@@ -1,0 +1,13 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMapping0",
+  "branch": "main",
+  "type": "git",
+  "url": "git@github.com:omegat-L10N/ja.git",
+  "mapping_count": 1,
+  "local": "/",
+  "repository": "/",
+  "keys": [
+    "org.omegat.gui.main.ProjectUICommandsTest#testGetRootRepositoryMapping0"
+  ]
+}

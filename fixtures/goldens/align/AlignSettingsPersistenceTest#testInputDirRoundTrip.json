@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testInputDirRoundTrip",
+  "source_dir": "tmp/foo",
+  "target_dir": null,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

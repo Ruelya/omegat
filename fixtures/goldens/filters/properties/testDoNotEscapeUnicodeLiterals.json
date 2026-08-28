@@ -1,0 +1,21 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-UnicodeLiterals.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testDoNotEscapeUnicodeLiterals",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "dontUnescapeULiterals": "true"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "a\nb\\u0020\\ad"
+  ],
+  "ids": [
+    "MU"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "# \\u00ad\nMU=a\\nb\\u0020\\\\ad\n"
+}

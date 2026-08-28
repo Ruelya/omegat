@@ -1,0 +1,18 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.html.EntityUtilTest#testEntitiesToCharsInvalid",
+  "cases": [
+    {
+      "input": "&invalid;",
+      "output": "&invalid;"
+    },
+    {
+      "input": "&;",
+      "output": "&;"
+    },
+    {
+      "input": "& #;",
+      "output": "& #;"
+    }
+  ]
+}
