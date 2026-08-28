@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnCount",
+  "column_count": 5,
+  "keys": [
+    "org.omegat.gui.issues.IssuesTableModelTest#testGetColumnCount"
+  ]
+}
