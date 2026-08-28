@@ -141,6 +141,51 @@ const rows = [
       };
     },
   },
+  {
+    driver: "packaged-random-durable-faults-linux.mjs",
+    boundaries: [
+      "long-random-sequence",
+      "project-pre-publication",
+      "project-post-publication",
+      "config-replica-rename-parent-fsync",
+      "config-terminal-history",
+      "cross-root-owner-release",
+    ],
+    validate(report) {
+      assert.equal(report.result, "passed");
+      assert(report.steps >= 8);
+      assert.equal(report.trace.length, report.steps);
+      assert.equal(report.allQueuesDrained, true);
+      assert.equal(report.allTerminalDecisionsExact, true);
+      assert.equal(report.ownerReleaseTombstonesVerified, true);
+      assert.equal(
+        report.trace.some((row) =>
+          row.kind === "project.save" && row.point === "before_atomic_publish"
+        ),
+        true,
+      );
+      assert.equal(
+        report.trace.some((row) =>
+          row.kind === "project.save" && row.point === "after_atomic_publish"
+        ),
+        true,
+      );
+      assert.equal(
+        report.trace.some((row) =>
+          row.kind === "prefs.patch"
+          && row.point === "after_terminal_history_publish"
+        ),
+        true,
+      );
+      return {
+        seed: report.seed,
+        steps: report.steps,
+        durationMs: report.durationMs,
+        roots: report.roots,
+        ownerReleaseTombstonesVerified: true,
+      };
+    },
+  },
 ];
 
 const matrix = [];

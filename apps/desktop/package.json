@@ -27,6 +27,7 @@
     "test:e2e:shared-config-v2:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-shared-config-v2.mjs",
     "test:e2e:unified-persistence-mixed:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-unified-persistence-mixed-linux.mjs",
     "test:e2e:durable-fifo-stress:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-durable-fifo-stress-linux.mjs",
+    "test:e2e:random-durable-faults:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-random-durable-faults-linux.mjs",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
