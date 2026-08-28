@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.IssuesTableModelTest#testActionMenuIconVisibility",
+  "icon_width_positive": true,
+  "keys": [
+    "org.omegat.gui.issues.IssuesTableModelTest#testActionMenuIconVisibility"
+  ]
+}

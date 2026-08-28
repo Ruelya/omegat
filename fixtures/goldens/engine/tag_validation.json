@@ -1,0 +1,476 @@
+{
+  "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "no_errors",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>",
+        "</g0>"
+      ],
+      "loc_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>",
+        "</g0>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "html_input_single",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<s0>",
+        "<i1>",
+        "</s0>"
+      ],
+      "loc_tags": [
+        "<s0>",
+        "<i1>",
+        "</s0>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "missing_end",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>",
+        "</g0>"
+      ],
+      "loc_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>"
+      ],
+      "src_errors": [
+        {
+          "tag": "</g0>",
+          "pos": -1,
+          "error": "MISSING"
+        }
+      ],
+      "trans_errors": [
+        {
+          "tag": "<g0>",
+          "pos": -1,
+          "error": "ORPHANED"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "duplicate_end",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>",
+        "</g0>"
+      ],
+      "loc_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>",
+        "</g0>",
+        "</g0>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+        {
+          "tag": "</g0>",
+          "pos": -1,
+          "error": "DUPLICATE"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "extraneous",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<g0>",
+        "<g1>",
+        "</g1>",
+        "</g0>"
+      ],
+      "loc_tags": [
+        "<g0>",
+        "<g1>",
+        "<x2/>",
+        "</g1>",
+        "</g0>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+        {
+          "tag": "<x2/>",
+          "pos": -1,
+          "error": "EXTRANEOUS"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "malformed",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<g0>",
+        "</g0>",
+        "<g1>",
+        "</g1>"
+      ],
+      "loc_tags": [
+        "<g0>",
+        "</g0>",
+        "</g1>",
+        "<g1>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+        {
+          "tag": "</g1>",
+          "pos": -1,
+          "error": "MALFORMED"
+        },
+        {
+          "tag": "<g1>",
+          "pos": -1,
+          "error": "MALFORMED"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "order",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "<g0>",
+        "</g0>",
+        "<g1>",
+        "</g1>"
+      ],
+      "loc_tags": [
+        "<g1>",
+        "</g1>",
+        "<g0>",
+        "</g0>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+        {
+          "tag": "</g0>",
+          "pos": -1,
+          "error": "ORDER"
+        },
+        {
+          "tag": "</g1>",
+          "pos": -1,
+          "error": "ORDER"
+        },
+        {
+          "tag": "<g0>",
+          "pos": -1,
+          "error": "ORDER"
+        },
+        {
+          "tag": "<g1>",
+          "pos": -1,
+          "error": "ORDER"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testOrderedTagValidation",
+      "name": "order_loose",
+      "kind": "ordered",
+      "loose": true,
+      "src_tags": [
+        "<g0>",
+        "</g0>",
+        "<g1>",
+        "</g1>"
+      ],
+      "loc_tags": [
+        "<g1>",
+        "</g1>",
+        "<g0>",
+        "</g0>"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testUnorderedTagValidation",
+      "name": "no_errors",
+      "kind": "unordered",
+      "loose": false,
+      "src_tags": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "loc_tags": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testUnorderedTagValidation",
+      "name": "missing",
+      "kind": "unordered",
+      "loose": false,
+      "src_tags": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "loc_tags": [
+        "a",
+        "b",
+        "c"
+      ],
+      "src_errors": [
+        {
+          "tag": "d",
+          "pos": -1,
+          "error": "MISSING"
+        }
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testUnorderedTagValidation",
+      "name": "count_mismatch_ok",
+      "kind": "unordered",
+      "loose": false,
+      "src_tags": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "loc_tags": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "d"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testUnorderedTagValidation",
+      "name": "extraneous_via_ordered",
+      "kind": "ordered",
+      "loose": false,
+      "src_tags": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "loc_tags": [
+        "a",
+        "b",
+        "e",
+        "c",
+        "d"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+        {
+          "tag": "e",
+          "pos": -1,
+          "error": "EXTRANEOUS"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testPrintfTagValidation",
+      "name": "ok",
+      "kind": "printf",
+      "loose": false,
+      "src_tags": [
+        "Foo %s bar %d"
+      ],
+      "loc_tags": [
+        "Foo %s bar %d"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testPrintfTagValidation",
+      "name": "missing",
+      "kind": "printf",
+      "loose": false,
+      "src_tags": [
+        "Foo %s bar %d"
+      ],
+      "loc_tags": [
+        "Foo %s bar"
+      ],
+      "src_errors": [
+        {
+          "tag": "%d",
+          "pos": 11,
+          "error": "UNSPECIFIED"
+        },
+        {
+          "tag": "%s",
+          "pos": 4,
+          "error": "UNSPECIFIED"
+        }
+      ],
+      "trans_errors": [
+        {
+          "tag": "%s",
+          "pos": 4,
+          "error": "UNSPECIFIED"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testPrintfTagValidation",
+      "name": "extraneous",
+      "kind": "printf",
+      "loose": false,
+      "src_tags": [
+        "Foo %s bar %d"
+      ],
+      "loc_tags": [
+        "Foo %s bar %d baz %d"
+      ],
+      "src_errors": [
+        {
+          "tag": "%d",
+          "pos": 11,
+          "error": "UNSPECIFIED"
+        },
+        {
+          "tag": "%s",
+          "pos": 4,
+          "error": "UNSPECIFIED"
+        }
+      ],
+      "trans_errors": [
+        {
+          "tag": "%d",
+          "pos": 11,
+          "error": "UNSPECIFIED"
+        },
+        {
+          "tag": "%d",
+          "pos": 18,
+          "error": "UNSPECIFIED"
+        },
+        {
+          "tag": "%s",
+          "pos": 4,
+          "error": "UNSPECIFIED"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testRemovePattern",
+      "name": "ok",
+      "kind": "remove",
+      "loose": false,
+      "src_tags": [
+        "foo bar baz"
+      ],
+      "loc_tags": [
+        "bar baz"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagValidationTest#testRemovePattern",
+      "name": "extraneous",
+      "kind": "remove",
+      "loose": false,
+      "src_tags": [
+        "foo bar baz"
+      ],
+      "loc_tags": [
+        "foo bar baz"
+      ],
+      "src_errors": [
+
+      ],
+      "trans_errors": [
+        {
+          "tag": "foo",
+          "pos": 0,
+          "error": "EXTRANEOUS"
+        }
+      ]
+    }
+  ]
+}
