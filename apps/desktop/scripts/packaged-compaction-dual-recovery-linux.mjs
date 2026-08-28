@@ -428,9 +428,22 @@ async function terminatePackaged(launched) {
   } catch (error) {
     if (error.code !== "ESRCH") throw error;
   }
-  await waitFor("terminated packaged Electron", async () =>
-    !await pathExists(`/proc/${pid}`)
-  );
+  try {
+    await waitFor(
+      "gracefully terminated packaged Electron",
+      async () => !await pathExists(`/proc/${pid}`),
+      5_000,
+    );
+  } catch {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+    await waitFor("SIGKILLed packaged Electron cleanup", async () =>
+      !await pathExists(`/proc/${pid}`)
+    );
+  }
 }
 
 function parseNdjson(raw) {
