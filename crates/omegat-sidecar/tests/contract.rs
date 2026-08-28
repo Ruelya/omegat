@@ -1278,7 +1278,7 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
             &mut setup,
             8,
             &root,
-            &format!("atomic-{kind}-old-owner"),
+            &format!("atomic-{kind}-setup"),
             62,
         );
         assert_eq!(
@@ -1288,10 +1288,7 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
         let old_owner: Value =
             serde_json::from_slice(&std::fs::read(&owner_path).unwrap()).unwrap();
         assert_eq!(old_owner["process_id"], setup.child.id());
-        assert_eq!(
-            old_owner["app_instance"],
-            format!("atomic-{kind}-old-owner")
-        );
+        assert_eq!(old_owner["app_instance"], format!("atomic-{kind}-setup"));
 
         let mut live_contender = spawn_sidecar(&config);
         let rejected_while_old_owner_lived = pending(
