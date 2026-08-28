@@ -304,12 +304,13 @@ impl App {
                 let base = serde_json::to_value(&self.prefs).unwrap();
                 let desired = serde_json::to_value(&preferences).unwrap();
                 let patch = config_transaction::preference_patch(&base, &desired);
-                let value = config_transaction::execute(
+                let value = config_transaction::execute_with_application_payload(
                     &self.prefs.config_dir,
                     &app_instance,
                     &batch_id,
                     owner_process_id,
-                    "prefs.patch",
+                    "prefs.set",
+                    desired,
                     patch,
                 )
                 .map_err(|error| (error_code::IO, error))?;

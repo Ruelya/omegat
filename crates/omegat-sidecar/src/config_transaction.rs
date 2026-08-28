@@ -62,6 +62,8 @@ struct ConfigTransactionEnvelope {
     owner_process_id: u32,
     status: ConfigTransactionStatus,
     payload: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    application_payload: Option<Value>,
     result: Option<Value>,
     error: Option<String>,
     updated_unix_ms: u128,
@@ -1113,7 +1115,7 @@ fn aligner_patch(payload: &Value) -> Value {
 
 fn apply_operation(config_dir: &Path, operation: &str, payload: &Value) -> Result<Value, String> {
     match operation {
-        "prefs.patch" => apply_preferences_patch(config_dir, payload),
+        "prefs.patch" | "prefs.set" => apply_preferences_patch(config_dir, payload),
         "aligner.configure" => {
             let preferences = apply_preferences_patch(config_dir, &aligner_patch(payload))?;
             Ok(json!({
@@ -1220,7 +1222,11 @@ fn drain_locked(
             workflow.persist_or_clear_queue()?;
         } else {
             let mut terminal = pending.clone();
-            match apply_operation(config_dir, &pending.operation, &pending.payload) {
+            let application_payload = pending
+                .application_payload
+                .as_ref()
+                .unwrap_or(&pending.payload);
+            match apply_operation(config_dir, &pending.operation, application_payload) {
                 Ok(result) => {
                     terminal.status = ConfigTransactionStatus::Completed;
                     terminal.result = Some(result);
@@ -1297,6 +1303,53 @@ pub fn execute(
     operation: &str,
     payload: Value,
 ) -> Result<Value, String> {
+    execute_inner(
+        config_dir,
+        app_instance,
+        batch_id,
+        owner_process_id,
+        operation,
+        payload,
+        None,
+    )
+}
+
+/// Enqueue a shared-config operation whose durable retry identity differs from
+/// the payload applied to the product.
+///
+/// `prefs.set` uses the normalized full request as its stable identity while
+/// applying a merge patch computed from the process snapshot. A retry after a
+/// restart can therefore return the original terminal result even though the
+/// live preferences now already contain that patch.
+pub fn execute_with_application_payload(
+    config_dir: &Path,
+    app_instance: &str,
+    batch_id: &str,
+    owner_process_id: u32,
+    operation: &str,
+    identity_payload: Value,
+    application_payload: Value,
+) -> Result<Value, String> {
+    execute_inner(
+        config_dir,
+        app_instance,
+        batch_id,
+        owner_process_id,
+        operation,
+        identity_payload,
+        Some(application_payload),
+    )
+}
+
+fn execute_inner(
+    config_dir: &Path,
+    app_instance: &str,
+    batch_id: &str,
+    owner_process_id: u32,
+    operation: &str,
+    payload: Value,
+    application_payload: Option<Value>,
+) -> Result<Value, String> {
     if app_instance.is_empty() || batch_id.is_empty() || owner_process_id == 0 {
         return Err("config transaction requires app instance, batch id, and process id".into());
     }
@@ -1325,6 +1378,7 @@ pub fn execute(
                 owner_process_id,
                 status: ConfigTransactionStatus::Pending,
                 payload,
+                application_payload,
                 result: None,
                 error: None,
                 updated_unix_ms: unix_ms(),
@@ -1394,6 +1448,7 @@ mod tests {
             owner_process_id: 707,
             status: ConfigTransactionStatus::Pending,
             payload,
+            application_payload: None,
             result: None,
             error: None,
             updated_unix_ms: unix_ms(),
@@ -1531,6 +1586,52 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("reused for a different operation or payload"));
+    }
+
+    #[test]
+    fn set_identity_is_stable_when_retry_patch_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let desired = json!({"locale": "fr", "theme": "system"});
+        let first = execute_with_application_payload(
+            &config,
+            "electron-before-restart",
+            "prefs-set",
+            303,
+            "prefs.set",
+            desired.clone(),
+            json!({"locale": "fr"}),
+        )
+        .unwrap();
+        let product = std::fs::read(config.join("omegat.prefs.json")).unwrap();
+
+        let retry = execute_with_application_payload(
+            &config,
+            "electron-after-restart",
+            "prefs-set",
+            404,
+            "prefs.set",
+            desired,
+            json!({}),
+        )
+        .unwrap();
+        assert_eq!(retry, first);
+        assert_eq!(
+            std::fs::read(config.join("omegat.prefs.json")).unwrap(),
+            product
+        );
+        let terminal = open_history(&config, None)
+            .unwrap()
+            .records_for("prefs-set")
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(terminal.operation, "prefs.set");
+        assert_eq!(terminal.payload, json!({"locale": "fr", "theme": "system"}));
+        assert_eq!(
+            terminal.application_payload,
+            Some(json!({"locale": "fr"}))
+        );
     }
 
     #[test]

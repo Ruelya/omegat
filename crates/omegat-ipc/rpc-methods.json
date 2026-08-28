@@ -17,7 +17,7 @@
         "scope": "config",
         "activation": "always",
         "receipt_route": "config",
-        "journal_operation": "prefs.patch",
+        "journal_operation": "prefs.set",
         "watches_project_inputs": false
       }
     },
