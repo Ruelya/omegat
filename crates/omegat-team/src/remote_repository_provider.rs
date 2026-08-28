@@ -960,9 +960,24 @@ fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
         Err(error) => return Err(TeamError::Io(error)),
     };
-    writeln!(file, "{point}")?;
+    serde_json::to_writer(
+        &mut file,
+        &serde_json::json!({
+            "point": point,
+            "sidecar_process_id": std::process::id(),
+        }),
+    )
+    .map_err(|error| TeamError::Command(format!("resolve cancellation checkpoint: {error}")))?;
+    file.write_all(b"\n")?;
     file.sync_all()?;
     sync_parent(&marker)?;
+    if let Some(release) = std::env::var_os("OMEGAT_TEST_RESOLVE_CANCELLATION_RELEASE") {
+        let release = PathBuf::from(release);
+        while !release.is_file() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        return Ok(());
+    }
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }

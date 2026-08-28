@@ -301,6 +301,48 @@ async function invokeRpcResult(client, method, params) {
   ))()`, true);
 }
 
+async function startTracedRpc(client, traceKey, method, params, requestId) {
+  return client.evaluate(`(() => {
+    window.__omegatConcurrentRpc ??= {};
+    const record = {
+      events: [],
+      settled: false,
+      resolved: null,
+      value: null,
+      error: null,
+    };
+    window.__omegatConcurrentRpc[${JSON.stringify(traceKey)}] = record;
+    window.omegat.onRpcOperation((event) => {
+      if (event.requestId === ${JSON.stringify(requestId)}) {
+        record.events.push(event);
+      }
+    });
+    void window.omegat.rpc(
+      ${JSON.stringify(method)},
+      ${JSON.stringify(params)},
+      ${JSON.stringify(requestId)}
+    ).then(
+      (value) => {
+        record.resolved = true;
+        record.value = value;
+      },
+      (error) => {
+        record.resolved = false;
+        record.error = String(error);
+      },
+    ).finally(() => {
+      record.settled = true;
+    });
+    return true;
+  })()`);
+}
+
+async function tracedRpcState(client, traceKey) {
+  return client.evaluate(`JSON.parse(JSON.stringify(
+    window.__omegatConcurrentRpc?.[${JSON.stringify(traceKey)}] ?? null
+  ))`);
+}
+
 async function clickTeamResolve(client, entryKey, side) {
   assert(["ours", "theirs"].includes(side));
   return client.evaluate(`(() => {
@@ -3597,22 +3639,132 @@ try {
     assert.equal(await pathExists(`/proc/${killed.browserPid}`), false);
 
     if (cancellationPoint === "after_rollback_fsync") {
-      launchedB = await launchPackagedRenderer(xvfb.display, config, null);
-      const secondCancellation = await invokeRpcResult(
-        launchedB.client,
-        "transaction.receipt.ack",
-        {
-          root: project,
-          app_instance: `${label}-second-cancel`,
-          owner_process_id: launchedB.application.pid,
-          generation: oldOwner.generation,
-          batch_id: oldOwner.batch_id,
-          operation: "resolve-conflict",
-          outcome: "cancelled",
+      const cancelOwnerMarker = join(workDir, `${label}-concurrent-owner.json`);
+      const cancelOwnerRelease = join(workDir, `${label}-concurrent-owner.release`);
+      const concurrentEnvelopeTraces = Array.from(
+        { length: 2 },
+        (_, index) => join(workDir, `${label}-concurrent-${index}.ndjson`),
+      );
+      const concurrentCancelCallers = await Promise.all(
+        concurrentEnvelopeTraces.map((trace) =>
+          launchPackagedRenderer(xvfb.display, config, null, {
+            OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: "after_rollback_fsync",
+            OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER: cancelOwnerMarker,
+            OMEGAT_TEST_RESOLVE_CANCELLATION_RELEASE: cancelOwnerRelease,
+            OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: trace,
+          })
+        ),
+      );
+      quorumReplacements = concurrentCancelCallers;
+      const traceKeys = concurrentCancelCallers.map((_, index) =>
+        `${label}-concurrent-cancel-${index}`
+      );
+      const requestIds = concurrentCancelCallers.map((_, index) =>
+        `${label}-concurrent-request-${index}`
+      );
+      await Promise.all(concurrentCancelCallers.map((replacement, index) =>
+        startTracedRpc(
+          replacement.client,
+          traceKeys[index],
+          "transaction.receipt.ack",
+          {
+            root: project,
+            app_instance: `${label}-concurrent-cancel-${index}`,
+            owner_process_id: replacement.application.pid,
+            generation: oldOwner.generation,
+            batch_id: oldOwner.batch_id,
+            operation: "resolve-conflict",
+            outcome: "cancelled",
+          },
+          requestIds[index],
+        )
+      ));
+      const durableCancelOwner = await waitFor(
+        "one concurrent packaged cancellation owner",
+        async () =>
+          await pathExists(cancelOwnerMarker)
+            ? JSON.parse(await readFile(cancelOwnerMarker, "utf8"))
+            : undefined,
+      );
+      assert.equal(durableCancelOwner.point, "after_rollback_fsync");
+      const concurrentSidecars = await Promise.all(
+        concurrentCancelCallers.map(async (replacement) => {
+          const processes = await descendants(replacement.application.pid);
+          const child = processes.find(({ command }) =>
+            command.includes("omegat-sidecar")
+          );
+          assert(child, `concurrent packaged sidecar not found: ${JSON.stringify(processes)}`);
+          return child.pid;
+        }),
+      );
+      assert.equal(
+        concurrentSidecars.filter((pid) =>
+          pid === durableCancelOwner.sidecar_process_id
+        ).length,
+        1,
+        "concurrent cancellation did not select exactly one durable owner",
+      );
+      const concurrentPending = await waitFor(
+        "both packaged secondary cancellations concurrently pending",
+        async () => {
+          const states = await Promise.all(concurrentCancelCallers.map(
+            (replacement, index) =>
+              tracedRpcState(replacement.client, traceKeys[index]),
+          ));
+          return states.every((state, index) =>
+              state
+              && !state.settled
+              && state.events.some((event) =>
+                event.requestId === requestIds[index]
+                && event.phase === "started"
+              )
+            )
+            ? states
+            : undefined;
         },
       );
-      assert.equal(secondCancellation.resolved, false);
-      assert.match(secondCancellation.error, /request cancelled/);
+      assert.equal(concurrentPending.length, 2);
+      assert.deepEqual(
+        JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+        durableOldOwner,
+        "secondary cancellation race elected a resolve dispatcher owner",
+      );
+      await writeFile(cancelOwnerRelease, "release\n", "utf8");
+      const concurrentResults = await waitFor(
+        "both packaged secondary cancellation acknowledgements",
+        async () => {
+          const states = await Promise.all(concurrentCancelCallers.map(
+            (replacement, index) =>
+              tracedRpcState(replacement.client, traceKeys[index]),
+          ));
+          return states.every((state) =>
+              state?.settled
+              && state.resolved === false
+              && /request cancelled/.test(state.error ?? "")
+              && state.events.some((event) =>
+                event.phase === "cancelled" && event.errorCode === -32800
+              )
+            )
+            ? states
+            : undefined;
+        },
+      );
+      for (const state of concurrentResults) {
+        assert.deepEqual(
+          state.events.map((event) => event.phase),
+          ["started", "cancelled"],
+        );
+        assert.equal(state.events.at(-1).errorCode, -32800);
+      }
+      for (const trace of concurrentEnvelopeTraces) {
+        assert.equal(
+          await pathExists(trace)
+            ? parseNdjson(await readFile(trace, "utf8")).length
+            : 0,
+          0,
+          "secondary cancellation caller delivered a resolve envelope",
+        );
+      }
       const takeoverHistory = parseNdjson(
         await readFile(prepared.historyPath, "utf8"),
       );
@@ -3637,13 +3789,19 @@ try {
       duplicateResolveCancellationResults.push({
         cancellationBoundary: cancellationPoint,
         firstCallerKilled: true,
-        secondPackagedCallerPid: launchedB.application.pid,
+        simultaneousPackagedCallerPids:
+          concurrentCancelCallers.map((replacement) => replacement.application.pid),
+        durableCancelOwnerSidecarPid: durableCancelOwner.sidecar_process_id,
+        idempotentLoserCount: 1,
         protocolErrorCode: -32800,
         durableRollbackCount: 1,
         terminalCount: 1,
+        resolveEnvelopeCount: 0,
       });
-      await terminatePackaged(launchedB);
-      launchedB = undefined;
+      await Promise.all(
+        concurrentCancelCallers.map((replacement) => terminatePackaged(replacement)),
+      );
+      quorumReplacements = [];
     }
 
     if (cancellationPoint === "after_terminal_queue_rename") {
@@ -3886,14 +4044,31 @@ try {
     quorumReplacements = [];
   }
 
-  {
-    const label = "atomic-team-resolve-fifo-tail-cancel";
+  for (const killBoundary of [
+    "after_intent_queue_rename",
+    "after_rollback_fsync",
+    "after_terminal_queue_rename",
+    "after_archive_fsync",
+    "after_queue_rename",
+  ]) {
+    const compactionBoundary = [
+      "after_archive_fsync",
+      "after_queue_rename",
+    ].includes(killBoundary)
+      ? killBoundary
+      : null;
+    const cancellationPoint = compactionBoundary
+      ? "after_terminal_queue_rename"
+      : killBoundary;
+    const label =
+      `atomic-team-resolve-fifo-${killBoundary.replaceAll("_", "-")}`;
     const config = join(workDir, `${label}-config`);
     const project = join(workDir, `${label}-project`);
     const remote = join(workDir, `${label}-remote`);
     const dispatchMarker = join(workDir, `${label}-dispatch.marker`);
     const dispatchRelease = join(workDir, `${label}-dispatch.release`);
     const cancellationMarker = join(workDir, `${label}-cancel.marker`);
+    const compactionMarker = join(workDir, `${label}-compaction.marker`);
     const resolveBatchId = `${label}-resolve-tail`;
     const prepared = await prepareResolveElectionProject(
       config,
@@ -3938,10 +4113,10 @@ try {
     launchedA = await launchPackaged(xvfb.display, config, project, {
       OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_MARKER: dispatchMarker,
       OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_RELEASE: dispatchRelease,
-      OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: "after_intent_queue_rename",
+      OMEGAT_TEST_RESOLVE_CANCELLATION_POINT: cancellationPoint,
       OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER: cancellationMarker,
     });
-    await waitFor("FIFO tail startup dispatch hold", () =>
+    await waitFor(`${killBoundary} FIFO tail startup dispatch hold`, () =>
       pathExists(dispatchMarker)
     );
     assert.equal(launchedA.workspace.translation, prepared.theirs);
@@ -3961,7 +4136,7 @@ try {
       },
     );
     void cancellationRequest;
-    await waitFor("FIFO tail durable cancellation intent", () =>
+    await waitFor(`${killBoundary} FIFO tail durable cancellation boundary`, () =>
       pathExists(cancellationMarker)
     );
     const parkedQueue = JSON.parse(await readFile(prepared.activePath, "utf8"));
@@ -3975,7 +4150,12 @@ try {
           batchId,
           "sidecar_committed",
         ]),
-        [resolveBatchId, "cancellation_pending"],
+        [
+          resolveBatchId,
+          cancellationPoint === "after_terminal_queue_rename"
+            ? "request_cancelled"
+            : "cancellation_pending",
+        ],
       ],
     );
     assert.equal(
@@ -3985,6 +4165,53 @@ try {
     );
     const killed = await killPackaged(launchedA);
     launchedA = undefined;
+    let compactionKilled = null;
+    if (compactionBoundary) {
+      launchedB = await launchPackagedRenderer(xvfb.display, config, project, {
+        OMEGAT_TEST_PRODUCT_COMPACTION_POINT: compactionBoundary,
+        OMEGAT_TEST_PRODUCT_COMPACTION_MARKER: compactionMarker,
+      });
+      await waitFor(`${killBoundary} FIFO terminal compaction boundary`, () =>
+        pathExists(compactionMarker)
+      );
+      const compactingQueue = JSON.parse(
+        await readFile(prepared.activePath, "utf8"),
+      );
+      assert.deepEqual(
+        productJournalBatches(compactingQueue).map((row) => [
+          row.batch_id,
+          row.status,
+        ]),
+        [
+          ...prepared.fifoHeads.map(({ batchId }) => [
+            batchId,
+            "sidecar_committed",
+          ]),
+          ...(compactionBoundary === "after_archive_fsync"
+            ? [[resolveBatchId, "request_cancelled"]]
+            : []),
+        ],
+        `${killBoundary} did not preserve the recoverable FIFO prefix`,
+      );
+      const compactionHistory = parseNdjson(
+        await readFile(prepared.historyPath, "utf8"),
+      );
+      assert.equal(
+        compactionHistory.filter((row) =>
+          row.batch_id === resolveBatchId
+          && row.status === "request_cancelled"
+          && row.error_code === -32800
+        ).length,
+        1,
+        `${killBoundary} archived the cancelled tail more than once`,
+      );
+      compactionKilled = await killPackaged(launchedB);
+      launchedB = undefined;
+      assert.equal(
+        await pathExists(`/proc/${compactionKilled.browserPid}`),
+        false,
+      );
+    }
 
     const traces = Array.from(
       { length: 3 },
@@ -4041,7 +4268,30 @@ try {
       );
       assert.equal(pending.resolved, false);
       assert.match(pending.error, /locked by another process|owned by live app/);
+      const acknowledgement = await invokeRpcResult(
+        replacement.client,
+        "transaction.receipt.ack",
+        {
+          root: project,
+          app_instance: `${label}-loser-${index}`,
+          owner_process_id: replacement.application.pid,
+          generation: prepared.fifoGeneration,
+          batch_id: prepared.fifoHeads[0].batchId,
+          operation: prepared.fifoHeads[0].operation,
+          outcome: "succeeded",
+        },
+      );
+      assert.equal(acknowledgement.resolved, false);
+      assert.match(
+        acknowledgement.error,
+        /locked by another process|owned by live app/,
+      );
     }
+    assert.deepEqual(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")),
+      durableOwner,
+      `${killBoundary} FIFO loser replaced the sole durable owner`,
+    );
     assert.deepEqual(await readFile(tmxPath), tmxBefore);
     assert.deepEqual(await readFile(conflictsPath), conflictsBefore);
     assert.deepEqual(await readFile(prepared.fileRemotePath), remoteBefore);
@@ -4078,12 +4328,17 @@ try {
       );
     }
     fifoTailCancellationResults.push({
-      cancellationBoundary: "after_intent_queue_rename",
+      killBoundary,
+      cancellationBoundary: cancellationPoint,
+      compactionBoundary,
       firstPackagedCallerKilledPid: killed.browserPid,
+      compactionBoundaryKilledPid: compactionKilled?.browserPid ?? null,
       replacementProcessCount: replacements.length,
       soleOwnerPid: durableOwner.process_id,
       deliveredFifo: prepared.fifoHeads.map(({ operation }) => operation),
       laterResolveEnvelopeCount: 0,
+      losingPendingRejected: true,
+      losingAcknowledgementRejected: true,
       protocolErrorCode: -32800,
       projectRollback: true,
       gitHeadWrite: false,
