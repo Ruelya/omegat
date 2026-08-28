@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.IssueProvidersTest#testDynamicProviderEnablingDisabling",
+  "can_toggle": true,
+  "keys": [
+    "org.omegat.gui.issues.IssueProvidersTest#testDynamicProviderEnablingDisabling"
+  ]
+}

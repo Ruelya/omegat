@@ -1,0 +1,30 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-WhiteSpace.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testWhiteSpace",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Value",
+    "Value    ",
+    "Value1\tValue2",
+    "Value1 Value2"
+  ],
+  "ids": [
+    "KEY",
+    "KEY2",
+    "KEY3",
+    "KEY4"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "# Next line contains a raw tab\n \t \n# Tab->\\t<-Tab\nKEY=Value\n\n# Trailing whitespace must be preserved\nKEY2=Value    \n\n# Significant whitespace on continuation line\nKEY3=Value1\\tValue2\n\nKEY4=Value1 Value2\n"
+}

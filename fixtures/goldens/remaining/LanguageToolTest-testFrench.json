@@ -1,0 +1,10 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.languagetools.LanguageToolTest#testFrench",
+  "lang": "fr",
+  "text": "Il est par conséquent perdue.",
+  "match_count": 1,
+  "keys": [
+    "org.omegat.languagetools.LanguageToolTest#testFrench"
+  ]
+}

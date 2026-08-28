@@ -1,0 +1,77 @@
+{
+  "name": "omegat-desktop",
+  "version": "6.2.0",
+  "private": true,
+  "description": "OmegaT desktop shell (Electron + React + Vite)",
+  "license": "GPL-3.0-or-later",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:e2e:restart:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-restart-linux.mjs",
+    "test:e2e:align-drag:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-align-drag-linux.mjs",
+    "test:e2e:editor-ime:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-editor-ime-linux.mjs",
+    "test:e2e:editor-drop-issues:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-editor-drop-issues-linux.mjs",
+    "test:e2e:native-marker:linux": "cargo build --release -p omegat-sidecar -p omegat-example-plugin && npm run build && electron-builder --dir --linux dir && node scripts/packaged-native-marker-linux.mjs",
+    "test:e2e:long-cancel:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-long-operation-cancel-linux.mjs",
+    "test:e2e:cross-project-transactions:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-cross-project-transaction-restart-linux.mjs",
+    "test:e2e:save-close-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-save-close-recovery-linux.mjs",
+    "test:e2e:team-rename-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-team-rename-recovery-linux.mjs",
+    "test:e2e:compaction-dual-recovery:linux": "cargo build --release -p omegat-sidecar && npm run build && electron-builder --dir --linux dir && node scripts/packaged-compaction-dual-recovery-linux.mjs",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.5",
+    "@fontsource/ibm-plex-sans": "^5.2.5",
+    "@phosphor-icons/react": "^2.1.10",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^34.3.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  },
+  "build": {
+    "appId": "org.omegat.OmegaT",
+    "productName": "OmegaT",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../target/release/",
+        "to": ".",
+        "filter": ["omegat-sidecar", "omegat-sidecar.exe"]
+      },
+      {
+        "from": "../../docs/manual",
+        "to": "manual"
+      }
+    ],
+    "linux": {
+      "target": ["dir", "tar.gz", "deb", "rpm"],
+      "category": "Office"
+    },
+    "win": {
+      "target": ["nsis", "dir"]
+    },
+    "mac": {
+      "target": ["dmg", "dir"]
+    }
+  }
+}

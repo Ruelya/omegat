@@ -1,0 +1,41 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.statistics.StatsResultTest#testStatsResultXML",
+  "project": {
+    "name": "testProject",
+    "root": "",
+    "source_language": "English",
+    "target_language": "French"
+  },
+  "total": [0, 0, 0, 0, 0],
+  "remaining": [0, 0, 0, 0, 0],
+  "unique": [0, 0, 0, 0, 0],
+  "unique_remaining": [0, 0, 0, 0, 0],
+  "filename": "file1.txt",
+  "file_total": [1, 5, 18, 22, 0],
+  "file_unique": [0, 0, 0, 0, 0],
+  "file_remaining": [0, 0, 0, 0, 0],
+  "file_unique_remaining": [0, 0, 0, 0, 0],
+  "xml_blocks": [
+    "standalone:project:name=testProject,root=,source-language=English,target-language=French",
+    "standalone:total:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "standalone:remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "standalone:unique:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "standalone:unique-remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "open:files",
+    "open:filename",
+    "text:file1.txt",
+    "close:filename",
+    "standalone:total:characters=22,characters-without-spaces=18,files=0,segments=1,words=5",
+    "standalone:unique:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "standalone:remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "standalone:unique-remaining:characters=0,characters-without-spaces=0,files=0,segments=0,words=0",
+    "close:files",
+    "open:date",
+    "text:DATE",
+    "close:date"
+  ],
+  "keys": [
+    "org.omegat.core.statistics.StatsResultTest#testStatsResultXML"
+  ]
+}
