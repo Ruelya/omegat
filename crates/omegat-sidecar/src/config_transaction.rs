@@ -1628,10 +1628,7 @@ mod tests {
             .unwrap();
         assert_eq!(terminal.operation, "prefs.set");
         assert_eq!(terminal.payload, json!({"locale": "fr", "theme": "system"}));
-        assert_eq!(
-            terminal.application_payload,
-            Some(json!({"locale": "fr"}))
-        );
+        assert_eq!(terminal.application_payload, Some(json!({"locale": "fr"})));
     }
 
     #[test]

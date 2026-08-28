@@ -543,9 +543,7 @@ impl<T: DurableTransactionRecord> std::ops::Deref for LockedDurableTransactionWo
     }
 }
 
-impl<T: DurableTransactionRecord> std::ops::DerefMut
-    for LockedDurableTransactionWorkflow<'_, T>
-{
+impl<T: DurableTransactionRecord> std::ops::DerefMut for LockedDurableTransactionWorkflow<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.workflow
     }

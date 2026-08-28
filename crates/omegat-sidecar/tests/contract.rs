@@ -220,13 +220,7 @@ fn every_listed_method_is_known() {
         );
     }
 
-    let registry = rpc(
-        &mut stdin,
-        &mut stdout,
-        1000,
-        "sys.rpc-registry",
-        json!({}),
-    );
+    let registry = rpc(&mut stdin, &mut stdout, 1000, "sys.rpc-registry", json!({}));
     assert_eq!(registry["result"]["version"], RPC_REGISTRY_VERSION);
     assert_eq!(
         registry["result"]["methods"],
@@ -891,13 +885,7 @@ fn shared_config_fifo_merges_stale_sidecars_and_isolates_project_journals() {
     first_stale["locale"] = json!("fr");
     first_stale["filter_options"]["text"] =
         json!({"preserve_spaces": "first", "file_context": "alpha"});
-    let first_saved = rpc(
-        &mut first_in,
-        &mut first_out,
-        3,
-        "prefs.set",
-        first_stale,
-    );
+    let first_saved = rpc(&mut first_in, &mut first_out, 3, "prefs.set", first_stale);
     assert_eq!(first_saved["result"]["locale"], "fr");
 
     // The second process deliberately submits the full snapshot it loaded
@@ -980,7 +968,9 @@ fn shared_config_fifo_merges_stale_sidecars_and_isolates_project_journals() {
     assert!(history.iter().all(|row| row["status"] == "completed"));
     for root in [&first_root, &second_root] {
         assert!(!root.join(".repositories/transactions/active.json").exists());
-        assert!(!root.join(".repositories/transactions/history.ndjson").exists());
+        assert!(!root
+            .join(".repositories/transactions/history.ndjson")
+            .exists());
     }
 
     let _ = first.kill();

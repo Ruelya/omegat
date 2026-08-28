@@ -13,12 +13,13 @@ use omegat_core::durable_fifo::{
     DurableFifoEntry, DurableFifoLayout, DurableFifoState, LegacyFifoState, LegacyOwnerClaim,
 };
 use omegat_core::durable_transaction::{
-    elect_owner_with_legacy, normalized, write_json_atomic, DurableCoordinatorExecutionError,
-    DurableCoordinatorCapability, DurableCoordinatorLockMode, DurableCoordinatorOpenError,
-    DurableOwnerElectionError, DurableOwnerIdentity, DurableOwnerRetry, DurableTransactionCoordinator,
-    DurableTransactionLayout, DurableTransactionPhase, DurableTransactionRecord,
-    DurableTransactionWorkflow, LockedDurableTransactionWorkflow, TransactionCommit,
-    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
+    elect_owner_with_legacy, normalized, write_json_atomic, DurableCoordinatorCapability,
+    DurableCoordinatorExecutionError, DurableCoordinatorLockMode, DurableCoordinatorOpenError,
+    DurableOwnerElectionError, DurableOwnerIdentity, DurableOwnerRetry,
+    DurableTransactionCoordinator, DurableTransactionLayout, DurableTransactionPhase,
+    DurableTransactionRecord, DurableTransactionWorkflow, LockedDurableTransactionWorkflow,
+    TransactionCommit, TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
+    TRANSACTION_ENVELOPE_VERSION,
 };
 use omegat_core::properties::ProjectProperties;
 use omegat_core::segmented_history::{
@@ -1215,16 +1216,17 @@ fn open_product_workflow<'lock>(
     capability: DurableCoordinatorCapability<'lock>,
 ) -> Result<LockedDurableTransactionWorkflow<'lock, SyncTransaction>> {
     let directory = transaction_dir(props);
-    capability.open_workflow_with_legacy(
-        &directory,
-        &props.root,
-        product_workflow_layout(),
-        product_history_options(),
-        decode_legacy_product_journal,
-        || legacy_product_history(props).map_err(|error| error.to_string()),
-        &mut |_, point| product_history_checkpoint(point),
-    )
-    .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
+    capability
+        .open_workflow_with_legacy(
+            &directory,
+            &props.root,
+            product_workflow_layout(),
+            product_history_options(),
+            decode_legacy_product_journal,
+            || legacy_product_history(props).map_err(|error| error.to_string()),
+            &mut |_, point| product_history_checkpoint(point),
+        )
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))
 }
 
 fn coordinator_error(props: &ProjectProperties, error: DurableCoordinatorOpenError) -> TeamError {
@@ -1392,7 +1394,10 @@ fn legacy_product_history(props: &ProjectProperties) -> Result<Vec<SyncTransacti
 }
 
 #[cfg(test)]
-fn product_history_records(props: &ProjectProperties, batch_id: &str) -> Result<Vec<SyncTransaction>> {
+fn product_history_records(
+    props: &ProjectProperties,
+    batch_id: &str,
+) -> Result<Vec<SyncTransaction>> {
     execute_product_coordinator(props, DurableCoordinatorLockMode::Wait, |coordinator| {
         coordinator
             .workflow()
