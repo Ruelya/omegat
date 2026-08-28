@@ -23,6 +23,7 @@ import {
   pathExists,
   sidecar,
   sleep,
+  spawnPackagedApplication,
   startPackagedDisplay,
   stopPackagedDisplay,
   terminatePackaged,
