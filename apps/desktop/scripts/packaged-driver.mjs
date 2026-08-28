@@ -15,7 +15,7 @@ const defaultExecutable = {
   darwin: join(
     desktopDir,
     "release",
-    "mac",
+    process.arch === "arm64" ? "mac-arm64" : "mac",
     "OmegaT.app",
     "Contents",
     "MacOS",

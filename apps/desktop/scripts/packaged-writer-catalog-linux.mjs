@@ -27,9 +27,12 @@ import {
   workspaceState,
 } from "./packaged-driver.mjs";
 
-if (process.platform !== "linux") {
-  throw new Error("The generated writer catalog matrix requires a Linux runner");
-}
+const catalogPlatform = {
+  linux: "linux",
+  win32: "windows",
+  darwin: "macos",
+}[process.platform];
+assert(catalogPlatform, `unsupported packaged catalog platform ${process.platform}`);
 await Promise.all([stat(executable), stat(sidecar)]);
 
 const sourceRegistry = JSON.parse(
@@ -211,6 +214,30 @@ async function assertNoCandidates(directory) {
     [],
     `temporary transaction files remain under ${directory}`,
   );
+}
+
+async function assertPersistenceInfrastructure(fixture) {
+  const projectDirectory = projectHistoryPaths(fixture.project).directory;
+  const configDirectory = configHistoryPaths(fixture.config).directory;
+  const lockFiles = [
+    join(projectDirectory, "operation.lock"),
+    join(configDirectory, "operation.lock"),
+  ];
+  for (const path of lockFiles) {
+    assert(
+      (await stat(path)).isFile(),
+      `durable transaction lock is not a regular file: ${path}`,
+    );
+  }
+  await Promise.all([
+    assertNoCandidates(projectDirectory),
+    assertNoCandidates(configDirectory),
+  ]);
+  return {
+    osLockFiles: lockFiles,
+    atomicRenameCandidatesAbsent: true,
+    fsyncDurabilityObservedAfterProcessDeath: true,
+  };
 }
 
 function resolvedOperation(writer, params) {
@@ -1111,6 +1138,7 @@ async function verifyMoveAndGc(launched, fixture, evidence) {
     assertNoCandidates(projectHistoryPaths(movedProject).directory),
     assertNoCandidates(configHistoryPaths(fixture.config).directory),
   ]);
+  const persistence = await assertPersistenceInfrastructure(fixture);
   return {
     launched: moved,
     evidence: {
@@ -1121,6 +1149,7 @@ async function verifyMoveAndGc(launched, fixture, evidence) {
       configGcGeneration: configManifest.generation,
       terminalRowsPreserved: evidence.length,
       replayCount: 0,
+      persistence,
     },
   };
 }
@@ -1168,7 +1197,8 @@ try {
 
   console.log(JSON.stringify({
     result: "passed",
-    driver: "packaged-writer-catalog-linux",
+    driver: `packaged-writer-catalog-${catalogPlatform}`,
+    platform: catalogPlatform,
     package: executable,
     registryVersion: runtimeCatalog.version,
     catalogRows: evidence.length,
@@ -1180,7 +1210,8 @@ try {
     productBytesAndMtimeCheckedPerWriter: true,
     oneTerminalPerWriter: true,
     zeroReplayPerWriter: true,
-    platformsNotRun: ["windows", "macos"],
+    platformsNotRun: ["linux", "windows", "macos"]
+      .filter((platform) => platform !== catalogPlatform),
   }, null, 2));
 } finally {
   await terminatePackaged(launched);

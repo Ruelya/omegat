@@ -96,3 +96,30 @@ jobs:
           name: omegat-macos-unsigned
           path: apps/desktop/release/**
           if-no-files-found: warn
+  writer-catalog-packaged:
+    name: generated writer catalog (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+            script: test:e2e:writer-catalog:windows
+          - os: macos-latest
+            platform: macos
+            script: test:e2e:writer-catalog:macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - working-directory: apps/desktop
+        run: npm ci
+      - name: Run generated catalog persistence matrix
+        working-directory: apps/desktop
+        run: npm run ${{ matrix.script }}
