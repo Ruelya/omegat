@@ -830,6 +830,27 @@ restores the product snapshot and leaves a recoverable journal copy. Legacy
 refresh queue, history, and config active-owner migration is idempotent when
 interrupted after the new destinations become durable but before old files are
 unlinked.
+A real Linux `linux-unpacked` writer matrix now drives glossary add, replace,
+wiki import, TMX export, and script execution through visible renderer controls.
+For each writer it SIGKILLs the complete Electron/sidecar process group before
+and after atomic product publication, then verifies rollback/commit bytes,
+committed nanosecond mtimes, one exact terminal history row, and the recovered
+visible state. A second packaged scenario interleaves glossary → team commit →
+replace → external refresh → wiki → save → TMX export → script → close in one
+durable FIFO. It rejects a live competing process, kills the owner, drops the
+replacement owner's glossary acknowledgement, kills that process too, and
+requires a third process to drain the exact order once while every external
+file's bytes and mtime remain unchanged.
+The same package displays prefs and spell persistence errors under real
+read-only directory permissions and injected `rename(2)` / `fsync(2)` failures.
+The live file remains byte- and mtime-identical at each failure boundary; a
+clean restart retains the prior locale and still exposes the unignored spell
+issue without replay. The sidecar contract separately pauses after durable
+legacy config-owner publication and after durable shared-journal publication,
+terminates the real sidecar process at each point, and proves the final
+migration has one copy of every legacy batch/history row and the expected
+per-app owners. This evidence was run on Linux only; Windows and macOS packages
+were not run.
 A new real Linux `linux-unpacked` matrix drives project properties, repository
 mapping, file-filter options, and segmentation settings exclusively through
 visible controls. It externally SIGKILLs Electron at both sides of each relevant
