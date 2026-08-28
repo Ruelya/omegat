@@ -1667,40 +1667,30 @@ try {
       `product ${point} archive is not idempotent`,
     );
 
-    launchedB = await launchPackaged(xvfb.display, config, null);
-    const contenderScope = {
-      root: project,
-      app_instance: `${scenario}-pre-kill-contender`,
-      owner_process_id: launchedB.application.pid,
-      generation: parked.generation + 1,
-    };
-    const contenderPending = await invokeRpcResult(
-      launchedB.client,
-      "transaction.receipt.pending",
-      contenderScope,
+    const preKillContenderWait = join(
+      workDir,
+      `${scenario}-pre-kill-contender-wait.json`,
+    );
+    const preKillContenderTrace = join(
+      workDir,
+      `${scenario}-pre-kill-contender-trace.ndjson`,
+    );
+    launchedB = await launchPackaged(xvfb.display, config, null, {
+      OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: preKillContenderWait,
+      OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: preKillContenderTrace,
+    });
+    const contenderWait = await waitFor(
+      `product ${point} pre-kill contender owner wait`,
+      async () =>
+        await pathExists(preKillContenderWait)
+          ? JSON.parse(await readFile(preKillContenderWait, "utf8"))
+          : undefined,
     );
     assert.equal(
-      contenderPending.resolved,
-      false,
-      `product ${point} contender obtained an envelope before owner SIGKILL`,
+      contenderWait.previous_owner_process_id,
+      durableOwner.process_id,
+      `product ${point} contender did not wait for the live owner`,
     );
-    assert.match(contenderPending.error, /locked by another process|owned by live app/);
-    const contenderAck = await invokeRpcResult(
-      launchedB.client,
-      "transaction.receipt.ack",
-      {
-        ...contenderScope,
-        batch_id: prepared.receiptBatchId,
-        operation: "entry.set",
-        outcome: "succeeded",
-      },
-    );
-    assert.equal(
-      contenderAck.resolved,
-      false,
-      `product ${point} contender acknowledged the live owner's head`,
-    );
-    assert.match(contenderAck.error, /locked by another process|owned by live app/);
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
       durableOwner,
@@ -1710,6 +1700,13 @@ try {
       JSON.parse(await readFile(prepared.activePath, "utf8")),
       queueAtBoundary,
       "pre-kill contender changed the product queue",
+    );
+    assert.equal(
+      await pathExists(preKillContenderTrace)
+        ? parseNdjson(await readFile(preKillContenderTrace, "utf8")).length
+        : 0,
+      0,
+      "pre-kill contender received an envelope while the owner lived",
     );
     assert.equal(
       await launchedB.client.evaluate(
@@ -2074,8 +2071,9 @@ try {
       archivedTerminalCount: 1,
       preKillContender: {
         browserPid: preKillContenderPid,
-        pendingRejected: true,
-        acknowledgementRejected: true,
+        pendingBlockedByLiveOwner: true,
+        deliveredEnvelopes: 0,
+        ownerClaimUnchanged: true,
         remainedResponsive: true,
       },
       firstElection: {
