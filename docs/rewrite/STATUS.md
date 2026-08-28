@@ -58,8 +58,8 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **152 passed**, filters
 **86 passed**, team **46 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **35 passed** plus sidecar journal/watcher unit
-**6 passed** and plugin filter **1 passed**, and desktop **24 files / 178 tests
+**4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
+**12 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 The raw NDJSON contract and real Linux packaged matrix also pass the
@@ -873,6 +873,31 @@ and destination-directory fsync; each restart repairs a complete pair and
 removes every staging directory. The full old+new writer matrix passes through
 `npm run test:e2e:writer-recovery:linux`. Windows and macOS runners were not
 available and those package paths were not run.
+The config FIFO now publishes each non-empty `active.json` revision to a
+same-value `active.recovery.json` first, selects the highest valid revision on
+restart, repairs a missing/truncated/corrupt peer, and refuses to mutate the
+product when both replicas are invalid. Terminal results are also retained in
+same-value `dedupe.json`/`dedupe.recovery.json` indexes. `history.ndjson` is
+compacted to the latest **64** rows in production; its complete ordered result
+set remains in the index, so a damaged/truncated history is rebuilt and an old
+batch retry returns its original success or failure without applying the
+operation again. Electron accepts an explicit retry batch identity, while the
+sidecar reloads the current persisted preferences after returning that original
+result so a historical response cannot replace newer in-memory fields.
+A real Linux `linux-unpacked` matrix externally SIGKILLs the Electron/sidecar
+process group at `active.json` and `history.ndjson` candidate-write, candidate
+fsync, rename, and parent-directory-fsync boundaries (**8** cases). Every
+restart verifies the exact locale product, one completed dedupe entry, bounded
+canonical history, removal of both active replicas, no hidden replacement
+candidate, and no config row in either project journal. A separate dual-Electron
+case uses a test bound of **3**, kills the first owner before history compaction,
+lets the already-waiting second PID compact and commit its FIFO tail, then kills
+that owner after compaction. A third process preserves the exact five-batch
+order, locale plus font fields, both dead PID identities, and byte/mtime-stable
+product state across a successful old-batch retry and a rejected conflicting
+retry. This is Linux evidence only; Windows file-lock/replacement semantics and
+macOS file-lock/replacement semantics were not run because those runners were
+not available.
 A new real Linux `linux-unpacked` matrix drives project properties, repository
 mapping, file-filter options, and segmentation settings exclusively through
 visible controls. It externally SIGKILLs Electron at both sides of each relevant
