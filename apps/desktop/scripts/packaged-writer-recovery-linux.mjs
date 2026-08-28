@@ -171,6 +171,16 @@ class DevToolsClient {
   }
 }
 
+async function invokeRpcResult(client, method, params) {
+  return client.evaluate(`(() => window.omegat.rpc(
+    ${JSON.stringify(method)},
+    ${JSON.stringify(params)}
+  ).then(
+    (value) => ({ resolved: true, value }),
+    (error) => ({ resolved: false, error: String(error) })
+  ))()`, true);
+}
+
 async function descendants(rootPid) {
   const found = [];
   const queue = [rootPid];
@@ -248,10 +258,15 @@ async function workspaceState(client) {
 
 async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const launched = await launchPackagedRenderer(display, configDir, project, extraEnv);
-  const workspace = await waitFor(`workspace for ${project}`, async () => {
-    const state = await workspaceState(launched.client);
-    return state.project === project && state.key ? state : undefined;
-  });
+  const workspace = await waitFor(
+    project ? `workspace for ${project}` : "closed renderer workspace",
+    async () => {
+      const state = await workspaceState(launched.client);
+      return project
+        ? state.project === project && state.key ? state : undefined
+        : state.project === null && state.welcome ? state : undefined;
+    },
+  );
   return { ...launched, workspace };
 }
 
@@ -821,6 +836,7 @@ async function runMixedWriterFifo(display, workDir) {
     OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: ownerRelease,
   });
   let contender;
+  let lostAckOwner;
   let recovered;
   try {
     const claim = await waitFor("mixed FIFO durable owner claim", async () =>
@@ -831,7 +847,32 @@ async function runMixedWriterFifo(display, workDir) {
     assert.equal(claim.batch_id, prepared.rows[0].batchId);
     assert.equal(claim.operation, "glossary.add");
     assert.equal(claim.owner_process_id, owner.application.pid);
-    contender = await launchPackagedRenderer(
+    contender = await launchPackaged(display, prepared.config, null);
+    const contenderPid = contender.application.pid;
+    const rejected = await invokeRpcResult(
+      contender.client,
+      "transaction.receipt.pending",
+      {
+        root: prepared.project,
+        app_instance: "mixed-pre-kill-contender",
+        owner_process_id: contenderPid,
+        generation: claim.generation,
+      },
+    );
+    assert.equal(rejected.resolved, false);
+    assert.match(rejected.error, /locked by another process|owned by live app/);
+    assert.equal(await pathExists(droppedTrace), false);
+    assert.equal(
+      JSON.parse(await readFile(prepared.ownerPath, "utf8")).process_id,
+      owner.application.pid,
+    );
+    await assertSnapshots(prepared.snapshots, "live owner exclusion");
+    await terminatePackaged(contender);
+    contender = undefined;
+
+    const killedOwner = await killPackaged(owner);
+    owner = undefined;
+    lostAckOwner = await launchPackaged(
       display,
       prepared.config,
       prepared.project,
@@ -840,16 +881,6 @@ async function runMixedWriterFifo(display, workDir) {
         OMEGAT_TEST_TRANSACTION_ACK_TRACE: droppedTrace,
       },
     );
-    await sleep(500);
-    assert.equal(await pathExists(droppedTrace), false);
-    assert.equal(
-      JSON.parse(await readFile(prepared.ownerPath, "utf8")).process_id,
-      owner.application.pid,
-    );
-    await assertSnapshots(prepared.snapshots, "live owner exclusion");
-
-    const killedOwner = await killPackaged(owner);
-    owner = undefined;
     const dropped = await waitFor("lost glossary acknowledgement", async () => {
       if (!await pathExists(droppedTrace)) return undefined;
       return parseNdjson(await readFile(droppedTrace, "utf8")).find((row) =>
@@ -860,8 +891,8 @@ async function runMixedWriterFifo(display, workDir) {
     });
     assert(dropped);
     await assertSnapshots(prepared.snapshots, "lost acknowledgement replay");
-    const killedContender = await killPackaged(contender);
-    contender = undefined;
+    const killedLostAckOwner = await killPackaged(lostAckOwner);
+    lostAckOwner = undefined;
 
     recovered = await launchPackagedRenderer(
       display,
@@ -905,8 +936,9 @@ async function runMixedWriterFifo(display, workDir) {
       );
     }
     return {
+      rejectedLiveContenderPid: contenderPid,
       killedOwner,
-      killedLostAckOwner: killedContender,
+      killedLostAckOwner,
       fifo: prepared.rows.map(({ batchId, operation }) => ({ batchId, operation })),
       externalBytesAndMtimeStable: true,
       endedOnVisibleWelcome: true,
@@ -915,6 +947,7 @@ async function runMixedWriterFifo(display, workDir) {
     await Promise.all([
       terminatePackaged(owner),
       terminatePackaged(contender),
+      terminatePackaged(lostAckOwner),
       terminatePackaged(recovered),
     ]);
   }
