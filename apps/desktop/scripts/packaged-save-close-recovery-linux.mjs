@@ -225,18 +225,20 @@ async function descendants(rootPid) {
 async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const port = await unusedPort();
   let stderr = "";
+  const environment = {
+    ...process.env,
+    DISPLAY: display,
+    OMEGAT_CONFIG_DIR: configDir,
+    ...extraEnv,
+  };
+  delete environment.OMEGAT_PROJECT;
+  if (project) environment.OMEGAT_PROJECT = project;
   const application = spawn(
     executable,
     [`--remote-debugging-port=${port}`, "--disable-gpu", "--no-sandbox"],
     {
       detached: true,
-      env: {
-        ...process.env,
-        DISPLAY: display,
-        OMEGAT_CONFIG_DIR: configDir,
-        OMEGAT_PROJECT: project,
-        ...extraEnv,
-      },
+      env: environment,
       stdio: ["ignore", "ignore", "pipe"],
     },
   );
@@ -253,11 +255,19 @@ async function launchPackaged(display, configDir, project, extraEnv = {}) {
       const segment = document.querySelector(".editor-segment.is-active");
       return {
         project: app?.dataset.projectId ?? null,
+        welcome: document.querySelector(".welcome") !== null,
         translation: segment?.querySelector(".editor-surface")?.textContent ?? null,
         key: segment?.getAttribute("data-entry-key") ?? null,
+        activeSurfaces: document.querySelectorAll(
+          ".editor-segment.is-active .editor-surface"
+        ).length,
       };
     })()`);
-    return value.project === project && value.key ? value : undefined;
+    return project
+      ? value.project === project && value.key ? value : undefined
+      : value.project === null && value.welcome && value.activeSurfaces === 0
+        ? value
+        : undefined;
   });
   return { application, client, workspace, stderr: () => stderr };
 }
@@ -424,12 +434,28 @@ try {
   const killedAfterClose = await killPackaged(launched);
   launched = undefined;
 
-  launched = await launchPackaged(xvfb.display, configDir, project);
-  assert.equal(launched.workspace.translation, afterClose);
-  assert.deepEqual(JSON.parse(launched.workspace.key), completeKey);
+  launched = await launchPackaged(xvfb.display, configDir, null);
   await waitFor("committed close cleanup", async () =>
     await pathExists(active) ? undefined : true
   );
+  const recoveredCloseWorkspace = await launched.client.evaluate(`(() => ({
+    project: document.querySelector(".app")?.dataset.projectId ?? null,
+    welcome: document.querySelector(".welcome") !== null,
+    activeSurfaces: document.querySelectorAll(
+      ".editor-segment.is-active .editor-surface"
+    ).length,
+  }))()`);
+  assert.deepEqual(recoveredCloseWorkspace, {
+    project: null,
+    welcome: true,
+    activeSurfaces: 0,
+  });
+  const closeRecoveryShutdown = await killPackaged(launched);
+  launched = undefined;
+
+  launched = await launchPackaged(xvfb.display, configDir, project);
+  assert.equal(launched.workspace.translation, afterClose);
+  assert.deepEqual(JSON.parse(launched.workspace.key), completeKey);
   const rows = (await readFile(history, "utf8"))
     .trim()
     .split(/\r?\n/)
@@ -474,6 +500,8 @@ try {
       batchId: closeEnvelope.batch_id,
       translation: afterClose,
       killed: killedAfterClose,
+      recoveredClosedWorkspace: recoveredCloseWorkspace,
+      recoveryShutdown: closeRecoveryShutdown,
     },
   }));
 } catch (error) {
