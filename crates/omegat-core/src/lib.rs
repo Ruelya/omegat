@@ -39,6 +39,7 @@ pub mod properties;
 pub mod real_project;
 pub mod search;
 pub mod segment;
+pub mod segmented_history;
 pub mod session;
 pub mod source_text_entry;
 pub mod spell;

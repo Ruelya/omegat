@@ -15,6 +15,9 @@ use crate::{team_enabled, SyncReport};
 use fs2::FileExt;
 use omegat_core::cancellation::CancellationToken;
 use omegat_core::properties::ProjectProperties;
+use omegat_core::segmented_history::{
+    SegmentedHistory, SegmentedHistoryLayout, SegmentedHistoryOptions, SegmentedHistoryRecord,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -156,7 +159,7 @@ fn commit_repository(
     )
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct FileRemoteSnapshot {
     repository_index: usize,
@@ -166,7 +169,7 @@ struct FileRemoteSnapshot {
     existed: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExternalProductSnapshot {
     target: PathBuf,
@@ -516,7 +519,7 @@ struct TeamProductManifest {
     root_git_version: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SyncTransactionPayload {
     operation: String,
@@ -538,7 +541,7 @@ struct SyncTransactionPayload {
     external_products: Vec<ExternalProductSnapshot>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(transparent)]
 struct SyncTransaction(TransactionEnvelope<SyncTransactionPayload>);
 
@@ -623,6 +626,16 @@ impl std::ops::Deref for SyncTransaction {
 impl std::ops::DerefMut for SyncTransaction {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0.payload
+    }
+}
+
+impl SegmentedHistoryRecord for SyncTransaction {
+    fn history_partition(&self) -> &str {
+        &self.0.batch_id
+    }
+
+    fn relocate(&mut self, old_scope: &Path, new_scope: &Path) {
+        relocate_sync_transaction(self, old_scope, new_scope);
     }
 }
 
@@ -765,14 +778,7 @@ impl SyncTransaction {
             journal.batches.push(self.clone());
         }
         write_product_journal(props, &journal)?;
-        let mut history = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("history.ndjson"))?;
-        serde_json::to_writer(&mut history, self)
-            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
-        history.write_all(b"\n")?;
-        history.sync_all()?;
+        append_product_history(props, self.clone())?;
         Ok(())
     }
 
@@ -1085,6 +1091,56 @@ fn load_product_journal(props: &ProjectProperties) -> Result<ProductTransactionJ
     })
 }
 
+fn relocate_scoped_path(path: &mut PathBuf, old_root: &Path, new_root: &Path) {
+    let Ok(relative) = path.strip_prefix(old_root) else {
+        return;
+    };
+    *path = normalized(new_root).join(relative);
+}
+
+fn relocate_scoped_string(path: &str, old_root: &Path, new_root: &Path) -> String {
+    let mut value = PathBuf::from(path);
+    relocate_scoped_path(&mut value, old_root, new_root);
+    value.to_string_lossy().into_owned()
+}
+
+fn relocate_sync_transaction(transaction: &mut SyncTransaction, old_scope: &Path, new_root: &Path) {
+    let old_root = if transaction.0.project_root.as_os_str().is_empty() {
+        old_scope.to_path_buf()
+    } else {
+        transaction.0.project_root.clone()
+    };
+    transaction.0.project_root = normalized(new_root);
+    relocate_scoped_path(&mut transaction.snapshot, &old_root, new_root);
+    for snapshot in &mut transaction.file_remotes {
+        relocate_scoped_path(&mut snapshot.source, &old_root, new_root);
+        relocate_scoped_path(&mut snapshot.backup, &old_root, new_root);
+    }
+    for snapshot in &mut transaction.external_products {
+        relocate_scoped_path(&mut snapshot.target, &old_root, new_root);
+        relocate_scoped_path(&mut snapshot.backup, &old_root, new_root);
+        if let Some(target) = &mut snapshot.symlink_target {
+            relocate_scoped_path(target, &old_root, new_root);
+        }
+    }
+    if let Some(refresh) = &mut transaction.refresh {
+        refresh.paths = refresh
+            .paths
+            .iter()
+            .map(|path| relocate_scoped_string(path, &old_root, new_root))
+            .collect();
+        refresh.fingerprints = std::mem::take(&mut refresh.fingerprints)
+            .into_iter()
+            .map(|(path, fingerprint)| {
+                (
+                    relocate_scoped_string(&path, &old_root, new_root),
+                    fingerprint,
+                )
+            })
+            .collect();
+    }
+}
+
 fn read_product_journal(
     props: &ProjectProperties,
     path: &Path,
@@ -1092,7 +1148,7 @@ fn read_product_journal(
     let bytes = std::fs::read(&path)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?;
-    let journal = if value.get("batches").is_some() {
+    let mut journal = if value.get("batches").is_some() {
         serde_json::from_value::<ProductTransactionJournal>(value)
             .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?
     } else {
@@ -1114,11 +1170,15 @@ fn read_product_journal(
         )));
     }
     if normalized(&journal.project_root) != normalized(&props.root) {
-        return Err(TeamError::Command(format!(
-            "product transaction journal root {} does not match {}",
-            journal.project_root.display(),
-            props.root.display()
-        )));
+        let old_root = journal.project_root.clone();
+        for transaction in &mut journal.batches {
+            relocate_sync_transaction(transaction, &old_root, &props.root);
+        }
+        journal.project_root = normalized(&props.root);
+        // A project-directory move is a scope adoption, not a new product
+        // operation. Publish both active replicas before recovery inspects any
+        // snapshot or exposes any retained receipt.
+        write_product_journal(props, &journal)?;
     }
     for transaction in &journal.batches {
         transaction.validate_loaded(props)?;
@@ -1151,37 +1211,177 @@ fn sync_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn configured_history_limit(name: &str, default: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn product_history_layout() -> SegmentedHistoryLayout {
+    SegmentedHistoryLayout {
+        // Keep the established observation path, but rewrite it as a bounded
+        // recent window after every durable state transition.
+        recent_file: "history.ndjson".into(),
+        hot_file: "history-hot.json".into(),
+        hot_recovery_file: ".history-hot.recovery.json".into(),
+        manifest_file: "history-manifest.json".into(),
+        manifest_recovery_file: ".history-manifest.recovery.json".into(),
+        archive_directory: "history-archive".into(),
+    }
+}
+
+fn product_history_options() -> SegmentedHistoryOptions {
+    let hot = configured_history_limit("OMEGAT_TEST_PRODUCT_HISTORY_HOT_LIMIT", 128);
+    SegmentedHistoryOptions {
+        recent_limit: configured_history_limit("OMEGAT_TEST_PRODUCT_HISTORY_RECENT_LIMIT", hot)
+            .min(hot),
+        hot_limit: hot,
+        segment_record_limit: configured_history_limit(
+            "OMEGAT_TEST_PRODUCT_HISTORY_SEGMENT_LIMIT",
+            32,
+        ),
+        generation_segment_limit: configured_history_limit(
+            "OMEGAT_TEST_PRODUCT_HISTORY_COMPACTION_SEGMENTS",
+            16,
+        )
+        .max(2),
+        generation_record_limit: configured_history_limit(
+            "OMEGAT_TEST_PRODUCT_HISTORY_COMPACTION_RECORDS",
+            128,
+        ),
+        partition_prefix_hex: configured_history_limit("OMEGAT_TEST_PRODUCT_HISTORY_PREFIX_HEX", 4)
+            .min(64),
+    }
+}
+
+fn product_history_checkpoint(point: &str) -> std::result::Result<(), String> {
+    if std::env::var("OMEGAT_TEST_PRODUCT_HISTORY_POINT").as_deref() != Ok(point) {
+        return Ok(());
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_PRODUCT_HISTORY_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create product history checkpoint directory: {error}"))?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "create product history checkpoint {}: {error}",
+                marker.display()
+            ))
+        }
+    };
+    serde_json::to_writer(
+        &mut file,
+        &serde_json::json!({
+            "point": point,
+            "sidecar_process_id": std::process::id(),
+        }),
+    )
+    .map_err(|error| format!("write product history checkpoint: {error}"))?;
+    file.write_all(b"\n")
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("sync product history checkpoint: {error}"))?;
+    sync_parent(&marker).map_err(|error| error.to_string())?;
+    if let Some(release) = std::env::var_os("OMEGAT_TEST_PRODUCT_HISTORY_RELEASE") {
+        let release = PathBuf::from(release);
+        while !release.is_file() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        return Ok(());
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+fn legacy_product_history(props: &ProjectProperties) -> Result<Vec<SyncTransaction>> {
+    let layout = product_history_layout();
+    let directory = transaction_dir(props);
+    if SegmentedHistory::<SyncTransaction>::has_durable_state(&directory, &layout) {
+        return Ok(Vec::new());
+    }
+    let path = directory.join(&layout.recent_file);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(TeamError::Io(error)),
+    };
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        return Err(TeamError::Command(format!(
+            "team transaction history {} has a truncated final row",
+            path.display()
+        )));
+    }
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| line.iter().any(|byte| !byte.is_ascii_whitespace()))
+        .map(|line| {
+            serde_json::from_slice::<SyncTransaction>(line)
+                .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))
+        })
+        .collect()
+}
+
+fn open_product_history(props: &ProjectProperties) -> Result<SegmentedHistory<SyncTransaction>> {
+    let legacy = legacy_product_history(props)?;
+    let directory = transaction_dir(props);
+    let mut checkpoint = product_history_checkpoint;
+    let mut history = SegmentedHistory::open_with(
+        &directory,
+        &props.root,
+        product_history_layout(),
+        product_history_options(),
+        &mut checkpoint,
+    )
+    .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+    history
+        .import_legacy(legacy, &mut checkpoint)
+        .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+    Ok(history)
+}
+
+fn append_product_history(props: &ProjectProperties, transaction: SyncTransaction) -> Result<()> {
+    let mut history = open_product_history(props)?;
+    let mut checkpoint = product_history_checkpoint;
+    history
+        .append_with(transaction, &mut checkpoint)
+        .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+    Ok(())
+}
+
+fn product_history_for_batch(
+    props: &ProjectProperties,
+    batch_id: &str,
+) -> Result<Vec<SyncTransaction>> {
+    open_product_history(props)?
+        .records_for(batch_id)
+        .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))
+}
+
 fn archive_terminal_product_transactions(
     props: &ProjectProperties,
     terminal: &[SyncTransaction],
 ) -> Result<()> {
-    let path = transaction_dir(props).join("history.ndjson");
-    let existing = match std::fs::read_to_string(&path) {
-        Ok(existing) => existing,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(TeamError::Io(error)),
-    };
-    let existing = existing
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str::<serde_json::Value>(line)
-                .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut history = OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut history = open_product_history(props)?;
+    let mut checkpoint = product_history_checkpoint;
     for transaction in terminal {
-        let value = serde_json::to_value(transaction)
+        history
+            .append_with(transaction.clone(), &mut checkpoint)
             .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
-        if existing.iter().any(|archived| archived == &value) {
-            continue;
-        }
-        serde_json::to_writer(&mut history, transaction)
-            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
-        history.write_all(b"\n")?;
     }
-    history.sync_all()?;
-    sync_parent(&path)
+    Ok(())
 }
 
 fn product_compaction_checkpoint(point: &str) -> Result<()> {
@@ -1412,6 +1612,24 @@ fn renderer_owner_path(props: &ProjectProperties) -> PathBuf {
     transaction_dir(props).join("renderer-owner.json")
 }
 
+fn read_renderer_owner_claim(props: &ProjectProperties, path: &Path) -> Result<RendererOwnerClaim> {
+    let mut claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(path)?)
+        .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
+    if claim.version != TRANSACTION_ENVELOPE_VERSION || claim.project_root.as_os_str().is_empty() {
+        return Err(TeamError::Command(format!(
+            "invalid renderer owner claim at {}",
+            path.display()
+        )));
+    }
+    if normalized(&claim.project_root) != normalized(&props.root) {
+        claim.project_root = normalized(&props.root);
+        claim.updated_unix_ms = unix_ms();
+        write_json_atomic(path, &claim)
+            .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
+    }
+    Ok(claim)
+}
+
 fn process_is_alive(process_id: u32) -> bool {
     if process_id == 0 {
         return false;
@@ -1493,18 +1711,7 @@ pub fn wait_for_transaction_dispatch_owner_exit_cancellable(
         match acquire_project_transaction_lock(props) {
             Ok(_lock) => {
                 if path.is_file() {
-                    let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
-                        .map_err(|error| {
-                            TeamError::Command(format!("renderer owner claim: {error}"))
-                        })?;
-                    if claim.version != TRANSACTION_ENVELOPE_VERSION
-                        || normalized(&claim.project_root) != normalized(&props.root)
-                    {
-                        return Err(TeamError::Command(format!(
-                            "invalid renderer owner claim at {}",
-                            path.display()
-                        )));
-                    }
+                    let claim = read_renderer_owner_claim(props, &path)?;
                     break claim;
                 }
             }
@@ -1552,16 +1759,7 @@ pub fn claim_transaction_dispatch(
     recover_pending_cancellation_locked(props)?;
     let path = renderer_owner_path(props);
     if path.is_file() {
-        let claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(&path)?)
-            .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
-        if claim.version != TRANSACTION_ENVELOPE_VERSION
-            || normalized(&claim.project_root) != normalized(&props.root)
-        {
-            return Err(TeamError::Command(format!(
-                "invalid renderer owner claim at {}",
-                path.display()
-            )));
-        }
+        let claim = read_renderer_owner_claim(props, &path)?;
         if claim.app_instance != app_instance && process_is_alive(claim.process_id) {
             return Err(TeamError::Conflict(format!(
                 "transaction dispatcher is owned by live app {} (pid {})",
@@ -2763,13 +2961,10 @@ fn acknowledged_receipt_in_history(
     batch_id: &str,
     operation: &str,
 ) -> Result<bool> {
-    let path = transaction_dir(props).join("history.ndjson");
-    let Ok(history) = std::fs::read_to_string(&path) else {
-        return Ok(false);
-    };
-    for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
-        let transaction: SyncTransaction = serde_json::from_str(line)
-            .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+    for transaction in product_history_for_batch(props, batch_id)?
+        .into_iter()
+        .rev()
+    {
         if transaction.0.batch_id == batch_id {
             return Ok(transaction.0.generation == generation
                 && !transaction.0.status.is_recoverable()
@@ -3008,22 +3203,19 @@ pub fn cancel_transaction_receipt(
         .into_iter()
         .find(|transaction| transaction.0.batch_id == batch_id)
     else {
-        let path = transaction_dir(props).join("history.ndjson");
-        if let Ok(history) = std::fs::read_to_string(path) {
-            for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
-                let archived: SyncTransaction = serde_json::from_str(line).map_err(|error| {
-                    TeamError::Command(format!("team transaction history: {error}"))
-                })?;
-                if archived.0.batch_id == batch_id {
-                    if archived.0.generation == generation
-                        && archived.operation == operation
-                        && archived.0.status == TransactionStatus::RequestCancelled
-                        && archived.0.error_code == Some(REQUEST_CANCELLED_CODE)
-                    {
-                        return Ok(());
-                    }
-                    break;
+        for archived in product_history_for_batch(props, batch_id)?
+            .into_iter()
+            .rev()
+        {
+            if archived.0.batch_id == batch_id {
+                if archived.0.generation == generation
+                    && archived.operation == operation
+                    && archived.0.status == TransactionStatus::RequestCancelled
+                    && archived.0.error_code == Some(REQUEST_CANCELLED_CODE)
+                {
+                    return Ok(());
                 }
+                break;
             }
         }
         return Err(TeamError::Conflict(format!(
@@ -3148,4 +3340,165 @@ pub fn commit_after_version(
         ))
     })?;
     remote_repository_factory::commit_after_versions(props, repo, versions, comment)
+}
+
+#[cfg(test)]
+mod segmented_product_history_tests {
+    use super::*;
+
+    fn historical_transaction(root: &Path, batch_id: &str, sequence: u64) -> SyncTransaction {
+        let mut envelope = TransactionEnvelope::pending(
+            root,
+            sequence.saturating_add(1),
+            batch_id,
+            SyncTransactionPayload {
+                operation: "project.save".into(),
+                phase: "renderer-acknowledged".into(),
+                snapshot: PathBuf::new(),
+                prep_existed: false,
+                file_remotes: Vec::new(),
+                repository_count: 0,
+                rollback_versions: Vec::new(),
+                commit_started: Vec::new(),
+                published: Vec::new(),
+                product_manifest: None,
+                root_git_rollback: None,
+                refresh: None,
+                external_products: Vec::new(),
+            },
+        );
+        envelope.transition(TransactionStatus::Completed, None);
+        envelope.updated_unix_ms = u128::from(sequence);
+        SyncTransaction(envelope)
+    }
+
+    #[test]
+    fn project_history_uses_bounded_sparse_generational_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).unwrap();
+        let directory = root.join(".repositories/transactions");
+        let layout = product_history_layout();
+        let options = SegmentedHistoryOptions {
+            recent_limit: 2,
+            hot_limit: 2,
+            segment_record_limit: 1,
+            generation_segment_limit: 3,
+            generation_record_limit: 8,
+            partition_prefix_hex: 8,
+        };
+        let mut history =
+            SegmentedHistory::open(&directory, &root, layout.clone(), options.clone()).unwrap();
+        for sequence in 0..9 {
+            history
+                .append(historical_transaction(
+                    &root,
+                    &format!("product-{sequence}"),
+                    sequence,
+                ))
+                .unwrap();
+        }
+        assert_eq!(history.status().hot_records, 2);
+        assert_eq!(history.recent().len(), 2);
+        assert!(history.status().generation >= 1);
+        assert_eq!(
+            history.records_for("product-0").unwrap()[0].0.batch_id,
+            "product-0"
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.join(&layout.recent_file))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+
+        // A structurally valid but contradictory sparse index replica must not
+        // silently hide an archived receipt.
+        let recovery = directory.join(&layout.manifest_recovery_file);
+        let mut conflicting: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&recovery).unwrap()).unwrap();
+        let descriptors = conflicting["segments"].as_array_mut().unwrap();
+        let old_prefix = descriptors[0]["partition_prefixes"][0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let replacement = if old_prefix == "00000000" {
+            "11111111"
+        } else {
+            "00000000"
+        };
+        descriptors[0]["partition_prefixes"][0] = serde_json::json!(replacement);
+        let mut rebuilt = serde_json::Map::new();
+        for descriptor in descriptors {
+            let id = descriptor["id"].as_u64().unwrap();
+            for prefix in descriptor["partition_prefixes"].as_array().unwrap() {
+                rebuilt
+                    .entry(prefix.as_str().unwrap().to_string())
+                    .or_insert_with(|| serde_json::json!([]))
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!(id));
+            }
+        }
+        conflicting["partition_index"] = serde_json::Value::Object(rebuilt);
+        std::fs::write(&recovery, serde_json::to_vec_pretty(&conflicting).unwrap()).unwrap();
+        let conflict =
+            SegmentedHistory::<SyncTransaction>::open(&directory, &root, layout, options)
+                .unwrap_err();
+        assert!(conflict.contains("manifest replicas disagree at revision"));
+    }
+
+    #[test]
+    fn moved_project_rebases_pending_receipt_and_archived_retry() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_root = temp.path().join("project-before-move");
+        let props = ProjectProperties::create(old_root.clone(), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let product = props.source_dir.join("moved.txt");
+        commit_product_transaction_cancellable(
+            &props,
+            "project.save",
+            &CancellationToken::default(),
+            "test.project-move",
+            77,
+            Some("moved-receipt"),
+            |_| {
+                std::fs::write(&product, "committed before move")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(props
+            .root
+            .join(".repositories/transactions/active.json")
+            .is_file());
+
+        let new_root = temp.path().join("project-after-move");
+        std::fs::rename(&old_root, &new_root).unwrap();
+        let moved = ProjectProperties::load(&new_root).unwrap();
+        let receipt = pending_transaction_receipt(&moved, 78).unwrap().unwrap();
+        assert_eq!(receipt.project_root, normalized(&new_root));
+        assert_eq!(receipt.batch_id, "moved-receipt");
+        assert_eq!(
+            std::fs::read_to_string(moved.source_dir.join("moved.txt")).unwrap(),
+            "committed before move"
+        );
+
+        acknowledge_transaction_receipt(&moved, 78, "moved-receipt", "project.save").unwrap();
+        let duplicate =
+            acknowledge_transaction_receipt(&moved, 78, "moved-receipt", "project.save").unwrap();
+        assert!(duplicate.already_acknowledged);
+        assert!(!new_root
+            .join(".repositories/transactions/active.json")
+            .exists());
+        let rows =
+            std::fs::read_to_string(new_root.join(".repositories/transactions/history.ndjson"))
+                .unwrap();
+        assert!(rows.lines().all(|line| {
+            serde_json::from_str::<serde_json::Value>(line).unwrap()["project_root"]
+                == new_root.to_string_lossy().as_ref()
+        }));
+    }
 }
