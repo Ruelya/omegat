@@ -812,6 +812,7 @@ async function prepareProductCompactionProject(
 
   const transactions = join(project, ".repositories", "transactions");
   const activePath = join(transactions, "active.json");
+  const activeRecoveryPath = join(transactions, ".active.previous.json");
   const historyPath = join(transactions, "history.ndjson");
   const ownerPath = join(transactions, "renderer-owner.json");
   const journal = JSON.parse(await readFile(activePath, "utf8"));
@@ -838,6 +839,7 @@ async function prepareProductCompactionProject(
   terminal.payload.phase = "renderer-acknowledged";
   terminal.payload.snapshot = terminalSnapshot;
   journal.batches.unshift(terminal);
+  await durableWriteJson(activeRecoveryPath, journal);
   await durableWriteJson(activePath, journal);
 
   return {
