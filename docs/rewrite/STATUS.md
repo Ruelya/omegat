@@ -773,6 +773,25 @@ contract creates an older refresh ahead of a team receipt, then two refresh
 tails ahead of a save receipt; it observes refresh → team → refresh → refresh →
 save with one envelope per turn, exact backend-specific payloads, one
 generation, and no starvation.
+The product/team transaction store is now a version-2 FIFO journal whose
+`batches` retain multiple envelopes in durable insertion order; a version-1
+single-envelope `active.json` is read as its first row and migrated on the next
+state transition. A committed but unacknowledged close therefore no longer
+blocks a later save from being durably appended, while the unified dispatcher
+still publishes only the close head before that save and any refresh tail.
+Dispatch ownership is persisted separately under the same project transaction
+lock with canonical root, Electron app instance, process ID, renderer
+generation, and claim ID. On Linux, another replacement cannot read or
+acknowledge either backend's head while that owner PID is live; it can take over
+only after the owner exits. The sidecar contract checks close → save ordering,
+rejected concurrent pending/ack calls, unchanged TMX bytes/mtime, and exactly
+one terminal row per batch. The real Linux `linux-unpacked` matrix starts two
+no-project replacements against the same lost close receipt, holds the first
+after its durable claim, proves the second delivers no envelope while remaining
+responsive, then drains close → save → refresh exactly once. Explicit reopen
+retains the wanted complete six-field `EntryKey`, its sole `Document3`
+translation, and the untranslated same-source decoy. Windows and macOS owner
+liveness/package behavior were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
