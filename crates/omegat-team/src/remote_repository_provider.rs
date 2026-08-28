@@ -12,8 +12,11 @@ use crate::transaction_envelope::{
     REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 use crate::{team_enabled, SyncReport};
-use fs2::FileExt;
 use omegat_core::cancellation::CancellationToken;
+use omegat_core::durable_fifo::{
+    self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
+    LegacyOwnerClaim, OwnerClaimError,
+};
 use omegat_core::properties::ProjectProperties;
 use omegat_core::segmented_history::{
     SegmentedHistory, SegmentedHistoryLayout, SegmentedHistoryOptions, SegmentedHistoryRecord,
@@ -32,7 +35,6 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-static OWNER_CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const PRODUCT_JOURNAL_VERSION: u8 = 2;
 #[cfg(test)]
 static FAIL_COMMIT_REPOSITORY: AtomicUsize = AtomicUsize::new(usize::MAX);
@@ -52,7 +54,7 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {
 }
 
 pub(crate) struct ProjectTransactionLock {
-    _file: std::fs::File,
+    _lock: DurableFifoLock,
     waited: bool,
 }
 
@@ -60,53 +62,41 @@ pub(crate) fn acquire_project_transaction_lock(
     props: &ProjectProperties,
 ) -> Result<ProjectTransactionLock> {
     let dir = transaction_dir(props);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("operation.lock");
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(&path)?;
-    file.try_lock_exclusive().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::WouldBlock {
+    let lock = DurableFifoLock::try_acquire(&dir, &product_fifo_layout().lock_file)
+        .map_err(TeamError::Command)?
+        .ok_or_else(|| {
             TeamError::Conflict(format!(
                 "team project is locked by another process: {}",
                 props.root.display()
             ))
-        } else {
-            TeamError::Io(error)
-        }
-    })?;
+        })?;
     Ok(ProjectTransactionLock {
-        _file: file,
+        _lock: lock,
         waited: false,
     })
 }
 
 fn wait_for_project_transaction_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
     let dir = transaction_dir(props);
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("operation.lock");
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(&path)?;
-    let waited = match file.try_lock_exclusive() {
-        Ok(()) => false,
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+    let (lock, waited) = match DurableFifoLock::try_acquire(&dir, &product_fifo_layout().lock_file)
+        .map_err(TeamError::Command)?
+    {
+        Some(lock) => (lock, false),
+        None => {
             resolve_cancellation_lock_checkpoint(
                 "OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER",
                 props,
                 "waiting-for-owner-lock",
             )?;
-            file.lock_exclusive().map_err(TeamError::Io)?;
-            true
+            (
+                DurableFifoLock::acquire(&dir, &product_fifo_layout().lock_file)
+                    .map_err(TeamError::Command)?,
+                true,
+            )
         }
-        Err(error) => return Err(TeamError::Io(error)),
     };
     Ok(ProjectTransactionLock {
-        _file: file,
+        _lock: lock,
         waited,
     })
 }
@@ -547,15 +537,19 @@ struct SyncTransaction(TransactionEnvelope<SyncTransactionPayload>);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ProductTransactionJournal {
+struct LegacyProductTransactionJournal {
     version: u8,
     project_root: PathBuf,
+    #[serde(default)]
+    revision: u64,
     batches: Vec<SyncTransaction>,
 }
 
+type ProductTransactionJournal = DurableFifoState<SyncTransaction>;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RendererOwnerClaim {
+struct LegacyRendererOwnerClaim {
     version: u8,
     project_root: PathBuf,
     app_instance: String,
@@ -632,6 +626,20 @@ impl std::ops::DerefMut for SyncTransaction {
 impl SegmentedHistoryRecord for SyncTransaction {
     fn history_partition(&self) -> &str {
         &self.0.batch_id
+    }
+
+    fn relocate(&mut self, old_scope: &Path, new_scope: &Path) {
+        relocate_sync_transaction(self, old_scope, new_scope);
+    }
+}
+
+impl DurableFifoEntry for SyncTransaction {
+    fn durable_fifo_id(&self) -> &str {
+        &self.0.batch_id
+    }
+
+    fn validate_for_scope(&self, scope: &Path) -> std::result::Result<(), String> {
+        self.0.validate_for_root(scope)
     }
 
     fn relocate(&mut self, old_scope: &Path, new_scope: &Path) {
@@ -777,7 +785,7 @@ impl SyncTransaction {
         } else {
             journal.batches.push(self.clone());
         }
-        write_product_journal(props, &journal)?;
+        write_product_journal(props, &mut journal)?;
         append_product_history(props, self.clone())?;
         Ok(())
     }
@@ -1007,16 +1015,6 @@ impl SyncTransaction {
             }))
     }
 
-    fn load_product_receipt_head(props: &ProjectProperties) -> Result<Option<Self>> {
-        Ok(load_product_journal(props)?
-            .batches
-            .into_iter()
-            .find(|transaction| {
-                !transaction.is_refresh()
-                    && transaction.0.status == TransactionStatus::SidecarCommitted
-            }))
-    }
-
     fn load_receipt(props: &ProjectProperties, batch_id: &str) -> Result<Option<Self>> {
         Ok(load_product_journal(props)?
             .batches
@@ -1043,10 +1041,9 @@ impl SyncTransaction {
             remove_path(&self.snapshot)?;
         }
         if journal.batches.is_empty() {
-            remove_path(&transaction_dir(props).join("active.json"))?;
-            remove_path(&transaction_dir(props).join(".active.previous.json"))?;
+            clear_product_journal(props)?;
         } else {
-            write_product_journal(props, &journal)?;
+            write_product_journal(props, &mut journal)?;
         }
         Ok(())
     }
@@ -1054,41 +1051,17 @@ impl SyncTransaction {
 
 fn load_product_journal(props: &ProjectProperties) -> Result<ProductTransactionJournal> {
     let dir = transaction_dir(props);
-    let active = dir.join("active.json");
-    let previous = dir.join(".active.previous.json");
-    if active.is_file() {
-        match read_product_journal(props, &active) {
-            Ok(journal) => return Ok(journal),
-            Err(active_error) if previous.is_file() => {
-                let journal = read_product_journal(props, &previous).map_err(|previous_error| {
-                    TeamError::Command(format!(
-                        "shared transaction journal and recovery copy are invalid: \
-                         active=({active_error}); previous=({previous_error})"
-                    ))
-                })?;
-                // Every normal publish writes this exact value to the recovery
-                // copy first, then atomically replaces active.json. Repairing a
-                // corrupt active file from it therefore never advances beyond
-                // a publication boundary that active.json did not cross.
-                write_json_atomic(&active, &journal).map_err(|error| {
-                    TeamError::Command(format!(
-                        "repair shared transaction journal {}: {error}",
-                        active.display()
-                    ))
-                })?;
-                return Ok(journal);
-            }
-            Err(error) => return Err(error),
-        }
+    let journal = durable_fifo::load_with_legacy(
+        &dir,
+        &props.root,
+        &product_fifo_layout(),
+        decode_legacy_product_journal,
+    )
+    .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?;
+    for transaction in &journal.batches {
+        transaction.validate_loaded(props)?;
     }
-    if previous.is_file() {
-        return read_product_journal(props, &previous);
-    }
-    Ok(ProductTransactionJournal {
-        version: PRODUCT_JOURNAL_VERSION,
-        project_root: normalized(&props.root),
-        batches: Vec::new(),
-    })
+    Ok(journal)
 }
 
 fn relocate_scoped_path(path: &mut PathBuf, old_root: &Path, new_root: &Path) {
@@ -1141,62 +1114,76 @@ fn relocate_sync_transaction(transaction: &mut SyncTransaction, old_scope: &Path
     }
 }
 
-fn read_product_journal(
-    props: &ProjectProperties,
-    path: &Path,
-) -> Result<ProductTransactionJournal> {
-    let bytes = std::fs::read(&path)?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?;
-    let mut journal = if value.get("batches").is_some() {
-        serde_json::from_value::<ProductTransactionJournal>(value)
-            .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))?
-    } else {
-        // Version-1 installations stored one transparent envelope directly in
-        // active.json. Read it as the first journal row without rewriting it
-        // until the next durable state transition.
-        let transaction = serde_json::from_value::<SyncTransaction>(value)
-            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
-        ProductTransactionJournal {
-            version: PRODUCT_JOURNAL_VERSION,
-            project_root: normalized(&props.root),
-            batches: vec![transaction],
-        }
+fn product_fifo_layout() -> DurableFifoLayout {
+    DurableFifoLayout {
+        primary_file: "active.json".into(),
+        recovery_file: ".active.previous.json".into(),
+        lock_file: "operation.lock".into(),
+        owner_file: "renderer-owner.json".into(),
+        owner_recovery_file: ".renderer-owner.recovery.json".into(),
+    }
+}
+
+fn decode_legacy_product_journal(
+    bytes: &[u8],
+) -> std::result::Result<Option<LegacyFifoState<SyncTransaction>>, String> {
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
     };
-    if journal.version != PRODUCT_JOURNAL_VERSION {
-        return Err(TeamError::Command(format!(
-            "unsupported product transaction journal version {}",
-            journal.version
-        )));
+    if value.get("scope").is_some() {
+        return Ok(None);
     }
-    if normalized(&journal.project_root) != normalized(&props.root) {
-        let old_root = journal.project_root.clone();
-        for transaction in &mut journal.batches {
-            relocate_sync_transaction(transaction, &old_root, &props.root);
+    if value.get("batches").is_some() {
+        let journal: LegacyProductTransactionJournal = serde_json::from_value(value)
+            .map_err(|error| format!("legacy product transaction journal: {error}"))?;
+        if journal.version != PRODUCT_JOURNAL_VERSION || journal.project_root.as_os_str().is_empty()
+        {
+            return Err(format!(
+                "unsupported product transaction journal version {}",
+                journal.version
+            ));
         }
-        journal.project_root = normalized(&props.root);
-        // A project-directory move is a scope adoption, not a new product
-        // operation. Publish both active replicas before recovery inspects any
-        // snapshot or exposes any retained receipt.
-        write_product_journal(props, &journal)?;
+        let updated_unix_ms = journal
+            .batches
+            .iter()
+            .map(|transaction| transaction.0.updated_unix_ms)
+            .max()
+            .unwrap_or_default();
+        return Ok(Some(LegacyFifoState {
+            scope: journal.project_root,
+            revision: journal.revision,
+            batches: journal.batches,
+            updated_unix_ms,
+        }));
     }
-    for transaction in &journal.batches {
-        transaction.validate_loaded(props)?;
-    }
-    Ok(journal)
+    // Version-1 installations stored one transparent envelope directly in
+    // active.json.
+    let transaction: SyncTransaction = serde_json::from_value(value)
+        .map_err(|error| format!("legacy product transaction: {error}"))?;
+    Ok(Some(LegacyFifoState {
+        scope: transaction.0.project_root.clone(),
+        revision: 0,
+        updated_unix_ms: transaction.0.updated_unix_ms,
+        batches: vec![transaction],
+    }))
 }
 
 fn write_product_journal(
     props: &ProjectProperties,
-    journal: &ProductTransactionJournal,
+    journal: &mut ProductTransactionJournal,
 ) -> Result<()> {
-    let dir = transaction_dir(props);
-    // The recovery copy is the same candidate value, not the prior generation.
-    // A process death before active.json is replaced keeps the old active
-    // publication authoritative; after replacement either file can repair
-    // media/parser corruption without reviving an older transaction state.
-    write_json_atomic(&dir.join(".active.previous.json"), journal)
-        .and_then(|_| write_json_atomic(&dir.join("active.json"), journal))
+    durable_fifo::persist(
+        &transaction_dir(props),
+        &props.root,
+        &product_fifo_layout(),
+        journal,
+    )
+    .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
+}
+
+fn clear_product_journal(props: &ProjectProperties) -> Result<()> {
+    durable_fifo::clear(&transaction_dir(props), &product_fifo_layout())
         .map_err(|error| TeamError::Command(format!("team transaction journal: {error}")))
 }
 
@@ -1587,10 +1574,7 @@ fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()
         .collect::<Vec<_>>();
     if terminal.is_empty() {
         if journal.batches.is_empty() {
-            let active = transaction_dir(props).join("active.json");
-            remove_path(&active)?;
-            remove_path(&transaction_dir(props).join(".active.previous.json"))?;
-            sync_parent(&active)?;
+            clear_product_journal(props)?;
         }
         return Ok(());
     }
@@ -1610,7 +1594,7 @@ fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()
     // Always publish the compacted v2 queue first, including an empty queue.
     // The atomic writer fsyncs the replacement and parent directory, so a
     // process death at the checkpoint cannot revive an archived terminal row.
-    write_product_journal(props, &journal)?;
+    write_product_journal(props, &mut journal)?;
     product_compaction_checkpoint("after_queue_rename")?;
     if std::env::var("OMEGAT_TEST_ABORT_PRODUCT_COMPACTION_AFTER_QUEUE_RENAME").as_deref()
         == Ok("1")
@@ -1618,34 +1602,53 @@ fn compact_terminal_product_transactions(props: &ProjectProperties) -> Result<()
         std::process::abort();
     }
     if journal.batches.is_empty() {
-        let active = transaction_dir(props).join("active.json");
-        remove_path(&active)?;
-        remove_path(&transaction_dir(props).join(".active.previous.json"))?;
-        sync_parent(&active)?;
+        clear_product_journal(props)?;
     }
     Ok(())
 }
 
-fn renderer_owner_path(props: &ProjectProperties) -> PathBuf {
-    transaction_dir(props).join("renderer-owner.json")
+fn decode_legacy_renderer_owner(
+    bytes: &[u8],
+) -> std::result::Result<Option<LegacyOwnerClaim>, String> {
+    let value: serde_json::Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    if value.get("project_root").is_none() {
+        return Ok(None);
+    }
+    let claim: LegacyRendererOwnerClaim = serde_json::from_value(value)
+        .map_err(|error| format!("legacy renderer owner claim: {error}"))?;
+    if claim.version != TRANSACTION_ENVELOPE_VERSION
+        || claim.project_root.as_os_str().is_empty()
+        || claim.app_instance.is_empty()
+        || claim.process_id == 0
+        || claim.generation == 0
+        || claim.claim_id.is_empty()
+    {
+        return Err("invalid legacy renderer owner claim".into());
+    }
+    Ok(Some(LegacyOwnerClaim {
+        scope: claim.project_root,
+        revision: 0,
+        app_instance: claim.app_instance,
+        process_id: claim.process_id,
+        generation: claim.generation,
+        claim_id: claim.claim_id,
+        updated_unix_ms: claim.updated_unix_ms,
+    }))
 }
 
-fn read_renderer_owner_claim(props: &ProjectProperties, path: &Path) -> Result<RendererOwnerClaim> {
-    let mut claim: RendererOwnerClaim = serde_json::from_slice(&std::fs::read(path)?)
-        .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
-    if claim.version != TRANSACTION_ENVELOPE_VERSION || claim.project_root.as_os_str().is_empty() {
-        return Err(TeamError::Command(format!(
-            "invalid renderer owner claim at {}",
-            path.display()
-        )));
-    }
-    if normalized(&claim.project_root) != normalized(&props.root) {
-        claim.project_root = normalized(&props.root);
-        claim.updated_unix_ms = unix_ms();
-        write_json_atomic(path, &claim)
-            .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))?;
-    }
-    Ok(claim)
+fn load_renderer_owner_claim(
+    props: &ProjectProperties,
+) -> Result<Option<omegat_core::durable_fifo::DurableOwnerClaim>> {
+    durable_fifo::load_owner_with_legacy(
+        &transaction_dir(props),
+        &props.root,
+        &product_fifo_layout(),
+        decode_legacy_renderer_owner,
+    )
+    .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))
 }
 
 fn process_is_alive(process_id: u32) -> bool {
@@ -1722,14 +1725,12 @@ pub fn wait_for_transaction_dispatch_owner_exit_cancellable(
     timeout: Duration,
     cancellation: &CancellationToken,
 ) -> Result<Option<u32>> {
-    let path = renderer_owner_path(props);
     let deadline = Instant::now() + timeout;
     let claim = loop {
         check_cancelled(cancellation)?;
         match acquire_project_transaction_lock(props) {
             Ok(_lock) => {
-                if path.is_file() {
-                    let claim = read_renderer_owner_claim(props, &path)?;
+                if let Some(claim) = load_renderer_owner_claim(props)? {
                     break claim;
                 }
             }
@@ -1775,34 +1776,26 @@ pub fn claim_transaction_dispatch(
     }
     let _lock = acquire_project_transaction_lock(props)?;
     recover_pending_cancellation_locked(props)?;
-    let path = renderer_owner_path(props);
-    if path.is_file() {
-        let claim = read_renderer_owner_claim(props, &path)?;
-        if claim.app_instance != app_instance && process_is_alive(claim.process_id) {
-            return Err(TeamError::Conflict(format!(
-                "transaction dispatcher is owned by live app {} (pid {})",
-                claim.app_instance, claim.process_id
-            )));
-        }
-        if claim.app_instance == app_instance
-            && claim.process_id == process_id
-            && claim.generation == generation
-        {
-            return Ok(());
-        }
-    }
-    let sequence = OWNER_CLAIM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let claim = RendererOwnerClaim {
-        version: TRANSACTION_ENVELOPE_VERSION,
-        project_root: normalized(&props.root),
-        app_instance: app_instance.to_string(),
+    durable_fifo::claim_owner_with_legacy(
+        &transaction_dir(props),
+        &props.root,
+        &product_fifo_layout(),
+        app_instance,
         process_id,
         generation,
-        claim_id: format!("{}-{process_id}-{sequence}", unix_ms()),
-        updated_unix_ms: unix_ms(),
-    };
-    write_json_atomic(&path, &claim)
-        .map_err(|error| TeamError::Command(format!("renderer owner claim: {error}")))
+        decode_legacy_renderer_owner,
+        process_is_alive,
+    )
+    .map(|_| ())
+    .map_err(|error| match error {
+        OwnerClaimError::Live(claim) => TeamError::Conflict(format!(
+            "transaction dispatcher is owned by live app {} (pid {})",
+            claim.app_instance, claim.process_id
+        )),
+        OwnerClaimError::Durable(error) => {
+            TeamError::Command(format!("renderer owner claim: {error}"))
+        }
+    })
 }
 
 fn capture_product_manifest(
@@ -2808,7 +2801,7 @@ pub fn migrate_refresh_transactions(
             .then_with(|| left.0.batch_id.cmp(&right.0.batch_id))
             .then_with(|| left.operation.cmp(&right.operation))
     });
-    write_product_journal(props, &journal)?;
+    write_product_journal(props, &mut journal)?;
 
     let terminal = history
         .into_iter()
@@ -2968,7 +2961,7 @@ pub fn discard_refresh_transactions(props: &ProjectProperties) -> Result<()> {
         changed = true;
     }
     if changed {
-        write_product_journal(props, &journal)?;
+        write_product_journal(props, &mut journal)?;
     }
     compact_terminal_product_transactions(props)
 }
@@ -3041,18 +3034,17 @@ pub fn pending_transaction_receipt_for_owner(
     transaction.renderer_receipt().map(Some)
 }
 
-/// Inspect a committed renderer receipt without adopting it into a new
-/// renderer generation.
+/// Inspect the FIFO dispatch head without adopting it into a new renderer
+/// generation.
 ///
-/// Recovery discovery uses this read-only view to identify a project-close
-/// receipt while no project is open. Generation adoption remains the
-/// responsibility of [`pending_transaction_receipt`], after a caller has
-/// selected the exact project root.
+/// Recovery discovery uses this read-only view to rotate across project roots.
+/// It can therefore continue from a close receipt into product and refresh
+/// tails without draining one root ahead of every other root.
 pub fn peek_transaction_receipt(
     props: &ProjectProperties,
 ) -> Result<Option<TransactionRendererReceipt>> {
     let _lock = acquire_project_transaction_lock(props)?;
-    let Some(transaction) = SyncTransaction::load_product_receipt_head(props)? else {
+    let Some(transaction) = SyncTransaction::load_dispatch_head(props)? else {
         return Ok(None);
     };
     transaction.validate_repository_shape(props)?;

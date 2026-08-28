@@ -189,6 +189,7 @@ function projectPaths(project) {
     manifestRecovery: join(directory, ".history-manifest.recovery.json"),
     archive: join(directory, "history-archive"),
     owner: join(directory, "renderer-owner.json"),
+    ownerRecovery: join(directory, ".renderer-owner.recovery.json"),
   };
 }
 
@@ -448,7 +449,6 @@ async function runMixedQueueTakeovers(display, workDir, config) {
   const rootB = join(workDir, "prepared-project-b");
   const remote = join(workDir, "prepared-remote");
   const traceA = join(workDir, "prepared-project-a-acks.ndjson");
-  const traceB = join(workDir, "prepared-project-b-acks.ndjson");
   const firstMarker = join(workDir, "prepared-owner-first.marker");
   const firstRelease = join(workDir, "prepared-owner-first.release");
   const secondMarker = join(workDir, "prepared-owner-second.marker");
@@ -528,8 +528,43 @@ async function runMixedQueueTakeovers(display, workDir, config) {
       transaction_batch_id: "prepared-save-b",
     });
     assert.equal(saveB.receipt.batch_id, "prepared-save-b");
+    const refreshB = await session.request("project.refresh.enqueue", {
+      root: rootB,
+      app_instance: "prepared-refresh-owner-b",
+      generation: 191,
+      paths: [join(rootB, "source", "source.txt")],
+      fingerprints: { "source/source.txt": "prepared-refresh-b" },
+      sources: ["native"],
+    });
+    assert.equal(refreshB.batch.status, "pending");
     await configPatch("prepared-config-2", { theme: "prepared-after-b" });
     await session.close();
+
+    // Seed the two former project active shapes and the former single-copy
+    // renderer owner. The first real packaged claimant must restartably
+    // migrate them before dispatching any product.
+    for (const root of [rootA, rootB]) {
+      const paths = projectPaths(root);
+      const current = JSON.parse(await readFile(paths.active, "utf8"));
+      const legacy = {
+        version: 2,
+        project_root: root,
+        batches: current.batches,
+      };
+      await Promise.all([
+        writeJson(paths.active, legacy),
+        writeJson(paths.activeRecovery, legacy),
+      ]);
+    }
+    await writeJson(projectPaths(rootA).owner, {
+      version: 1,
+      project_root: rootA,
+      app_instance: "legacy-dead-renderer",
+      process_id: 4_000_000,
+      generation: 180,
+      claim_id: "legacy-dead-claim",
+      updated_unix_ms: Date.now() - 10_000,
+    });
 
     const expectedA = [
       ["prepared-close", "sidecar_committed"],
@@ -545,7 +580,10 @@ async function runMixedQueueTakeovers(display, workDir, config) {
     assert.deepEqual(
       JSON.parse(await readFile(projectPaths(rootB).active, "utf8"))
         .batches.map((row) => [row.batch_id, row.status]),
-      [["prepared-save-b", "sidecar_committed"]],
+      [
+        ["prepared-save-b", "sidecar_committed"],
+        [refreshB.batch.batch_id, "pending"],
+      ],
     );
 
     first = await launchPackagedRenderer(display, config, rootA, {
@@ -587,11 +625,32 @@ async function runMixedQueueTakeovers(display, workDir, config) {
       ...limits,
       OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceA,
     });
-    await waitFor("prepared project A FIFO drain", async () =>
-      !await pathExists(projectPaths(rootA).active) ? true : undefined
+    await waitFor("prepared cross-root FIFO drain", async () =>
+      !await pathExists(projectPaths(rootA).active)
+        && !await pathExists(projectPaths(rootB).active)
+        ? true
+        : undefined
     );
-    const acknowledgedA = parseNdjson(await readFile(traceA, "utf8"))
+    const acknowledged = parseNdjson(await readFile(traceA, "utf8"))
       .filter((row) => row.result === "acknowledged");
+    const expectedB = [
+      ["prepared-save-b", "project.save"],
+      [refreshB.batch.batch_id, "project.external-refresh"],
+    ];
+    assert.deepEqual(
+      acknowledged.map((row) => row.batch_id),
+      [
+        expectedA[0][0],
+        expectedB[0][0],
+        expectedA[1][0],
+        expectedB[1][0],
+        expectedA[2][0],
+        expectedA[3][0],
+      ],
+    );
+    const acknowledgedA = acknowledged.filter((row) =>
+      expectedA.some(([batchId]) => batchId === row.batch_id)
+    );
     const operationsA = acknowledgedA.map((row) => row.operation);
     assert.deepEqual(operationsA, [
       "project.close",
@@ -608,16 +667,13 @@ async function runMixedQueueTakeovers(display, workDir, config) {
 
     projectB = await launchPackagedRenderer(display, config, rootB, {
       ...limits,
-      OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceB,
     });
-    await waitFor("prepared project B FIFO drain", async () =>
-      !await pathExists(projectPaths(rootB).active) ? true : undefined
+    const acknowledgedB = acknowledged.filter((row) =>
+      expectedB.some(([batchId]) => batchId === row.batch_id)
     );
-    const acknowledgedB = parseNdjson(await readFile(traceB, "utf8"))
-      .filter((row) => row.result === "acknowledged");
     assert.deepEqual(
       acknowledgedB.map((row) => [row.batch_id, row.operation]),
-      [["prepared-save-b", "project.save"]],
+      expectedB,
     );
     assert.equal(
       await readFile(join(remote, "target", "team.txt"), "utf8"),
@@ -683,11 +739,17 @@ async function runMixedQueueTakeovers(display, workDir, config) {
       roots: [movedA, rootB],
       projectAOrder: operationsA,
       projectBOrder: acknowledgedB.map((row) => row.operation),
+      crossRootDispatchOrder: acknowledged.map((row) => row.batch_id),
       configOrder,
       consecutiveOwnerTakeovers: [firstKilled, secondKilled],
       projectMoveRebasedMutableMetadata: true,
       immutableProjectSegmentsRetained: Object.keys(immutableBefore).length,
       globalConfigProjectIsolation: true,
+      ownerReplicasEqual: await Promise.all([movedA, rootB].map(async (root) =>
+        (await readFile(projectPaths(root).owner)).equals(
+          await readFile(projectPaths(root).ownerRecovery),
+        )
+      )),
     };
   } finally {
     if (session.child.exitCode === null) {
@@ -881,6 +943,72 @@ async function runReplicaCrashBoundary(
   }
 }
 
+async function runActiveReplicaCrashBoundary(
+  display,
+  workDir,
+  file,
+  point,
+  sequence,
+) {
+  const fixture = await prepareFaultFixture(
+    display,
+    workDir,
+    `active-boundary-${sequence}`,
+  );
+  const marker = join(workDir, `active-boundary-${sequence}.marker`);
+  const batchId = `active-boundary-batch-${sequence}`;
+  const requestedTheme = `active-boundary-${sequence}`;
+  const beforeTheme = `active-boundary-${sequence}-seed-3`;
+  let owner = await launchPackagedRenderer(display, fixture.config, null, {
+    ...limits,
+    OMEGAT_TEST_DURABLE_FILE_NAME: file,
+    OMEGAT_TEST_DURABLE_FILE_POINT: point,
+    OMEGAT_TEST_DURABLE_FILE_MARKER: marker,
+  });
+  let recovered;
+  try {
+    await startRpc(owner.client, "prefs.patch", {
+      theme: requestedTheme,
+      config_transaction_retry_batch_id: batchId,
+    });
+    await waitFor(`config active ${file} ${point}`, () => pathExists(marker));
+    const killed = await killPackaged(owner);
+    owner = undefined;
+    recovered = await launchPackagedRenderer(
+      display,
+      fixture.config,
+      null,
+      limits,
+    );
+    const queueWasDurable = file === "active.json"
+      || point === "after_rename"
+      || point === "after_parent_fsync";
+    const preferences = await rpc(recovered.client, "prefs.get");
+    assert.equal(
+      preferences.theme,
+      queueWasDurable ? requestedTheme : beforeTheme,
+    );
+    const state = await segmentedRows(fixture.paths);
+    assert.equal(
+      state.rows.filter((row) => row.batch_id === batchId).length,
+      queueWasDurable ? 1 : 0,
+    );
+    await assertNoTemporaryFiles(fixture.paths.directory);
+    return {
+      file,
+      point,
+      killed,
+      queueWasDurable,
+      exactTerminalRows: queueWasDurable ? 1 : 0,
+    };
+  } finally {
+    await Promise.all([
+      terminatePackaged(recovered),
+      terminatePackaged(owner),
+    ]);
+  }
+}
+
 async function runDualReplicaCorruption(display, workDir, kind) {
   const fixture = await prepareFaultFixture(
     display,
@@ -990,6 +1118,26 @@ try {
     }
   }
 
+  const activeReplicaBoundaries = [];
+  for (const file of ["active.recovery.json", "active.json"]) {
+    for (const point of [
+      "after_candidate_write",
+      "after_candidate_fsync",
+      "after_rename",
+      "after_parent_fsync",
+    ]) {
+      activeReplicaBoundaries.push(
+        await runActiveReplicaCrashBoundary(
+          display.display,
+          workDir,
+          file,
+          point,
+          sequence++,
+        ),
+      );
+    }
+  }
+
   const dualReplicaCorruption = [
     await runDualReplicaCorruption(display.display, workDir, "hot"),
     await runDualReplicaCorruption(display.display, workDir, "manifest"),
@@ -1004,6 +1152,7 @@ try {
     deletedRoot,
     historyBoundaries,
     replicaBoundaries,
+    activeReplicaBoundaries,
     dualReplicaCorruption,
     platformsNotRun: ["windows", "macos"],
   }, null, 2));

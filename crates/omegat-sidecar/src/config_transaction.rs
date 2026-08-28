@@ -9,7 +9,9 @@
 //! before they are removed, so migration is restartable and old batch retries
 //! retain their exact result.
 
-use fs2::FileExt;
+use omegat_core::durable_fifo::{
+    self, DurableFifoEntry, DurableFifoLayout, DurableFifoLock, DurableFifoState, LegacyFifoState,
+};
 use omegat_core::prefs::Preferences;
 use omegat_core::segmented_history::{
     SegmentedHistory, SegmentedHistoryLayout, SegmentedHistoryOptions, SegmentedHistoryRecord,
@@ -73,7 +75,7 @@ impl SegmentedHistoryRecord for ConfigTransactionEnvelope {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ConfigTransactionJournal {
+struct LegacyConfigTransactionJournal {
     version: u8,
     config_dir: PathBuf,
     #[serde(default)]
@@ -82,17 +84,7 @@ struct ConfigTransactionJournal {
     updated_unix_ms: u128,
 }
 
-impl ConfigTransactionJournal {
-    fn empty(config_dir: &Path) -> Self {
-        Self {
-            version: CONFIG_TRANSACTION_VERSION,
-            config_dir: normalized(config_dir),
-            revision: 0,
-            batches: Vec::new(),
-            updated_unix_ms: unix_ms(),
-        }
-    }
-}
+type ConfigTransactionJournal = DurableFifoState<ConfigTransactionEnvelope>;
 
 /// Former sidecar-private hot index. Kept only as a strict migration decoder.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -151,10 +143,6 @@ struct LegacyArchiveSegment {
     batches: Vec<ConfigTransactionEnvelope>,
 }
 
-struct ConfigTransactionLock {
-    _file: File,
-}
-
 fn unix_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -170,10 +158,12 @@ fn transaction_dir(config_dir: &Path) -> PathBuf {
     config_dir.join("transactions").join(TRANSACTION_DIRECTORY)
 }
 
+#[cfg(test)]
 fn active_path(config_dir: &Path) -> PathBuf {
     transaction_dir(config_dir).join("active.json")
 }
 
+#[cfg(test)]
 fn active_recovery_path(config_dir: &Path) -> PathBuf {
     transaction_dir(config_dir).join("active.recovery.json")
 }
@@ -280,25 +270,10 @@ fn remove_durable(path: &Path) -> Result<(), String> {
     }
 }
 
-fn acquire_lock(config_dir: &Path) -> Result<ConfigTransactionLock, String> {
+fn acquire_lock(config_dir: &Path) -> Result<DurableFifoLock, String> {
     let directory = transaction_dir(config_dir);
-    std::fs::create_dir_all(&directory).map_err(|error| {
-        format!(
-            "create config transaction directory {}: {error}",
-            directory.display()
-        )
-    })?;
-    sync_parent(&directory)?;
-    let path = directory.join("operation.lock");
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(&path)
-        .map_err(|error| format!("open config transaction lock {}: {error}", path.display()))?;
-    file.lock_exclusive()
-        .map_err(|error| format!("lock shared config {}: {error}", path.display()))?;
-    Ok(ConfigTransactionLock { _file: file })
+    DurableFifoLock::acquire(&directory, &fifo_layout().lock_file)
+        .map_err(|error| format!("lock shared config {}: {error}", directory.display()))
 }
 
 fn cleanup_interrupted_candidates(config_dir: &Path) -> Result<(), String> {
@@ -389,118 +364,93 @@ fn rebase_envelope(
     envelope
 }
 
-fn read_journal_replica(
-    path: &Path,
-    config_dir: &Path,
-) -> Result<(bool, Option<ConfigTransactionJournal>, bool), String> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok((false, None, false)),
-        Err(error) => {
-            return Err(format!(
-                "read config transaction journal replica {}: {error}",
-                path.display()
+impl DurableFifoEntry for ConfigTransactionEnvelope {
+    fn durable_fifo_id(&self) -> &str {
+        &self.batch_id
+    }
+
+    fn validate_for_scope(&self, scope: &Path) -> Result<(), String> {
+        if valid_envelope(self, scope, true) {
+            Ok(())
+        } else {
+            Err(format!(
+                "invalid pending config transaction {}",
+                self.batch_id
             ))
         }
-    };
-    let Some(mut journal) = serde_json::from_slice::<ConfigTransactionJournal>(&bytes)
-        .ok()
-        .filter(|journal| {
-            supported_version(journal.version)
-                && !journal.config_dir.as_os_str().is_empty()
-                && journal
-                    .batches
-                    .iter()
-                    .all(|batch| valid_envelope(batch, &journal.config_dir, true))
-        })
-    else {
-        return Ok((true, None, false));
-    };
-    let migrated = journal.version != CONFIG_TRANSACTION_VERSION
-        || normalized(&journal.config_dir) != normalized(config_dir);
-    journal.version = CONFIG_TRANSACTION_VERSION;
-    journal.config_dir = normalized(config_dir);
-    journal.batches = journal
-        .batches
-        .into_iter()
-        .map(|batch| rebase_envelope(batch, config_dir))
-        .collect();
-    Ok((true, Some(journal), migrated))
+    }
+
+    fn relocate(&mut self, _old_scope: &Path, new_scope: &Path) {
+        *self = rebase_envelope(self.clone(), new_scope);
+    }
 }
 
-fn write_journal_replicas(
-    config_dir: &Path,
-    journal: &ConfigTransactionJournal,
-) -> Result<(), String> {
-    if journal.batches.is_empty() {
-        remove_durable(&active_recovery_path(config_dir))?;
-        return remove_durable(&active_path(config_dir));
+fn fifo_layout() -> DurableFifoLayout {
+    DurableFifoLayout {
+        primary_file: "active.json".into(),
+        recovery_file: "active.recovery.json".into(),
+        lock_file: "operation.lock".into(),
+        ..DurableFifoLayout::default()
     }
-    let bytes = serde_json::to_vec_pretty(journal)
-        .map_err(|error| format!("serialize config transaction journal: {error}"))?;
-    for path in [active_recovery_path(config_dir), active_path(config_dir)] {
-        omegat_core::durable_file::replace(&path, &bytes).map_err(|error| {
-            format!(
-                "publish config transaction journal replica {}: {error}",
-                path.display()
-            )
-        })?;
+}
+
+fn decode_legacy_active(
+    bytes: &[u8],
+) -> Result<Option<LegacyFifoState<ConfigTransactionEnvelope>>, String> {
+    let value: Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    if value.get("config_dir").is_none() || value.get("batches").is_none() {
+        return Ok(None);
     }
-    Ok(())
+    let journal: LegacyConfigTransactionJournal = serde_json::from_value(value)
+        .map_err(|error| format!("config transaction active journal: {error}"))?;
+    if !supported_version(journal.version) || journal.config_dir.as_os_str().is_empty() {
+        return Err(format!(
+            "unsupported config transaction active version {}",
+            journal.version
+        ));
+    }
+    if journal
+        .batches
+        .iter()
+        .any(|batch| !valid_envelope(batch, &journal.config_dir, true))
+    {
+        return Err("invalid legacy config transaction active batch".into());
+    }
+    Ok(Some(LegacyFifoState {
+        scope: journal.config_dir,
+        revision: journal.revision,
+        batches: journal.batches,
+        updated_unix_ms: journal.updated_unix_ms,
+    }))
 }
 
 fn read_journal(config_dir: &Path) -> Result<ConfigTransactionJournal, String> {
     cleanup_interrupted_candidates(config_dir)?;
-    let replicas = [
-        read_journal_replica(&active_path(config_dir), config_dir)?,
-        read_journal_replica(&active_recovery_path(config_dir), config_dir)?,
-    ];
-    let mut valid = replicas
-        .iter()
-        .filter_map(|(_, journal, _)| journal.as_ref())
-        .cloned()
-        .collect::<Vec<_>>();
-    if valid.is_empty() {
-        if replicas.iter().any(|(exists, _, _)| *exists) {
-            return Err(format!(
-                "both config transaction journal replicas are invalid in {}",
-                transaction_dir(config_dir).display()
-            ));
-        }
-        return Ok(ConfigTransactionJournal::empty(config_dir));
-    }
-    valid.sort_by_key(|journal| journal.revision);
-    let selected = valid.last().expect("non-empty journal replicas").clone();
-    if valid
-        .iter()
-        .any(|journal| journal.revision == selected.revision && journal != &selected)
-    {
-        return Err(format!(
-            "config transaction journal replicas disagree at revision {}",
-            selected.revision
-        ));
-    }
-    if replicas.iter().any(|(_, journal, migrated)| {
-        *migrated
-            || journal
-                .as_ref()
-                .map(|value| value != &selected)
-                .unwrap_or(true)
-    }) {
-        write_journal_replicas(config_dir, &selected)?;
-    }
-    Ok(selected)
+    durable_fifo::load_with_legacy(
+        &transaction_dir(config_dir),
+        config_dir,
+        &fifo_layout(),
+        decode_legacy_active,
+    )
 }
 
 fn persist_journal(
     config_dir: &Path,
     journal: &mut ConfigTransactionJournal,
 ) -> Result<(), String> {
-    journal.version = CONFIG_TRANSACTION_VERSION;
-    journal.config_dir = normalized(config_dir);
-    journal.revision = journal.revision.saturating_add(1);
-    journal.updated_unix_ms = unix_ms();
-    write_journal_replicas(config_dir, journal)
+    if journal.batches.is_empty() {
+        durable_fifo::clear(&transaction_dir(config_dir), &fifo_layout())
+    } else {
+        durable_fifo::persist(
+            &transaction_dir(config_dir),
+            config_dir,
+            &fifo_layout(),
+            journal,
+        )
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -1563,10 +1513,22 @@ mod tests {
         assert_eq!(read_journal(&config).unwrap().batches[0].batch_id, "repair");
         assert_eq!(std::fs::read(active_path(&config)).unwrap(), recovery_bytes);
 
+        let mut disagreement = read_journal(&config).unwrap();
+        disagreement.batches[0].payload = json!({"locale": "de"});
+        std::fs::write(
+            active_path(&config),
+            serde_json::to_vec_pretty(&disagreement).unwrap(),
+        )
+        .unwrap();
+        let error = recover(&config).unwrap_err();
+        assert!(error.contains("durable FIFO replicas disagree at revision"));
+        assert!(!config.join("omegat.prefs.json").exists());
+        std::fs::write(active_path(&config), &recovery_bytes).unwrap();
+
         std::fs::write(active_path(&config), b"{").unwrap();
         std::fs::write(active_recovery_path(&config), b"not-json").unwrap();
         let error = recover(&config).unwrap_err();
-        assert!(error.contains("both config transaction journal replicas are invalid"));
+        assert!(error.contains("both durable FIFO replicas are invalid"));
         assert!(!config.join("omegat.prefs.json").exists());
     }
 

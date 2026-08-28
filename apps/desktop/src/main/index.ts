@@ -1024,6 +1024,16 @@ app.whenReady().then(() => {
         })}\n`);
       }
       if (detachedMatches) {
+        const completedScope = detachedTransactionScope;
+        if (completedScope?.sidecarProjectOpen) {
+          await rpc("project.recovery.detach", { root: completedScope.root });
+        }
+        if (detachedTransactionScope === completedScope) {
+          detachedTransactionScope = null;
+        }
+        // Re-discover after every acknowledged head. The config-scoped
+        // per-root owner timestamp was just refreshed, so another root gets
+        // the next turn before this root's FIFO tail.
         setTimeout(() => scheduleDetachedTransactionRecovery(), 0);
       } else if (activeMatches) {
         setTimeout(() => {

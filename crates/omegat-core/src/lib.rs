@@ -8,6 +8,7 @@ pub mod completer;
 pub mod consts;
 pub mod dict;
 pub mod durable_file;
+pub mod durable_fifo;
 pub mod encoding;
 pub mod entity_util;
 pub mod error;

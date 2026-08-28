@@ -4,15 +4,11 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const TRANSACTION_ENVELOPE_VERSION: u8 = 1;
 pub const REQUEST_CANCELLED_CODE: i32 = -32800;
-static ATOMIC_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -190,53 +186,10 @@ impl<T> TransactionEnvelope<T> {
 /// Callers put both their product commit receipt and envelope status in
 /// `value`. The parent directory sync closes the rename durability gap.
 pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("transaction state has no parent: {}", path.display()))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("create transaction directory {}: {error}", parent.display()))?;
-    let sequence = ATOMIC_WRITE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let filename = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("transaction");
-    let temporary = parent.join(format!(".{filename}.{}.{sequence}.tmp", std::process::id()));
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|error| format!("serialize transaction state: {error}"))?;
-    let write_result = {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)
-            .map_err(|error| {
-                format!(
-                    "create transaction temporary {}: {error}",
-                    temporary.display()
-                )
-            })?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|error| {
-                format!(
-                    "write transaction temporary {}: {error}",
-                    temporary.display()
-                )
-            })
-    };
-    if let Err(error) = write_result {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error);
-    }
-    if let Err(error) = std::fs::rename(&temporary, path) {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(format!(
-            "publish transaction state {}: {error}",
-            path.display()
-        ));
-    }
-    File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("sync transaction directory {}: {error}", parent.display()))
+    omegat_core::durable_file::replace(path, &bytes)
+        .map_err(|error| format!("publish transaction state {}: {error}", path.display()))
 }
 
 pub fn normalized(path: &Path) -> PathBuf {

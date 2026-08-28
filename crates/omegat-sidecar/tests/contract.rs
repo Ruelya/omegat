@@ -1302,7 +1302,7 @@ fn close_team_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
         "direct reply returned the older close head instead of the new tail"
     );
     let journal: Value = serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
-    assert_eq!(journal["version"], 2);
+    assert_eq!(journal["version"], 1);
     assert_eq!(
         journal["batches"]
             .as_array()
@@ -6568,7 +6568,7 @@ fn product_journal_compaction_survives_archive_and_queue_rename_interruptions() 
 
         let mut journal: Value =
             serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
-        assert_eq!(journal["version"], 2);
+        assert_eq!(journal["version"], 1);
         assert_eq!(journal["batches"].as_array().unwrap().len(), 3);
         let mut terminal = journal["batches"][0].clone();
         terminal["batch_id"] = json!(terminal_batch);

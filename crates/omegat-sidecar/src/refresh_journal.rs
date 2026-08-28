@@ -75,8 +75,17 @@ fn legacy_history_path(root: &Path) -> PathBuf {
     transaction_dir(root).join(LEGACY_HISTORY_FILE)
 }
 
-fn active_path(config_dir: &Path, app_instance: &str) -> PathBuf {
+fn legacy_per_app_active_path(config_dir: &Path, app_instance: &str) -> PathBuf {
     let owner = format!("{:x}", Sha256::digest(app_instance.as_bytes()));
+    config_dir
+        .join("transactions")
+        .join(ACTIVE_DIRECTORY)
+        .join(format!("{owner}.json"))
+}
+
+fn active_path(config_dir: &Path, app_instance: &str, root: &Path) -> PathBuf {
+    let identity = format!("{}\0{}", app_instance, normalized(root).display());
+    let owner = format!("{:x}", Sha256::digest(identity.as_bytes()));
     config_dir
         .join("transactions")
         .join(ACTIVE_DIRECTORY)
@@ -221,7 +230,7 @@ fn write_active(
     generation: u64,
 ) -> Result<(), String> {
     write_json(
-        &active_path(config_dir, app_instance),
+        &active_path(config_dir, app_instance, root),
         &ActiveProject {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(root),
@@ -243,9 +252,49 @@ fn migrate_legacy_active(config_dir: &Path) -> Result<(), String> {
             active.version
         ));
     }
-    write_json(&active_path(config_dir, &active.app_instance), &active)?;
+    write_json(
+        &active_path(config_dir, &active.app_instance, &active.project_root),
+        &active,
+    )?;
     legacy_migration_checkpoint("after_config_owner_publish")?;
     remove_file(&legacy_path)
+}
+
+fn migrate_per_app_active(
+    config_dir: &Path,
+    app_instance: &str,
+    selected_root: &Path,
+) -> Result<(), String> {
+    let legacy = legacy_per_app_active_path(config_dir, app_instance);
+    let destination = active_path(config_dir, app_instance, selected_root);
+    if legacy == destination || !legacy.is_file() {
+        return Ok(());
+    }
+    let Some(active) = read_json::<ActiveProject>(&legacy)? else {
+        return Ok(());
+    };
+    if active.version != TRANSACTION_ENVELOPE_VERSION || active.app_instance != app_instance {
+        return Err(format!(
+            "invalid legacy per-app refresh owner {}",
+            legacy.display()
+        ));
+    }
+    let actual_destination = active_path(config_dir, app_instance, &active.project_root);
+    if let Some(existing) = read_json::<ActiveProject>(&actual_destination)? {
+        if existing.project_root != active.project_root
+            || existing.app_instance != active.app_instance
+            || existing.generation != active.generation
+        {
+            return Err(format!(
+                "legacy per-app refresh owner conflicts with {}",
+                actual_destination.display()
+            ));
+        }
+    } else {
+        write_json(&actual_destination, &active)?;
+    }
+    legacy_migration_checkpoint("after_per_root_owner_publish")?;
+    remove_file(&legacy)
 }
 
 fn discard_root_refreshes(root: &Path) -> Result<(), String> {
@@ -270,8 +319,9 @@ fn select_active_project(
     generation: u64,
 ) -> Result<(), String> {
     migrate_legacy_active(config_dir)?;
+    migrate_per_app_active(config_dir, app_instance, root)?;
     migrate_legacy_journal(root)?;
-    let owner_path = active_path(config_dir, app_instance);
+    let owner_path = active_path(config_dir, app_instance, root);
     if let Some(active) = read_json::<ActiveProject>(&owner_path)? {
         if active.version != TRANSACTION_ENVELOPE_VERSION {
             return Err(format!(
@@ -282,13 +332,16 @@ fn select_active_project(
         if active.app_instance != app_instance {
             return Err(format!("active refresh owner collision for {app_instance}"));
         }
-        let root_changed = normalized(&active.project_root) != normalized(root);
-        let same_process_generation_changed =
-            !root_changed && active.generation != 0 && active.generation != generation;
-        if root_changed || same_process_generation_changed {
+        if normalized(&active.project_root) != normalized(root) {
+            return Err(format!(
+                "per-root refresh owner {} points at a different project",
+                owner_path.display()
+            ));
+        }
+        if active.generation != 0 && active.generation != generation {
             // Product/team receipts remain untouched. Only stale filesystem
-            // work owned by this same Electron lifecycle is made terminal.
-            discard_root_refreshes(&active.project_root)?;
+            // work for this exact project owner is made terminal.
+            discard_root_refreshes(root)?;
         }
     }
     write_active(config_dir, root, app_instance, generation)
@@ -354,7 +407,7 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
         let root = normalized(&active.project_root);
         roots
             .entry(root)
-            .and_modify(|updated| *updated = (*updated).min(active.updated_unix_ms))
+            .and_modify(|updated| *updated = (*updated).max(active.updated_unix_ms))
             .or_insert(active.updated_unix_ms);
     }
     let mut roots = roots.into_iter().collect::<Vec<_>>();
@@ -449,7 +502,8 @@ pub fn discard(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(),
     migrate_legacy_journal(root)?;
     discard_root_refreshes(root)?;
     migrate_legacy_active(config_dir)?;
-    let owner_path = active_path(config_dir, app_instance);
+    migrate_per_app_active(config_dir, app_instance, root)?;
+    let owner_path = active_path(config_dir, app_instance, root);
     if let Some(active) = read_json::<ActiveProject>(&owner_path)? {
         if normalized(&active.project_root) == normalized(root)
             && active.app_instance == app_instance
@@ -496,7 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn deleted_previous_project_does_not_block_new_owner_selection() {
+    fn one_app_can_rotate_across_roots_without_discarding_other_root_owner() {
         let temp = tempfile::tempdir().unwrap();
         let config = temp.path().join("config");
         let deleted = temp.path().join("deleted");
@@ -508,11 +562,12 @@ mod tests {
 
         prepare(&config, &current, "electron", 5).unwrap();
 
-        let active = read_json::<ActiveProject>(&active_path(&config, "electron"))
+        let active = read_json::<ActiveProject>(&active_path(&config, "electron", &current))
             .unwrap()
             .unwrap();
         assert_eq!(active.project_root, normalized(&current));
         assert_eq!(active.generation, 5);
+        assert!(active_path(&config, "electron", &deleted).is_file());
     }
 
     #[test]
@@ -584,7 +639,11 @@ mod tests {
         // Simulate process death after each destination became durable but
         // before its legacy source was unlinked.
         omegat_team::migrate_refresh_transactions(&props, vec![pending], vec![completed]).unwrap();
-        write_json(&active_path(&config, "legacy-electron"), &active_owner).unwrap();
+        write_json(
+            &active_path(&config, "legacy-electron", &root),
+            &active_owner,
+        )
+        .unwrap();
         assert!(legacy_journal_path(&root).is_file());
         assert!(legacy_history_path(&root).is_file());
         assert!(legacy_active_path(&config).is_file());
@@ -594,7 +653,7 @@ mod tests {
         assert!(!legacy_journal_path(&root).exists());
         assert!(!legacy_history_path(&root).exists());
         assert!(!legacy_active_path(&config).exists());
-        assert!(active_path(&config, "legacy-electron").is_file());
+        assert!(active_path(&config, "legacy-electron", &root).is_file());
 
         let active: serde_json::Value = serde_json::from_slice(
             &std::fs::read(transaction_dir(&root).join("active.json")).unwrap(),

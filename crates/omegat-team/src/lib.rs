@@ -659,7 +659,8 @@ mod tests {
         let active = root.join(".repositories/transactions/active.json");
         let committed: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
-        assert_eq!(committed["version"], 2);
+        assert_eq!(committed["version"], 1);
+        assert_ne!(committed["revision"], 0);
         assert_eq!(committed["batches"][0]["status"], "completed");
         assert_eq!(committed["batches"][0]["payload"]["phase"], "committed");
         assert!(
@@ -1423,7 +1424,8 @@ mod tests {
         .unwrap();
         let unacknowledged: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
-        assert_eq!(unacknowledged["version"], 2);
+        assert_eq!(unacknowledged["version"], 1);
+        assert!(unacknowledged["revision"].as_u64().unwrap() > 0);
         assert_eq!(unacknowledged["batches"][0]["status"], "sidecar_committed");
         assert_eq!(unacknowledged["batches"][0]["generation"], 16);
         assert_eq!(unacknowledged["batches"][0]["batch_id"], "mixed-receipt");
@@ -1674,10 +1676,53 @@ mod tests {
         let TeamError::Command(message) = error else {
             panic!("expected invalid shared-journal command error");
         };
-        assert!(message.starts_with("shared transaction journal and recovery copy are invalid"));
+        assert!(message.contains("both durable FIFO replicas are invalid"));
         assert_eq!(std::fs::read_to_string(&product).unwrap(), "committed");
         assert_eq!(std::fs::read(&active).unwrap(), b"{corrupt-active");
         assert_eq!(std::fs::read(&previous).unwrap(), b"{corrupt-previous");
+    }
+
+    #[test]
+    fn shared_journal_rejects_equal_revision_disagreement_without_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let props =
+            ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let product = props.source_dir.join("equal-revision.txt");
+        commit_product_transaction_cancellable(
+            &props,
+            "project.save",
+            &omegat_core::cancellation::CancellationToken::default(),
+            "test.equal-revision",
+            45,
+            Some("equal-revision-receipt"),
+            |_| {
+                std::fs::write(&product, "committed-once")?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        let transactions = props.root.join(".repositories/transactions");
+        let active = transactions.join("active.json");
+        let recovery = transactions.join(".active.previous.json");
+        let recovery_bytes = std::fs::read(&recovery).unwrap();
+        let mut disagreement: serde_json::Value = serde_json::from_slice(&recovery_bytes).unwrap();
+        disagreement["batches"][0]["updated_unix_ms"] = serde_json::json!(
+            disagreement["batches"][0]["updated_unix_ms"]
+                .as_u64()
+                .unwrap()
+                + 1
+        );
+        std::fs::write(&active, serde_json::to_vec_pretty(&disagreement).unwrap()).unwrap();
+
+        let error = pending_transaction_receipt(&props, 46).unwrap_err();
+        let TeamError::Command(message) = error else {
+            panic!("expected equal-revision journal error");
+        };
+        assert!(message.contains("durable FIFO replicas disagree at revision"));
+        assert_eq!(std::fs::read_to_string(&product).unwrap(), "committed-once");
+        assert_ne!(std::fs::read(&active).unwrap(), recovery_bytes);
     }
 
     #[test]

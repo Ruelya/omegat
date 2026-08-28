@@ -815,7 +815,8 @@ async function prepareProductCompactionProject(
   const historyPath = join(transactions, "history.ndjson");
   const ownerPath = join(transactions, "renderer-owner.json");
   const journal = JSON.parse(await readFile(activePath, "utf8"));
-  assert.equal(journal.version, 2);
+  assert.equal(journal.version, 1);
+  assert(Number.isSafeInteger(journal.revision) && journal.revision > 0);
   assert.deepEqual(
     journal.batches.map((row) => [row.batch_id, row.status]),
     [
@@ -1571,7 +1572,7 @@ try {
     assert.equal(parked.activeSurfaces, 1);
     assert.deepEqual(JSON.parse(parked.key), prepared.key);
     const durableOwner = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
-    assert.equal(durableOwner.project_root, project);
+    assert.equal(durableOwner.scope, project);
     assert.equal(durableOwner.process_id, launchedA.application.pid);
     assert.equal(durableOwner.generation, parked.generation);
     assert.equal(typeof durableOwner.claim_id, "string");
@@ -2783,7 +2784,7 @@ try {
   assert.equal(ownerClaim.operation, "project.close");
   assert.equal(ownerClaim.owner_process_id, launchedA.application.pid);
   const durableOwnerClaim = JSON.parse(await readFile(lostClose.ownerPath, "utf8"));
-  assert.equal(durableOwnerClaim.project_root, closeProject);
+  assert.equal(durableOwnerClaim.scope, closeProject);
   assert.equal(durableOwnerClaim.app_instance, ownerClaim.app_instance);
   assert.equal(durableOwnerClaim.process_id, ownerClaim.owner_process_id);
   assert.equal(durableOwnerClaim.generation, ownerClaim.generation);

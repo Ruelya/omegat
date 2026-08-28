@@ -2480,9 +2480,6 @@ fn dispatch_refresh_journal(
                     let Some(receipt) = receipt else {
                         continue;
                     };
-                    if receipt.payload.operation != "project.close" {
-                        continue;
-                    }
                     projects.push(json!({
                         "project_root": receipt.project_root,
                         "generation": receipt.generation,
@@ -2490,28 +2487,6 @@ fn dispatch_refresh_journal(
                         "updated_unix_ms": receipt.updated_unix_ms,
                     }));
                 }
-                projects.sort_by(|left, right| {
-                    left.get("updated_unix_ms")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(u64::MAX)
-                        .cmp(
-                            &right
-                                .get("updated_unix_ms")
-                                .and_then(Value::as_u64)
-                                .unwrap_or(u64::MAX),
-                        )
-                        .then_with(|| {
-                            left.get("project_root")
-                                .and_then(Value::as_str)
-                                .unwrap_or("")
-                                .cmp(
-                                    right
-                                        .get("project_root")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or(""),
-                                )
-                        })
-                });
                 return Ok(json!({ "projects": projects }));
             }
             let require_batch_id = method == "transaction.receipt.ack";
