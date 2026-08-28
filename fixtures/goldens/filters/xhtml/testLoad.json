@@ -1,0 +1,45 @@
+{
+  "id": "xhtml",
+  "fixture": "xhtml/file-XHTMLFilter.html",
+  "java_test": "org.omegat.filters.XHTMLFilterTest#testLoad",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "en",
+    "en",
+    "XHTML 1.0 Example",
+    "Extensible HyperText Markup Language",
+    "http://www.w3.org/Icons/valid-xhtml10",
+    "Valid XHTML 1.0 Strict",
+    "This is an example of an <a0>XHTML</a0> 1.0 Strict document.",
+    "This is first line.",
+    "This is second line."
+  ],
+  "ids": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "<?xml version=\"1.0\"?>\r\n<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\r\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\r\n <head>\r\n <meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"/>\r\n <title>XHTML 1.0 Example</title>\r\n <script type=\"text/javascript\">\r\n <!--//--><![CDATA[//><!--\r\n   function loadpdf() {\r\n   document.getElementById(\"pdf-object\").src=\"http://www.w3.org/TR/xhtml1/xhtml1.pdf\";\r\n }\r\n //--><!]]>\r\n </script>\r\n </head>\r\n <body onload=\"loadpdf()\">\r\n <p>This is an example of an\r\n <abbr title=\"Extensible HyperText Markup Language\">XHTML</abbr> 1.0 Strict document.<br/>\r\n <img id=\"validation-icon\" src=\"http://www.w3.org/Icons/valid-xhtml10\" alt=\"Valid XHTML 1.0 Strict\"/><br/>\r\n <object id=\"pdf-object\" name=\"pdf-object\" type=\"application/pdf\" data=\"http://www.w3.org/TR/xhtml1/xhtml1.pdf\" width=\"100%\" height=\"500\">\r\n </object>\r\n </p>\r\n <p>This is first line.</p>\r\n <p>This is second line.</p>\r\n </body>\r\n</html>"
+}

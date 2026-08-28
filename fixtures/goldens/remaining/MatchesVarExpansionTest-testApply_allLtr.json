@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.matches.MatchesVarExpansionTest#testApply_allLtr",
+  "template": "${id}. ${projectSourceLang} - ${fileName} ${sourceLanguage}: ${sourceText}\n${targetLanguage} ${targetText}\n<${score}/${noStemScore}/${adjustedScore}% ${filePath} by ${initialCreationId} >\n${projectTargetLang}",
+  "text": "2. pl - mock testing project mock source language: mock source text\nmock target language mock target text\n<20/40/60% mock testing project by mock creator >\npl",
+  "keys": [
+    "org.omegat.gui.matches.MatchesVarExpansionTest#testApply_allLtr"
+  ]
+}
