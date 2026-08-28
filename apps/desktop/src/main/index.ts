@@ -237,6 +237,21 @@ async function holdAfterClaimingTransactionHead(
   }
 }
 
+async function holdBeforeTransactionDispatch(): Promise<void> {
+  const markerPath =
+    process.env.OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_MARKER;
+  const releasePath =
+    process.env.OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_RELEASE;
+  if (!markerPath || !releasePath || existsSync(markerPath)) return;
+  durableTestMarker(markerPath, {
+    app_instance: appInstance,
+    owner_process_id: process.pid,
+  });
+  while (!stoppingSidecar && !existsSync(releasePath)) {
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+}
+
 function traceTransactionOwnerRetry(value: unknown) {
   const trace = process.env.OMEGAT_TEST_TRANSACTION_OWNER_RETRY_TRACE;
   if (trace) appendFileSync(trace, `${JSON.stringify(value)}\n`);
@@ -723,6 +738,7 @@ app.whenReady().then(() => {
         root,
         typeof generation === "number" ? generation : undefined,
       );
+      await holdBeforeTransactionDispatch();
       const client = await statefulClient();
       await publishPendingTransactionEnvelopes(client, root, activeGeneration);
     }

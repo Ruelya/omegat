@@ -3487,28 +3487,52 @@ try {
       "team.resolve old owner remained live before replacement election",
     );
 
+    const dispatchRelease = join(workDir, `${label}-dispatch.release`);
     const candidates = Array.from({ length: 4 }, (_, index) => ({
+      dispatchMarker: join(workDir, `${label}-candidate-${index}-dispatch.json`),
       ownerMarker: join(workDir, `${label}-candidate-${index}-owner.json`),
       ownerRelease: join(workDir, `${label}-candidate-${index}-owner.release`),
       waitMarker: join(workDir, `${label}-candidate-${index}-wait.json`),
       retryTrace: join(workDir, `${label}-candidate-${index}-retry.ndjson`),
       envelopeTrace: join(workDir, `${label}-candidate-${index}-envelope.ndjson`),
     }));
-    const replacements = await Promise.all(
-      candidates.map((candidate) =>
-        launchPackagedRenderer(xvfb.display, config, project, {
-          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "resolve-conflict",
-          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER:
-            candidate.ownerMarker,
-          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE:
-            candidate.ownerRelease,
-          OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: candidate.waitMarker,
-          OMEGAT_TEST_TRANSACTION_OWNER_RETRY_TRACE: candidate.retryTrace,
-          OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: candidate.envelopeTrace,
-        })
-      ),
-    );
+    const replacements = [];
+    for (const [index, candidate] of candidates.entries()) {
+      const replacement = await launchPackaged(xvfb.display, config, project, {
+        OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_MARKER:
+          candidate.dispatchMarker,
+        OMEGAT_TEST_HOLD_BEFORE_TRANSACTION_DISPATCH_RELEASE: dispatchRelease,
+        OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "resolve-conflict",
+        OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER:
+          candidate.ownerMarker,
+        OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE:
+          candidate.ownerRelease,
+        OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: candidate.waitMarker,
+        OMEGAT_TEST_TRANSACTION_OWNER_RETRY_TRACE: candidate.retryTrace,
+        OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: candidate.envelopeTrace,
+      });
+      await waitFor(
+        `team.resolve replacement ${index} pre-dispatch checkpoint`,
+        () => pathExists(candidate.dispatchMarker),
+      );
+      assert.equal(replacement.workspace.project, project);
+      assert.equal(replacement.workspace.translation, prepared.theirs);
+      assert.equal(replacement.workspace.activeSurfaces, 1);
+      assert.deepEqual(
+        JSON.parse(replacement.workspace.key),
+        prepared.wantedKey,
+      );
+      const detached = await invokeRpcResult(
+        replacement.client,
+        "project.recovery.detach",
+        { root: project },
+      );
+      assert.equal(detached.resolved, true);
+      assert.equal(detached.value.ok, true);
+      replacements.push(replacement);
+    }
     quorumReplacements = replacements;
+    await writeFile(dispatchRelease, "release\n", "utf8");
     const firstWinnerIndex = await waitFor(
       "team.resolve first four-replacement election",
       async () => {
@@ -3688,6 +3712,13 @@ try {
       );
     }
 
+    const reopenedSecondWinner = await invokeRpcResult(
+      secondWinner.client,
+      "project.open",
+      { root: project },
+    );
+    assert.equal(reopenedSecondWinner.resolved, true);
+    assert.equal(reopenedSecondWinner.value.root, project);
     await writeFile(candidates[secondWinnerIndex].ownerRelease, "release\n", "utf8");
     await waitFor("team.resolve recovered receipt acknowledgement", async () =>
       !await pathExists(prepared.activePath) ? true : undefined
