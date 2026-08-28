@@ -671,6 +671,262 @@ fn close_receipt_is_discovered_and_acknowledged_without_an_open_project() {
 }
 
 #[test]
+fn close_and_save_receipts_queue_and_one_live_replacement_owns_dispatch() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take().unwrap();
+        let output = BufReader::new(child.stdout.take().unwrap());
+        (child, input, output)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("queued-project");
+    let active = root.join(".repositories/transactions/active.json");
+    let history = root.join(".repositories/transactions/history.ndjson");
+    let (mut first, mut first_in, mut first_out) = spawn_sidecar(&config);
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.create",
+        json!({
+            "root": root,
+            "source_lang": "en",
+            "target_lang": "fr",
+            "sentence_seg": false,
+        }),
+    );
+    std::fs::write(root.join("source/source.txt"), "queued source").unwrap();
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "project.reload",
+        json!({}),
+    );
+    let closed = rpc(
+        &mut first_in,
+        &mut first_out,
+        3,
+        "project.close",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 51,
+            "transaction_batch_id": "queued-close",
+        }),
+    );
+    assert_eq!(
+        closed["result"]["receipt"]["payload"]["operation"],
+        "project.close"
+    );
+    let reopened = rpc(
+        &mut first_in,
+        &mut first_out,
+        4,
+        "project.open",
+        json!({ "root": root }),
+    );
+    assert_eq!(reopened["error"], Value::Null);
+    let saved = rpc(
+        &mut first_in,
+        &mut first_out,
+        5,
+        "project.save",
+        json!({
+            "transaction_project_root": root,
+            "transaction_generation": 51,
+            "transaction_batch_id": "queued-save",
+        }),
+    );
+    assert_eq!(
+        saved["result"]["receipt"]["batch_id"],
+        "queued-save",
+        "direct reply returned the older close head instead of the new tail"
+    );
+    let journal: Value =
+        serde_json::from_slice(&std::fs::read(&active).unwrap()).unwrap();
+    assert_eq!(journal["version"], 2);
+    assert_eq!(
+        journal["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["batch_id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["queued-close", "queued-save"]
+    );
+    assert!(journal["batches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["status"] == "sidecar_committed"));
+
+    let selected = rpc(
+        &mut first_in,
+        &mut first_out,
+        6,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "original-electron",
+            "generation": 51,
+        }),
+    );
+    assert_eq!(
+        selected["result"]["envelopes"][0]["batch_id"],
+        "queued-close"
+    );
+    first.kill().unwrap();
+    first.wait().unwrap();
+
+    let save_tmx = root.join("omegat/project_save.tmx");
+    let product_before_recovery = std::fs::read(&save_tmx).unwrap();
+    let product_mtime_before_recovery = std::fs::metadata(&save_tmx).unwrap().modified().unwrap();
+    let (mut owner, mut owner_in, mut owner_out) = spawn_sidecar(&config);
+    let owner_selected = rpc(
+        &mut owner_in,
+        &mut owner_out,
+        7,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "replacement-owner",
+            "generation": 52,
+        }),
+    );
+    assert_eq!(
+        owner_selected["result"]["envelopes"][0]["batch_id"],
+        "queued-close"
+    );
+    assert_eq!(
+        owner_selected["result"]["envelopes"][0]["generation"],
+        52
+    );
+
+    let (mut contender, mut contender_in, mut contender_out) = spawn_sidecar(&config);
+    let rejected = rpc(
+        &mut contender_in,
+        &mut contender_out,
+        8,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "replacement-contender",
+            "generation": 53,
+        }),
+    );
+    assert_eq!(rejected["error"]["code"], -32005);
+    assert!(rejected["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("owned by live app"));
+    let rejected_ack = rpc(
+        &mut contender_in,
+        &mut contender_out,
+        9,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "replacement-contender",
+            "generation": 53,
+            "batch_id": "queued-close",
+            "operation": "project.close",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(rejected_ack["error"]["code"], -32005);
+    assert_eq!(std::fs::read(&save_tmx).unwrap(), product_before_recovery);
+    assert_eq!(
+        std::fs::metadata(&save_tmx).unwrap().modified().unwrap(),
+        product_mtime_before_recovery
+    );
+
+    let close_ack = rpc(
+        &mut owner_in,
+        &mut owner_out,
+        10,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "replacement-owner",
+            "generation": 52,
+            "batch_id": "queued-close",
+            "operation": "project.close",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(close_ack["result"]["ack"]["acknowledged"], true);
+    let save_head = rpc(
+        &mut owner_in,
+        &mut owner_out,
+        11,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "replacement-owner",
+            "generation": 52,
+        }),
+    );
+    assert_eq!(
+        save_head["result"]["envelopes"][0]["batch_id"],
+        "queued-save"
+    );
+    let save_ack = rpc(
+        &mut owner_in,
+        &mut owner_out,
+        12,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "replacement-owner",
+            "generation": 52,
+            "batch_id": "queued-save",
+            "operation": "project.save",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(save_ack["result"]["ack"]["acknowledged"], true);
+    assert!(!active.exists());
+    let rows = std::fs::read_to_string(history).unwrap();
+    for batch_id in ["queued-close", "queued-save"] {
+        assert_eq!(
+            rows.lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter(|row| {
+                    row["batch_id"] == batch_id
+                        && row["status"] == "completed"
+                        && row["payload"]["phase"] == "renderer-acknowledged"
+                })
+                .count(),
+            1
+        );
+    }
+    assert_eq!(std::fs::read(&save_tmx).unwrap(), product_before_recovery);
+    assert_eq!(
+        std::fs::metadata(&save_tmx).unwrap().modified().unwrap(),
+        product_mtime_before_recovery
+    );
+
+    contender.kill().unwrap();
+    contender.wait().unwrap();
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+}
+
+#[test]
 fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
     fn spawn_sidecar(
         config: &std::path::Path,
