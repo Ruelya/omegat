@@ -1,0 +1,33 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-NonASCIIComments.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testRegressionGithub227",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "forceJava8LiteralsEscape": "false"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Unpack project from OMT file...",
+    "Pack project as OMT file...",
+    "Pack and delete project...",
+    "The project already has an ongoing translation.\nDo you want to overwrite it with the translation from the package ?",
+    "Deleting project..."
+  ],
+  "ids": [
+    "omt.menu.import",
+    "omt.menu.export",
+    "omt.menu.export.delete",
+    "omt.dialog.overwrite_project_save",
+    "omt.status.delete_project"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "#/**************************************************************************\n# OmegaT Plugin - OMT Package Manager\n#\n# Copyright (C) 2019 Briac Pilpré\n# Home page: http://www.omegat.org/\n# Support center: http://groups.yahoo.com/group/OmegaT/\n#\n# This program is free software: you can redistribute it and/or modify\n# it under the terms of the GNU General Public License as published by\n# the Free Software Foundation, either version 3 of the License, or\n# (at your option) any later version.\n#\n# This program is distributed in the hope that it will be useful,\n# but WITHOUT ANY WARRANTY; without even the implied warranty of\n# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n# GNU General Public License for more details.\n#\n# You should have received a copy of the GNU General Public License\n# along with this program. If not, see <http://www.gnu.org/licenses/>.\n#\n# **************************************************************************/\nomt.menu.import=Unpack project from OMT file...\nomt.menu.export=Pack project as OMT file...\nomt.menu.export.delete=Pack and delete project...\nomt.dialog.overwrite_project_save=The project already has an ongoing translation.\\nDo you want to overwrite it with the translation from the package ?\nomt.status.delete_project=Deleting project...\n"
+}

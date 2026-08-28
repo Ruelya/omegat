@@ -1,0 +1,71 @@
+{
+  "java_test": "org.omegat.core.segmentation.SegmenterTest#testSegment",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "lang": "en",
+      "input": "<br7>\n\n<br5>\n\nother",
+      "sentences": [
+        "<br7>",
+        "<br5>",
+        "other"
+      ],
+      "java_test": "org.omegat.core.segmentation.SegmenterTest#testSegment"
+    },
+    {
+      "lang": "en",
+      "input": "Mr. Smith went home. Next sentence.",
+      "sentences": [
+        "Mr. Smith went home.",
+        "Next sentence."
+      ],
+      "java_test": "org.omegat.core.segmentation.Segmenter#segment"
+    },
+    {
+      "lang": "en",
+      "input": "Hello world. How are you? Fine.",
+      "sentences": [
+        "Hello world.",
+        "How are you?",
+        "Fine."
+      ],
+      "java_test": "org.omegat.core.segmentation.Segmenter#segment"
+    },
+    {
+      "lang": "de",
+      "input": "Hallo Welt. Nächster Satz.",
+      "sentences": [
+        "Hallo Welt.",
+        "Nächster Satz."
+      ],
+      "java_test": "org.omegat.core.segmentation.Segmenter#segment"
+    },
+    {
+      "lang": "fr",
+      "input": "M. Dupont est arrive. Ensuite il part.",
+      "sentences": [
+        "M. Dupont est arrive.",
+        "Ensuite il part."
+      ],
+      "java_test": "org.omegat.core.segmentation.Segmenter#segment"
+    },
+    {
+      "lang": "zh",
+      "input": "你好。世界。",
+      "sentences": [
+        "你好。",
+        "世界。"
+      ],
+      "java_test": "org.omegat.core.segmentation.Segmenter#segment"
+    },
+    {
+      "lang": "ja",
+      "input": "こんにちは。世界。",
+      "sentences": [
+        "こんにちは。",
+        "世界。"
+      ],
+      "java_test": "org.omegat.core.segmentation.Segmenter#segment"
+    }
+  ]
+}

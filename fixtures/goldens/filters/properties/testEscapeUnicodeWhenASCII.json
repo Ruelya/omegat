@@ -1,0 +1,22 @@
+{
+  "id": "properties",
+  "fixture": "resourceBundle/file-ResourceBundleFilter-UnicodeEscaped.properties",
+  "java_test": "org.omegat.filters.ResourceBundleFilterTest#testEscapeUnicodeWhenASCII",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+    "dontUnescapeULiterals": "false",
+    "forceJava8LiteralsEscape": "false"
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "ユニコード"
+  ],
+  "ids": [
+    "Unicode"
+  ],
+  "paths": [
+    ""
+  ],
+  "empty_write_text": "#\nUnicode=ユニコード\n"
+}

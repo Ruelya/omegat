@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.OStringsTest#testDevBuildMarkerFromBranchCheckout",
+  "cases": [
+    {
+      "revision": "6d79ee8db",
+      "branch": "master",
+      "marker": "[6d79ee8db @ master]"
+    },
+    {
+      "revision": "6d79ee8db",
+      "branch": "topic/stpa/build/worktree-revision",
+      "marker": "[6d79ee8db @ topic/stpa/build/worktree-revision]"
+    }
+  ]
+}

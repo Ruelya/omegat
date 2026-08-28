@@ -1,0 +1,6 @@
+{
+  "java_test": "org.omegat.gui.align.AlignSettingsPersistenceTest#testEmptyFiltersConfigFallsBackToDefaults",
+  "mode": "heapwise",
+  "non_empty": true,
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

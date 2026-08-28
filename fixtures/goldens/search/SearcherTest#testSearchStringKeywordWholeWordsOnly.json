@@ -1,0 +1,16 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchStringKeywordWholeWordsOnly",
+  "cases": [
+    {
+      "hit": true,
+      "text": "soft and great"
+    },
+    {
+      "hit": false,
+      "text": "OmegaT is great software"
+    }
+  ],
+  "type": "KEYWORD",
+  "query": "great soft"
+}

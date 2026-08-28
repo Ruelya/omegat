@@ -1,0 +1,284 @@
+{
+  "java_test": "org.omegat.core.statistics.FindMatchesTest#testSegmented",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSegmented",
+      "name": "without_separate",
+      "query": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members. Wow! Thanks for expanding the diversity of our community with new members!",
+      "hits": [
+        {
+          "source": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members.",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 5 persones que posteriorment han passat prou temps en ellloc web per a convertir-se en membres plens.",
+          "score": 65,
+          "score_no_stem": 62,
+          "adjusted_score": 62,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "This badge is granted when you’ve invited 3 people who subsequently spent enough time on the site to become basic users. A vibrant community needs a regular infusion of newcomers who regularly participate and add new voices to the conversations.\n",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 3 persones que posteriorment han passat prou temps al lloc web per a convertir-se en usuaris bàsics. Una comunitat vibrant necessita una entrada regular de nouvinguts que hi participen habitualment i aporten veus noves a les converses.\n",
+          "score": 50,
+          "score_no_stem": 51,
+          "adjusted_score": 65,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "Thanks for expanding the diversity of our community with new members!",
+          "translation": "Gràcies per ampliar la diversitat de la comunitat amb nous membres.",
+          "score": 30,
+          "score_no_stem": 34,
+          "adjusted_score": 31,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "This badge is granted when you’ve been a member for a year with at least one post in that year. Thank you for sticking around and contributing to our community. We couldn’t do it without you.\n",
+          "translation": "Aquesta insígnia es concedeix quan heu estat membre durant un any amb almenys una publicació durant aquest any. Gràcies per continuar aquí i per contribuir a la comunitat. No podríem fer-ho sense la vostra presència.\n",
+          "score": 17,
+          "score_no_stem": 25,
+          "adjusted_score": 50,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "This badge is granted when you have 500 liked posts and give 1000 or more likes in return. Wow! You’re a model of generosity and mutual appreciation :two_hearts:.\n",
+          "translation": "Aquesta insígnia es concedeix quan teniu 500 publicacions amb 'M'agrada' i heu fet 1000 o més 'M'agrada' a canvi. Molt bé! Sou un model de generositat i apreciació mútua :two_hearts:.\n",
+          "score": 17,
+          "score_no_stem": 21,
+          "adjusted_score": 50,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSegmented",
+      "name": "with_separate",
+      "query": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members. Wow! Thanks for expanding the diversity of our community with new members!",
+      "hits": [
+        {
+          "source": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members. Wow! Thanks for expanding the diversity of our community with new members!",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 5 persones que posteriorment han passat prou temps en ellloc web per a convertir-se en membres plens. Bé! Gràcies per ampliar la diversitat de la comunitat amb nous membres.",
+          "score": 100,
+          "score_no_stem": 100,
+          "adjusted_score": 100,
+          "penalty": 0,
+          "comes_from": "SUBSEGMENTS",
+          "proj": ""
+        },
+        {
+          "source": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members.",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 5 persones que posteriorment han passat prou temps en ellloc web per a convertir-se en membres plens.",
+          "score": 65,
+          "score_no_stem": 62,
+          "adjusted_score": 62,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "This badge is granted when you’ve invited 3 people who subsequently spent enough time on the site to become basic users. A vibrant community needs a regular infusion of newcomers who regularly participate and add new voices to the conversations.\n",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 3 persones que posteriorment han passat prou temps al lloc web per a convertir-se en usuaris bàsics. Una comunitat vibrant necessita una entrada regular de nouvinguts que hi participen habitualment i aporten veus noves a les converses.\n",
+          "score": 50,
+          "score_no_stem": 51,
+          "adjusted_score": 65,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "Thanks for expanding the diversity of our community with new members!",
+          "translation": "Gràcies per ampliar la diversitat de la comunitat amb nous membres.",
+          "score": 30,
+          "score_no_stem": 34,
+          "adjusted_score": 31,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "This badge is granted when you’ve been a member for a year with at least one post in that year. Thank you for sticking around and contributing to our community. We couldn’t do it without you.\n",
+          "translation": "Aquesta insígnia es concedeix quan heu estat membre durant un any amb almenys una publicació durant aquest any. Gràcies per continuar aquí i per contribuir a la comunitat. No podríem fer-ho sense la vostra presència.\n",
+          "score": 17,
+          "score_no_stem": 25,
+          "adjusted_score": 50,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSearchRFE1578",
+      "name": "rfe1578",
+      "query": "XXX",
+      "hits": [
+        {
+          "source": "XXX",
+          "translation": "YYY",
+          "score": 70,
+          "score_no_stem": 70,
+          "adjusted_score": 70,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/en-US_sr.tmx"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSearchRFE1578_2",
+      "name": "rfe1578_2",
+      "query": "XXX",
+      "hits": [
+        {
+          "source": "XXx",
+          "translation": "XXX",
+          "score": 70,
+          "score_no_stem": 70,
+          "adjusted_score": 70,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/en-US_en-GB_fr_sr.tmx"
+        },
+        {
+          "source": "XXx",
+          "translation": "YYY",
+          "score": 70,
+          "score_no_stem": 70,
+          "adjusted_score": 70,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/en-US_en-GB_fr_sr.tmx"
+        },
+        {
+          "source": "XXx",
+          "translation": "ZZZ",
+          "score": 70,
+          "score_no_stem": 70,
+          "adjusted_score": 70,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/en-US_en-GB_fr_sr.tmx"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSearchBUGS1251",
+      "name": "bugs1251",
+      "query": "地力の搾取と浪費が現われる。(1)",
+      "hits": [
+        {
+          "source": "地力の搾取と浪費が現われる。(1)",
+          "translation": "weird behavior",
+          "score": 90,
+          "score_no_stem": 90,
+          "adjusted_score": 90,
+          "penalty": 10,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/penalty-010/segment_1.tmx"
+        },
+        {
+          "source": "地力の搾取と浪費が現われる。(1)",
+          "translation": "weird behavior ",
+          "score": 90,
+          "score_no_stem": 90,
+          "adjusted_score": 90,
+          "penalty": 10,
+          "comes_from": "SUBSEGMENTS",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/penalty-010/segment_1.tmx"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSearchForeign",
+      "name": "foreign",
+      "query": "地力の搾取と浪費が現われる。(1)",
+      "hits": [
+        {
+          "source": "地力の搾取と浪費が現われる。(1)",
+          "translation": "weird behavior",
+          "score": 70,
+          "score_no_stem": 70,
+          "adjusted_score": 70,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/segment_2.tmx"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSearchForeignSegmented",
+      "name": "foreign_segmented",
+      "query": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members. Wow! Thanks for expanding the diversity of our community with new members!",
+      "hits": [
+        {
+          "source": "This badge is granted when you’ve invited 5 people who subsequently spent enough time on the site to become full members.",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 5 persones que posteriorment han passat prou temps en ellloc web per a convertir-se en membres plens.",
+          "score": 35,
+          "score_no_stem": 32,
+          "adjusted_score": 32,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/test-match-stat-en-ca.tmx"
+        },
+        {
+          "source": "This badge is granted when you’ve invited 3 people who subsequently spent enough time on the site to become basic users. A vibrant community needs a regular infusion of newcomers who regularly participate and add new voices to the conversations.\n",
+          "translation": "Aquesta insígnia es concedeix quan heu convidat 3 persones que posteriorment han passat prou temps al lloc web per a convertir-se en usuaris bàsics. Una comunitat vibrant necessita una entrada regular de nouvinguts que hi participen habitualment i aporten veus noves a les converses.\n",
+          "score": 20,
+          "score_no_stem": 21,
+          "adjusted_score": 35,
+          "penalty": 30,
+          "comes_from": "TM",
+          "proj": "/workspace/reference/java/src/test/resources/data/tmx/test-match-stat-en-ca.tmx"
+        }
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.statistics.FindMatchesTest#testSearchMulti",
+      "name": "multi",
+      "query": "Other",
+      "hits": [
+        {
+          "source": "Other",
+          "translation": "Altre",
+          "score": 100,
+          "score_no_stem": 100,
+          "adjusted_score": 100,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": ""
+        },
+        {
+          "source": "Other",
+          "translation": "Altri",
+          "score": 100,
+          "score_no_stem": 100,
+          "adjusted_score": 100,
+          "penalty": 0,
+          "comes_from": "MEMORY",
+          "proj": "",
+          "key_file": "website/download.html"
+        },
+        {
+          "source": "Other",
+          "translation": "Other",
+          "score": 100,
+          "score_no_stem": 100,
+          "adjusted_score": 100,
+          "penalty": 0,
+          "comes_from": "FILES",
+          "proj": "website/download.html",
+          "key_file": "website/download.html"
+        }
+      ]
+    }
+  ]
+}

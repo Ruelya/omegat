@@ -1,0 +1,85 @@
+{
+  "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "cases": [
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "extraneous",
+      "input": "Foo bar baz bar bonkers",
+      "output": "Foo  baz  bonkers",
+      "tags": [
+        "bar",
+        "bar"
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "missing_before",
+      "input": "Foo bar {tag2}baz",
+      "output": "Foo bar {tag1}{tag2}baz",
+      "tags": [
+        "{tag1}"
+      ],
+      "source_order": [
+        "{tag1}",
+        "{tag2}"
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "missing_after",
+      "input": "Foo bar {tag2}baz",
+      "output": "Foo bar {tag2}{tag1}baz",
+      "tags": [
+        "{tag1}"
+      ],
+      "source_order": [
+        "{tag2}",
+        "{tag1}"
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "missing_no_anchor",
+      "input": "Foo bar baz",
+      "output": "Foo bar baz{tag1}",
+      "tags": [
+        "{tag1}"
+      ],
+      "source_order": [
+        "{tag1}"
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "malformed",
+      "input": "Foo bar {tag2}baz{tag1}",
+      "output": "Foo bar {tag1}{tag2}baz",
+      "tags": [
+        "{tag1}"
+      ],
+      "source_order": [
+        "{tag1}",
+        "{tag2}"
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "whitespace_strip",
+      "input": "\nFoo\n",
+      "output": "Foo",
+      "tags": [
+
+      ]
+    },
+    {
+      "java_test": "org.omegat.core.tagvalidation.TagRepairTest#testRepairTags",
+      "name": "whitespace_add",
+      "input": "Foo",
+      "output": "\nFoo\n",
+      "tags": [
+
+      ]
+    }
+  ]
+}
