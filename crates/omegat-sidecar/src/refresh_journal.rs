@@ -144,7 +144,38 @@ fn append_history(root: &Path, envelope: &RefreshEnvelope) -> Result<(), String>
     history
         .write_all(b"\n")
         .and_then(|_| history.sync_all())
-        .map_err(|error| format!("write refresh history {}: {error}", path.display()))
+        .map_err(|error| format!("write refresh history {}: {error}", path.display()))?;
+    sync_parent(&path)
+}
+
+fn compaction_checkpoint(point: &str) -> Result<(), String> {
+    if std::env::var("OMEGAT_TEST_REFRESH_COMPACTION_POINT").as_deref() != Ok(point) {
+        return Ok(());
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_REFRESH_COMPACTION_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create compaction marker parent: {error}"))?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(format!("create compaction marker: {error}")),
+    };
+    writeln!(file, "{point}").map_err(|error| format!("write compaction marker: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync compaction marker: {error}"))?;
+    sync_parent(&marker)?;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
 
 fn compact_acknowledged_batches(root: &Path, journal: &mut RefreshJournal) -> Result<bool, String> {
@@ -160,6 +191,10 @@ fn compact_acknowledged_batches(root: &Path, journal: &mut RefreshJournal) -> Re
     if terminal.is_empty() {
         return Ok(false);
     }
+    // The marker is durable before the process parks. A packaged E2E can
+    // SIGKILL Electron's whole process group at this exact boundary and prove
+    // that the still-authoritative source queue retains every recoverable row.
+    compaction_checkpoint("after_archive_fsync")?;
     journal
         .batches
         .retain(|envelope| envelope.status.is_recoverable());
@@ -301,6 +336,10 @@ pub fn pending(
         }
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
+        // write_json_atomic has already fsynced the replacement and its parent
+        // directory. A process-group SIGKILL from this checkpoint must leave
+        // this compacted queue authoritative.
+        compaction_checkpoint("after_queue_rename")?;
         if std::env::var("OMEGAT_TEST_ABORT_REFRESH_COMPACTION_AFTER_QUEUE_RENAME").as_deref()
             == Ok("1")
         {
@@ -322,7 +361,9 @@ pub fn pending(
         journal.app_instance = app_instance.to_string();
         journal.generation = generation;
         for envelope in &mut journal.batches {
-            envelope.restamp_generation(generation);
+            // Keep updated_unix_ms as the durable cross-backend dispatch key.
+            // Renderer adoption changes ownership, not FIFO creation order.
+            envelope.generation = generation;
         }
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
@@ -477,11 +518,7 @@ pub fn request_cancelled(
     )
 }
 
-fn acknowledged_in_history(
-    root: &Path,
-    generation: u64,
-    batch_id: &str,
-) -> Result<bool, String> {
+fn acknowledged_in_history(root: &Path, generation: u64, batch_id: &str) -> Result<bool, String> {
     let Ok(history) = std::fs::read_to_string(history_path(root)) else {
         return Ok(false);
     };
@@ -489,11 +526,9 @@ fn acknowledged_in_history(
         let envelope: RefreshEnvelope = serde_json::from_str(line)
             .map_err(|error| format!("parse refresh history: {error}"))?;
         if envelope.batch_id == batch_id {
-            return Ok(
-                envelope.generation == generation
-                    && !envelope.status.is_recoverable()
-                    && envelope.payload.operation == external_refresh_operation(),
-            );
+            return Ok(envelope.generation == generation
+                && !envelope.status.is_recoverable()
+                && envelope.payload.operation == external_refresh_operation());
         }
     }
     Ok(false)
