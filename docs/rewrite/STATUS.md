@@ -62,6 +62,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **7 passed** and plugin filter **1 passed**, and desktop **24 files / 175 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
+The raw NDJSON contract and real Linux packaged matrix also pass the
+three-owner-death cancellation row: the third pre-existing waiter reads the
+already-published terminal, all four logical callers receive **-32800**, and
+the resolve envelope count remains zero.
 The sidecar contract and real Linux package both exercise pre-kill contender
 rejection at each product compaction checkpoint; the packaged result records
 `pendingRejected` and `acknowledgementRejected` before the old PID exits.
