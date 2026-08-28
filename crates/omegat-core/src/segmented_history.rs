@@ -1366,7 +1366,7 @@ mod tests {
         let directory = scope.join("transactions");
         let layout = SegmentedHistoryLayout::default();
         let options = small_options();
-        let mut store =
+        let store =
             SegmentedHistory::open(&directory, &scope, layout.clone(), options.clone()).unwrap();
         let predecessor = store
             .stage_segment(1, 3, &[record(&scope, "safe", 1)], &mut |_| Ok(()))

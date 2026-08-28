@@ -1309,19 +1309,32 @@ fn product_history_checkpoint(point: &str) -> std::result::Result<(), String> {
 fn legacy_product_history(props: &ProjectProperties) -> Result<Vec<SyncTransaction>> {
     let layout = product_history_layout();
     let directory = transaction_dir(props);
-    if SegmentedHistory::<SyncTransaction>::has_durable_state(&directory, &layout) {
-        return Ok(Vec::new());
-    }
-    let path = directory.join(&layout.recent_file);
-    let bytes = match std::fs::read(&path) {
+    let recent = directory.join(&layout.recent_file);
+    let migration = directory.join(".history-legacy-migration.ndjson");
+    let bytes = match std::fs::read(&migration) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if SegmentedHistory::<SyncTransaction>::has_durable_state(&directory, &layout) {
+                return Ok(Vec::new());
+            }
+            let bytes = match std::fs::read(&recent) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+                Err(error) => return Err(TeamError::Io(error)),
+            };
+            // The bounded recent path is rewritten while importing. Preserve
+            // the complete legacy stream in its own atomically-published seed
+            // first, so a process death at any import row resumes without
+            // losing the not-yet-imported suffix.
+            omegat_core::durable_file::replace(&migration, &bytes)?;
+            bytes
+        }
         Err(error) => return Err(TeamError::Io(error)),
     };
     if !bytes.is_empty() && !bytes.ends_with(b"\n") {
         return Err(TeamError::Command(format!(
             "team transaction history {} has a truncated final row",
-            path.display()
+            migration.display()
         )));
     }
     bytes
@@ -1349,6 +1362,11 @@ fn open_product_history(props: &ProjectProperties) -> Result<SegmentedHistory<Sy
     history
         .import_legacy(legacy, &mut checkpoint)
         .map_err(|error| TeamError::Command(format!("team transaction history: {error}")))?;
+    let migration = directory.join(".history-legacy-migration.ndjson");
+    if migration.exists() {
+        std::fs::remove_file(&migration)?;
+        sync_parent(&migration)?;
+    }
     Ok(history)
 }
 
@@ -3500,5 +3518,57 @@ mod segmented_product_history_tests {
             serde_json::from_str::<serde_json::Value>(line).unwrap()["project_root"]
                 == new_root.to_string_lossy().as_ref()
         }));
+    }
+
+    #[test]
+    fn interrupted_legacy_history_import_resumes_from_durable_seed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("legacy-project");
+        std::fs::create_dir_all(&root).unwrap();
+        let props = ProjectProperties::create(root.clone(), "en".into(), "fr".into(), false);
+        props.ensure_dirs().unwrap();
+        props.write().unwrap();
+        let directory = transaction_dir(&props);
+        std::fs::create_dir_all(&directory).unwrap();
+        let rows = (0..6)
+            .map(|sequence| {
+                historical_transaction(&root, &format!("legacy-product-{sequence}"), sequence)
+            })
+            .collect::<Vec<_>>();
+        let mut bytes = Vec::new();
+        for row in &rows {
+            serde_json::to_writer(&mut bytes, row).unwrap();
+            bytes.push(b'\n');
+        }
+        std::fs::write(directory.join("history.ndjson"), &bytes).unwrap();
+        omegat_core::durable_file::replace(
+            &directory.join(".history-legacy-migration.ndjson"),
+            &bytes,
+        )
+        .unwrap();
+
+        // Model a killed importer that durably published only a prefix and
+        // already rewrote the observation window.
+        let mut partial = SegmentedHistory::open(
+            &directory,
+            &root,
+            product_history_layout(),
+            product_history_options(),
+        )
+        .unwrap();
+        partial.append(rows[0].clone()).unwrap();
+        partial.append(rows[1].clone()).unwrap();
+        drop(partial);
+
+        let recovered = open_product_history(&props).unwrap();
+        for (sequence, row) in rows.iter().enumerate() {
+            assert_eq!(
+                recovered
+                    .records_for(&format!("legacy-product-{sequence}"))
+                    .unwrap(),
+                vec![row.clone()]
+            );
+        }
+        assert!(!directory.join(".history-legacy-migration.ndjson").exists());
     }
 }
