@@ -211,6 +211,13 @@ fn migrate_legacy_active(config_dir: &Path) -> Result<(), String> {
 }
 
 fn discard_root_refreshes(root: &Path) -> Result<(), String> {
+    // A config-scoped owner pointer can outlive a project that was moved or
+    // deleted while OmegaT was not running. There is no durable project queue
+    // left to discard in that case, and the caller will atomically replace the
+    // stale owner pointer with the newly selected root.
+    if !root.join("omegat.project").is_file() {
+        return Ok(());
+    }
     migrate_legacy_journal(root)?;
     let props = omegat_core::properties::ProjectProperties::load(root)
         .map_err(|error| format!("load project for refresh discard: {error}"))?;
@@ -448,6 +455,26 @@ mod tests {
         assert_eq!(roots.len(), 2);
         assert!(roots.contains(&normalized(&first)));
         assert!(roots.contains(&normalized(&second)));
+    }
+
+    #[test]
+    fn deleted_previous_project_does_not_block_new_owner_selection() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let deleted = temp.path().join("deleted");
+        let current = temp.path().join("current");
+        project(&deleted);
+        project(&current);
+        write_active(&config, &deleted, "electron", 4).unwrap();
+        std::fs::remove_dir_all(&deleted).unwrap();
+
+        prepare(&config, &current, "electron", 5).unwrap();
+
+        let active = read_json::<ActiveProject>(&active_path(&config, "electron"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(active.project_root, normalized(&current));
+        assert_eq!(active.generation, 5);
     }
 
     #[test]
