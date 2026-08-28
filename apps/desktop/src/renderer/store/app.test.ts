@@ -55,6 +55,28 @@ function refreshEnvelope(event: ExternalChangeEvent): TransactionEnvelope {
   };
 }
 
+function productEnvelope(
+  root: string,
+  generation: number,
+  batchId: string,
+  operation: string,
+): TransactionEnvelope {
+  return {
+    version: 1,
+    project_root: root,
+    generation,
+    batch_id: batchId,
+    status: "sidecar_committed",
+    error_code: null,
+    updated_unix_ms: 1,
+    payload: { operation },
+    commit: {
+      manifest_sha256: "a".repeat(64),
+      manifest_items: 1,
+    },
+  };
+}
+
 async function transactionAck(
   envelope: TransactionEnvelope,
   _outcome?: TransactionOutcome,
@@ -189,6 +211,9 @@ describe("app store", () => {
   });
 
   it("commits the sole Document3 before save and project-close checkpoints", async () => {
+    projectEvents.publishProject("load", "/project");
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    let receiptSequence = 0;
     rpc.mockImplementation(async (method: string, params?: unknown) => {
       if (method === "entry.set") {
         const input = params as {
@@ -203,9 +228,28 @@ describe("app store", () => {
           revision: input.revision + 1,
           translated: input.translation.length > 0,
         };
-        return { entry, updated: [entry] };
+        return {
+          entry,
+          updated: [entry],
+          receipt: productEnvelope(
+            "/project",
+            generation,
+            `entry-${++receiptSequence}`,
+            "entry.set",
+          ),
+        };
       }
-      if (method === "project.save" || method === "project.close") return { ok: true };
+      if (method === "project.save" || method === "project.close") {
+        return {
+          ok: true,
+          receipt: productEnvelope(
+            "/project",
+            generation,
+            `${method}-${++receiptSequence}`,
+            method,
+          ),
+        };
+      }
       throw new Error(`unexpected RPC: ${method}`);
     });
     useApp.setState({
@@ -234,6 +278,9 @@ describe("app store", () => {
     ]);
     expect(useApp.getState().entries[0]?.translation).toBe("saved translation");
     expect(useApp.getState().document3.dirty).toBe(false);
+    expect(acknowledgeTransactionReceipt.mock.calls.map(([receipt]) =>
+      receipt.payload.operation
+    )).toEqual(["entry.set", "project.save"]);
 
     useApp.getState().setDraft("closed translation");
     await useApp.getState().closeProject();
@@ -245,6 +292,14 @@ describe("app store", () => {
     ]);
     expect(useApp.getState().screen).toBe("welcome");
     expect(useApp.getState().props).toBeNull();
+    expect(acknowledgeTransactionReceipt.mock.calls.map(([receipt]) =>
+      receipt.payload.operation
+    )).toEqual([
+      "entry.set",
+      "project.save",
+      "entry.set",
+      "project.close",
+    ]);
   });
 
   it("builds search RPC from the Search window form", async () => {

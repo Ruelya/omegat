@@ -772,7 +772,6 @@ export const useApp = create<AppState>((set, get) => ({
       ok: boolean;
       receipt?: TransactionEnvelope | null;
     } | null = null;
-    dockLifecycle.beginProject(null, "close");
     try {
       const current = before.entries[before.index];
       if (
@@ -784,6 +783,7 @@ export const useApp = create<AppState>((set, get) => ({
       ) {
         await get().commitCurrent();
       }
+      dockLifecycle.beginProject(null, "close");
       closed = await rpc<{
         ok: boolean;
         receipt?: TransactionEnvelope | null;
