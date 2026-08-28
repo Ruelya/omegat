@@ -283,18 +283,6 @@ async function terminatePackaged(launched) {
   }
 }
 
-async function pressKey(client, key, code, windowsVirtualKeyCode, modifiers = 0) {
-  for (const type of ["keyDown", "keyUp"]) {
-    await client.command("Input.dispatchKeyEvent", {
-      type,
-      key,
-      code,
-      windowsVirtualKeyCode,
-      modifiers,
-    });
-  }
-}
-
 async function setInput(client, selector, value) {
   const changed = await client.evaluate(`(() => {
     const input = document.querySelector(${JSON.stringify(selector)});
@@ -346,7 +334,7 @@ async function closeWindow(client, windowId) {
 }
 
 async function openProperties(client) {
-  await pressKey(client, "e", "KeyE", 69, 2);
+  await click(client, '[data-operation-action="project-properties"]');
   await waitForSelector(client, '[data-window-id="project-edit"]');
 }
 
@@ -385,7 +373,7 @@ function faultEnv(operation, point, marker) {
 }
 
 async function closeAndReopen(launched, display, configDir, project, verify) {
-  await pressKey(launched.client, "w", "KeyW", 87, 2 | 8);
+  await click(launched.client, '[data-operation-action="project-close"]');
   await waitFor("visible closed workspace", () =>
     launched.client.evaluate(`(() => ({
       welcome: document.querySelector(".welcome") !== null,

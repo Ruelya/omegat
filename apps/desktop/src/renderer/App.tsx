@@ -132,10 +132,25 @@ export function App() {
             <button type="button" onClick={() => app.openWindow("issues")}>{t("issues")}</button>
             <button
               type="button"
+              data-operation-action="project-properties"
+              onClick={() => app.openWindow("project-edit")}
+            >
+              {t("properties")}
+            </button>
+            <button
+              type="button"
               data-operation-action="team-window"
               onClick={() => app.openWindow("team")}
             >
               {t("team")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="project-close"
+              disabled={Boolean(operationActive)}
+              onClick={() => void app.closeProject()}
+            >
+              {t("close")}
             </button>
           </>
         )}
