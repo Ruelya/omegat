@@ -270,7 +270,14 @@ pub fn sha1_file(path: &Path) -> Result<String> {
         }
         digest.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = digest.finalize();
+    let mut value = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        value.push(HEX[(byte >> 4) as usize] as char);
+        value.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(value)
 }
 
 /// Java `HTTPRemoteRepository.switchToVersion`: only `null` (latest) is supported.
