@@ -4250,8 +4250,10 @@ try {
       "after_intent_queue_rename",
       "after_rollback_fsync",
     ].includes(killBoundary)) {
+      const waiterCount =
+        killBoundary === "after_intent_queue_rename" ? 3 : 2;
       const waiterTraces = Array.from(
-        { length: 2 },
+        { length: waiterCount },
         (_, index) => join(workDir, `${label}-waiting-cancel-${index}.ndjson`),
       );
       const waiterMarkers = waiterTraces.map((_, index) =>
@@ -4263,6 +4265,10 @@ try {
       const consecutiveRollbackMarker = join(
         workDir,
         `${label}-waiting-cancel-rollback-owner.json`,
+      );
+      const consecutiveTerminalMarker = join(
+        workDir,
+        `${label}-waiting-cancel-terminal-owner.json`,
       );
       const waitingCallers = await Promise.all(
         waiterTraces.map((trace, index) =>
@@ -4277,6 +4283,10 @@ try {
                   "after_rollback_fsync",
                 OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER:
                   consecutiveRollbackMarker,
+                OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_POINT:
+                  "after_terminal_queue_rename",
+                OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_MARKER:
+                  consecutiveTerminalMarker,
               }
               : {}),
           })
@@ -4318,7 +4328,7 @@ try {
           )
         ),
       );
-      assert.deepEqual(starts, [true, true]);
+      assert.deepEqual(starts, Array.from({ length: waiterCount }, () => true));
       await Promise.all(waitingCallers.map((caller, index) =>
         waitFor(`FIFO cancellation loser ${index} waiting on owner lock`, () =>
           pathExists(waiterMarkers[index])
@@ -4346,6 +4356,9 @@ try {
       let resultIndices = waitingCallers.map((_, index) => index);
       let rollbackOwnerKill = null;
       let rollbackOwnerIndex = null;
+      let terminalOwnerKill = null;
+      let terminalOwnerIndex = null;
+      let terminalReadOnlyIndex = null;
       if (killBoundary === "after_intent_queue_rename") {
         const rollbackOwner = await waitFor(
           "first waiting loser durable rollback before second owner death",
@@ -4367,21 +4380,23 @@ try {
           true,
           "durable rollback owner did not first take over the pending intent",
         );
-        const terminalOwnerIndex = resultIndices.find(
+        const stillBlockedIndices = resultIndices.filter(
           (index) => index !== rollbackOwnerIndex,
         );
-        assert.notEqual(terminalOwnerIndex, undefined);
-        assert.equal(
-          await pathExists(takeoverMarkers[terminalOwnerIndex]),
-          false,
-          "second waiting loser took the lock before rollback owner death",
-        );
-        const waitingTerminalState = await tracedRpcState(
-          waitingCallers[terminalOwnerIndex].client,
-          traceKeys[terminalOwnerIndex],
-        );
-        assert.equal(waitingTerminalState.started, true);
-        assert.equal(waitingTerminalState.settled, false);
+        assert.equal(stillBlockedIndices.length, 2);
+        for (const index of stillBlockedIndices) {
+          assert.equal(
+            await pathExists(takeoverMarkers[index]),
+            false,
+            "later waiting loser took the lock before rollback owner death",
+          );
+          const waitingState = await tracedRpcState(
+            waitingCallers[index].client,
+            traceKeys[index],
+          );
+          assert.equal(waitingState.started, true);
+          assert.equal(waitingState.settled, false);
+        }
         const rollbackQueue = JSON.parse(
           await readFile(prepared.activePath, "utf8"),
         );
@@ -4401,7 +4416,79 @@ try {
           rollbackOwnerKill.sidecarPid,
           rollbackOwner.sidecar_process_id,
         );
-        resultIndices = [terminalOwnerIndex];
+        const terminalOwner = await waitFor(
+          "second waiting loser terminal publish before third owner death",
+          async () =>
+            await pathExists(consecutiveTerminalMarker)
+              ? JSON.parse(await readFile(consecutiveTerminalMarker, "utf8"))
+              : undefined,
+        );
+        terminalOwnerIndex = waiterSidecarPids.indexOf(
+          terminalOwner.sidecar_process_id,
+        );
+        assert.notEqual(
+          terminalOwnerIndex,
+          -1,
+          "terminal publisher was not an already-waiting loser",
+        );
+        assert.notEqual(terminalOwnerIndex, rollbackOwnerIndex);
+        assert.equal(
+          await pathExists(takeoverMarkers[terminalOwnerIndex]),
+          true,
+          "terminal publisher did not take over the durable rollback",
+        );
+        terminalReadOnlyIndex = stillBlockedIndices.find(
+          (index) => index !== terminalOwnerIndex,
+        );
+        assert.notEqual(terminalReadOnlyIndex, undefined);
+        assert.equal(
+          await pathExists(takeoverMarkers[terminalReadOnlyIndex]),
+          false,
+          "third waiter acquired the lock before terminal publisher death",
+        );
+        const readOnlyWaitingState = await tracedRpcState(
+          waitingCallers[terminalReadOnlyIndex].client,
+          traceKeys[terminalReadOnlyIndex],
+        );
+        assert.equal(readOnlyWaitingState.started, true);
+        assert.equal(readOnlyWaitingState.settled, false);
+        const terminalQueue = JSON.parse(
+          await readFile(prepared.activePath, "utf8"),
+        );
+        assert.deepEqual(
+          productJournalBatches(terminalQueue).map((row) => [
+            row.batch_id,
+            row.status,
+          ]),
+          [
+            ...prepared.fifoHeads.map(({ batchId }) => [
+              batchId,
+              "sidecar_committed",
+            ]),
+            [resolveBatchId, "request_cancelled"],
+          ],
+          "terminal publisher changed the FIFO prefix before its third death",
+        );
+        const terminalRow = productJournalBatches(terminalQueue).find(
+          (row) => row.batch_id === resolveBatchId,
+        );
+        assert(terminalRow);
+        assert.equal(terminalRow.status, "request_cancelled");
+        assert.equal(terminalRow.error_code, -32800);
+        assert.equal(
+          terminalRow.payload.phase,
+          "renderer-cancelled-takeover",
+        );
+        assert.deepEqual(await readFile(tmxPath), tmxBefore);
+        assert.deepEqual(await readFile(conflictsPath), conflictsBefore);
+        terminalOwnerKill = await killPackaged(
+          waitingCallers[terminalOwnerIndex],
+        );
+        assert.equal(
+          terminalOwnerKill.sidecarPid,
+          terminalOwner.sidecar_process_id,
+        );
+        resultIndices = [terminalReadOnlyIndex];
         quorumReplacements = resultIndices.map(
           (index) => waitingCallers[index],
         );
@@ -4437,8 +4524,19 @@ try {
       );
       const terminalTakeoverIndex =
         killBoundary === "after_intent_queue_rename"
-          ? resultIndices[0]
+          ? terminalOwnerIndex
           : takeoverIndices[0];
+      if (killBoundary === "after_intent_queue_rename") {
+        assert.deepEqual(
+          takeoverIndices.toSorted((a, b) => a - b),
+          [rollbackOwnerIndex, terminalOwnerIndex].toSorted((a, b) => a - b),
+          "third pre-existing waiter must only read the published terminal",
+        );
+        assert.equal(
+          await pathExists(takeoverMarkers[terminalReadOnlyIndex]),
+          false,
+        );
+      }
       const takeover = JSON.parse(
         await readFile(takeoverMarkers[terminalTakeoverIndex], "utf8"),
       );
@@ -4449,7 +4547,7 @@ try {
       );
       const retryErrorCodes = [];
       if (killBoundary === "after_intent_queue_rename") {
-        const terminalCaller = waitingCallers[terminalTakeoverIndex];
+        const terminalReader = waitingCallers[terminalReadOnlyIndex];
         for (const retry of [
           {
             appInstance: `${label}-first-cancel`,
@@ -4459,9 +4557,13 @@ try {
             appInstance: traceKeys[rollbackOwnerIndex],
             ownerProcessId: rollbackOwnerKill.browserPid,
           },
+          {
+            appInstance: traceKeys[terminalOwnerIndex],
+            ownerProcessId: terminalOwnerKill.browserPid,
+          },
         ]) {
           const result = await invokeRpcResult(
-            terminalCaller.client,
+            terminalReader.client,
             "transaction.receipt.ack",
             {
               root: project,
@@ -4480,6 +4582,14 @@ try {
           );
           retryErrorCodes.push(-32800);
         }
+        assert.deepEqual(
+          [
+            ...waiterResults.map((state) => state.errorCode),
+            ...retryErrorCodes,
+          ],
+          [-32800, -32800, -32800, -32800],
+          "all four logical cancellation callers must converge on -32800",
+        );
       }
       for (const trace of waiterTraces) {
         assert.equal(
@@ -4538,6 +4648,22 @@ try {
             : waiterSidecarPids[rollbackOwnerIndex],
         firstTakeoverKilledAfterDurableRollback:
           rollbackOwnerKill?.sidecarPid ?? null,
+        terminalPublisherKilledAfterTerminalRename:
+          terminalOwnerKill?.sidecarPid ?? null,
+        terminalPublisherSidecarPid:
+          terminalOwnerIndex === null
+            ? null
+            : waiterSidecarPids[terminalOwnerIndex],
+        terminalReadOnlyWaiterSidecarPid:
+          terminalReadOnlyIndex === null
+            ? null
+            : waiterSidecarPids[terminalReadOnlyIndex],
+        terminalReadOnlyWaiterWasPreExisting:
+          terminalReadOnlyIndex !== null,
+        terminalReadOnlyWaiterCreatedTakeover:
+          terminalReadOnlyIndex === null
+            ? null
+            : await pathExists(takeoverMarkers[terminalReadOnlyIndex]),
         terminalTakeoverWasAlreadyWaiting:
           killBoundary === "after_intent_queue_rename",
         takeoverPerformedProductRollback:

@@ -3798,10 +3798,11 @@ fn resolve_cancellation_recovery_wins_owner_death_at_each_durable_boundary() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() {
+fn waiting_raw_cancel_callers_survive_rollback_and_terminal_publisher_deaths() {
     fn spawn_sidecar(
         config: &std::path::Path,
         checkpoint: Option<(&str, &std::path::Path)>,
+        followup_checkpoint: Option<(&str, &std::path::Path)>,
         wait_marker: Option<&std::path::Path>,
         takeover_marker: Option<&std::path::Path>,
     ) -> (
@@ -3815,6 +3816,14 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
             command
                 .env("OMEGAT_TEST_RESOLVE_CANCELLATION_POINT", point)
                 .env("OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER", owner_marker);
+        }
+        if let Some((point, owner_marker)) = followup_checkpoint {
+            command
+                .env("OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_POINT", point)
+                .env(
+                    "OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_MARKER",
+                    owner_marker,
+                );
         }
         if let Some(wait_marker) = wait_marker {
             command.env("OMEGAT_TEST_RESOLVE_CANCELLATION_WAIT_MARKER", wait_marker);
@@ -3911,6 +3920,7 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
         let remote = temp.path().join("raw-cancel-owner-remote");
         let owner_marker = temp.path().join("cancel-owner.json");
         let rollback_owner_marker = temp.path().join("cancel-rollback-owner.json");
+        let terminal_owner_marker = temp.path().join("cancel-terminal-owner.json");
         let save_tmx = root.join("omegat/project_save.tmx");
         let prep = root.join(".repositories/prep");
         let conflicts_path = prep.join("conflicts.json");
@@ -3925,7 +3935,7 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
         ];
 
         let (mut owner, mut owner_in, mut owner_out) =
-            spawn_sidecar(&config, Some((point, &owner_marker)), None, None);
+            spawn_sidecar(&config, Some((point, &owner_marker)), None, None, None);
         rpc(
             &mut owner_in,
             &mut owner_out,
@@ -4081,7 +4091,7 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
         }
 
         let waiter_count = if point == "after_intent_queue_rename" {
-            2
+            3
         } else {
             1
         };
@@ -4091,9 +4101,14 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
             let takeover_marker = temp.path().join(format!("cancel-takeover-{index}.json"));
             let checkpoint = (point == "after_intent_queue_rename")
                 .then_some(("after_rollback_fsync", rollback_owner_marker.as_path()));
+            let followup_checkpoint = (point == "after_intent_queue_rename").then_some((
+                "after_terminal_queue_rename",
+                terminal_owner_marker.as_path(),
+            ));
             let (child, input, output) = spawn_sidecar(
                 &config,
                 checkpoint,
+                followup_checkpoint,
                 Some(&wait_marker),
                 Some(&takeover_marker),
             );
@@ -4130,6 +4145,7 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
         owner.kill().unwrap();
         owner.wait().unwrap();
         let mut rollback_owner_pid = None;
+        let mut terminal_owner_pid = None;
         let survivor_index = if point == "after_intent_queue_rename" {
             wait_for_file(&rollback_owner_marker, &mut waiters[0].0);
             let rollback_owner: Value =
@@ -4141,12 +4157,19 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
                 })
                 .expect("rollback owner was not an already-waiting caller");
             assert!(waiters[rollback_index].4.exists());
-            let terminal_index = 1 - rollback_index;
-            assert!(
-                !waiters[terminal_index].4.exists(),
-                "second waiter took over before rollback owner death"
-            );
-            assert!(waiters[terminal_index].0.try_wait().unwrap().is_none());
+            let blocked_indices = waiters
+                .iter()
+                .enumerate()
+                .filter_map(|(index, _)| (index != rollback_index).then_some(index))
+                .collect::<Vec<_>>();
+            assert_eq!(blocked_indices.len(), 2);
+            for index in &blocked_indices {
+                assert!(
+                    !waiters[*index].4.exists(),
+                    "later waiter took over before rollback owner death"
+                );
+                assert!(waiters[*index].0.try_wait().unwrap().is_none());
+            }
             let rollback_queue: Value =
                 serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
             let rollback_row = rollback_queue["batches"]
@@ -4176,7 +4199,61 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
                 killed_response.is_none(),
                 "rollback owner published a response before its second SIGKILL"
             );
-            terminal_index
+
+            wait_for_file(
+                &terminal_owner_marker,
+                &mut waiters[blocked_indices[0]].0,
+            );
+            let terminal_owner: Value =
+                serde_json::from_slice(&std::fs::read(&terminal_owner_marker).unwrap()).unwrap();
+            let terminal_index = waiters
+                .iter()
+                .position(|(_, pid, _, _, _)| {
+                    terminal_owner["sidecar_process_id"].as_u64() == Some(u64::from(*pid))
+                })
+                .expect("terminal publisher was not an already-waiting caller");
+            assert_ne!(terminal_index, rollback_index);
+            assert!(waiters[terminal_index].4.exists());
+            let read_only_index = blocked_indices
+                .into_iter()
+                .find(|index| *index != terminal_index)
+                .expect("missing third pre-existing waiter");
+            assert!(
+                !waiters[read_only_index].4.exists(),
+                "third waiter took over before terminal publisher death"
+            );
+            assert!(waiters[read_only_index].0.try_wait().unwrap().is_none());
+            let terminal_queue: Value =
+                serde_json::from_slice(&std::fs::read(&active_path).unwrap()).unwrap();
+            let terminal_row = terminal_queue["batches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["batch_id"] == batch_id)
+                .unwrap();
+            assert_eq!(terminal_row["status"], "request_cancelled");
+            assert_eq!(terminal_row["error_code"], -32800);
+            assert_eq!(
+                terminal_row["payload"]["phase"],
+                "renderer-cancelled-takeover"
+            );
+            assert_eq!(std::fs::read(&save_tmx).unwrap(), original_tmx.as_bytes());
+            assert_eq!(std::fs::read(&conflicts_path).unwrap(), original_conflicts);
+
+            terminal_owner_pid = Some(waiters[terminal_index].1);
+            waiters[terminal_index].0.kill().unwrap();
+            waiters[terminal_index].0.wait().unwrap();
+            let (killed_response, _, _) = waiters[terminal_index]
+                .2
+                .take()
+                .unwrap()
+                .join()
+                .unwrap();
+            assert!(
+                killed_response.is_none(),
+                "terminal publisher returned before its third SIGKILL"
+            );
+            read_only_index
         } else {
             0
         };
@@ -4194,10 +4271,17 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
             waiter_response["error"],
             json!({"code": -32800, "message": "request cancelled"})
         );
-        let takeover: Value =
-            serde_json::from_slice(&std::fs::read(&takeover_marker).unwrap()).unwrap();
-        assert_eq!(takeover["point"], "took-over-pending-cancellation");
-        assert_eq!(takeover["sidecar_process_id"], waiter_pid);
+        if point == "after_intent_queue_rename" {
+            assert!(
+                !takeover_marker.exists(),
+                "third waiter rewrote the already-published terminal"
+            );
+        } else {
+            let takeover: Value =
+                serde_json::from_slice(&std::fs::read(&takeover_marker).unwrap()).unwrap();
+            assert_eq!(takeover["point"], "took-over-pending-cancellation");
+            assert_eq!(takeover["sidecar_process_id"], waiter_pid);
+        }
         assert_eq!(
             waiters
                 .iter()
@@ -4228,10 +4312,12 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
                 .collect::<Vec<_>>()
         );
 
-        // Retry the killed logical caller with the same idempotency key. Both
-        // logical callers therefore settle at the protocol boundary as -32800.
+        // Retry every killed logical caller with the same durable batch key.
+        // The initial owner, rollback owner, terminal publisher, and the
+        // surviving read-only waiter all settle at the protocol boundary as
+        // -32800.
         let (mut owner_retry, mut retry_in, mut retry_out) =
-            spawn_sidecar(&config, None, None, None);
+            spawn_sidecar(&config, None, None, None, None);
         let owner_retry_response = rpc(
             &mut retry_in,
             &mut retry_out,
@@ -4269,6 +4355,27 @@ fn waiting_raw_cancel_callers_take_over_unfinished_and_consecutive_boundaries() 
             );
             assert_eq!(
                 rollback_owner_retry["error"],
+                json!({"code": -32800, "message": "request cancelled"})
+            );
+        }
+        if let Some(terminal_owner_pid) = terminal_owner_pid {
+            let terminal_owner_retry = rpc(
+                &mut retry_in,
+                &mut retry_out,
+                8,
+                "transaction.receipt.ack",
+                json!({
+                    "root": root,
+                    "app_instance": "raw-cancel-terminal-retry",
+                    "owner_process_id": terminal_owner_pid,
+                    "generation": generation,
+                    "batch_id": batch_id,
+                    "operation": "resolve-conflict",
+                    "outcome": "cancelled",
+                }),
+            );
+            assert_eq!(
+                terminal_owner_retry["error"],
                 json!({"code": -32800, "message": "request cancelled"})
             );
         }

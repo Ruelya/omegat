@@ -967,16 +967,22 @@ fn product_compaction_checkpoint(point: &str) -> Result<()> {
     }
 }
 
-fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
-    if std::env::var("OMEGAT_TEST_RESOLVE_CANCELLATION_POINT").as_deref() != Ok(point) {
+fn resolve_cancellation_checkpoint_from_env(
+    point: &str,
+    point_variable: &str,
+    trigger_variable: &str,
+    marker_variable: &str,
+    release_variable: &str,
+) -> Result<()> {
+    if std::env::var(point_variable).as_deref() != Ok(point) {
         return Ok(());
     }
-    if let Some(trigger) = std::env::var_os("OMEGAT_TEST_RESOLVE_CANCELLATION_TRIGGER") {
+    if let Some(trigger) = std::env::var_os(trigger_variable) {
         if !PathBuf::from(trigger).is_file() {
             return Ok(());
         }
     }
-    let Some(marker) = std::env::var_os("OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER") else {
+    let Some(marker) = std::env::var_os(marker_variable) else {
         return Ok(());
     };
     let marker = PathBuf::from(marker);
@@ -1003,7 +1009,7 @@ fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
     file.write_all(b"\n")?;
     file.sync_all()?;
     sync_parent(&marker)?;
-    if let Some(release) = std::env::var_os("OMEGAT_TEST_RESOLVE_CANCELLATION_RELEASE") {
+    if let Some(release) = std::env::var_os(release_variable) {
         let release = PathBuf::from(release);
         while !release.is_file() {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1013,6 +1019,27 @@ fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+}
+
+fn resolve_cancellation_checkpoint(point: &str) -> Result<()> {
+    resolve_cancellation_checkpoint_from_env(
+        point,
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_POINT",
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_TRIGGER",
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_MARKER",
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_RELEASE",
+    )?;
+    // A single process can own two successive durable boundaries. Keeping a
+    // separate follow-up marker lets crash tests stop the rollback publisher
+    // and then the terminal publisher while all later callers remain blocked
+    // in their original OS-lock wait.
+    resolve_cancellation_checkpoint_from_env(
+        point,
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_POINT",
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_TRIGGER",
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_MARKER",
+        "OMEGAT_TEST_RESOLVE_CANCELLATION_FOLLOWUP_RELEASE",
+    )
 }
 
 fn resolve_cancellation_lock_checkpoint(

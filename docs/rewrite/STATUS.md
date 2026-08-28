@@ -917,23 +917,26 @@ its first sidecar owner only after the second caller has entered the lock wait;
 that same waiting process takes over, the killed logical caller retries the
 same idempotency key, both logical calls end at **-32800**, and the sidecar
 remains responsive with no resolve envelope or second rollback pass.
-The FIFO-tail intent and rollback rows now also keep two packaged cancellation
-callers blocked on the original owner's OS lock before that owner is killed.
-At `after_intent_queue_rename`, the one already-waiting loser selected by kernel
-lock release performs the sole real TMX/conflict rollback, then parks before
-publishing the terminal. That first takeover owner is also SIGKILLed while the
-second loser is still blocked in its original RPC; kernel lock release lets
-that same already-running second loser observe `renderer-rollback-durable` and
-publish the sole terminal without another rollback or process launch. Retrying
-the two killed logical calls and the surviving call all produce protocol
-**-32800**. At the direct `after_rollback_fsync` row, the selected loser still
-publishes only the terminal without rewriting the already durable rollback.
-The consecutive row has two ordered takeover markers but exactly one
-rollback-durable row and one terminal, and every cancellation caller emits zero
-resolve envelopes. The raw NDJSON contract runs the same nonempty sync → save
-→ close prefix and independently performs both owner deaths, proving the
-second pre-existing waiter completes the terminal while all three logical
-cancellation calls converge on **-32800**.
+The FIFO-tail intent row now keeps three packaged cancellation callers blocked
+on the original owner's OS lock before that owner is killed. The first
+already-waiting loser selected by kernel lock release performs the sole real
+TMX/conflict rollback, then is SIGKILLed at `after_rollback_fsync`. The second
+loser remains in its original RPC, observes `renderer-rollback-durable`,
+publishes the sole terminal, and is also SIGKILLed at
+`after_terminal_queue_rename`, where `request_cancelled` is durable and visible
+but its RPC result has not returned. The third original loser stays blocked
+through both deaths, then reads that published terminal and returns **-32800**
+without a takeover marker, another rollback, another terminal, a process
+relaunch, or a resolve envelope. Retrying the three killed logical calls makes
+all four callers converge on **-32800**. At the direct
+`after_rollback_fsync` row, the selected loser still publishes only the
+terminal without rewriting the already durable rollback. The consecutive row
+has two ordered takeover markers but exactly one rollback-durable row and one
+terminal, and every cancellation caller emits zero resolve envelopes. The raw
+NDJSON contract and real Linux packaged FIFO matrix run the same nonempty
+`team.sync` → save → close prefix through all three owner deaths while retaining
+the complete six-field wanted/decoy keys and single `Document3` translation
+surface.
 The terminal-rename case also SIGKILLs packaged process groups at
 `after_archive_fsync` and `after_queue_rename`; restart sees one archived
 request-cancelled row and an empty compacted queue.
