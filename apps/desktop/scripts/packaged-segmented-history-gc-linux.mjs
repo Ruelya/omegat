@@ -103,6 +103,35 @@ async function saveAndAcknowledge(
   });
   assert.equal(saved.receipt.batch_id, batchId);
   assert.equal(saved.receipt.status, "sidecar_committed");
+  const ownerPath = join(historyDirectory(project), "renderer-owner.json");
+  const owner = await waitFor("packaged renderer owner claim", async () =>
+    await pathExists(ownerPath)
+      ? JSON.parse(await readFile(ownerPath, "utf8"))
+      : undefined
+  );
+  const ownerScope = {
+    root: project,
+    app_instance: owner.app_instance,
+    owner_process_id: launched.application.pid,
+    generation: owner.generation,
+  };
+  const selected = await rpc(
+    launched.client,
+    "transaction.receipt.pending",
+    ownerScope,
+  );
+  assert.equal(selected.envelopes[0].batch_id, batchId);
+  const acknowledged = await rpc(
+    launched.client,
+    "transaction.receipt.ack",
+    {
+      ...ownerScope,
+      batch_id: batchId,
+      operation: "project.save",
+      outcome: "succeeded",
+    },
+  );
+  assert.equal(acknowledged.ack.acknowledged, true);
   await waitForReceiptDrain(project);
   return saved.receipt;
 }
