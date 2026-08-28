@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **25 passed** plus sidecar journal/watcher unit
+**4 passed**, sidecar contract **26 passed** plus sidecar journal/watcher unit
 **7 passed** and plugin filter **1 passed**, and desktop **24 files / 174 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
