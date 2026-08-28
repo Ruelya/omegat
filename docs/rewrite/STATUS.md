@@ -825,10 +825,11 @@ after publication. Global `prefs.set`, aligner preferences, and
 changing the live preferences, and these calls do not create a project journal.
 The shared journal keeps an atomically written same-value recovery copy. A
 corrupt `active.json` is repaired only from a valid copy; two corrupt copies are
-rejected without product mutation, while a failed active publish leaves a
-recoverable pending copy before mutation begins. Legacy refresh queue, history,
-and config active-owner migration is idempotent when interrupted after the new
-destinations become durable but before old files are unlinked.
+rejected without product mutation, while a failed post-mutation active publish
+restores the product snapshot and leaves a recoverable journal copy. Legacy
+refresh queue, history, and config active-owner migration is idempotent when
+interrupted after the new destinations become durable but before old files are
+unlinked.
 A new real Linux `linux-unpacked` matrix drives project properties, repository
 mapping, file-filter options, and segmentation settings exclusively through
 visible controls. It externally SIGKILLs Electron at both sides of each relevant

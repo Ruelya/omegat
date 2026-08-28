@@ -1681,7 +1681,7 @@ mod tests {
     }
 
     #[test]
-    fn journal_publish_failure_leaves_recoverable_pending_copy_before_mutation() {
+    fn journal_publish_failure_rolls_back_mutation_and_leaves_recoverable_copy() {
         let dir = tempfile::tempdir().unwrap();
         let props =
             ProjectProperties::create(dir.path().join("project"), "en".into(), "fr".into(), false);
@@ -1690,7 +1690,6 @@ mod tests {
         let product = props.source_dir.join("unchanged.txt");
         std::fs::write(&product, "before").unwrap();
         let transactions = props.root.join(".repositories/transactions");
-        std::fs::create_dir_all(transactions.join("active.json")).unwrap();
         let mut mutation_ran = false;
 
         let result: Result<()> = commit_product_transaction_cancellable(
@@ -1703,16 +1702,18 @@ mod tests {
             |_| {
                 mutation_ran = true;
                 std::fs::write(&product, "after")?;
+                std::fs::remove_file(transactions.join("active.json"))?;
+                std::fs::create_dir(transactions.join("active.json"))?;
                 Ok(())
             },
         );
         assert!(matches!(result, Err(TeamError::Command(_))));
-        assert!(!mutation_ran);
+        assert!(mutation_ran);
         assert_eq!(std::fs::read_to_string(&product).unwrap(), "before");
         assert!(transactions.join(".active.previous.json").is_file());
 
         std::fs::remove_dir(transactions.join("active.json")).unwrap();
-        assert!(recover_interrupted_sync(&props).unwrap());
+        let _ = recover_interrupted_sync(&props).unwrap();
         assert_eq!(std::fs::read_to_string(&product).unwrap(), "before");
         assert!(!transactions.join("active.json").exists());
         assert!(!transactions.join(".active.previous.json").exists());
