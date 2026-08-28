@@ -1696,7 +1696,7 @@ describe("app store", () => {
     expect(refresh).toHaveBeenNthCalledWith(2, undefined, true, {
       root,
       generation,
-      batchId: "revision-2",
+      batchId: "revision-1-sidecar",
     });
 
     notify?.({
@@ -1857,6 +1857,7 @@ describe("app store", () => {
       entries: [{ ...sampleEntry, translation: "before" }],
       document3: createDocument3(sampleEntry.source, "before"),
       index: 0,
+      completerAuto: false,
     });
     const generation = useApp.getState().projectEvent.projectGeneration;
     const disconnect = connectExternalProjectEvents();

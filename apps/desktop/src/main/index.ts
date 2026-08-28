@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import { isLongOperationMethod } from "../shared/rpc-operation";
@@ -104,12 +104,25 @@ type RefreshBatch = {
   };
 };
 
+function normalizedProjectRoot(root: string): string {
+  try {
+    return realpathSync(root);
+  } catch {
+    return root;
+  }
+}
+
 function publishRefreshBatch(
   root: string,
   generation: number,
   batch: RefreshBatch,
 ) {
-  if (batch.generation !== generation) return;
+  if (
+    batch.version !== 1
+    || batch.generation !== generation
+    || normalizedProjectRoot(batch.project_root) !== normalizedProjectRoot(root)
+    || !["pending", "sidecar_committed"].includes(batch.status)
+  ) return;
   BrowserWindow.getAllWindows().forEach((window) => {
     window.webContents.send("project:external-change", {
       id: batch.batch_id,
