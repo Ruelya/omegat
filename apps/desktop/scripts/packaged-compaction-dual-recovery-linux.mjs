@@ -940,6 +940,7 @@ async function prepareAtomicElectionProject(
   let remoteContent = null;
   let gitRemote = null;
   let gitHead = null;
+  let gitSeed = null;
   if (headKind === "team") {
     remotePath = join(remote, "target", "atomic.txt");
     await mkdir(dirname(remotePath), { recursive: true });
@@ -960,7 +961,7 @@ async function prepareAtomicElectionProject(
     await session.request("team.sync", {});
   } else if (headKind === "team-sync") {
     gitRemote = join(remote, "main.git");
-    const gitSeed = join(remote, "main-seed");
+    gitSeed = join(remote, "main-seed");
     const fileRemote = join(remote, "file-remote");
     remotePath = join(fileRemote, "mapping.marker");
     await Promise.all([
@@ -1064,10 +1065,13 @@ async function prepareAtomicElectionProject(
     assert.equal(await readFile(remotePath, "utf8"), remoteContent);
   } else if (headKind === "team-sync") {
     remoteContent = `${label} mapping committed exactly once\n`;
-    await Promise.all([
-      writeFile(join(project, "team-main.marker"), `${label} main v2\n`, "utf8"),
-      writeFile(join(project, "team-mapping.marker"), remoteContent, "utf8"),
-    ]);
+    await git(["fetch", "origin", "main"], gitSeed);
+    await git(["reset", "--hard", "origin/main"], gitSeed);
+    await writeFile(join(gitSeed, "main.marker"), `${label} main v2\n`, "utf8");
+    await git(["add", "-A"], gitSeed);
+    await git(["commit", "-m", "publish atomic team sync update"], gitSeed);
+    await git(["push", "origin", "HEAD:refs/heads/main"], gitSeed);
+    await writeFile(remotePath, remoteContent, "utf8");
     const head = await session.request("team.sync", {
       transaction_project_root: project,
       transaction_generation: 131,
@@ -1076,6 +1080,14 @@ async function prepareAtomicElectionProject(
     operation = "sync";
     assert.equal(head.receipt.payload.operation, operation);
     assert.equal(await readFile(remotePath, "utf8"), remoteContent);
+    assert.equal(
+      await readFile(join(project, "team-mapping.marker"), "utf8"),
+      remoteContent,
+    );
+    assert.equal(
+      await readFile(join(project, "team-main.marker"), "utf8"),
+      `${label} main v2\n`,
+    );
     gitHead = await git([
       "--git-dir",
       gitRemote,
