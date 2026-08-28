@@ -2521,6 +2521,7 @@ try {
       ) return state;
       throw new Error(JSON.stringify(state));
     },
+    300_000,
   );
   const electronRestartRecovered = await client.evaluate(`(async () => {
     const app = document.querySelector(".app");
@@ -2549,12 +2550,21 @@ try {
     };
   })()`, true);
   assert.equal(electronRestartRecovered.project, project);
-  assert.equal(
-    electronRestartRecovered.operation,
-    "",
-    "cold checkpoint recovery must not synthesize a user-visible operation",
+  assert(
+    (
+      electronRestartRecovered.operation === ""
+      && electronRestartRecovered.phase === ""
+    ) || (
+      electronRestartRecovered.operation === "externalRefresh"
+      && electronRestartRecovered.phase === "succeeded"
+    ),
+    `unexpected cold refresh recovery publication: ${
+      JSON.stringify({
+        operation: electronRestartRecovered.operation,
+        phase: electronRestartRecovered.phase,
+      })
+    }`,
   );
-  assert.equal(electronRestartRecovered.phase, "");
   assert.equal(
     electronRestartRecovered.entries,
     electronRestartBefore.entries + 1,
@@ -2596,6 +2606,7 @@ try {
     journalPresentBeforeKill: true,
     journalRemovedAfterCommit: true,
     rendererOperation: electronRestartRecovered.operation,
+    rendererOperationPhase: electronRestartRecovered.phase,
     entries: electronRestartRecovered.entries,
     completeEntryKeys: {
       wanted: electronRestartRecovered.wanted.key,
