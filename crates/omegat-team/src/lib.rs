@@ -33,7 +33,8 @@ mod user_pass_dialog;
 
 pub use error::{Conflict, SyncReport, TeamError};
 pub use mapping::{
-    copy_mapped, copy_mapped_from_worktree, default_mapping, glob_match, propagate_deleted, CopyDir,
+    copy_mapped, copy_mapped_from_worktree, copy_mapped_path, copy_mapped_path_from_worktree,
+    default_mapping, glob_match, propagate_deleted, CopyDir,
 };
 pub use omegat_core::durable_transaction::{
     write_json_atomic, TransactionCommit, TransactionEnvelope, TransactionStatus,
@@ -848,6 +849,74 @@ mod tests {
     }
 
     #[test]
+    fn http_remote_honors_etag_and_preserves_304_product_bytes_and_mtime() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for request_index in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.ends_with(b"\r\n\r\n") {
+                    let read = stream.read(&mut buffer).unwrap();
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                if request_index == 0 {
+                    assert_eq!(request.contains("If-None-Match:"), false);
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 18\r\nETag: \"java-etag\"\r\nConnection: close\r\n\r\nTest file contents",
+                        )
+                        .unwrap();
+                } else {
+                    assert_eq!(request.contains("If-None-Match: \"java-etag\""), true);
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 304 Not Modified\r\nETag: \"java-etag\"\r\nConnection: close\r\n\r\n",
+                        )
+                        .unwrap();
+                }
+            }
+        });
+
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("file.txt");
+        let url = format!("http://{address}/repository/file.txt");
+        assert_eq!(
+            crate::http_remote_repository::retrieve(&url, &output, None).unwrap(),
+            Some("\"java-etag\"".into())
+        );
+        let bytes = std::fs::read(&output).unwrap();
+        let modified = std::fs::metadata(&output).unwrap().modified().unwrap();
+        assert_eq!(bytes, b"Test file contents");
+        assert_eq!(
+            crate::http_remote_repository::sha1_file(&output).unwrap(),
+            "c5af4c6f00ea919116fc16df7b873b7940c0cff9"
+        );
+        assert_eq!(
+            crate::http_remote_repository::retrieve(
+                &url,
+                &output,
+                Some("\"java-etag\"")
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(&output).unwrap().modified().unwrap(),
+            modified
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
     fn mapping_excludes_are_applied() {
         let dir = tempfile::tempdir().unwrap();
         let remote = dir.path().join("remote");
@@ -899,6 +968,26 @@ mod tests {
         let row = loaded.for_url("https://example.com/repo.git").unwrap();
         assert_eq!(row.user_pass.username, "u");
         assert_eq!(row.passphrase.value, "phrase");
+    }
+
+    #[test]
+    fn credential_fingerprints_match_java_product_goldens() {
+        let golden = remaining_golden("GITCredentialsProviderTest-extractFingerprint.json");
+        for case in golden["cases"].as_array().unwrap() {
+            assert_eq!(
+                crate::git_credentials_provider::extract_fingerprint(
+                    case["input"].as_str().unwrap()
+                )
+                .as_deref(),
+                case["fingerprint"].as_str()
+            );
+        }
+        assert_eq!(
+            crate::git_credentials_provider::extract_fingerprint(
+                "Accept unknown host key without a fingerprint?"
+            ),
+            None
+        );
     }
 
     fn seed_bare(bare: &Path, seed: &Path) {
@@ -2128,24 +2217,22 @@ mod tests {
             "RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json",
         );
         let base = std::env::temp_dir();
-        let got = relative_remote_to_absolute_local("file.txt", &base, "/", "/");
-        assert_eq!(
-            got.strip_prefix(&base)
-                .unwrap()
-                .to_string_lossy()
-                .replace('\\', "/"),
-            rel["file"].as_str().unwrap()
-        );
-        let mapped =
-            relative_remote_to_absolute_local("somedir/file.txt", &base, "somedir", "source");
-        assert_eq!(
-            mapped
+        for case in rel["cases"].as_array().unwrap() {
+            let result = relative_remote_to_absolute_local(
+                case["remote"].as_str().unwrap(),
+                &base,
+                case["remote_prefix"].as_str().unwrap(),
+                case["local_prefix"].as_str().unwrap(),
+            );
+            assert_eq!(
+                result
                 .strip_prefix(&base)
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/"),
-            rel["mapped"].as_str().unwrap()
-        );
+                case["result"].as_str().unwrap()
+            );
+        }
     }
 
     #[test]
@@ -2205,47 +2292,4 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "Existing content");
     }
 
-    #[test]
-    fn remaining_copy_and_rename_match_java() {
-        for name in [
-            "RemoteRepositoryProviderTest-testCopyFileFromReposToProject.json",
-            "RemoteRepositoryProviderTest-testCopyFileFromProjectToRepos.json",
-            "RemoteRepositoryProviderTest-testCopyRenamedFileFromRepoToProject.json",
-            "RemoteRepositoryProviderTest-testCopyRenamedFileFromProjectToRepos.json",
-            "RemoteRepositoryProviderTest-testCopySubFileFromProjectToRepos.json",
-            "RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludes.json",
-            "RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix.json",
-            "RemoteRepositoryProviderTest-testCopyAndDeletePropagateReposToProject.json",
-        ] {
-            let g = remaining_golden(name);
-            let dir = tempfile::tempdir().unwrap();
-            let remote = dir.path().join("remote");
-            let local = dir.path().join("local");
-            std::fs::create_dir_all(remote.join("source")).unwrap();
-            std::fs::write(remote.join("source").join("file1.txt"), "one").unwrap();
-            std::fs::write(remote.join("renamed.txt"), "renamed").unwrap();
-            std::fs::write(remote.join("skip.bak"), "bak").unwrap();
-            let mut mapping = default_mapping();
-            if name.contains("Renamed") {
-                mapping.local = "source/otherproject/file.txt".into();
-                mapping.repository = "renamed.txt".into();
-            }
-            mapping.excludes = vec!["**/*.bak".into()];
-            let props = team_props(local, "file", &remote.to_string_lossy(), vec![mapping]);
-            let wc = crate::project_team_settings::repo_work_dir(&props, &props.repositories[0]);
-            crate::team_utils::copy_tree(&remote, &wc, false).unwrap();
-            let dir = if name.contains("FromProjectToRepos") {
-                crate::mapping::CopyDir::ProjectToRepo
-            } else {
-                crate::mapping::CopyDir::RepoToProject
-            };
-            if matches!(dir, crate::mapping::CopyDir::ProjectToRepo) {
-                std::fs::create_dir_all(props.root.join("source")).unwrap();
-                std::fs::write(props.root.join("source").join("file1.txt"), "one").unwrap();
-            }
-            crate::mapping::copy_mapped(&props, &props.repositories[0], dir).unwrap();
-            assert_eq!(g["copied"].as_bool().unwrap(), true);
-            assert_eq!(g["excludes_honored"].as_bool().unwrap(), true);
-        }
-    }
 }

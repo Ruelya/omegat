@@ -1,9 +1,60 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.RemoteRepositoryProvider2Test#testRelativeRemoteToAbsoluteLocal",
-  "file": "file.txt",
-  "mapped": "source/file.txt",
-  "keys": [
-    "org.omegat.core.team2.RemoteRepositoryProvider2Test#testRelativeRemoteToAbsoluteLocal"
+  "cases": [
+    {
+      "remote": "file.txt",
+      "remote_prefix": "/",
+      "local_prefix": "/",
+      "result": "file.txt"
+    },
+    {
+      "remote": "file.txt",
+      "remote_prefix": "",
+      "local_prefix": "",
+      "result": "file.txt"
+    },
+    {
+      "remote": "file.txt",
+      "remote_prefix": "",
+      "local_prefix": "/",
+      "result": "file.txt"
+    },
+    {
+      "remote": "file.txt",
+      "remote_prefix": "/",
+      "local_prefix": "",
+      "result": "file.txt"
+    },
+    {
+      "remote": "somedir/file.txt",
+      "remote_prefix": "somedir",
+      "local_prefix": "source",
+      "result": "source/file.txt"
+    },
+    {
+      "remote": "somedir/file.txt",
+      "remote_prefix": "somedir",
+      "local_prefix": "source/",
+      "result": "source/file.txt"
+    },
+    {
+      "remote": "somedir/file.txt",
+      "remote_prefix": "somedir/",
+      "local_prefix": "source",
+      "result": "source/file.txt"
+    },
+    {
+      "remote": "somedir/file.txt",
+      "remote_prefix": "/somedir/",
+      "local_prefix": "source",
+      "result": "source/file.txt"
+    },
+    {
+      "remote": "somedir/file.txt",
+      "remote_prefix": "/",
+      "local_prefix": "/source",
+      "result": "source/somedir/file.txt"
+    }
   ]
 }

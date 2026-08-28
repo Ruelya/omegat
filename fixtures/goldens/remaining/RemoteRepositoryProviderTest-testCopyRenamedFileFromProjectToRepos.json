@@ -1,9 +1,7 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyRenamedFileFromProjectToRepos",
-  "excludes_honored": true,
-  "copied": true,
-  "keys": [
-    "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyRenamedFileFromProjectToRepos"
+  "copied": [
+    "secondary:otherprojectfile.txt"
   ]
 }

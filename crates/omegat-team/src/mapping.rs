@@ -105,14 +105,50 @@ pub fn copy_mapped(
     copy_mapped_cancellable(props, repo, dir, &CancellationToken::default())
 }
 
+pub fn copy_mapped_path(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+) -> Result<Vec<String>> {
+    copy_mapped_path_cancellable(
+        props,
+        repo,
+        dir,
+        local_path,
+        postfix,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn copy_mapped_path_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
+    let wc = repo_work_dir(props, repo);
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        &wc,
+        dir,
+        local_path,
+        postfix,
+        cancellation,
+    )
+}
+
 pub fn copy_mapped_cancellable(
     props: &ProjectProperties,
     repo: &RepositoryDef,
     dir: CopyDir,
     cancellation: &CancellationToken,
 ) -> Result<Vec<String>> {
-    let wc = repo_work_dir(props, repo);
-    copy_mapped_from_worktree_cancellable(props, repo, &wc, dir, cancellation)
+    copy_mapped_path_cancellable(props, repo, dir, "", "", cancellation)
 }
 
 /// Execute repository mappings against an already prepared worktree.
@@ -126,7 +162,15 @@ pub fn copy_mapped_from_worktree(
     wc: &std::path::Path,
     dir: CopyDir,
 ) -> Result<Vec<String>> {
-    copy_mapped_from_worktree_cancellable(props, repo, wc, dir, &CancellationToken::default())
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        wc,
+        dir,
+        "",
+        "",
+        &CancellationToken::default(),
+    )
 }
 
 pub fn copy_mapped_from_worktree_cancellable(
@@ -136,12 +180,60 @@ pub fn copy_mapped_from_worktree_cancellable(
     dir: CopyDir,
     cancellation: &CancellationToken,
 ) -> Result<Vec<String>> {
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        wc,
+        dir,
+        "",
+        "",
+        cancellation,
+    )
+}
+
+pub fn copy_mapped_path_from_worktree(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+) -> Result<Vec<String>> {
+    copy_mapped_path_from_worktree_cancellable(
+        props,
+        repo,
+        wc,
+        dir,
+        local_path,
+        postfix,
+        &CancellationToken::default(),
+    )
+}
+
+pub fn copy_mapped_path_from_worktree_cancellable(
+    props: &ProjectProperties,
+    repo: &RepositoryDef,
+    wc: &std::path::Path,
+    dir: CopyDir,
+    local_path: &str,
+    postfix: &str,
+    cancellation: &CancellationToken,
+) -> Result<Vec<String>> {
     let mut copied = Vec::new();
     if !wc.exists() {
         return Ok(copied);
     }
+    let requested = strip_slash(local_path);
+    if !safe_relative(requested) {
+        return Err(TeamError::Command(format!(
+            "mapped local path is not relative: {local_path}"
+        )));
+    }
     for mapping in effective_mappings(repo) {
         check_cancelled(cancellation)?;
+        let Some(selection) = local_selection(requested, strip_slash(&mapping.local)) else {
+            continue;
+        };
         let (from_root, from_rel, to_root, to_rel) = match dir {
             CopyDir::RepoToProject => (
                 wc,
@@ -156,12 +248,25 @@ pub fn copy_mapped_from_worktree_cancellable(
                 &mapping.repository,
             ),
         };
-        let from = join_mapped(from_root, from_rel);
-        let to = join_mapped(to_root, to_rel);
+        let from_base = join_mapped(from_root, from_rel);
+        let to_base = join_mapped(to_root, to_rel);
+        let from = join_mapped(&from_base, selection);
+        let mut to = join_mapped(&to_base, selection);
         if from.is_file() {
-            if mapping_allows(&rel_unix(&from, from_root), &mapping)
-                && !skip_copy(props, &rel_unix(&from, from_root), dir)
+            let mapping_relative = rel_unix(&from, &from_base);
+            if mapping_allows(&mapping_relative, &mapping)
+                && !skip_copy_for_request(
+                    props,
+                    &rel_unix(&from, from_root),
+                    dir,
+                    requested.is_empty(),
+                )
             {
+                if !postfix.is_empty() {
+                    let mut name = to.as_os_str().to_os_string();
+                    name.push(postfix);
+                    to = name.into();
+                }
                 if let Some(p) = to.parent() {
                     std::fs::create_dir_all(p)?;
                 }
@@ -185,11 +290,14 @@ pub fn copy_mapped_from_worktree_cancellable(
                 .unwrap_or(ent.path())
                 .to_string_lossy()
                 .replace('\\', "/");
-            let from_project_rel = join_rel(from_rel, &rel);
-            if skip_copy(props, &from_project_rel, dir) {
+            let mapping_relative = join_rel(selection, &rel);
+            let from_project_rel = join_rel(from_rel, &mapping_relative);
+            if skip_copy_for_request(props, &from_project_rel, dir, requested.is_empty()) {
                 continue;
             }
-            if !mapping_allows(&rel, &mapping) && !mapping_allows(&from_project_rel, &mapping) {
+            if !mapping_allows(&mapping_relative, &mapping)
+                && !mapping_allows(&from_project_rel, &mapping)
+            {
                 continue;
             }
             let dest = to.join(&rel);
@@ -202,6 +310,44 @@ pub fn copy_mapped_from_worktree_cancellable(
         }
     }
     Ok(copied)
+}
+
+fn local_selection<'a>(requested: &'a str, mapped: &'a str) -> Option<&'a str> {
+    if requested.is_empty() || requested == mapped {
+        return Some("");
+    }
+    if mapped.is_empty() {
+        return Some(requested);
+    }
+    if let Some(selection) = requested
+        .strip_prefix(mapped)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+    {
+        return Some(selection);
+    }
+    mapped
+        .strip_prefix(requested)
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .map(|_| "")
+}
+
+fn skip_copy_for_request(
+    props: &ProjectProperties,
+    rel: &str,
+    dir: CopyDir,
+    full_project: bool,
+) -> bool {
+    let r = strip_slash(rel);
+    if r.starts_with(".git/")
+        || r == ".git"
+        || r.starts_with(".svn/")
+        || r == ".svn"
+        || r.starts_with(".repositories/")
+        || r == ".repositories"
+    {
+        return true;
+    }
+    full_project && skip_copy(props, rel, dir)
 }
 
 fn check_cancelled(cancellation: &CancellationToken) -> Result<()> {

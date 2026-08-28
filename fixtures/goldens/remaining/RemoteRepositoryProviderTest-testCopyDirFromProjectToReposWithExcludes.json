@@ -1,9 +1,11 @@
 {
   "exported_by": "org.omegat.tools.ExportGoldens",
   "java_test": "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludes",
-  "excludes_honored": true,
-  "copied": true,
-  "keys": [
-    "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludes"
+  "copied": [
+    "primary:source/3.jpg",
+    "primary:source/file1.txt",
+    "primary:source/otherproject/file.txt",
+    "primary:source/subdir/file2.txt",
+    "secondary:file.txt"
   ]
 }

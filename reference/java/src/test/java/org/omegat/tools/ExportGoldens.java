@@ -3431,6 +3431,12 @@ public final class ExportGoldens {
 
     private void exportTeamMappingTests() throws Exception {
         assertJavaTestClass("org.omegat.core.team2.RemoteRepositoryProviderTest");
+        assertJavaTestClass("org.omegat.core.team2.RemoteRepositoryProvider2Test");
+        assertJavaTestClass("org.omegat.core.team2.impl.HTTPRemoteRepositoryTest");
+        assertJavaTestClass("org.omegat.core.team2.impl.GITCredentialsProviderTest");
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyFileFromReposToProject.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyFileFromReposToProject",
+                Map.of("copied", List.of("omegat.project")));
         writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyAllFromReposToProjectWithExcludes.json",
                 "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAllFromReposToProjectWithExcludes",
                 Map.of("excludes", List.of("**/*.bak", "*.png", "subdir/3.jpg"),
@@ -3453,6 +3459,66 @@ public final class ExportGoldens {
                                 "source/subdir/3.jpg",
                                 "source/subdir/4.png",
                                 "source/subdir/file2.txt")));
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyRenamedFileFromRepoToProject.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyRenamedFileFromRepoToProject",
+                Map.of("copied", List.of("source/otherproject/file.txt")));
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludes.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludes",
+                Map.of("copied", List.of(
+                        "primary:source/3.jpg",
+                        "primary:source/file1.txt",
+                        "primary:source/otherproject/file.txt",
+                        "primary:source/subdir/file2.txt",
+                        "secondary:file.txt")));
+        writeStrictCase(
+                "remaining/RemoteRepositoryProviderTest-testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyDirFromProjectToReposWithExcludesWithDirectorySeparatorPrefix",
+                Map.of("copied", List.of(
+                        "primary:source/3.jpg",
+                        "primary:source/4.png",
+                        "primary:source/asubdir/subdir/3.jpg",
+                        "primary:source/file1.txt",
+                        "primary:source/otherproject/file.txt",
+                        "primary:source/subdir/3.jpg",
+                        "primary:source/subdir/4.png",
+                        "primary:source/subdir/file2.txt",
+                        "secondary:file.txt")));
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyFileFromProjectToRepos.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyFileFromProjectToRepos",
+                Map.of("copied", List.of("primary:omegat.project")));
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopySubFileFromProjectToRepos.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopySubFileFromProjectToRepos",
+                Map.of("copied", List.of("primary:omegat/project_save.tmx")));
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyRenamedFileFromProjectToRepos.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyRenamedFileFromProjectToRepos",
+                Map.of("copied", List.of("secondary:otherprojectfile.txt")));
+        writeStrictCase("remaining/RemoteRepositoryProviderTest-testCopyAndDeletePropagateReposToProject.json",
+                "org.omegat.core.team2.RemoteRepositoryProviderTest#testCopyAndDeletePropagateReposToProject",
+                Map.of("copied", List.of("omegat.project.NEW")));
+
+        Class<?> credentials = Class.forName("org.omegat.core.team2.impl.GITCredentialsProvider");
+        Method extractFingerprint = credentials.getDeclaredMethod("extractFingerprint", String.class);
+        extractFingerprint.setAccessible(true);
+        List<String> fingerprintPrompts = List.of(
+                "The authenticity of host 'example.example.com' cannot be established.\n"
+                        + "The EC key's fingerprints are:\n"
+                        + "MD5:27:eb:84:a1:af:13:be:e6:7d:8a:20:fa:93:87:29:7b\n"
+                        + "SHA256:Pv1a78W/c6tlPKyxTuT3Ziw6n8vXLTQiGfgR+NkU6fk\n"
+                        + "Accept and store this key, and continue connecting?",
+                "The authenticity of host '192.0.2.1' can't be established.\n"
+                        + "ECDSA key fingerprint is SHA256:cdDZrkZGXs01lb5r1Q93qGPkNxd+EiMrre5C0o3dSZ1.\n"
+                        + "Are you sure you want to continue connecting?",
+                "The authenticity of host '192.0.2.1' can't be established.\n"
+                        + "RSA key fingerprint is 27:eb:84:a1:af:13:be:e6:7d:8a:20:fa:93:87:29:7b.\n"
+                        + "Are you sure you want to continue connecting?");
+        List<Map<String, Object>> fingerprintCases = new ArrayList<>();
+        for (String prompt : fingerprintPrompts) {
+            fingerprintCases.add(Map.of("input", prompt,
+                    "fingerprint", extractFingerprint.invoke(null, prompt)));
+        }
+        writeStrictCase("remaining/GITCredentialsProviderTest-extractFingerprint.json",
+                "org.omegat.core.team2.impl.GITCredentialsProviderTest#extractFingerprint",
+                Map.of("cases", fingerprintCases));
     }
 
     private void exportScriptItemTests() throws Exception {
@@ -4622,7 +4688,25 @@ public final class ExportGoldens {
                         List.of("/aa", "/aa"), List.of("a/b/c/d", "/a/b/c/d"))));
         writeCase("remaining/RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json",
                 "org.omegat.core.team2.RemoteRepositoryProvider2Test#testRelativeRemoteToAbsoluteLocal",
-                Map.of("file", "file.txt", "mapped", "source/file.txt"));
+                Map.of("cases", List.of(
+                        Map.of("remote", "file.txt", "remote_prefix", "/", "local_prefix", "/",
+                                "result", "file.txt"),
+                        Map.of("remote", "file.txt", "remote_prefix", "", "local_prefix", "",
+                                "result", "file.txt"),
+                        Map.of("remote", "file.txt", "remote_prefix", "", "local_prefix", "/",
+                                "result", "file.txt"),
+                        Map.of("remote", "file.txt", "remote_prefix", "/", "local_prefix", "",
+                                "result", "file.txt"),
+                        Map.of("remote", "somedir/file.txt", "remote_prefix", "somedir",
+                                "local_prefix", "source", "result", "source/file.txt"),
+                        Map.of("remote", "somedir/file.txt", "remote_prefix", "somedir",
+                                "local_prefix", "source/", "result", "source/file.txt"),
+                        Map.of("remote", "somedir/file.txt", "remote_prefix", "somedir/",
+                                "local_prefix", "source", "result", "source/file.txt"),
+                        Map.of("remote", "somedir/file.txt", "remote_prefix", "/somedir/",
+                                "local_prefix", "source", "result", "source/file.txt"),
+                        Map.of("remote", "somedir/file.txt", "remote_prefix", "/",
+                                "local_prefix", "/source", "result", "source/somedir/file.txt"))));
         writeCase("remaining/HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully",
                 Map.of("body", "Test file contents", "exists", true));
