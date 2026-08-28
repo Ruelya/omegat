@@ -103,11 +103,9 @@ async function durableHistoryRows(project) {
 }
 
 async function openUnscopedProject(launched, project) {
-  await rpc(launched.client, "project.open", { root: project });
-  return waitFor(`unscoped workspace for ${project}`, async () => {
-    const state = await workspaceState(launched.client);
-    return state.project === project && state.key ? state : undefined;
-  });
+  const opened = await rpc(launched.client, "project.open", { root: project });
+  assert.equal(opened.root, project);
+  return opened;
 }
 
 async function waitForReceiptDrain(project) {
