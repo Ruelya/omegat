@@ -54,7 +54,11 @@ export function GeneralPage({ prefs, setPref }: PrefPageProps) {
     <>
       <label>
         {t("uiLanguage")}
-        <select value={prefs.locale} onChange={(e) => setPref("locale", e.target.value)}>
+        <select
+          data-setting="locale"
+          value={prefs.locale}
+          onChange={(e) => setPref("locale", e.target.value)}
+        >
           {availableLocales().map((code) => (
             <option key={code} value={code}>{code}</option>
           ))}

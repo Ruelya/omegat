@@ -10,6 +10,7 @@ export function PrefsWindow() {
   const loadPrefs = app.loadPrefs;
   const [page, setPage] = useState(PREF_PAGES[0]!.id);
   const [draft, setDraft] = useState<Preferences | null>(app.prefs ? defaultPreferences(app.prefs) : null);
+  const [saveError, setSaveError] = useState("");
   useEffect(() => {
     void loadPrefs().then(() => {
       const p = useApp.getState().prefs;
@@ -26,7 +27,11 @@ export function PrefsWindow() {
   };
   return (
     <div className="modal-bg" onClick={() => app.openWindow("prefs", false)}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal wide"
+        data-window-id="prefs"
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2>{t("prefs")}</h2>
         <div className="prefs-grid">
           <nav className="list">
@@ -46,13 +51,23 @@ export function PrefsWindow() {
             <button
               type="button"
               className="primary"
-              onClick={() => {
-                void app.savePrefs(draft);
-                if (draft.locale !== app.locale) app.setLocale(draft.locale);
+              data-action="save-preferences"
+              onClick={async () => {
+                setSaveError("");
+                try {
+                  await app.savePrefs(draft);
+                } catch (error) {
+                  setSaveError(String(error));
+                }
               }}
             >
               {t("save")}
             </button>
+            {saveError && (
+              <div role="alert" data-persistence-error="prefs">
+                {saveError}
+              </div>
+            )}
           </div>
         </div>
         <button type="button" onClick={() => app.openWindow("prefs", false)}>{t("cancel")}</button>

@@ -39,6 +39,7 @@ export function buildApplicationMenu(win: BrowserWindow, tr: (key: string) => st
         item(win, tr("close"), "project.close", "CmdOrCtrl+Shift+W"),
         { type: "separator" },
         item(win, tr("save"), "project.save", "CmdOrCtrl+S"),
+        item(win, tr("exportTm"), "project.export-tmx"),
         { type: "separator" },
         item(win, tr("commitSource"), "project.commit-source"),
         item(win, tr("commitTarget"), "project.commit-target"),

@@ -387,6 +387,7 @@ export type AppState = {
   ignoreWord: (word: string) => Promise<void>;
   addGlossary: (source: string, target: string, comment?: string) => Promise<void>;
   importWiki: (source: string) => Promise<void>;
+  exportTmx: (dest: string, level: "omegat" | "level1" | "level2") => Promise<void>;
   refreshEntriesAfterExternalChange: (
     changedKeys?: readonly EntryKeyDto[],
     reloadFromDisk?: boolean,
@@ -1338,6 +1339,15 @@ export const useApp = create<AppState>((set, get) => ({
     if (result.receipt) {
       await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
     }
+  },
+  exportTmx: async (dest, level) => {
+    const result = await rpc<{
+      receipt?: TransactionEnvelope | null;
+    }>("tmx.export", { dest, level });
+    if (result.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+    }
+    get().logLine(`exported ${level} TMX ${dest}`);
   },
   refreshEntriesAfterExternalChange: async (
     changedKeys,

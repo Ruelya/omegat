@@ -14,13 +14,18 @@ export function SearchWindow({ mode }: { mode: "search" | "replace" }) {
   const close = () => useApp.getState().openWindow(mode === "replace" ? "replace" : "search", false);
   return (
     <div className="modal-bg" onClick={close}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="modal wide"
+        data-window-id={mode}
+        onClick={(e) => e.stopPropagation()}
+      >
         <h2>{mode === "replace" ? t("replace") : t("search")}</h2>
         <div className="form">
           <label>
             {t("search")}
             <input
               autoFocus
+              data-setting="search-query"
               value={form.query}
               onChange={(e) => {
                 set({ query: e.target.value });
@@ -31,7 +36,11 @@ export function SearchWindow({ mode }: { mode: "search" | "replace" }) {
           {mode === "replace" && (
             <label>
               {t("replace")}
-              <input value={form.replace} onChange={(e) => set({ replace: e.target.value })} />
+              <input
+                data-setting="replace-text"
+                value={form.replace}
+                onChange={(e) => set({ replace: e.target.value })}
+              />
             </label>
           )}
           <fieldset className="checks">
@@ -80,7 +89,13 @@ export function SearchWindow({ mode }: { mode: "search" | "replace" }) {
             {mode === "replace" && (
               <>
                 <button type="button" onClick={() => void run(true)}>{t("replacePreview")}</button>
-                <button type="button" onClick={() => void replaceAll()}>{t("replace")}</button>
+                <button
+                  type="button"
+                  data-action="replace-all"
+                  onClick={() => void replaceAll()}
+                >
+                  {t("replace")}
+                </button>
               </>
             )}
             <button type="button" onClick={close}>{t("cancel")}</button>

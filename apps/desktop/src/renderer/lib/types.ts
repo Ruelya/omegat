@@ -324,6 +324,7 @@ export type WindowId =
   | "med"
   | "convert"
   | "scripts"
+  | "tmx-export"
   | "changes"
   | "mapping";
 

@@ -1270,10 +1270,16 @@ export function WikiWindow() {
   const [src, setSrc] = useState("");
   return (
     <Modal id="wiki" title={t("wiki")}>
-      <input value={src} onChange={(e) => setSrc(e.target.value)} placeholder="page.xml" />
+      <input
+        data-setting="wiki-source"
+        value={src}
+        onChange={(e) => setSrc(e.target.value)}
+        placeholder="page.xml"
+      />
       <button
         type="button"
         className="primary"
+        data-action="import-wiki"
         onClick={() => void useApp.getState().importWiki(src).then(() => useApp.getState().openWindow("wiki", false))}
       >
         {t("create")}
@@ -1329,10 +1335,16 @@ export function ScriptsWindow() {
   const [out, setOut] = useState("");
   return (
     <Modal id="scripts" title={t("scripts")} wide>
-      <textarea rows={8} value={src} onChange={(e) => setSrc(e.target.value)} />
+      <textarea
+        data-setting="script-source"
+        rows={8}
+        value={src}
+        onChange={(e) => setSrc(e.target.value)}
+      />
       <button
         type="button"
         className="primary"
+        data-action="run-script"
         onClick={async () => {
           const r = (await callerManagedProductRpc("script.run", {
             source: src,
@@ -1353,16 +1365,76 @@ export function ScriptsWindow() {
   );
 }
 
+export function TmxExportWindow() {
+  const [dest, setDest] = useState("");
+  const [level, setLevel] = useState<"omegat" | "level1" | "level2">("level2");
+  const [error, setError] = useState("");
+  return (
+    <Modal id="tmx-export" title={t("exportTm")}>
+      <label>
+        {t("target")}
+        <input
+          data-setting="tmx-destination"
+          value={dest}
+          onChange={(event) => setDest(event.target.value)}
+          placeholder="export.tmx"
+        />
+      </label>
+      <label>
+        TMX
+        <select
+          data-setting="tmx-level"
+          value={level}
+          onChange={(event) =>
+            setLevel(event.target.value as "omegat" | "level1" | "level2")}
+        >
+          <option value="omegat">OmegaT</option>
+          <option value="level1">level1</option>
+          <option value="level2">level2</option>
+        </select>
+      </label>
+      <button
+        type="button"
+        className="primary"
+        data-action="export-tmx"
+        onClick={async () => {
+          setError("");
+          try {
+            await useApp.getState().exportTmx(dest, level);
+            useApp.getState().openWindow("tmx-export", false);
+          } catch (failure) {
+            setError(String(failure));
+          }
+        }}
+      >
+        {t("exportTm")}
+      </button>
+      {error && <div role="alert" data-persistence-error="tmx-export">{error}</div>}
+    </Modal>
+  );
+}
+
 export function GlossaryAddWindow() {
   const [s, setS] = useState("");
   const [tg, setTg] = useState("");
   return (
     <Modal id="glossary-add" title={t("glossary")}>
-      <input value={s} onChange={(e) => setS(e.target.value)} placeholder="source" />
-      <input value={tg} onChange={(e) => setTg(e.target.value)} placeholder="target" />
+      <input
+        data-setting="glossary-source"
+        value={s}
+        onChange={(e) => setS(e.target.value)}
+        placeholder="source"
+      />
+      <input
+        data-setting="glossary-target"
+        value={tg}
+        onChange={(e) => setTg(e.target.value)}
+        placeholder="target"
+      />
       <button
         type="button"
         className="primary"
+        data-action="add-glossary"
         onClick={() => void useApp.getState().addGlossary(s, tg).then(() => useApp.getState().openWindow("glossary-add", false))}
       >
         {t("create")}

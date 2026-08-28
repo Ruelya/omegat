@@ -7,6 +7,7 @@ pub mod cli_params;
 pub mod completer;
 pub mod consts;
 pub mod dict;
+pub mod durable_file;
 pub mod encoding;
 pub mod entity_util;
 pub mod error;

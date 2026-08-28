@@ -15,9 +15,11 @@ use omegat_team::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const LEGACY_QUEUE_VERSION: u8 = 2;
 const LEGACY_JOURNAL_FILE: &str = "external-refresh.json";
@@ -118,6 +120,40 @@ fn remove_file(path: &Path) -> Result<(), String> {
     }
 }
 
+fn legacy_migration_checkpoint(point: &str) -> Result<(), String> {
+    if std::env::var("OMEGAT_TEST_LEGACY_MIGRATION_POINT").as_deref() != Ok(point) {
+        return Ok(());
+    }
+    let Some(marker) = std::env::var_os("OMEGAT_TEST_LEGACY_MIGRATION_MARKER") else {
+        return Ok(());
+    };
+    let marker = PathBuf::from(marker);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("create migration marker directory: {error}"))?;
+    }
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(format!("create migration marker: {error}")),
+    };
+    writeln!(file, "{point}").map_err(|error| format!("write migration marker: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync migration marker: {error}"))?;
+    if let Some(parent) = marker.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("sync migration marker directory: {error}"))?;
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
 fn read_legacy_history(root: &Path) -> Result<Vec<RefreshEnvelope>, String> {
     let path = legacy_history_path(root);
     let contents = match std::fs::read_to_string(&path) {
@@ -173,6 +209,7 @@ fn migrate_legacy_journal(root: &Path) -> Result<(), String> {
         .map_err(|error| format!("migrate refresh journal: {error}"))?;
     // The shared queue and history are durable before either legacy source is
     // removed. A crash between removals merely repeats exact-id migration.
+    legacy_migration_checkpoint("after_shared_journal_publish")?;
     remove_file(&journal_path)?;
     remove_file(&history_path)
 }
@@ -207,6 +244,7 @@ fn migrate_legacy_active(config_dir: &Path) -> Result<(), String> {
         ));
     }
     write_json(&active_path(config_dir, &active.app_instance), &active)?;
+    legacy_migration_checkpoint("after_config_owner_publish")?;
     remove_file(&legacy_path)
 }
 

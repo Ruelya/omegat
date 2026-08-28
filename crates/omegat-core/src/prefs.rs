@@ -493,7 +493,10 @@ impl Preferences {
         std::fs::create_dir_all(&self.config_dir)?;
         let mut clean = self.clone();
         clean.extra.clear();
-        std::fs::write(clean.path(), serde_json::to_string_pretty(&clean).unwrap())
+        crate::durable_file::replace(
+            &clean.path(),
+            serde_json::to_string_pretty(&clean).unwrap().as_bytes(),
+        )
     }
 
     pub fn filter_option(&self, id: &str, key: &str) -> Option<&str> {
@@ -779,6 +782,27 @@ mod tests {
         let raw = std::fs::read_to_string(p.path()).unwrap();
         assert!(!raw.contains("\"extra\""));
         assert!(raw.contains("\"tag_validation\": \"abort\""));
+    }
+
+    #[test]
+    fn failed_atomic_save_preserves_live_preferences_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut before = Preferences::default_in(dir.path().to_path_buf());
+        before.locale = "en".into();
+        before.save().unwrap();
+        let original = std::fs::read(before.path()).unwrap();
+        let stored = before.path().with_extension("stored");
+        std::fs::rename(before.path(), &stored).unwrap();
+        std::fs::create_dir(before.path()).unwrap();
+
+        let mut after = before;
+        after.locale = "fr".into();
+        assert!(after.save().is_err());
+        assert_eq!(std::fs::read(stored).unwrap(), original);
+        assert!(std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")));
     }
 
     #[test]

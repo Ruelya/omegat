@@ -602,12 +602,14 @@ fn load_wordlist_into(path: &Path, out: &mut HashSet<String>) {
 }
 
 fn append_word(path: &Path, word: &str) -> std::io::Result<()> {
-    if let Some(p) = path.parent() {
-        std::fs::create_dir_all(p)?;
-    }
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(f, "{word}")
+    let mut contents = match std::fs::read(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    contents.extend_from_slice(word.as_bytes());
+    contents.push(b'\n');
+    crate::durable_file::replace(path, &contents)
 }
 
 #[cfg(test)]
@@ -660,6 +662,19 @@ mod tests {
         s.ignore("Ctrl", dir.path()).unwrap();
         assert!(s.is_correct("OmegaT"));
         assert!(s.is_correct("Ctrl"));
+    }
+
+    #[test]
+    fn word_lists_are_atomically_replaced_without_changing_append_order() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("omegat/learned_words.txt");
+        append_word(&path, "first").unwrap();
+        append_word(&path, "second").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first\nsecond\n");
+        assert!(std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().ends_with(".tmp")));
     }
 
     #[test]

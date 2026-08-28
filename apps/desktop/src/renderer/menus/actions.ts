@@ -129,6 +129,7 @@ export const SCRIPT_SLOT_ACTIONS = Array.from({ length: 12 }, (_, i) => `tools.s
 export const DESKTOP_MENU_ACTIONS = [
   ...JAVA_MENU_ACTIONS,
   ...SCRIPT_SLOT_ACTIONS,
+  "project.export-tmx",
   "tools.align",
   "tools.scripts",
   "options.shortcuts",
@@ -183,6 +184,9 @@ export async function dispatchMenuAction(action: string, _payload?: unknown): Pr
       break;
     case "project.compile":
       await a.compile();
+      break;
+    case "project.export-tmx":
+      a.openWindow("tmx-export");
       break;
     case "project.compile-single":
       if (e) await a.compile(e.file);

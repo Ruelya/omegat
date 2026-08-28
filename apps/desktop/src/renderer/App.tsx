@@ -28,6 +28,7 @@ import {
   SegmentationWindow,
   ShortcutsWindow,
   TeamWindow,
+  TmxExportWindow,
   WikiWindow,
 } from "./windows/ToolsWindows";
 import { Wizard } from "./windows/Wizard";
@@ -127,9 +128,50 @@ export function App() {
                 {app.longOperation?.phase === "cancelling" ? "Cancelling…" : t("cancel")}
               </button>
             )}
+            <button
+              type="button"
+              data-operation-action="replace"
+              onClick={() => app.openWindow("replace")}
+            >
+              {t("replace")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="glossary"
+              onClick={() => app.openWindow("glossary-add")}
+            >
+              {t("glossary")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="wiki"
+              onClick={() => app.openWindow("wiki")}
+            >
+              {t("wiki")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="tmx-export"
+              onClick={() => app.openWindow("tmx-export")}
+            >
+              {t("exportTm")}
+            </button>
+            <button
+              type="button"
+              data-operation-action="scripts"
+              onClick={() => app.openWindow("scripts")}
+            >
+              {t("scripts")}
+            </button>
             <button type="button" onClick={() => app.openWindow("search")}>{t("search")}</button>
             <button type="button" onClick={() => app.openWindow("files")}>{t("files")}</button>
-            <button type="button" onClick={() => app.openWindow("issues")}>{t("issues")}</button>
+            <button
+              type="button"
+              data-operation-action="issues"
+              onClick={() => app.openWindow("issues")}
+            >
+              {t("issues")}
+            </button>
             <button
               type="button"
               data-operation-action="project-properties"
@@ -206,6 +248,7 @@ export function App() {
       {w.med && <MedWindow />}
       {w.convert && <ConvertWindow />}
       {w.scripts && <ScriptsWindow />}
+      {w["tmx-export"] && <TmxExportWindow />}
       {w["glossary-add"] && <GlossaryAddWindow />}
       {app.error && <div className="status">{app.error}</div>}
     </div>

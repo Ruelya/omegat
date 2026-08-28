@@ -7390,6 +7390,223 @@ fn unified_journal_migrates_refresh_envelopes_and_compacts_only_acked_work() {
 }
 
 #[test]
+fn legacy_journal_and_config_owner_migration_survive_real_process_kills() {
+    fn spawn_faulted(
+        config: &std::path::Path,
+        point: Option<&str>,
+        marker: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"));
+        command.env("OMEGAT_CONFIG_DIR", config);
+        if let Some(point) = point {
+            command
+                .env("OMEGAT_TEST_LEGACY_MIGRATION_POINT", point)
+                .env("OMEGAT_TEST_LEGACY_MIGRATION_MARKER", marker);
+        }
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    fn start_pending(
+        child_in: &mut impl Write,
+        root: &std::path::Path,
+        app_instance: &str,
+        generation: u64,
+    ) {
+        writeln!(
+            child_in,
+            "{}",
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "transaction.receipt.pending",
+                "params": {
+                    "root": root,
+                    "app_instance": app_instance,
+                    "generation": generation,
+                },
+            })
+        )
+        .unwrap();
+        child_in.flush().unwrap();
+    }
+
+    fn wait_for_marker(child: &mut std::process::Child, marker: &std::path::Path) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !marker.is_file() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "migration checkpoint was not reached"
+            );
+            assert_eq!(
+                child.try_wait().unwrap(),
+                None,
+                "sidecar exited before migration checkpoint"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("project");
+    let props = omegat_core::properties::ProjectProperties::create(
+        root.clone(),
+        "en".into(),
+        "fr".into(),
+        false,
+    );
+    props.ensure_dirs().unwrap();
+    props.write().unwrap();
+    std::fs::write(props.source_dir.join("source.txt"), "legacy source").unwrap();
+    let root = root.canonicalize().unwrap();
+    let transactions = root.join(".repositories/transactions");
+    std::fs::create_dir_all(&transactions).unwrap();
+    let legacy_journal = transactions.join("external-refresh.json");
+    let legacy_history = transactions.join("external-refresh-history.ndjson");
+    let legacy_owner = config.join("transactions/external-refresh-active.json");
+    std::fs::create_dir_all(legacy_owner.parent().unwrap()).unwrap();
+
+    let payload = json!({
+        "paths": [root.join("source/source.txt")],
+        "fingerprints": { "source/source.txt": "legacy-fingerprint" },
+        "sources": ["native"],
+    });
+    let pending = json!({
+        "version": 1,
+        "project_root": root,
+        "generation": 7,
+        "batch_id": "legacy-process-pending",
+        "status": "pending",
+        "error_code": null,
+        "updated_unix_ms": 20,
+        "payload": payload,
+    });
+    let mut completed = pending.clone();
+    completed["batch_id"] = json!("legacy-process-completed");
+    completed["status"] = json!("completed");
+    completed["updated_unix_ms"] = json!(10);
+    std::fs::write(
+        &legacy_journal,
+        serde_json::to_vec_pretty(&json!({
+            "version": 2,
+            "project_root": root,
+            "app_instance": "legacy-process-owner",
+            "generation": 7,
+            "batches": [pending],
+            "updated_unix_ms": 20,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        &legacy_history,
+        format!("{}\n", serde_json::to_string(&completed).unwrap()),
+    )
+    .unwrap();
+    std::fs::write(
+        &legacy_owner,
+        serde_json::to_vec_pretty(&json!({
+            "version": 1,
+            "project_root": root,
+            "app_instance": "legacy-process-owner",
+            "generation": 7,
+            "updated_unix_ms": 20,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let journal_marker = temp.path().join("journal-published.marker");
+    let (mut journal_process, mut journal_in, _journal_out) = spawn_faulted(
+        &config,
+        Some("after_shared_journal_publish"),
+        &journal_marker,
+    );
+    start_pending(&mut journal_in, &root, "replacement-one", 30);
+    wait_for_marker(&mut journal_process, &journal_marker);
+    assert!(transactions.join("active.json").is_file());
+    assert!(transactions.join("history.ndjson").is_file());
+    assert!(legacy_journal.is_file());
+    assert!(legacy_history.is_file());
+    assert!(legacy_owner.is_file());
+    journal_process.kill().unwrap();
+    journal_process.wait().unwrap();
+
+    let owner_marker = temp.path().join("owner-published.marker");
+    let (mut owner_process, mut owner_in, _owner_out) = spawn_faulted(
+        &config,
+        Some("after_config_owner_publish"),
+        &owner_marker,
+    );
+    start_pending(&mut owner_in, &root, "replacement-two", 31);
+    wait_for_marker(&mut owner_process, &owner_marker);
+    assert!(!legacy_journal.exists());
+    assert!(!legacy_history.exists());
+    assert!(legacy_owner.is_file());
+    let migrated_owners = config.join("transactions/external-refresh-active");
+    assert_eq!(std::fs::read_dir(&migrated_owners).unwrap().count(), 1);
+    owner_process.kill().unwrap();
+    owner_process.wait().unwrap();
+
+    let unused_marker = temp.path().join("unused.marker");
+    let (mut recovered, mut recovered_in, mut recovered_out) =
+        spawn_faulted(&config, None, &unused_marker);
+    let selected = rpc(
+        &mut recovered_in,
+        &mut recovered_out,
+        2,
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "replacement-three",
+            "generation": 32,
+        }),
+    );
+    assert_eq!(
+        selected["result"]["envelopes"][0]["batch_id"],
+        "legacy-process-pending"
+    );
+    assert_eq!(selected["result"]["envelopes"][0]["status"], "pending");
+    assert!(!legacy_owner.exists());
+    assert_eq!(std::fs::read_dir(&migrated_owners).unwrap().count(), 1);
+
+    let active: Value =
+        serde_json::from_slice(&std::fs::read(transactions.join("active.json")).unwrap()).unwrap();
+    assert_eq!(
+        active["batches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["batch_id"] == "legacy-process-pending")
+            .count(),
+        1
+    );
+    let history = std::fs::read_to_string(transactions.join("history.ndjson")).unwrap();
+    assert_eq!(
+        history
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|row| row["batch_id"] == "legacy-process-completed")
+            .count(),
+        1
+    );
+    recovered.kill().unwrap();
+    recovered.wait().unwrap();
+}
+
+#[test]
 fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
     fn spawn_sidecar(
         config: &std::path::Path,
