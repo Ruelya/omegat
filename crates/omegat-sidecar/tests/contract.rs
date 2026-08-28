@@ -1094,6 +1094,72 @@ fn dead_owner_product_heads_choose_one_of_simultaneous_replacements() {
             "project.reload",
             json!({}),
         );
+        let entries = rpc(
+            &mut setup.input,
+            &mut setup.output,
+            20,
+            "entry.list",
+            json!({}),
+        );
+        let entry = &entries["result"][0];
+        let mut key_fields = entry["key"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        key_fields.sort_unstable();
+        assert_eq!(
+            key_fields,
+            ["file", "id", "next", "path", "prev", "source_text"]
+        );
+        let initial_batch = format!("atomic-{kind}-initial-entry");
+        let initial = rpc(
+            &mut setup.input,
+            &mut setup.output,
+            21,
+            "entry.set",
+            json!({
+                "index": entry["index"],
+                "key": entry["key"],
+                "translation": format!("atomic {kind} translation"),
+                "note": "atomic replacement election",
+                "revision": entry["revision"],
+                "default_translation": false,
+                "transaction_project_root": root,
+                "transaction_generation": 60,
+                "transaction_batch_id": initial_batch,
+            }),
+        );
+        assert_eq!(
+            initial["result"]["receipt"]["payload"]["operation"],
+            "entry.set"
+        );
+        let initial_ack = rpc(
+            &mut setup.input,
+            &mut setup.output,
+            22,
+            "transaction.receipt.ack",
+            json!({
+                "root": root,
+                "app_instance": format!("atomic-{kind}-setup"),
+                "generation": 60,
+                "batch_id": initial_batch,
+                "operation": "entry.set",
+                "outcome": "succeeded",
+            }),
+        );
+        assert_eq!(initial_ack["result"]["ack"]["acknowledged"], true);
+        assert_eq!(
+            pending(
+                &mut setup,
+                23,
+                &root,
+                &format!("atomic-{kind}-setup"),
+                60,
+            )["result"]["envelopes"],
+            json!([])
+        );
 
         let remote_path = remote.join("target/atomic.txt");
         if kind == "team" {
