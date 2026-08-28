@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultVersion",
+  "version": "2.0",
+  "keys": [
+    "org.omegat.core.segmentation.SRXManagerTest#testGetDefaultVersion"
+  ]
+}

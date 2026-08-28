@@ -1,0 +1,9 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.BiDiMarkersTest#testBidiMarkersNoBidi",
+  "enabled": true,
+  "source": "edit",
+  "translation": "edit",
+  "is_active": true,
+  "marks": [],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "magento",
+  "fixture": "magento/MagentoFilter.csv",
+  "java_test": "org.omegat.filters.MagentoFilterTest#testParse",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "Tr: %s",
+    "Tr: There are <a href=\"\"%s\"\">%s items</a> in your cart.",
+    "Tr: Separate by \"\",\"\".",
+    "Tr: After selecting a new media storage location, press the Synchronize button",
+    "Tr: The reader repaired"
+  ],
+  "ids": [
+    "%s",
+    "There are <a href=\"\"%s\"\">%s items</a> in your cart.",
+    "Separate by \"\",\"\".",
+    "After selecting a new media storage location, press the \nSynchronize button",
+    "The reader repaired"
+  ],
+  "paths": [
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "\"%s\",\"Tr: %s\"\n\"There are <a href=\"\"%s\"\">%s items</a> in your cart.\",\"Tr: There are <a href=\"\"%s\"\">%s items</a> in your cart.\"\n\"Separate by \"\",\"\".\",\"Tr: Separate by \"\",\"\".\"\n\"After selecting a new media storage location, press the \nSynchronize button\",\"Tr: After selecting a new media storage location, press the Synchronize button\"\n\"The reader repaired\",\"Tr: The reader repaired\""
+}

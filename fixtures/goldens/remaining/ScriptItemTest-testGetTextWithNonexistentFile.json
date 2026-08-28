@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithNonexistentFile",
+  "file_name": "missing.js",
+  "error_class": "FileNotFoundException",
+  "keys": [
+    "org.omegat.gui.scripting.ScriptItemTest#testGetTextWithNonexistentFile"
+  ]
+}

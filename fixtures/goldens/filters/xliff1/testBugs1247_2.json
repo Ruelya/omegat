@@ -1,0 +1,24 @@
+{
+  "id": "xliff1",
+  "fixture": "xliff/filters4-xliff1/file-XLIFFFilter1-multiple-file-tag.xlf",
+  "java_test": "org.omegat.filters4.Xliff1FilterTest#testBugs1247_2",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "This is text3",
+    "test2"
+  ],
+  "ids": [
+    "id1",
+    "id2"
+  ],
+  "paths": [
+    "//text3.txt",
+    "//text.txt"
+  ],
+  "empty_write_text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><xliff xmlns=\"urn:oasis:names:tc:xliff:document:1.2\" version=\"1.2\">\n<file target-language=\"be\" source-language=\"en\" original=\"text3.txt\" datatype=\"plaintext\">\n    <body>\n        <trans-unit id=\"id1\">\n            <source>This is text3</source>\n        </trans-unit>\n    </body>\n</file>\n<file target-language=\"be\" source-language=\"en\" original=\"text.txt\" datatype=\"plaintext\">\n    <body>\n        <trans-unit id=\"id2\">\n            <source>test2</source>\n        </trans-unit>\n    </body>\n</file>\n</xliff>"
+}

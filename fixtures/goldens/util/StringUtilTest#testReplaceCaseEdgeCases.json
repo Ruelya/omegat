@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testReplaceCaseEdgeCases",
+  "U": "HELLO",
+  "plain": "Hello, World!",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testReplaceCaseEdgeCases"
+  ]
+}

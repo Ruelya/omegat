@@ -1,0 +1,2668 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+const WAIT_MS = 60_000;
+const SOURCE_FILES = 2_400;
+const desktopDir = resolve(import.meta.dirname, "..");
+const executable =
+  process.env.OMEGAT_PACKAGED_EXECUTABLE
+  ?? join(desktopDir, "release", "linux-unpacked", "omegat-desktop");
+const sidecar =
+  process.env.OMEGAT_SIDECAR
+  ?? resolve(desktopDir, "..", "..", "target", "release", "omegat-sidecar");
+const keepWorkDir = process.env.OMEGAT_KEEP_E2E_WORKDIR === "1";
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+
+async function waitFor(label, check, timeoutMs = WAIT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      const value = await check();
+      if (value) return value;
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(50);
+  }
+  throw new Error(
+    `Timed out waiting for ${label}${lastError ? `: ${lastError.message}` : ""}`,
+  );
+}
+
+async function unusedPort() {
+  const server = createServer();
+  await new Promise((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  assert(address && typeof address === "object");
+  await new Promise((resolveClose, reject) =>
+    server.close((error) => error ? reject(error) : resolveClose())
+  );
+  return address.port;
+}
+
+async function rpcOnce(configDir, method, params) {
+  const child = spawn(sidecar, [], {
+    env: { ...process.env, OMEGAT_CONFIG_DIR: configDir },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  child.stdin.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })}\n`);
+  const code = await new Promise((resolveExit, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolveExit);
+  });
+  assert.equal(code, 0, `sidecar setup failed: ${stderr}`);
+  const response = stdout
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line))
+    .find((message) => message.id === 1);
+  assert(response, `sidecar setup returned no response: ${stdout}`);
+  assert.equal(response.error, undefined, JSON.stringify(response.error));
+  return response.result;
+}
+
+async function startXvfb() {
+  const child = spawn(
+    "Xvfb",
+    ["-displayfd", "3", "-screen", "0", "1440x900x24", "-nolisten", "tcp"],
+    { stdio: ["ignore", "ignore", "pipe", "pipe"] },
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const display = await new Promise((resolveDisplay, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error(`Xvfb did not report a display: ${stderr}`)),
+      5_000,
+    );
+    timeout.unref();
+    let output = "";
+    child.stdio[3].on("data", (chunk) => {
+      output += chunk.toString();
+      const newline = output.indexOf("\n");
+      if (newline >= 0) {
+        clearTimeout(timeout);
+        resolveDisplay(`:${output.slice(0, newline).trim()}`);
+      }
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      reject(new Error(`Xvfb exited early with ${code}: ${stderr}`));
+    });
+  });
+  return { child, display };
+}
+
+async function pageTarget(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
+    signal: AbortSignal.timeout(1_000),
+  });
+  if (!response.ok) throw new Error(`DevTools endpoint returned ${response.status}`);
+  const targets = await response.json();
+  return targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+}
+
+class DevToolsClient {
+  constructor(url) {
+    this.socket = new WebSocket(url);
+    this.nextId = 1;
+    this.pending = new Map();
+  }
+
+  async connect() {
+    await new Promise((resolveOpen, reject) => {
+      this.socket.addEventListener("open", resolveOpen, { once: true });
+      this.socket.addEventListener("error", reject, { once: true });
+    });
+    this.socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data);
+      if (message.id == null) return;
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (message.error) pending.reject(new Error(message.error.message));
+      else pending.resolve(message.result);
+    });
+  }
+
+  command(method, params = {}) {
+    const id = this.nextId++;
+    return new Promise((resolveCommand, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        const context = method === "Runtime.evaluate"
+          ? ` (${String(params.expression ?? "").replaceAll(/\s+/g, " ").slice(0, 240)})`
+          : "";
+        reject(new Error(`DevTools command timed out: ${method}${context}`));
+      }, WAIT_MS);
+      timeout.unref();
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolveCommand(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+      this.socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  async evaluate(expression, awaitPromise = false) {
+    const response = await this.command("Runtime.evaluate", {
+      expression,
+      awaitPromise,
+      returnByValue: true,
+    });
+    if (response.exceptionDetails) {
+      throw new Error(
+        response.exceptionDetails.exception?.description ?? "renderer evaluation failed",
+      );
+    }
+    return response.result?.value;
+  }
+
+  close() {
+    this.socket.close();
+  }
+}
+
+async function snapshot(root, { ignoreTopLevel = [] } = {}) {
+  const ignored = new Set(ignoreTopLevel);
+  const files = [];
+  async function walk(dir, prefix = "") {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      if (!prefix && ignored.has(entry.name)) continue;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) await walk(path, relative);
+      else if (entry.isFile()) {
+        files.push([relative, (await readFile(path)).toString("base64")]);
+      }
+    }
+  }
+  await walk(root);
+  return files;
+}
+
+async function compileResidue(root) {
+  const residue = [];
+  async function walk(dir, prefix = "") {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.name.includes(".omegat-compile-")) residue.push(relative);
+      if (entry.isDirectory()) await walk(join(dir, entry.name), relative);
+    }
+  }
+  await walk(root);
+  return residue.sort();
+}
+
+async function writeSources(sourceDir) {
+  const payload = "x".repeat(16_384);
+  for (let start = 0; start < SOURCE_FILES; start += 100) {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(100, SOURCE_FILES - start) },
+        (_, offset) => {
+          const index = start + offset;
+          if (index === 1_000) {
+            return writeFile(
+              join(sourceDir, "1000-wanted.yaml"),
+              'wanted: "Repeated packaged source"\n',
+              "utf8",
+            );
+          }
+          if (index === 1_001) {
+            return writeFile(
+              join(sourceDir, "1001-decoy.yaml"),
+              'decoy: "Repeated packaged source"\n',
+              "utf8",
+            );
+          }
+          return writeFile(
+            join(sourceDir, `${String(index).padStart(4, "0")}.txt`),
+            `Source ${index}: ${payload}`,
+            "utf8",
+          );
+        },
+      ),
+    );
+  }
+}
+
+async function writeRemoteSources(sourceDir) {
+  await mkdir(sourceDir, { recursive: true });
+  const payload = "z".repeat(16_384);
+  for (let start = 0; start < SOURCE_FILES; start += 100) {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(100, SOURCE_FILES - start) },
+        (_, offset) => {
+          const index = start + offset;
+          return writeFile(
+            join(sourceDir, `${String(index).padStart(4, "0")}.txt`),
+            `Remote ${index}: ${payload}`,
+            "utf8",
+          );
+        },
+      ),
+    );
+  }
+}
+
+function xmlEscape(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function writeAlternativeTmx(path, key, translation) {
+  return writeAlternativeEntriesTmx(path, [{ key, translation }]);
+}
+
+async function writeAlternativeEntriesTmx(path, entries) {
+  const units = entries.map(({ key, translation }) => {
+    const props = [
+      ["file", key.file],
+      ["id", key.id],
+      ["prev", key.prev],
+      ["next", key.next],
+      ["path", key.path],
+    ]
+      .filter(([, value]) => value !== null)
+      .map(([name, value]) =>
+        `      <prop type="${name}">${xmlEscape(value)}</prop>`
+      )
+      .join("\n");
+    return `    <tu>
+${props}
+      <tuv xml:lang="en"><seg>${xmlEscape(key.source_text)}</seg></tuv>
+      <tuv xml:lang="fr"><seg>${xmlEscape(translation)}</seg></tuv>
+    </tu>`;
+  }).join("\n");
+  await writeFile(
+    path,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="OmegaT" creationtoolversion="6.2.0" segtype="paragraph" o-tmf="OmegaT TMX" adminlang="EN-US" srclang="en" datatype="plaintext"/>
+  <body>
+${units}
+  </body>
+</tmx>
+`,
+    "utf8",
+  );
+}
+
+async function pathExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function editorState(client) {
+  return client.evaluate(`(() => {
+    const segment = document.querySelector(".editor-segment.is-active");
+    const surface = segment?.querySelector(".editor-surface");
+    const caret = surface?.querySelector(":scope > .caret");
+    const following = caret
+      ? [...surface.children]
+          .slice([...surface.children].indexOf(caret) + 1)
+          .find((child) => child.hasAttribute("data-offset"))
+      : null;
+    return {
+      entry: Number(segment?.getAttribute("data-entry") ?? -1),
+      key: segment?.getAttribute("data-entry-key") ?? "",
+      source: segment?.querySelector(".src")?.textContent ?? "",
+      translation: surface?.textContent ?? "",
+      caret: following
+        ? Number(following.getAttribute("data-offset"))
+        : (surface?.textContent.length ?? -1),
+    };
+  })()`);
+}
+
+async function clickEnabledConflictAction(client, key, action, label) {
+  const serializedKey = JSON.stringify(key);
+  await client.evaluate(`(() => {
+    window.__omegatStopConflictActionStart?.();
+    window.__omegatConflictActionStart = null;
+    window.__omegatStopConflictActionStart = window.omegat.onRpcOperation((event) => {
+      if (
+        event.method === "team.resolve"
+        && event.phase === "started"
+        && !window.__omegatConflictActionStart
+      ) {
+        window.__omegatConflictActionStart = event;
+      }
+    });
+  })()`);
+  try {
+    return await waitFor(label, async () => {
+      const state = await client.evaluate(`(() => {
+        if (window.__omegatConflictActionStart) {
+          return { started: window.__omegatConflictActionStart, clicked: false };
+        }
+        const row = [...document.querySelectorAll("[data-team-conflict-key]")]
+          .find((candidate) =>
+            candidate.getAttribute("data-team-conflict-key")
+              === ${JSON.stringify(serializedKey)}
+          );
+        const action = ${JSON.stringify(action)};
+        const button = row?.querySelector(
+          '[data-operation-action="' + action + '"]'
+        );
+        if (!(button instanceof HTMLButtonElement) || button.disabled) {
+          return { started: null, clicked: false };
+        }
+        button.click();
+        return { started: window.__omegatConflictActionStart, clicked: true };
+      })()`);
+      return state.started ?? undefined;
+    });
+  } finally {
+    await client.evaluate(`(() => {
+      window.__omegatStopConflictActionStart?.();
+      window.__omegatStopConflictActionStart = null;
+    })()`);
+  }
+}
+
+async function terminate(child) {
+  if (!child || child.exitCode != null || child.signalCode != null) return;
+  const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+  child.kill("SIGTERM");
+  await Promise.race([exited, sleep(2_000)]);
+}
+
+async function descendantProcesses(rootPid) {
+  const found = [];
+  const queue = [rootPid];
+  while (queue.length > 0) {
+    const pid = queue.shift();
+    let children = "";
+    try {
+      children = await readFile(`/proc/${pid}/task/${pid}/children`, "utf8");
+    } catch {
+      continue;
+    }
+    for (const value of children.trim().split(/\s+/).filter(Boolean)) {
+      const childPid = Number(value);
+      if (!Number.isInteger(childPid)) continue;
+      let command = "";
+      try {
+        command = (await readFile(`/proc/${childPid}/cmdline`, "utf8"))
+          .replaceAll("\0", " ");
+      } catch {
+        // The process may have exited between /proc reads.
+      }
+      found.push({ pid: childPid, command });
+      queue.push(childPid);
+    }
+  }
+  return found;
+}
+
+async function xdotool(display, args) {
+  return new Promise((resolveCommand, reject) => {
+    const child = spawn("xdotool", args, {
+      env: { ...process.env, DISPLAY: display },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolveCommand(stdout.trim());
+      else reject(new Error(`xdotool ${args[0]} failed (${code}): ${stderr}`));
+    });
+  });
+}
+
+async function sidecarProjectState(client) {
+  return client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const version = await window.omegat.rpc("sys.version", {});
+    return {
+      version,
+      entryCount: entries.length,
+      firstEntry: entries[0] ?? null,
+    };
+  })()`, true);
+}
+
+async function cancelTeamOperation(
+  client,
+  { kind, action, cancelledMessage, project, remotes },
+) {
+  const projectBefore = await snapshot(project, {
+    ignoreTopLevel: [".repositories"],
+  });
+  const remoteBefore = await Promise.all(
+    remotes.map(({ root }) => snapshot(root)),
+  );
+  const activeJournal = join(
+    project,
+    ".repositories",
+    "transactions",
+    "active.json",
+  );
+  const activeBefore = await editorState(client);
+  const parsedKey = JSON.parse(activeBefore.key);
+  assert.deepEqual(
+    Object.keys(parsedKey).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+    "the packaged editor did not expose a complete six-field EntryKey",
+  );
+  const sidecarBefore = await sidecarProjectState(client);
+  assert.equal(sidecarBefore.entryCount, SOURCE_FILES);
+  assert.equal(sidecarBefore.firstEntry.key.file, parsedKey.file);
+  assert.notEqual(
+    activeBefore.translation,
+    sidecarBefore.firstEntry.translation,
+    "the active Document3 must be dirty before team cancellation",
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatTeamProgress = null;
+    window.__omegatTeamCancelObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatTeamCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === ${JSON.stringify(kind)}
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "team.mapping.copy"
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button || window.__omegatTeamProgress) return;
+        window.__omegatTeamProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          operation: app.dataset.operation,
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          cancelVisible: true,
+        };
+        button.click();
+      }
+    });
+    window.__omegatTeamCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector(
+        '[data-operation-action=${JSON.stringify(action)}]'
+      );
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    `visible ${action} action was unavailable`,
+  );
+
+  const terminal = await waitFor(`${kind} protocol-confirmed cancellation`, async () => {
+    const state = await client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      return {
+        operation: app?.dataset.operation ?? "",
+        phase: app?.dataset.operationPhase ?? "",
+        stage: app?.dataset.operationStage ?? "",
+        operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+        cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+      };
+    })()`);
+    if (
+      state.operation === kind
+      && state.phase === "cancelled"
+      && state.stage === "team.mapping.copy"
+      && state.operationStatus === `${kind}: cancelled (team.mapping.copy)`
+      && state.teamMessage === cancelledMessage
+      && !state.cancelVisible
+    ) {
+      return state;
+    }
+    throw new Error(JSON.stringify(state));
+  });
+
+  const postCancel = await client.evaluate(`(async () => {
+    window.__omegatTeamCancelObserver?.disconnect();
+    const entries = await window.omegat.rpc("entry.list", {});
+    const version = await window.omegat.rpc("sys.version", {});
+    return {
+      visibleProgress: window.__omegatTeamProgress,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+      version,
+      entryCount: entries.length,
+      firstEntry: entries[0] ?? null,
+    };
+  })()`, true);
+  assert(postCancel.visibleProgress, `${kind} progress checkpoint was not observed`);
+  assert.equal(postCancel.visibleProgress.operation, kind);
+  assert.equal(postCancel.visibleProgress.phase, "progress");
+  assert.equal(postCancel.visibleProgress.stage, "team.mapping.copy");
+  assert.equal(postCancel.visibleProgress.status, `${kind}: team.mapping.copy`);
+  assert.equal(postCancel.visibleProgress.cancelVisible, true);
+  assert(postCancel.visibleProgress.requestId);
+
+  const requestEvents = postCancel.rpcTrace.filter(
+    (event) => event.requestId === postCancel.visibleProgress.requestId,
+  );
+  const requestTrace = requestEvents
+    .map((event) => `${event.phase}:${event.stage}`)
+    .filter((value, index, values) => index === 0 || values[index - 1] !== value);
+  assert.deepEqual(requestTrace, [
+    "started:",
+    "progress:team.mapping.copy",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  const cancelledEvent = requestEvents.find((event) => event.phase === "cancelled");
+  assert.equal(
+    cancelledEvent?.errorCode,
+    -32800,
+    `${kind} became terminal without the sidecar cancellation code`,
+  );
+  assert(
+    postCancel.domTrace.includes(
+      `${kind}|cancelling|team.mapping.copy|${kind}: cancelling (team.mapping.copy)`,
+    ),
+    `renderer never visibly entered ${kind} cancelling: ${
+      JSON.stringify(postCancel.domTrace)
+    }`,
+  );
+
+  assert.deepEqual(
+    await snapshot(project, { ignoreTopLevel: [".repositories"] }),
+    projectBefore,
+  );
+  const remoteAfter = await Promise.all(
+    remotes.map(({ root }) => snapshot(root)),
+  );
+  assert.deepEqual(remoteAfter, remoteBefore);
+  assert.equal(await pathExists(activeJournal), false);
+  assert.deepEqual(await editorState(client), activeBefore);
+  assert.equal(postCancel.version.version, "6.2.0");
+  assert.equal(postCancel.entryCount, sidecarBefore.entryCount);
+  assert.deepEqual(postCancel.firstEntry, sidecarBefore.firstEntry);
+
+  return {
+    visibleProgress: postCancel.visibleProgress,
+    terminal,
+    requestTrace,
+    protocolErrorCode: cancelledEvent.errorCode,
+    domTrace: postCancel.domTrace,
+    projectRollback: true,
+    remoteRollback: Object.fromEntries(remotes.map(({ name }) => [name, true])),
+    activeJournalRemoved: true,
+    editor: {
+      entry: activeBefore.entry,
+      completeEntryKey: parsedKey,
+      translation: activeBefore.translation,
+      caret: activeBefore.caret,
+    },
+    sidecar: {
+      version: postCancel.version.version,
+      entries: postCancel.entryCount,
+    },
+  };
+}
+
+if (process.platform !== "linux") {
+  throw new Error("This E2E exercises long-operation cancellation in a real Linux package");
+}
+await Promise.all([access(executable), access(sidecar)]);
+
+const workDir = await mkdtemp(join(tmpdir(), "omegat-long-cancel-e2e-"));
+const configDir = join(workDir, "config");
+const project = join(workDir, "project");
+const sourceDir = join(project, "source");
+const targetDir = join(project, "target");
+const mainRemote = join(workDir, "main-file-remote");
+const mappingRemote = join(workDir, "mapping-file-remote");
+const conflictRemote = join(workDir, "complete-key-conflict-remote");
+await mkdir(configDir, { recursive: true });
+await rpcOnce(configDir, "project.create", {
+  root: project,
+  source_lang: "en",
+  target_lang: "fr",
+  sentence_seg: false,
+});
+await writeSources(sourceDir);
+await mkdir(mainRemote, { recursive: true });
+await writeRemoteSources(join(mappingRemote, "source"));
+await mkdir(join(targetDir, "nested"), { recursive: true });
+await Promise.all([
+  writeFile(join(targetDir, "0000.txt"), "PREEXISTING TARGET", "utf8"),
+  writeFile(join(targetDir, "nested", "unrelated.keep"), "MUST REMAIN", "utf8"),
+]);
+const targetBefore = await snapshot(targetDir);
+
+const port = await unusedPort();
+const xvfb = await startXvfb();
+let application;
+let client;
+let stderr = "";
+try {
+  application = spawn(
+    executable,
+    [`--remote-debugging-port=${port}`, "--disable-gpu", "--no-sandbox"],
+    {
+      env: {
+        ...process.env,
+        DISPLAY: xvfb.display,
+        OMEGAT_CONFIG_DIR: configDir,
+        OMEGAT_PROJECT: project,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  application.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const target = await waitFor("packaged renderer", () => pageTarget(port));
+  client = new DevToolsClient(target.webSocketDebuggerUrl);
+  await client.connect();
+  await client.command("Runtime.enable");
+
+  await waitFor("large project workspace", async () => {
+    const state = await client.evaluate(`(() => {
+      document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
+      return {
+        project: document.querySelector(".app")?.dataset.projectId ?? null,
+        source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? null,
+        compileReady: !document.querySelector('[data-operation-action="compile"]')?.disabled,
+      };
+    })()`);
+    if (
+      state.project === project
+      && state.source?.startsWith("Source ")
+      && state.compileReady
+    ) {
+      return state;
+    }
+    throw new Error(JSON.stringify(state));
+  });
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatStopOperationTrace = window.omegat.onRpcOperation((event) => {
+      window.__omegatRpcOperationTrace.push({
+        requestId: event.requestId,
+        method: event.method,
+        phase: event.phase,
+        stage: event.stage ?? "",
+        error: event.error ?? "",
+        errorCode: event.errorCode ?? null,
+      });
+    });
+    const app = document.querySelector(".app");
+    const record = () => {
+      const value = [
+        app?.dataset.operation ?? "",
+        app?.dataset.operationPhase ?? "",
+        app?.dataset.operationStage ?? "",
+        document.querySelector("[data-operation-status]")?.textContent ?? "",
+      ].join("|");
+      const trace = window.__omegatDomOperationTrace;
+      if (trace.at(-1) !== value) trace.push(value);
+    };
+    window.__omegatOperationObserver = new MutationObserver(record);
+    window.__omegatOperationObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+    record();
+  })()`);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="compile"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible compile action was unavailable",
+  );
+
+  const visibleProgress = await waitFor("visible compile progress checkpoint", async () => {
+    const state = await client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      return {
+        requestId: app?.dataset.operationRequestId ?? "",
+        operation: app?.dataset.operation ?? "",
+        phase: app?.dataset.operationPhase ?? "",
+        stage: app?.dataset.operationStage ?? "",
+        status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+      };
+    })()`);
+    if (
+      state.operation === "compile"
+      && state.phase === "progress"
+      && state.stage === "project.compile.targets"
+      && state.status === "compile: project.compile.targets"
+      && state.cancelVisible
+    ) {
+      return state;
+    }
+    throw new Error(JSON.stringify(state));
+  });
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="cancel"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible cancel action was unavailable",
+  );
+
+  const cancelled = await waitFor("protocol-confirmed visible cancellation", async () => {
+    const state = await client.evaluate(`(() => {
+      const app = document.querySelector(".app");
+      return {
+        operation: app?.dataset.operation ?? "",
+        phase: app?.dataset.operationPhase ?? "",
+        stage: app?.dataset.operationStage ?? "",
+        operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        footer: [...document.querySelectorAll("footer.status span")]
+          .map((node) => node.textContent ?? ""),
+        cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+      };
+    })()`);
+    if (
+      state.operation === "compile"
+      && state.phase === "cancelled"
+      && state.stage === "project.compile.targets"
+      && state.operationStatus
+        === "compile: cancelled (project.compile.targets)"
+      && !state.cancelVisible
+    ) {
+      return state;
+    }
+    throw new Error(JSON.stringify(state));
+  });
+
+  const postCancel = await client.evaluate(`(async () => ({
+    version: await window.omegat.rpc("sys.version", {}),
+    entries: (await window.omegat.rpc("entry.list", {})).length,
+    rpcTrace: window.__omegatRpcOperationTrace,
+    domTrace: window.__omegatDomOperationTrace,
+  }))()`, true);
+  const requestTrace = postCancel.rpcTrace
+    .filter((event) => event.requestId === visibleProgress.requestId)
+    .map((event) => `${event.phase}:${event.stage}`);
+  assert.deepEqual(requestTrace, [
+    "started:",
+    "progress:project.compile.targets",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  assert(
+    postCancel.domTrace.includes(
+      "compile|cancelling|project.compile.targets|compile: cancelling (project.compile.targets)",
+    ),
+    `renderer never visibly entered cancelling: ${JSON.stringify(postCancel.domTrace)}`,
+  );
+  assert.equal(postCancel.version.rewrite, true);
+  assert.equal(postCancel.entries, SOURCE_FILES);
+  assert.deepEqual(await snapshot(targetDir), targetBefore);
+  assert.deepEqual(await compileResidue(project), []);
+
+  const reloadBefore = await client.evaluate(`(() => {
+    const active = document.querySelector(".editor-segment.is-active");
+    return {
+      entry: Number(active?.getAttribute("data-entry") ?? -1),
+      key: active?.getAttribute("data-entry-key") ?? "",
+      source: active?.querySelector(".src")?.textContent ?? "",
+      translation: active?.querySelector(".editor-surface")?.textContent ?? "",
+    };
+  })()`);
+  assert.equal(reloadBefore.entry, 1);
+  assert(reloadBefore.key, "active EntryKey was unavailable before reload");
+  assert(reloadBefore.source.startsWith("Source 0: "));
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatReloadProgress = null;
+    const app = document.querySelector(".app");
+    window.__omegatReloadCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "reload"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.reload.sources"
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button || window.__omegatReloadProgress) return;
+        window.__omegatReloadProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          operation: app.dataset.operation,
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          cancelVisible: true,
+        };
+        button.click();
+      }
+    });
+    window.__omegatReloadCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const windowId = await waitFor("OmegaT X11 window", async () => {
+    const ids = await xdotool(xvfb.display, [
+      "search",
+      "--sync",
+      "--onlyvisible",
+      "--name",
+      "OmegaT",
+    ]);
+    return ids.split(/\s+/).filter(Boolean).at(-1);
+  });
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "F5"]);
+
+  const reloadCancelled = await waitFor(
+    "protocol-confirmed visible reload cancellation",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const active = document.querySelector(".editor-segment.is-active");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          editorStatus: [...document.querySelectorAll("footer.status span")]
+            .map((node) => node.textContent ?? ""),
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+          entry: Number(active?.getAttribute("data-entry") ?? -1),
+          key: active?.getAttribute("data-entry-key") ?? "",
+          source: active?.querySelector(".src")?.textContent ?? "",
+          translation: active?.querySelector(".editor-surface")?.textContent ?? "",
+        };
+      })()`);
+      if (
+        state.operation === "reload"
+        && state.phase === "cancelled"
+        && state.stage === "project.reload.sources"
+        && state.operationStatus === "reload: cancelled (project.reload.sources)"
+        && state.editorStatus.includes("reload cancelled")
+        && !state.cancelVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const reloadPostCancel = await client.evaluate(`(async () => {
+    window.__omegatReloadCancelObserver?.disconnect();
+    const entries = await window.omegat.rpc("entry.list", {});
+    const version = await window.omegat.rpc("sys.version", {});
+    return {
+      version,
+      entryCount: entries.length,
+      firstEntry: {
+        key: JSON.stringify(entries[0]?.key ?? null),
+        source: entries[0]?.source ?? "",
+        translation: entries[0]?.translation ?? "",
+      },
+      visibleProgress: window.__omegatReloadProgress,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+    };
+  })()`, true);
+  const reloadRequestTrace = reloadPostCancel.rpcTrace
+    .filter((event) => event.requestId === reloadPostCancel.visibleProgress?.requestId)
+    .map((event) => `${event.phase}:${event.stage}`);
+  assert(reloadPostCancel.visibleProgress, "reload progress checkpoint was not observed");
+  assert.deepEqual(reloadPostCancel.visibleProgress, {
+    requestId: reloadPostCancel.visibleProgress.requestId,
+    operation: "reload",
+    phase: "progress",
+    stage: "project.reload.sources",
+    status: "reload: project.reload.sources",
+    cancelVisible: true,
+  });
+  assert(reloadPostCancel.visibleProgress.requestId);
+  assert.deepEqual(reloadRequestTrace, [
+    "started:",
+    "progress:project.reload.sources",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  assert(
+    reloadPostCancel.domTrace.includes(
+      "reload|cancelling|project.reload.sources|reload: cancelling (project.reload.sources)",
+    ),
+    `renderer never visibly entered reload cancelling: ${
+      JSON.stringify(reloadPostCancel.domTrace)
+    }`,
+  );
+  assert.deepEqual(
+    {
+      entry: reloadCancelled.entry,
+      key: reloadCancelled.key,
+      source: reloadCancelled.source,
+      translation: reloadCancelled.translation,
+    },
+    reloadBefore,
+  );
+  assert.equal(reloadPostCancel.entryCount, SOURCE_FILES);
+  assert.equal(reloadPostCancel.firstEntry.key, reloadBefore.key);
+  assert.equal(reloadPostCancel.firstEntry.source, reloadBefore.source);
+  assert.equal(reloadPostCancel.firstEntry.translation, reloadBefore.translation);
+  assert.equal(reloadPostCancel.version.version, "6.2.0");
+
+  const repositories = [
+    {
+      repo_type: "file",
+      url: mainRemote,
+      branch: null,
+      mappings: [{
+        local: "/",
+        repository: "/",
+        includes: ["main-repository-only.marker"],
+        excludes: [],
+      }],
+    },
+    {
+      repo_type: "file",
+      url: mappingRemote,
+      branch: null,
+      mappings: [{
+        local: "/source/",
+        repository: "/source/",
+        includes: [],
+        excludes: [],
+      }],
+    },
+  ];
+  const configured = await client.evaluate(
+    `window.omegat.rpc("team.mapping", ${JSON.stringify({ repositories })})`,
+    true,
+  );
+  assert.equal(configured.ok, true);
+  assert.equal(configured.repositories.length, 2);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+    "packaged editor did not focus its native input proxy",
+  );
+  const dirtyTeamTranslation = "unsaved team transaction draft 😀";
+  await client.command("Input.insertText", { text: dirtyTeamTranslation });
+  await waitFor("dirty team-cancellation Document3", async () => {
+    const state = await editorState(client);
+    return state.translation === dirtyTeamTranslation ? state : undefined;
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+  }
+  const dirtyEditor = await editorState(client);
+  assert.equal(dirtyEditor.translation, dirtyTeamTranslation);
+  // The first ArrowLeft crosses the terminal emoji's UTF-16 surrogate pair
+  // atomically; the remaining five cross one code unit each.
+  assert.equal(dirtyEditor.caret, dirtyTeamTranslation.length - 7);
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-window"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible team action was unavailable",
+  );
+  await waitFor("team transaction window", async () =>
+    await client.evaluate(
+      `Boolean(document.querySelector('[data-operation-action="team-sync"]'))`,
+    )
+      ? true
+      : undefined
+  );
+
+  const teamRemotes = [
+    { name: "main", root: mainRemote },
+    { name: "mapping", root: mappingRemote },
+  ];
+  const teamSync = await cancelTeamOperation(client, {
+    kind: "teamSync",
+    action: "team-sync",
+    cancelledMessage: "sync cancelled",
+    project,
+    remotes: teamRemotes,
+  });
+  const teamCommit = await cancelTeamOperation(client, {
+    kind: "teamCommit",
+    action: "team-commit-source",
+    cancelledMessage: "commit source cancelled",
+    project,
+    remotes: teamRemotes,
+  });
+  assert.deepEqual(await editorState(client), dirtyEditor);
+
+  const duplicateSetup = await client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const wanted = entries.find((entry) => entry.key.file === "1000-wanted.yaml");
+    const decoy = entries.find((entry) => entry.key.file === "1001-decoy.yaml");
+    if (!wanted || !decoy) throw new Error("packaged duplicate entries were not loaded");
+    const translation = "wanted duplicate translation 😀 tail";
+    await window.omegat.rpc("entry.set", {
+      index: wanted.index,
+      key: wanted.key,
+      translation,
+      note: "wanted duplicate note",
+      revision: wanted.revision,
+      default_translation: false,
+    });
+    await window.omegat.rpc("project.save", {});
+    return {
+      translation,
+      wanted: { index: wanted.index, key: wanted.key },
+      decoy: { index: decoy.index, key: decoy.key },
+    };
+  })()`, true);
+  assert.equal(
+    duplicateSetup.wanted.key.source_text,
+    duplicateSetup.decoy.key.source_text,
+  );
+  assert.notEqual(duplicateSetup.wanted.key.file, duplicateSetup.decoy.key.file);
+  assert.notEqual(duplicateSetup.wanted.key.id, duplicateSetup.decoy.key.id);
+  assert.notEqual(duplicateSetup.wanted.key.path, duplicateSetup.decoy.key.path);
+  assert.deepEqual(
+    Object.keys(duplicateSetup.wanted.key).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+  );
+
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(duplicateSetup.wanted.index + 1))};
+  })()`);
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  await waitFor("duplicated-source packaged entry", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(duplicateSetup.wanted.key)
+      ? state
+      : undefined;
+  });
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+  );
+  assert.equal(
+    (await editorState(client)).translation,
+    duplicateSetup.translation,
+    "packaged duplicate translation was not loaded before editing",
+  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await waitFor("selected duplicated-source translation", async () =>
+    await client.evaluate(
+      `Boolean(document.querySelector(".editor-segment.is-active .editor-selection"))`,
+    )
+      ? true
+      : undefined
+  );
+  await client.command("Input.insertText", {
+    text: duplicateSetup.translation,
+  });
+  await waitFor("dirty duplicated-source Document3", async () => {
+    const state = await editorState(client);
+    return state.translation === duplicateSetup.translation ? state : undefined;
+  });
+  for (let index = 0; index < 6; index += 1) {
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+  }
+  const duplicateBeforeRefresh = await editorState(client);
+  assert.equal(
+    duplicateBeforeRefresh.caret,
+    duplicateSetup.translation.length - 7,
+    "UTF-16 caret did not cross the packaged emoji atomically",
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatExternalChangeTrace = [];
+    window.__omegatStopExternalTrace?.();
+    window.__omegatStopExternalTrace = window.omegat.onProjectExternalChange((event) => {
+      window.__omegatExternalChangeTrace.push(event);
+    });
+    window.__omegatExternalRefreshProgress = null;
+    window.__omegatExternalRefreshCancelled = null;
+    window.__omegatExternalRefreshCancelObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatExternalRefreshCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.external-refresh.sources"
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button || window.__omegatExternalRefreshProgress) return;
+        window.__omegatExternalRefreshProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        };
+      }
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "cancelled"
+        && !window.__omegatExternalRefreshCancelled
+      ) {
+        const segment = document.querySelector(".editor-segment.is-active");
+        const surface = segment?.querySelector(".editor-surface");
+        const caret = surface?.querySelector(":scope > .caret");
+        const following = caret
+          ? [...surface.children]
+              .slice([...surface.children].indexOf(caret) + 1)
+              .find((child) => child.hasAttribute("data-offset"))
+          : null;
+        window.__omegatExternalRefreshCancelled = {
+          operation: app.dataset.operation,
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          editorStatus: [...document.querySelectorAll("footer.status span")]
+            .map((node) => node.textContent ?? ""),
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+          editor: {
+            entry: Number(segment?.getAttribute("data-entry") ?? -1),
+            key: segment?.getAttribute("data-entry-key") ?? "",
+            source: segment?.querySelector(".src")?.textContent ?? "",
+            translation: surface?.textContent ?? "",
+            caret: following
+              ? Number(following.getAttribute("data-offset"))
+              : (surface?.textContent.length ?? -1),
+          },
+        };
+      }
+    });
+    window.__omegatExternalRefreshCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const reorderPath = join(sourceDir, "0999-reorder.yaml");
+  await writeFile(reorderPath, 'reorder: "First external candidate"\n', "utf8");
+  await waitFor("first external refresh progress before queued fingerprint", async () => {
+    const state = await client.evaluate(`(() => ({
+      progress: window.__omegatExternalRefreshProgress,
+      cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+    }))()`);
+    return state.progress?.stage === "project.external-refresh.sources"
+      && state.cancelVisible
+      ? state
+      : undefined;
+  });
+  await writeFile(reorderPath, 'reorder: "Committed external candidate"\n', "utf8");
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="cancel"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible external refresh cancel action disappeared before the second fingerprint",
+  );
+
+  const externalRefreshCancelled = await waitFor(
+    "protocol-confirmed external refresh cancellation",
+    async () => {
+      const state = await client.evaluate(
+        `window.__omegatExternalRefreshCancelled`,
+      );
+      if (
+        state?.operation === "externalRefresh"
+        && state.phase === "cancelled"
+        && state.stage === "project.external-refresh.sources"
+        && state.operationStatus
+          === "externalRefresh: cancelled (project.external-refresh.sources)"
+        && !state.cancelVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const externalCancelPost = await client.evaluate(`(async () => {
+    return {
+      visibleProgress: window.__omegatExternalRefreshProgress,
+      cancelled: window.__omegatExternalRefreshCancelled,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+      externalTrace: window.__omegatExternalChangeTrace,
+    };
+  })()`, true);
+  const externalCancelEvents = externalCancelPost.rpcTrace.filter(
+    (event) => event.requestId === externalCancelPost.visibleProgress?.requestId,
+  );
+  const externalCancelTrace = externalCancelEvents
+    .map((event) => `${event.phase}:${event.stage}`)
+    .filter((value, index, values) => index === 0 || values[index - 1] !== value);
+  assert.deepEqual(externalCancelTrace, [
+    "started:",
+    "progress:project.external-refresh.sources",
+    "cancelling:",
+    "cancelled:",
+  ]);
+  assert.equal(
+    externalCancelEvents.find((event) => event.phase === "cancelled")?.errorCode,
+    -32800,
+  );
+  assert(
+    externalCancelPost.domTrace.includes(
+      "externalRefresh|cancelling|project.external-refresh.sources|externalRefresh: cancelling (project.external-refresh.sources)",
+    ),
+  );
+  assert.deepEqual(
+    externalRefreshCancelled.editor,
+    duplicateBeforeRefresh,
+    "cancelled fingerprint batch published a partial editor list",
+  );
+  assert(
+    externalRefreshCancelled.editorStatus.includes(`0/${SOURCE_FILES}`),
+    JSON.stringify(externalRefreshCancelled.editorStatus),
+  );
+  const externalRefreshSucceeded = await waitFor(
+    "queued distinct fingerprint refresh after cancellation",
+    async () => {
+      const state = await editorState(client);
+      const operation = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          kind: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+        };
+      })()`);
+      if (
+        operation.kind === "externalRefresh"
+        && operation.phase === "succeeded"
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === duplicateBeforeRefresh.entry + 1
+        && state.translation === duplicateSetup.translation
+        && state.caret === duplicateBeforeRefresh.caret
+      ) {
+        return { operation, editor: state };
+      }
+      throw new Error(JSON.stringify({ operation, state }));
+    },
+  );
+  const externalSuccessPost = await client.evaluate(`(async () => {
+    const stats = await window.omegat.rpc("stats.get", {});
+    const wanted = await window.omegat.rpc("entry.get", {
+      index: ${duplicateSetup.wanted.index + 1},
+    });
+    const decoy = await window.omegat.rpc("entry.get", {
+      index: ${duplicateSetup.decoy.index + 1},
+    });
+    return {
+      events: window.__omegatExternalChangeTrace,
+      rpcTrace: window.__omegatRpcOperationTrace,
+      entryCount: stats.segments,
+      wanted,
+      decoy,
+    };
+  })()`, true);
+  assert.equal(externalSuccessPost.entryCount, SOURCE_FILES + 1);
+  assert.deepEqual(externalSuccessPost.wanted.key, duplicateSetup.wanted.key);
+  assert.equal(externalSuccessPost.wanted.translation, duplicateSetup.translation);
+  assert.equal(externalSuccessPost.decoy.translation, "");
+  const externalRefreshRequests = [
+    ...new Set(
+      externalSuccessPost.rpcTrace
+        .filter((event) => event.method === "project.external-refresh")
+        .map((event) => event.requestId),
+    ),
+  ];
+  assert.equal(
+    externalRefreshRequests.length,
+    2,
+    JSON.stringify({
+      externalRefreshRequests,
+      externalTrace: externalSuccessPost.events,
+    }),
+  );
+  const firstTerminalIndex = externalSuccessPost.rpcTrace.findIndex((event) =>
+    event.requestId === externalRefreshRequests[0]
+    && event.phase === "cancelled"
+    && event.errorCode === -32800
+  );
+  const secondStartedIndex = externalSuccessPost.rpcTrace.findIndex((event) =>
+    event.requestId === externalRefreshRequests[1]
+    && event.phase === "started"
+  );
+  assert(
+    firstTerminalIndex >= 0 && secondStartedIndex > firstTerminalIndex,
+    JSON.stringify(externalSuccessPost.rpcTrace),
+  );
+  assert.deepEqual(
+    new Set(
+      externalSuccessPost.events.flatMap((event) => event.sources),
+    ),
+    new Set(["native", "sidecar"]),
+    "packaged refresh did not traverse both project.files-changed sources",
+  );
+
+  const teamConflictOurs = "packaged ours resolution 😀 tail";
+  const teamConflictTheirs = "packaged them resolution 😀 tail";
+  const secondConflictOurs = "packaged decoy ours";
+  const secondConflictTheirs = "packaged decoy theirs";
+  assert.equal(
+    teamConflictOurs.length,
+    teamConflictTheirs.length,
+    "ours/theirs fixtures must preserve the UTF-16 caret exactly",
+  );
+  const conflictRemoteTmx = join(conflictRemote, "omegat", "project_save.tmx");
+  await Promise.all([
+    mkdir(join(conflictRemote, "omegat"), { recursive: true }),
+    mkdir(join(conflictRemote, "source"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeAlternativeTmx(
+      conflictRemoteTmx,
+      duplicateSetup.wanted.key,
+      duplicateSetup.translation,
+    ),
+    writeFile(
+      join(conflictRemote, "source", "0998-team-order.yaml"),
+      'remote_order: "Team remote inserted before duplicate"\n',
+      "utf8",
+    ),
+  ]);
+  const conflictRepositories = [{
+    repo_type: "file",
+    url: conflictRemote,
+    branch: null,
+    mappings: [
+      {
+        local: "/source/0998-team-order.yaml",
+        repository: "/source/0998-team-order.yaml",
+        includes: [],
+        excludes: [],
+      },
+      {
+        local: "/omegat/project_save.tmx",
+        repository: "/omegat/project_save.tmx",
+        includes: [],
+        excludes: [],
+      },
+    ],
+  }];
+  const conflictConfigured = await client.evaluate(
+    `window.omegat.rpc("team.mapping", ${
+      JSON.stringify({ repositories: conflictRepositories })
+    })`,
+    true,
+  );
+  assert.equal(conflictConfigured.ok, true);
+  const beforeTeamOrdering = await editorState(client);
+  assert.equal(
+    beforeTeamOrdering.key,
+    JSON.stringify(duplicateSetup.wanted.key),
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-sync"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible team sync action was unavailable for remote ordering",
+  );
+  const teamOrdering = await waitFor(
+    "remote team insertion and complete-key rebind",
+    async () => {
+      const state = await editorState(client);
+      const ui = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+        };
+      })()`);
+      if (
+        ui.operation === "externalRefresh"
+        && ui.phase === "succeeded"
+        && ui.teamMessage.startsWith("sync:")
+        && ui.conflicts === 0
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === beforeTeamOrdering.entry + 1
+        && state.translation === duplicateSetup.translation
+        && state.caret === beforeTeamOrdering.caret
+      ) {
+        return { ui, editor: state };
+      }
+      throw new Error(JSON.stringify({ ui, state }));
+    },
+  );
+  const teamOrderingEntries = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  const orderedWanted = teamOrderingEntries.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+  );
+  const orderedDecoy = teamOrderingEntries.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+  );
+  assert(orderedWanted, "wanted duplicate disappeared after remote ordering");
+  assert(orderedDecoy, "decoy duplicate disappeared after remote ordering");
+  assert.equal(orderedWanted.index, duplicateSetup.wanted.index + 2);
+  assert.equal(orderedDecoy.index, duplicateSetup.decoy.index + 2);
+  assert.equal(orderedDecoy.translation, "");
+  const teamOrderingTrace = await client.evaluate(
+    `window.__omegatRpcOperationTrace`,
+  );
+  assert(
+    teamOrderingTrace.some((event) =>
+      event.method === "team.sync" && event.phase === "succeeded"
+    ),
+    JSON.stringify(teamOrderingTrace),
+  );
+  assert(
+    teamOrderingTrace.some((event) =>
+      event.method === "project.external-refresh" && event.phase === "succeeded"
+    ),
+    JSON.stringify(teamOrderingTrace),
+  );
+
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await client.command("Input.insertText", { text: teamConflictOurs });
+  await waitFor("dirty packaged team ours Document3", async () => {
+    const state = await editorState(client);
+    return state.translation === teamConflictOurs ? state : undefined;
+  });
+
+  await xdotool(xvfb.display, ["windowfocus", "--sync", String(windowId)]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "alt+e"]);
+  await xdotool(xvfb.display, ["key", "End"]);
+  for (let index = 0; index < 3; index += 1) {
+    await xdotool(xvfb.display, ["key", "Up"]);
+  }
+  await xdotool(xvfb.display, ["key", "Return"]);
+  const decoyAfterAlternativeCommit = await waitFor(
+    "decoy after visible alternative-translation commit",
+    async () => {
+      const state = await editorState(client);
+      return state.key === JSON.stringify(duplicateSetup.decoy.key)
+        ? state
+        : undefined;
+    },
+  );
+  assert.equal(decoyAfterAlternativeCommit.translation, teamConflictOurs);
+  const entriesAfterAlternativeCommit = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  assert.equal(
+    entriesAfterAlternativeCommit.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+    )?.default_translation,
+    false,
+  );
+  assert.equal(
+    entriesAfterAlternativeCommit.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    "",
+  );
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+    "packaged team decoy did not focus before editing its own translation",
+  );
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+a"]);
+  await client.command("Input.insertText", { text: secondConflictOurs });
+  await waitFor("dirty packaged decoy ours Document3", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(duplicateSetup.decoy.key)
+      && state.translation === secondConflictOurs
+      ? state
+      : undefined;
+  });
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
+  })()`);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  await waitFor("wanted after exact packaged team commit", async () => {
+    const state = await editorState(client);
+    return state.key === JSON.stringify(duplicateSetup.wanted.key)
+      && state.translation === teamConflictOurs
+      ? state
+      : undefined;
+  });
+  const committedSecondConflict = await client.evaluate(`(async () => {
+    const entries = await window.omegat.rpc("entry.list", {});
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))}
+    );
+    if (!decoy) throw new Error("same-source decoy disappeared after visible commit");
+    const updated = await window.omegat.rpc("entry.set", {
+      index: decoy.index,
+      key: decoy.key,
+      translation: ${JSON.stringify(secondConflictOurs)},
+      note: "second same-source ours",
+      revision: decoy.revision,
+      default_translation: false,
+    });
+    await window.omegat.rpc("project.save", {});
+    return updated.entry;
+  })()`, true);
+  assert.deepEqual(committedSecondConflict.key, duplicateSetup.decoy.key);
+  assert.equal(committedSecondConflict.translation, secondConflictOurs);
+  assert.equal(committedSecondConflict.default_translation, false);
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector(".topbar button");
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible project save action was unavailable for packaged team conflicts",
+  );
+  await waitFor("both packaged team ours saved to local TMX", async () => {
+    const tmx = await readFile(
+      join(project, "omegat", "project_save.tmx"),
+      "utf8",
+    );
+    return tmx.includes(`<seg>${teamConflictOurs}</seg>`)
+        && tmx.includes(`<seg>${secondConflictOurs}</seg>`)
+      ? true
+      : undefined;
+  });
+  assert.equal(
+    await client.evaluate(`(() => {
+      const surface = document.querySelector(".editor-segment.is-active .editor-surface");
+      surface?.focus();
+      return document.activeElement?.classList.contains("ime-proxy") ?? false;
+    })()`),
+    true,
+    "packaged team conflict entry did not focus its native input proxy",
+  );
+  for (let index = 0; index < 6; index += 1) {
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+    await client.command("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      windowsVirtualKeyCode: 37,
+    });
+  }
+  const beforeTeamConflict = await editorState(client);
+  assert.equal(beforeTeamConflict.translation, teamConflictOurs);
+  assert.equal(beforeTeamConflict.caret, teamConflictOurs.length - 7);
+  assert.equal(beforeTeamConflict.entry, teamOrdering.editor.entry);
+
+  await writeAlternativeEntriesTmx(conflictRemoteTmx, [
+    {
+      key: duplicateSetup.wanted.key,
+      translation: teamConflictTheirs,
+    },
+    {
+      key: duplicateSetup.decoy.key,
+      translation: secondConflictTheirs,
+    },
+  ]);
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-sync"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "visible team sync action was unavailable for complete-key conflict",
+  );
+  const visibleTeamConflict = await waitFor(
+    "visible complete-key ours/theirs conflict",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        const row = rows.find((candidate) =>
+          candidate.getAttribute("data-team-conflict-key")
+            === ${JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))}
+        );
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          key: row?.getAttribute("data-team-conflict-key") ?? "",
+          text: row?.textContent ?? "",
+          keys: rows.map((candidate) =>
+            candidate.getAttribute("data-team-conflict-key") ?? ""
+          ),
+          oursVisible: Boolean(
+            row?.querySelector('[data-operation-action="team-resolve-ours"]')
+          ),
+          theirsVisible: Boolean(
+            row?.querySelector('[data-operation-action="team-resolve-theirs"]')
+          ),
+          count: rows.length,
+        };
+      })()`);
+      if (
+        state.operation === "teamSync"
+        && state.phase === "failed"
+        && state.count === 2
+        && state.oursVisible
+        && state.theirsVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  assert.deepEqual(
+    JSON.parse(visibleTeamConflict.key),
+    duplicateSetup.wanted.key,
+  );
+  assert(visibleTeamConflict.text.includes(`ours: ${teamConflictOurs}`));
+  assert(visibleTeamConflict.text.includes(`theirs: ${teamConflictTheirs}`));
+  assert.deepEqual(
+    new Set(visibleTeamConflict.keys.map((key) => JSON.stringify(JSON.parse(key)))),
+    new Set([
+      JSON.stringify(duplicateSetup.wanted.key),
+      JSON.stringify(duplicateSetup.decoy.key),
+    ]),
+  );
+  assert.deepEqual(
+    await editorState(client),
+    beforeTeamConflict,
+    "failed team rebase polluted the active Document3",
+  );
+  const entriesDuringConflict = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  assert.equal(
+    entriesDuringConflict.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+    )?.translation,
+    teamConflictOurs,
+  );
+  assert.equal(
+    entriesDuringConflict.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    secondConflictOurs,
+  );
+
+  const sidecarRestartBefore = {
+    editor: await editorState(client),
+    entries: entriesDuringConflict.length,
+  };
+  await client.evaluate(`(() => {
+    window.__omegatRestartRefreshProgress = null;
+    window.__omegatRestartRefreshObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatRestartRefreshObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.external-refresh.sources"
+        && !window.__omegatRestartRefreshProgress
+      ) {
+        window.__omegatRestartRefreshProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+        };
+      }
+    });
+    window.__omegatRestartRefreshObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const sidecarRestartSource = join(sourceDir, "zzzz-sidecar-restart.yaml");
+  await writeFile(
+    sidecarRestartSource,
+    'sidecar_restart: "Recovered after a killed sidecar"\n',
+    "utf8",
+  );
+  const sidecarRestartProgress = await waitFor(
+    "persisted fingerprint refresh before sidecar kill",
+    async () => {
+      const progress = await client.evaluate(
+        "window.__omegatRestartRefreshProgress",
+      );
+      return progress?.stage === "project.external-refresh.sources"
+        ? progress
+        : undefined;
+    },
+  );
+  const refreshJournal = join(
+    project,
+    ".repositories",
+    "transactions",
+    "external-refresh.json",
+  );
+  assert.equal(
+    await pathExists(refreshJournal),
+    true,
+    "fingerprint FIFO was not durable before killing the sidecar",
+  );
+  const beforeSidecarKill = await descendantProcesses(application.pid);
+  const killedRefreshSidecar = beforeSidecarKill.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(
+    killedRefreshSidecar,
+    `refresh sidecar process not found: ${JSON.stringify(beforeSidecarKill)}`,
+  );
+  process.kill(killedRefreshSidecar.pid, "SIGKILL");
+  const replacementRefreshSidecar = await waitFor(
+    "replacement sidecar after fingerprint interruption",
+    async () => {
+      const children = await descendantProcesses(application.pid);
+      return children.find(({ pid, command }) =>
+        pid !== killedRefreshSidecar.pid && command.includes("omegat-sidecar")
+      );
+    },
+  );
+  const sidecarRestartRecovered = await waitFor(
+    "fingerprint FIFO recovery in replacement sidecar",
+    async () => {
+      const state = await editorState(client);
+      const product = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          conflictKeys: rows.map((row) =>
+            row.getAttribute("data-team-conflict-key") ?? ""
+          ),
+        };
+      })()`);
+      if (
+        product.operation === "externalRefresh"
+        && product.phase === "succeeded"
+        && product.conflictKeys.length === 2
+        && state.key === sidecarRestartBefore.editor.key
+        && state.translation === sidecarRestartBefore.editor.translation
+        && state.caret === sidecarRestartBefore.editor.caret
+      ) {
+        return { product, editor: state };
+      }
+      throw new Error(JSON.stringify({ product, state }));
+    },
+  );
+  await waitFor(
+    "completed sidecar-recovered fingerprint journal removal",
+    async () => await pathExists(refreshJournal) ? undefined : true,
+  );
+  const sidecarRestartEntries = await client.evaluate(
+    "window.omegat.rpc('entry.list', {})",
+    true,
+  );
+  assert.equal(
+    sidecarRestartEntries.length,
+    sidecarRestartBefore.entries + 1,
+  );
+  assert.deepEqual(
+    new Set(sidecarRestartRecovered.product.conflictKeys),
+    new Set([
+      JSON.stringify(duplicateSetup.wanted.key),
+      JSON.stringify(duplicateSetup.decoy.key),
+    ]),
+    "recovered refresh did not rebind unresolved conflicts by complete key",
+  );
+  const sidecarFingerprintRecovery = {
+    progress: sidecarRestartProgress,
+    killedPid: killedRefreshSidecar.pid,
+    replacementPid: replacementRefreshSidecar.pid,
+    journalPresentBeforeKill: true,
+    journalRemovedAfterCommit: true,
+    entries: sidecarRestartEntries.length,
+    completeEntryKey: JSON.parse(sidecarRestartRecovered.editor.key),
+    conflictKeys: sidecarRestartRecovered.product.conflictKeys.map((key) =>
+      JSON.parse(key)
+    ),
+  };
+
+  const resolveTmxBeforeCancel = await readFile(
+    join(project, "omegat", "project_save.tmx"),
+  );
+  const resolveQueuePath = join(
+    project,
+    ".repositories",
+    "prep",
+    "conflicts.json",
+  );
+  const resolveQueueBeforeCancel = await readFile(resolveQueuePath);
+  const resolveResolvedPath = join(
+    project,
+    ".repositories",
+    "prep",
+    "resolved.json",
+  );
+  const resolveResolvedBeforeCancel = await pathExists(resolveResolvedPath)
+    ? await readFile(resolveResolvedPath)
+    : null;
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+    window.__omegatResolveProgress = null;
+    window.__omegatResolveCancelObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatResolveCancelObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "teamResolve"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "team.resolve.snapshot"
+        && !window.__omegatResolveProgress
+      ) {
+        const button = document.querySelector('[data-operation-action="cancel"]');
+        if (!button) return;
+        window.__omegatResolveProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+          status: document.querySelector("[data-operation-status]")?.textContent ?? "",
+        };
+        button.click();
+      }
+    });
+    window.__omegatResolveCancelObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.wanted.key,
+    "team-resolve-theirs",
+    "enabled keep-theirs action for cancellation",
+  );
+  const cancelledTeamResolve = await waitFor(
+    "protocol-confirmed team.resolve cancellation",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+          operationStatus: document.querySelector("[data-operation-status]")?.textContent ?? "",
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+          cancelVisible: Boolean(document.querySelector('[data-operation-action="cancel"]')),
+          progress: window.__omegatResolveProgress,
+        };
+      })()`);
+      if (
+        state.operation === "teamResolve"
+        && state.phase === "cancelled"
+        && state.stage === "team.resolve.snapshot"
+        && state.operationStatus === "teamResolve: cancelled (team.resolve.snapshot)"
+        && state.teamMessage === "resolve cancelled (Repeated packaged source)"
+        && state.conflicts === 2
+        && !state.cancelVisible
+      ) {
+        return state;
+      }
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const resolveCancelPost = await client.evaluate(`(() => {
+    window.__omegatResolveCancelObserver?.disconnect();
+    return {
+      rpcTrace: window.__omegatRpcOperationTrace,
+      domTrace: window.__omegatDomOperationTrace,
+      editor: {
+        key: document.querySelector(".editor-segment.is-active")
+          ?.getAttribute("data-entry-key") ?? "",
+        translation: document.querySelector(
+          ".editor-segment.is-active .editor-surface"
+        )?.textContent ?? "",
+      },
+    };
+  })()`);
+  const resolveCancelEvents = resolveCancelPost.rpcTrace.filter((event) =>
+    event.method === "team.resolve"
+  );
+  const resolveCancelRequestId = cancelledTeamResolve.progress?.requestId;
+  assert(resolveCancelRequestId, "team.resolve snapshot progress was not visible");
+  assert.deepEqual(
+    resolveCancelEvents
+      .filter((event) => event.requestId === resolveCancelRequestId)
+      .map((event) => `${event.phase}:${event.stage}`)
+      .filter((value, index, values) => index === 0 || values[index - 1] !== value),
+    [
+      "started:",
+      "progress:team.resolve.snapshot",
+      "cancelling:",
+      "cancelled:",
+    ],
+  );
+  assert.equal(
+    resolveCancelEvents.find((event) =>
+      event.requestId === resolveCancelRequestId && event.phase === "cancelled"
+    )?.errorCode,
+    -32800,
+  );
+  assert.deepEqual(await editorState(client), beforeTeamConflict);
+  assert.deepEqual(
+    await readFile(join(project, "omegat", "project_save.tmx")),
+    resolveTmxBeforeCancel,
+  );
+  assert.deepEqual(await readFile(resolveQueuePath), resolveQueueBeforeCancel);
+  assert.deepEqual(
+    await pathExists(resolveResolvedPath) ? await readFile(resolveResolvedPath) : null,
+    resolveResolvedBeforeCancel,
+  );
+  assert.equal(
+    await pathExists(join(project, ".repositories", "transactions", "active.json")),
+    false,
+  );
+
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.wanted.key,
+    "team-resolve-theirs",
+    "enabled keep-theirs action for interruption recovery",
+  );
+  const interruptedResolveProgress = await waitFor(
+    "team.resolve snapshot before process interruption",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          requestId: app?.dataset.operationRequestId ?? "",
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          stage: app?.dataset.operationStage ?? "",
+        };
+      })()`);
+      if (
+        state.operation === "teamResolve"
+        && state.phase === "progress"
+        && state.stage === "team.resolve.snapshot"
+      ) return state;
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  const descendants = await descendantProcesses(application.pid);
+  const sidecarProcess = descendants.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(sidecarProcess, `packaged sidecar process not found: ${JSON.stringify(descendants)}`);
+  process.kill(sidecarProcess.pid, "SIGKILL");
+  const applicationExited = new Promise((resolveExit) =>
+    application.once("exit", resolveExit)
+  );
+  application.kill("SIGKILL");
+  await applicationExited;
+  client.close();
+  client = undefined;
+  await waitFor("persisted interrupted team.resolve journal", async () =>
+    await pathExists(join(project, ".repositories", "transactions", "active.json"))
+      ? true
+      : undefined
+  );
+
+  const restartPort = await unusedPort();
+  application = spawn(
+    executable,
+    [`--remote-debugging-port=${restartPort}`, "--disable-gpu", "--no-sandbox"],
+    {
+      env: {
+        ...process.env,
+        DISPLAY: xvfb.display,
+        OMEGAT_CONFIG_DIR: configDir,
+        OMEGAT_PROJECT: project,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  application.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const restartedTarget = await waitFor(
+    "restarted packaged renderer",
+    () => pageTarget(restartPort),
+  );
+  client = new DevToolsClient(restartedTarget.webSocketDebuggerUrl);
+  await client.connect();
+  await client.command("Runtime.enable");
+  await waitFor("recovered packaged team conflict queue", async () => {
+    const state = await client.evaluate(`(() => {
+      document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
+      const app = document.querySelector(".app");
+      return {
+        project: app?.dataset.projectId ?? "",
+        source: document.querySelector(".editor-segment.is-active .src")?.textContent ?? "",
+      };
+    })()`);
+    if (state.project !== project || !state.source) {
+      throw new Error(JSON.stringify(state));
+    }
+    return state;
+  });
+  assert.equal(
+    await pathExists(join(project, ".repositories", "transactions", "active.json")),
+    false,
+  );
+  assert.equal(
+    await client.evaluate(`(() => {
+      const button = document.querySelector('[data-operation-action="team-window"]');
+      button?.click();
+      return Boolean(button);
+    })()`),
+    true,
+    "restarted package did not expose the Team window",
+  );
+  const recoveredInterruptedResolve = await waitFor(
+    "visible same-project conflicts after sidecar restart recovery",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        return {
+          keys: rows.map((row) => row.getAttribute("data-team-conflict-key") ?? ""),
+          count: rows.length,
+        };
+      })()`);
+      if (state.count === 2) return state;
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  assert.deepEqual(
+    new Set(recoveredInterruptedResolve.keys),
+    new Set([
+      JSON.stringify(duplicateSetup.wanted.key),
+      JSON.stringify(duplicateSetup.decoy.key),
+    ]),
+  );
+  const recoveredEntries = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  assert.equal(
+    recoveredEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+    )?.translation,
+    teamConflictOurs,
+  );
+  assert.equal(
+    recoveredEntries.find((entry) =>
+      JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+    )?.translation,
+    secondConflictOurs,
+  );
+  await client.evaluate(`(() => {
+    window.prompt = () => ${JSON.stringify(String(orderedWanted.index + 1))};
+  })()`);
+  const restartedWindowId = await waitFor("restarted OmegaT X11 window", async () => {
+    const ids = await xdotool(xvfb.display, [
+      "search",
+      "--sync",
+      "--onlyvisible",
+      "--name",
+      "OmegaT",
+    ]);
+    return ids.split(/\s+/).filter(Boolean).at(-1);
+  });
+  await xdotool(xvfb.display, [
+    "windowfocus",
+    "--sync",
+    String(restartedWindowId),
+  ]);
+  await xdotool(xvfb.display, ["key", "--clearmodifiers", "ctrl+j"]);
+  const beforeRecoveredTeamConflict = await waitFor(
+    "recovered wanted same-source conflict entry",
+    async () => {
+      const state = await editorState(client);
+      return state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.translation === teamConflictOurs
+        ? state
+        : undefined;
+    },
+  );
+
+  await client.evaluate(`(() => {
+    window.__omegatRpcOperationTrace = [];
+    window.__omegatDomOperationTrace = [];
+  })()`);
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.wanted.key,
+    "team-resolve-theirs",
+    "enabled keep-theirs action after cancellation",
+  );
+  const firstResolvedTeamConflict = await waitFor(
+    "first same-source complete-key keep-theirs write-back",
+    async () => {
+      const state = await editorState(client);
+      const ui = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        const rows = [...document.querySelectorAll("[data-team-conflict-key]")];
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          conflicts: rows.length,
+          remainingKey: rows[0]?.getAttribute("data-team-conflict-key") ?? "",
+          activeSurfaces: document.querySelectorAll(
+            ".editor-segment.is-active .editor-surface"
+          ).length,
+          teamMessage: document.querySelector("[data-team-message]")?.textContent ?? "",
+        };
+      })()`);
+      if (
+        ui.operation === "externalRefresh"
+        && ui.phase === "succeeded"
+        && ui.conflicts === 1
+        && ui.remainingKey === JSON.stringify(duplicateSetup.decoy.key)
+        && ui.activeSurfaces === 1
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.entry === beforeRecoveredTeamConflict.entry
+        && state.translation === teamConflictTheirs
+        && state.caret === beforeRecoveredTeamConflict.caret
+      ) {
+        return { ui, editor: state };
+      }
+      throw new Error(JSON.stringify({ ui, state }));
+    },
+  );
+  const entriesAfterFirstResolution = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  const resolvedWanted = entriesAfterFirstResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+  );
+  const untouchedDecoy = entriesAfterFirstResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+  );
+  assert.equal(resolvedWanted?.index, orderedWanted.index);
+  assert.equal(resolvedWanted?.translation, teamConflictTheirs);
+  assert.equal(untouchedDecoy?.index, orderedDecoy.index);
+  assert.equal(untouchedDecoy?.translation, secondConflictOurs);
+
+  await clickEnabledConflictAction(
+    client,
+    duplicateSetup.decoy.key,
+    "team-resolve-ours",
+    "enabled same-source keep-ours action",
+  );
+  const resolvedTeamConflict = await waitFor(
+    "second same-source complete-key keep-ours write-back",
+    async () => {
+      const state = await editorState(client);
+      const ui = await client.evaluate(`(() => {
+        const app = document.querySelector(".app");
+        return {
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+          activeSurfaces: document.querySelectorAll(
+            ".editor-segment.is-active .editor-surface"
+          ).length,
+        };
+      })()`);
+      if (
+        ui.operation === "externalRefresh"
+        && ui.phase === "succeeded"
+        && ui.conflicts === 0
+        && ui.activeSurfaces === 1
+        && state.key === JSON.stringify(duplicateSetup.wanted.key)
+        && state.translation === teamConflictTheirs
+      ) {
+        return { ui, editor: state };
+      }
+      throw new Error(JSON.stringify({ ui, state }));
+    },
+  );
+  const entriesAfterResolution = await client.evaluate(
+    `window.omegat.rpc("entry.list", {})`,
+    true,
+  );
+  const retainedWanted = entriesAfterResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.wanted.key)
+  );
+  const resolvedDecoy = entriesAfterResolution.find((entry) =>
+    JSON.stringify(entry.key) === JSON.stringify(duplicateSetup.decoy.key)
+  );
+  assert.equal(retainedWanted?.translation, teamConflictTheirs);
+  assert.equal(resolvedDecoy?.translation, secondConflictOurs);
+
+  const electronRestartBefore = {
+    pid: application.pid,
+    entries: entriesAfterResolution.length,
+    wanted: retainedWanted,
+    decoy: resolvedDecoy,
+  };
+  await client.evaluate(`(() => {
+    window.__omegatElectronRestartRefreshProgress = null;
+    window.__omegatElectronRestartRefreshObserver?.disconnect();
+    const app = document.querySelector(".app");
+    window.__omegatElectronRestartRefreshObserver = new MutationObserver(() => {
+      if (
+        app?.dataset.operation === "externalRefresh"
+        && app?.dataset.operationPhase === "progress"
+        && app?.dataset.operationStage === "project.external-refresh.sources"
+        && !window.__omegatElectronRestartRefreshProgress
+      ) {
+        window.__omegatElectronRestartRefreshProgress = {
+          requestId: app.dataset.operationRequestId ?? "",
+          phase: app.dataset.operationPhase,
+          stage: app.dataset.operationStage,
+        };
+      }
+    });
+    window.__omegatElectronRestartRefreshObserver.observe(app, {
+      attributes: true,
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
+  const electronRestartSource = join(sourceDir, "zzzy-electron-restart.yaml");
+  await writeFile(
+    electronRestartSource,
+    'electron_restart: "Recovered after killed Electron and sidecar processes"\n',
+    "utf8",
+  );
+  const electronRestartProgress = await waitFor(
+    "persisted fingerprint refresh before Electron kill",
+    async () => {
+      const progress = await client.evaluate(
+        "window.__omegatElectronRestartRefreshProgress",
+      );
+      return progress?.stage === "project.external-refresh.sources"
+        ? progress
+        : undefined;
+    },
+  );
+  assert.equal(
+    await pathExists(refreshJournal),
+    true,
+    "fingerprint FIFO was not durable before killing Electron",
+  );
+  const electronRestartChildren = await descendantProcesses(application.pid);
+  const electronRestartOldSidecar = electronRestartChildren.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(
+    electronRestartOldSidecar,
+    `Electron refresh sidecar not found: ${JSON.stringify(electronRestartChildren)}`,
+  );
+  process.kill(electronRestartOldSidecar.pid, "SIGKILL");
+  const killedElectron = new Promise((resolveExit) =>
+    application.once("exit", resolveExit)
+  );
+  application.kill("SIGKILL");
+  await killedElectron;
+  client.close();
+  client = undefined;
+
+  const fingerprintRestartPort = await unusedPort();
+  application = spawn(
+    executable,
+    [
+      `--remote-debugging-port=${fingerprintRestartPort}`,
+      "--disable-gpu",
+      "--no-sandbox",
+    ],
+    {
+      env: {
+        ...process.env,
+        DISPLAY: xvfb.display,
+        OMEGAT_CONFIG_DIR: configDir,
+        OMEGAT_PROJECT: project,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  application.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+  const fingerprintRestartTarget = await waitFor(
+    "renderer after Electron fingerprint interruption",
+    () => pageTarget(fingerprintRestartPort),
+  );
+  client = new DevToolsClient(fingerprintRestartTarget.webSocketDebuggerUrl);
+  await client.connect();
+  await client.command("Runtime.enable");
+  await waitFor(
+    "fingerprint FIFO recovery after Electron restart",
+    async () => {
+      const state = await client.evaluate(`(() => {
+        document.querySelectorAll(".modal-bg").forEach((modal) => modal.click());
+        const app = document.querySelector(".app");
+        return {
+          project: app?.dataset.projectId ?? "",
+          operation: app?.dataset.operation ?? "",
+          phase: app?.dataset.operationPhase ?? "",
+          conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+        };
+      })()`);
+      if (
+        state.project === project
+        && state.operation === "externalRefresh"
+        && state.phase === "succeeded"
+        && state.conflicts === 0
+      ) return state;
+      throw new Error(JSON.stringify(state));
+    },
+  );
+  await waitFor("completed Electron-recovered refresh journal removal", async () =>
+    await pathExists(refreshJournal) ? undefined : true
+  );
+  const electronRestartRecovered = await client.evaluate(`(async () => {
+    const app = document.querySelector(".app");
+    const entries = await window.omegat.rpc("entry.list", {});
+    const wanted = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${
+        JSON.stringify(JSON.stringify(duplicateSetup.wanted.key))
+      }
+    );
+    const decoy = entries.find((entry) =>
+      JSON.stringify(entry.key) === ${
+        JSON.stringify(JSON.stringify(duplicateSetup.decoy.key))
+      }
+    );
+    return {
+      project: app?.dataset.projectId ?? "",
+      operation: app?.dataset.operation ?? "",
+      phase: app?.dataset.operationPhase ?? "",
+      entries: entries.length,
+      wanted,
+      decoy,
+      recoveredSource: entries.some((entry) =>
+        entry.key.file === "zzzy-electron-restart.yaml"
+      ),
+      conflicts: document.querySelectorAll("[data-team-conflict-key]").length,
+    };
+  })()`, true);
+  assert.equal(electronRestartRecovered.project, project);
+  assert.equal(electronRestartRecovered.operation, "externalRefresh");
+  assert.equal(electronRestartRecovered.phase, "succeeded");
+  assert.equal(
+    electronRestartRecovered.entries,
+    electronRestartBefore.entries + 1,
+  );
+  assert.equal(electronRestartRecovered.recoveredSource, true);
+  assert.equal(electronRestartRecovered.conflicts, 0);
+  assert.equal(
+    electronRestartRecovered.wanted?.translation,
+    electronRestartBefore.wanted.translation,
+  );
+  assert.equal(
+    electronRestartRecovered.decoy?.translation,
+    electronRestartBefore.decoy.translation,
+  );
+  assert.deepEqual(
+    Object.keys(electronRestartRecovered.wanted.key).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+  );
+  assert.deepEqual(
+    Object.keys(electronRestartRecovered.decoy.key).sort(),
+    ["file", "id", "next", "path", "prev", "source_text"],
+  );
+  const [electronRestartNewSidecar] = await waitFor(
+    "new sidecar after Electron fingerprint recovery",
+    async () => {
+      const children = await descendantProcesses(application.pid);
+      const matching = children.filter(({ command }) =>
+        command.includes("omegat-sidecar")
+      );
+      return matching.length ? matching : undefined;
+    },
+  );
+  const electronFingerprintRecovery = {
+    progress: electronRestartProgress,
+    killedElectronPid: electronRestartBefore.pid,
+    restartedElectronPid: application.pid,
+    killedSidecarPid: electronRestartOldSidecar.pid,
+    restartedSidecarPid: electronRestartNewSidecar.pid,
+    journalPresentBeforeKill: true,
+    journalRemovedAfterCommit: true,
+    entries: electronRestartRecovered.entries,
+    completeEntryKeys: {
+      wanted: electronRestartRecovered.wanted.key,
+      decoy: electronRestartRecovered.decoy.key,
+    },
+    completedConflictsRevived: electronRestartRecovered.conflicts,
+  };
+  assert.notEqual(
+    electronFingerprintRecovery.restartedElectronPid,
+    electronFingerprintRecovery.killedElectronPid,
+  );
+  assert.notEqual(
+    electronFingerprintRecovery.restartedSidecarPid,
+    electronFingerprintRecovery.killedSidecarPid,
+  );
+
+  console.log(JSON.stringify({
+    result: "passed",
+    package: executable,
+    platform: "linux",
+    sourceFiles: SOURCE_FILES,
+    compile: {
+      visibleProgress,
+      cancelled,
+      requestTrace,
+      domTrace: postCancel.domTrace,
+      targetRollback: true,
+      residue: [],
+    },
+    reload: {
+      visibleProgress: reloadPostCancel.visibleProgress,
+      cancelled: {
+        operation: reloadCancelled.operation,
+        phase: reloadCancelled.phase,
+        stage: reloadCancelled.stage,
+        operationStatus: reloadCancelled.operationStatus,
+        editorStatus: reloadCancelled.editorStatus,
+        cancelVisible: reloadCancelled.cancelVisible,
+        entry: reloadCancelled.entry,
+      },
+      requestTrace: reloadRequestTrace,
+      domTrace: reloadPostCancel.domTrace,
+      entryRollback: {
+        entry: reloadBefore.entry,
+        keyPreserved: reloadCancelled.key === reloadBefore.key,
+        sourcePreserved: reloadCancelled.source === reloadBefore.source,
+        translationPreserved:
+          reloadCancelled.translation === reloadBefore.translation,
+      },
+    },
+    team: {
+      repositories: repositories.map(({ repo_type, url, mappings }) => ({
+        repo_type,
+        url,
+        mappings,
+      })),
+      sync: teamSync,
+      commitSource: teamCommit,
+    },
+    externalRefresh: {
+      duplicateKeys: {
+        wanted: duplicateSetup.wanted.key,
+        decoy: duplicateSetup.decoy.key,
+      },
+      cancelled: externalRefreshCancelled,
+      cancelTrace: externalCancelTrace,
+      rollbackEntryCount: SOURCE_FILES,
+      serializedRequests: externalRefreshRequests,
+      succeeded: externalRefreshSucceeded,
+      committedEntryCount: externalSuccessPost.entryCount,
+      sources: [...new Set(
+        externalSuccessPost.events.flatMap((event) => event.sources),
+      )].sort(),
+      decoyTranslation: externalSuccessPost.decoy.translation,
+      sidecarRestartRecovery: sidecarFingerprintRecovery,
+      electronRestartRecovery: electronFingerprintRecovery,
+    },
+    teamConflict: {
+      remoteInsertion: "source/0998-team-order.yaml",
+      initialIndex: duplicateSetup.wanted.index,
+      reorderedIndex: orderedWanted.index,
+      completeEntryKey: duplicateSetup.wanted.key,
+      visible: visibleTeamConflict,
+      cancelled: {
+        visible: cancelledTeamResolve,
+        requestTrace: resolveCancelEvents
+          .filter((event) => event.requestId === resolveCancelRequestId)
+          .map((event) => `${event.phase}:${event.stage}`),
+        protocolErrorCode: -32800,
+        tmxRollback: true,
+        conflictQueueRollback: true,
+        editorRollback: resolveCancelPost.editor,
+      },
+      interruptedRecovery: {
+        progress: interruptedResolveProgress,
+        killedSidecarPid: sidecarProcess.pid,
+        recoveredQueue: recoveredInterruptedResolve,
+        activeJournalRemoved: true,
+      },
+      selected: ["theirs", "ours"],
+      firstResolved: firstResolvedTeamConflict,
+      resolved: resolvedTeamConflict,
+      wantedTranslation: retainedWanted.translation,
+      decoyTranslation: resolvedDecoy.translation,
+      singleDocument3Surface: resolvedTeamConflict.ui.activeSurfaces,
+      utf16Caret: resolvedTeamConflict.editor.caret,
+    },
+    sidecarResponsive: postCancel.version.version,
+  }));
+} catch (error) {
+  if (stderr) process.stderr.write(stderr);
+  throw error;
+} finally {
+  client?.close();
+  await terminate(application);
+  await terminate(xvfb.child);
+  if (keepWorkDir) {
+    process.stderr.write(`Retained packaged E2E work directory: ${workDir}\n`);
+  } else {
+    await rm(workDir, { recursive: true, force: true });
+  }
+}
