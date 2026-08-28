@@ -407,7 +407,18 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
         {
             continue;
         }
-        let Some(active) = read_json::<ActiveProject>(&entry.path())? else {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json")
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        {
+            // An interrupted atomic publisher can leave a dot-prefixed .tmp
+            // file. Only completed owner pointer names are discovery inputs.
+            continue;
+        }
+        let Some(active) = read_json::<ActiveProject>(&path)? else {
             continue;
         };
         if active.version != TRANSACTION_ENVELOPE_VERSION {
@@ -419,7 +430,7 @@ pub fn active_project_roots(config_dir: &Path) -> Result<Vec<PathBuf>, String> {
         if active.app_instance.is_empty() {
             return Err(format!(
                 "active refresh owner {} has an empty app instance",
-                entry.path().display()
+                path.display()
             ));
         }
         let root = normalized(&active.project_root);
@@ -759,6 +770,12 @@ mod tests {
         write_active(&config, &first, "electron-a").unwrap();
         write_active(&config, &first, "electron-b").unwrap();
         write_active(&config, &second, "electron-c").unwrap();
+        let owner_directory = config.join("transactions").join(ACTIVE_DIRECTORY);
+        std::fs::write(
+            owner_directory.join(".interrupted-owner.json.1.tmp"),
+            b"incomplete",
+        )
+        .unwrap();
         let before = std::fs::read(active_path(&config, "electron-a")).unwrap();
 
         let roots = active_project_roots(&config).unwrap();
