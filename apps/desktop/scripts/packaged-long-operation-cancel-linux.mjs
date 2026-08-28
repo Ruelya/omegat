@@ -850,6 +850,7 @@ try {
     .map((event) => `${event.phase}:${event.stage}`);
   assert.deepEqual(requestTrace, [
     "started:",
+    "progress:project.compile.snapshot",
     "progress:project.compile.targets",
     "cancelling:",
     "cancelled:",
@@ -987,6 +988,7 @@ try {
   assert(reloadPostCancel.visibleProgress.requestId);
   assert.deepEqual(reloadRequestTrace, [
     "started:",
+    "progress:project.reload.snapshot",
     "progress:project.reload.sources",
     "cancelling:",
     "cancelled:",
