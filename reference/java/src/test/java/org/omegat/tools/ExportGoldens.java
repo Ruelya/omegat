@@ -278,6 +278,10 @@ public final class ExportGoldens {
             exporter.exportStats();
             exporter.exportP1Core();
             exporter.exportRewriteWaves();
+            // JUnit classes run by exportRewriteWaves can clear the process-wide
+            // FilterMaster. Engine mode also exports HTML honesty fixtures, so
+            // restore the same default state used by the full export.
+            Core.setFilterMaster(new FilterMaster(FilterMaster.createDefaultFiltersConfig()));
             exporter.exportHonesty();
             System.out.println("ExportGoldens wrote engine goldens to " + goldenRoot);
         } else {
