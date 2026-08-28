@@ -1565,10 +1565,16 @@ try {
     const project = join(workDir, `${scenario}-project`);
     const remote = join(workDir, `${scenario}-remote`);
     const marker = join(workDir, `${scenario}.marker`);
-    const firstElectionMarker = join(workDir, `${scenario}-first-election.json`);
     const firstElectionRelease = join(workDir, `${scenario}-first-election-release`);
-    const secondElectionMarker = join(workDir, `${scenario}-second-election.json`);
     const secondElectionRelease = join(workDir, `${scenario}-second-election-release`);
+    const firstElectionMarkers = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${scenario}-first-${index}-election.json`),
+    );
+    const secondElectionMarkers = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${scenario}-second-${index}-election.json`),
+    );
     const firstElectionTraces = Array.from(
       { length: 3 },
       (_, index) => join(workDir, `${scenario}-first-${index}-trace.ndjson`),
@@ -1720,29 +1726,25 @@ try {
       `product ${point} old owner PID remained live before quorum election`,
     );
 
-    const launchElectionWave = (markerPath, releasePath, traces, waits) =>
+    const launchElectionWave = (markerPaths, releasePath, traces, waits) =>
       Promise.all(traces.map((tracePath, index) =>
         launchPackagedRenderer(xvfb.display, config, null, {
           OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
           OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: waits[index],
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "entry.set",
-          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: markerPath,
+          OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER:
+            markerPaths[index],
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: releasePath,
         })
       ));
     const waitForDurableElection = (
       label,
-      markerPath,
+      markerPaths,
       previousClaimId,
       replacements,
+      requireRendererMarker = false,
     ) =>
       waitFor(label, async () => {
-        if (await pathExists(markerPath)) {
-          return {
-            ...JSON.parse(await readFile(markerPath, "utf8")),
-            rendererMarkerObserved: true,
-          };
-        }
         if (!await pathExists(prepared.ownerPath)) return undefined;
         const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
         if (
@@ -1753,12 +1755,29 @@ try {
         ) {
           return undefined;
         }
+        for (const markerPath of markerPaths) {
+          if (!await pathExists(markerPath)) continue;
+          const marker = JSON.parse(await readFile(markerPath, "utf8"));
+          if (
+            marker.owner_process_id === claim.process_id
+            && marker.app_instance === claim.app_instance
+            && marker.generation === claim.generation
+          ) {
+            return {
+              ...marker,
+              claim_id: claim.claim_id,
+              rendererMarkerObserved: true,
+            };
+          }
+        }
+        if (requireRendererMarker) return undefined;
         return {
           batch_id: prepared.receiptBatchId,
           operation: "entry.set",
           app_instance: claim.app_instance,
           owner_process_id: claim.process_id,
           generation: claim.generation,
+          claim_id: claim.claim_id,
           rendererMarkerObserved: false,
         };
       });
@@ -1811,7 +1830,7 @@ try {
     };
 
     const firstWave = await launchElectionWave(
-      firstElectionMarker,
+      firstElectionMarkers,
       firstElectionRelease,
       firstElectionTraces,
       firstElectionWaits,
@@ -1819,7 +1838,7 @@ try {
     quorumReplacements = firstWave;
     const firstElection = await waitForDurableElection(
       `${point} first three-replacement election`,
-      firstElectionMarker,
+      firstElectionMarkers,
       durableOwner.claim_id,
       firstWave,
     );
@@ -1876,7 +1895,7 @@ try {
     }
 
     const secondWave = await launchElectionWave(
-      secondElectionMarker,
+      secondElectionMarkers,
       secondElectionRelease,
       secondElectionTraces,
       secondElectionWaits,
@@ -1884,7 +1903,7 @@ try {
     quorumReplacements = secondWave;
     let secondElection = await waitForDurableElection(
       `${point} second three-replacement election`,
-      secondElectionMarker,
+      secondElectionMarkers,
       firstDurableOwner.claim_id,
       secondWave,
     );
@@ -1898,16 +1917,13 @@ try {
       quorumReplacements = secondWave.filter((replacement) =>
         replacement !== claimed
       );
-      secondElection = {
-        ...await waitFor(
-          `${point} second-wave pre-existing waiter takeover`,
-          async () =>
-            await pathExists(secondElectionMarker)
-              ? JSON.parse(await readFile(secondElectionMarker, "utf8"))
-              : undefined,
-        ),
-        rendererMarkerObserved: true,
-      };
+      secondElection = await waitForDurableElection(
+        `${point} second-wave pre-existing waiter takeover`,
+        secondElectionMarkers,
+        secondElection.claim_id,
+        quorumReplacements,
+        true,
+      );
     }
     assert.equal(secondElection.batch_id, prepared.receiptBatchId);
     assert.equal(secondElection.operation, "entry.set");
