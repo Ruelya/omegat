@@ -1080,12 +1080,23 @@ async function verifyMoveAndGc(launched, fixture, evidence) {
     );
   }
   const projectRows = await segmentedRows(projectHistoryPaths(movedProject));
-  for (const row of evidence.filter(({ scope }) => scope === "project")) {
+  const projectEvidence = evidence.filter(({ scope }) => scope === "project");
+  for (const row of projectEvidence) {
     assert.equal(
       terminalRows(projectRows)
         .filter(({ batch_id }) => batch_id === row.batchId).length,
       1,
       `${row.method} terminal did not survive project rename`,
+    );
+  }
+  const configRows = await segmentedRows(configHistoryPaths(fixture.config));
+  const configEvidence = evidence.filter(({ scope }) => scope === "config");
+  for (const row of configEvidence) {
+    assert.equal(
+      terminalRows(configRows)
+        .filter(({ batch_id }) => batch_id === row.batchId).length,
+      1,
+      `${row.method} terminal did not survive config GC`,
     );
   }
   const projectManifest = JSON.parse(
