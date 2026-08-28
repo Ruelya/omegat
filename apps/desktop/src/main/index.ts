@@ -34,7 +34,6 @@ let stoppingSidecar = false;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 const appInstance = randomUUID();
 let nextId = 1;
-let testDroppedTransactionAck = false;
 const watchedProjectWriteMethods = new Set([
   "entry.set",
   "project.save",
@@ -504,11 +503,9 @@ app.whenReady().then(() => {
         throw new Error("transaction receipt is not scoped to the watched project");
       }
       if (
-        !testDroppedTransactionAck
-        && process.env.OMEGAT_TEST_DROP_TRANSACTION_ACK_ONCE
+        process.env.OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR
           === envelope.payload.operation
       ) {
-        testDroppedTransactionAck = true;
         throw new Error(
           `injected lost transaction acknowledgement for ${envelope.batch_id}`,
         );

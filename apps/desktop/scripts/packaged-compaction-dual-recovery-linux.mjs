@@ -773,7 +773,7 @@ try {
     mixedRemote,
   );
   launchedA = await launchPackaged(xvfb.display, mixedConfig, mixedProject, {
-    OMEGAT_TEST_DROP_TRANSACTION_ACK_ONCE: "project.external-refresh",
+    OMEGAT_TEST_DROP_TRANSACTION_ACKS_FOR: "project.external-refresh",
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: firstTracePath,
   });
   await waitFor("lost refresh acknowledgement checkpoint", async () => {
