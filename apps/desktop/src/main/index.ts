@@ -45,6 +45,7 @@ const appInstance = randomUUID();
 let nextId = 1;
 let transactionRpcTail: Promise<void> = Promise.resolve();
 const callerManagedTransactionReceipts = new Set<string>();
+const publishedRecoveryTransactionReceipts = new Set<string>();
 
 function enqueueTransactionRpc<T>(task: () => Promise<T>): Promise<T> {
   const result = transactionRpcTail.then(task, task);
@@ -432,10 +433,14 @@ async function publishPendingTransactionEnvelopes(
   const rendererEnvelopes = transactionEnvelopesForRenderer(
     envelopes,
     callerManagedTransactionReceipts,
+    publishedRecoveryTransactionReceipts,
   );
-  rendererEnvelopes.forEach((envelope) =>
-    publishTransactionEnvelope(root, generation, envelope)
-  );
+  rendererEnvelopes.forEach((envelope) => {
+    publishedRecoveryTransactionReceipts.add(
+      transactionReceiptIdentity(envelope),
+    );
+    publishTransactionEnvelope(root, generation, envelope);
+  });
   return rendererEnvelopes.length;
 }
 
@@ -856,6 +861,7 @@ function createWindow() {
     // A renderer reload abandons its ephemeral direct-receipt ownership.
     // The next project-watch handshake republishes any durable unacked head.
     callerManagedTransactionReceipts.clear();
+    publishedRecoveryTransactionReceipts.clear();
     win.webContents.send("menu:ready");
   });
 }
@@ -980,6 +986,9 @@ app.whenReady().then(() => {
         })
       );
       callerManagedTransactionReceipts.delete(
+        transactionReceiptIdentity(envelope),
+      );
+      publishedRecoveryTransactionReceipts.delete(
         transactionReceiptIdentity(envelope),
       );
       const trace = process.env.OMEGAT_TEST_TRANSACTION_ACK_TRACE;

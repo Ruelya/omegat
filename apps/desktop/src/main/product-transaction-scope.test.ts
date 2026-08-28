@@ -123,4 +123,17 @@ describe("transactionEnvelopesForRenderer", () => {
       new Set([transactionReceiptIdentity(current)]),
     )).toEqual([older]);
   });
+
+  it("publishes a recovered durable head only once per renderer lifecycle", () => {
+    expect(transactionEnvelopesForRenderer(
+      [older],
+      new Set(),
+      new Set([transactionReceiptIdentity(older)]),
+    )).toEqual([]);
+    expect(transactionEnvelopesForRenderer(
+      [current],
+      new Set(),
+      new Set([transactionReceiptIdentity(older)]),
+    )).toEqual([current]);
+  });
 });
