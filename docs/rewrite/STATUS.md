@@ -58,7 +58,7 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 
 **2026-08-28 verification:** core selected suites **148 passed**, filters
 **86 passed**, team **40 passed / 1 ignored**, script **10 passed**, CLI
-**4 passed**, sidecar contract **26 passed** plus sidecar journal/watcher unit
+**4 passed**, sidecar contract **27 passed** plus sidecar journal/watcher unit
 **7 passed** and plugin filter **1 passed**, and desktop **24 files / 174 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
@@ -826,6 +826,20 @@ at both checkpoints and retains its contender while the replacement claims.
 Both paths retain the exact six-field duplicate `EntryKey`, one `Document3`
 translation surface, and an untranslated same-source decoy. This is Linux-only
 evidence; Windows and macOS were not run.
+The owner matrix now also starts **two replacement Electron processes
+concurrently**, only after `/proc/<old-owner-pid>` has disappeared. It repeats
+that race with `project.close`, `team.commit`, and `project.save` as the durable
+product head, each followed by a refresh tail. The project transaction lock
+selects exactly one new claim ID: only that process receives the head and drains
+product → refresh, while the losing process records zero renderer envelopes and
+both its pending query and acknowledgement are rejected. Each scenario also
+rejects a contender while the old owner is live. Product and refresh histories
+contain one terminal row per batch, complete six-field duplicate keys and the
+sole `Document3` translation survive, and exact TMX plus file-remote bytes/mtime
+prove no product or team write was replayed. A sidecar contract performs the
+same simultaneous two-process election for all three product-head classes.
+These assertions pass in the real Linux `linux-unpacked` package; Windows and
+macOS were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
