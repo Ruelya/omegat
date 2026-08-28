@@ -71,6 +71,10 @@ type DetachedTransactionScope = {
   sidecarProjectOpen: boolean;
 };
 let detachedTransactionScope: DetachedTransactionScope | null = null;
+// Different FIFO heads can retain their original writer generations. Keep one
+// renderer recovery generation per root so rotating away and back cannot look
+// like a project-lifecycle transition and discard a pending refresh tail.
+const detachedTransactionGenerations = new Map<string, number>();
 const watchedProjectWriteMethods = new Set([
   "entry.set",
   "project.open",
@@ -480,9 +484,13 @@ async function advanceDetachedTransactionRecovery(
       const previousGeneration = typeof candidate.generation === "number"
         ? candidate.generation
         : 0;
+      const rootKey = normalizedProjectRoot(candidate.project_root);
+      const generation = detachedTransactionGenerations.get(rootKey)
+        ?? Math.max(1, previousGeneration + 1);
+      detachedTransactionGenerations.set(rootKey, generation);
       scope = {
         root: candidate.project_root,
-        generation: Math.max(1, previousGeneration + 1),
+        generation,
         sidecarProjectOpen: false,
       };
       detachedTransactionScope = scope;
@@ -804,6 +812,10 @@ async function rpc(
       && "operation" in receipt.payload
       && receipt.payload.operation === "project.close"
     ) {
+      detachedTransactionGenerations.set(
+        normalizedProjectRoot(receipt.project_root),
+        receipt.generation,
+      );
       detachedTransactionScope = {
         root: receipt.project_root,
         generation: receipt.generation,
