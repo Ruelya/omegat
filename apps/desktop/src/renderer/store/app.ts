@@ -784,7 +784,7 @@ export const useApp = create<AppState>((set, get) => ({
   reloadProject: async () => {
     await get().rebindProjectEntries({ kind: "reload" });
   },
-  rebindProjectEntries: async ({ kind, changedKeys, transaction }) => {
+  rebindProjectEntries: async ({ kind, changedKeys, transaction, committedResult }) => {
     const root = get().props?.root;
     if (!root) return false;
     const initial = get();
@@ -814,9 +814,7 @@ export const useApp = create<AppState>((set, get) => ({
 
     const before = get();
     let refreshedProps: ProjectPropsDto | null = before.props;
-    const committedResult = kind === "external-refresh"
-      ? request.committedResult
-      : undefined;
+    committedResult = kind === "external-refresh" ? committedResult : undefined;
     try {
       if (kind === "reload") {
         const result = await get().runLongOperation<{ props?: ProjectPropsDto }>("reload");
