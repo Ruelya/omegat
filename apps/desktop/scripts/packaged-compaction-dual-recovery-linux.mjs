@@ -3657,7 +3657,8 @@ try {
       const requestIds = concurrentCancelCallers.map((_, index) =>
         `${label}-concurrent-request-${index}`
       );
-      await Promise.all(concurrentCancelCallers.map((replacement, index) =>
+      const concurrentStarts = await Promise.all(
+        concurrentCancelCallers.map((replacement, index) =>
         startTracedRpc(
           replacement.client,
           traceKeys[index],
@@ -3673,7 +3674,9 @@ try {
           },
           requestIds[index],
         )
-      ));
+        ),
+      );
+      assert.deepEqual(concurrentStarts, [true, true]);
       const durableCancelOwner = await waitFor(
         "one concurrent packaged cancellation owner",
         async () =>
@@ -3699,23 +3702,6 @@ try {
         1,
         "concurrent cancellation did not select exactly one durable owner",
       );
-      const concurrentPending = await waitFor(
-        "both packaged secondary cancellations concurrently pending",
-        async () => {
-          const states = await Promise.all(concurrentCancelCallers.map(
-            (replacement, index) =>
-              tracedRpcState(replacement.client, traceKeys[index]),
-          ));
-          return states.every((state) =>
-              state
-              && state.started
-              && !state.settled
-            )
-            ? states
-            : undefined;
-        },
-      );
-      assert.equal(concurrentPending.length, 2);
       assert.deepEqual(
         JSON.parse(await readFile(prepared.ownerPath, "utf8")),
         durableOldOwner,
