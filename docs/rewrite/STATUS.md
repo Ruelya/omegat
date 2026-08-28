@@ -783,15 +783,7 @@ Dispatch ownership is persisted separately under the same project transaction
 lock with canonical root, Electron app instance, process ID, renderer
 generation, and claim ID. On Linux, another replacement cannot read or
 acknowledge either backend's head while that owner PID is live; it can take over
-only after the owner exits. The sidecar contract checks close → save ordering,
-rejected concurrent pending/ack calls, unchanged TMX bytes/mtime, and exactly
-one terminal row per batch. The real Linux `linux-unpacked` matrix starts two
-no-project replacements against the same lost close receipt, holds the first
-after its durable claim, proves the second delivers no envelope while remaining
-responsive, then drains close → save → refresh exactly once. Explicit reopen
-retains the wanted complete six-field `EntryKey`, its sole `Document3`
-translation, and the untranslated same-source decoy. Windows and macOS owner
-liveness/package behavior were not run.
+only after the owner exits.
 A Linux packaged owner-takeover matrix now SIGKILLs the entire Electron process
 group after its durable close-head claim but before
 `transaction:envelope` delivery. A single replacement Electron process adopts
@@ -804,7 +796,10 @@ neither the team write nor another product write was replayed. Explicit reopen
 retains the complete six-field wanted key, its sole `Document3` translation,
 and the untranslated same-source decoy. The sidecar contract independently
 keeps the same close → team → save product-journal order and unchanged remote
-and TMX mtimes through replacement ownership. This is Linux-only evidence.
+and TMX mtimes through replacement ownership. The complete package, owner, and
+compaction matrix passes through
+`npm run test:e2e:compaction-dual-recovery:linux`. Windows and macOS owner
+liveness/package behavior were not run.
 Team TMX rebase now identities occurrence-specific alternatives by all six
 `EntryKey` fields rather than source text. Conflict persistence carries that
 key through the visible ours/theirs row and the sidecar resolution call, and
