@@ -75,6 +75,19 @@ pub(crate) fn acquire_project_transaction_lock(
     Ok(ProjectTransactionLock { _file: file })
 }
 
+fn wait_for_project_transaction_lock(props: &ProjectProperties) -> Result<ProjectTransactionLock> {
+    let dir = transaction_dir(props);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("operation.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)?;
+    file.lock_exclusive().map_err(TeamError::Io)?;
+    Ok(ProjectTransactionLock { _file: file })
+}
+
 #[cfg(test)]
 pub(crate) fn fail_next_commit_for(repository_index: usize) {
     FAIL_COMMIT_REPOSITORY.store(repository_index, Ordering::SeqCst);
@@ -2282,7 +2295,11 @@ pub fn cancel_transaction_receipt(
             "only a scoped resolve-conflict receipt can be cancelled".into(),
         ));
     }
-    let _lock = acquire_project_transaction_lock(props)?;
+    // Concurrent cancellation acknowledgements target the same durable
+    // idempotency key. Unlike unrelated team operations, the loser must wait
+    // for the current cancellation owner (or its OS-released lock after
+    // process death), then observe the sole terminal decision as -32800.
+    let _lock = wait_for_project_transaction_lock(props)?;
     let Some(mut transaction) = load_product_journal(props)?
         .batches
         .into_iter()
