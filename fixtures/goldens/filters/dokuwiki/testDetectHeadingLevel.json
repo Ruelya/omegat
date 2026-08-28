@@ -1,0 +1,13 @@
+{
+  "id": "dokuwiki",
+  "java_test": "org.omegat.filters.DokuWikiFilterTest#testDetectHeadingLevel",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "heading_levels": {
+    "====== Title ======": 6,
+    "===== H =====": 5,
+    "not a heading": 0
+  }
+}

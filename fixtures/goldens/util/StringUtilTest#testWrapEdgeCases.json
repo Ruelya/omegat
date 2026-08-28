@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.util.StringUtilTest#testWrapEdgeCases",
+  "long": "Longword",
+  "empty": "",
+  "keys": [
+    "org.omegat.util.StringUtilTest#testWrapEdgeCases"
+  ]
+}

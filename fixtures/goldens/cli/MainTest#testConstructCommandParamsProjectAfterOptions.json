@@ -1,0 +1,9 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.MainTest#testConstructCommandParamsProjectAfterOptions",
+  "config_dir": "/tmp/omegat-conf",
+  "project": "/tmp/project",
+  "keys": [
+    "org.omegat.MainTest#testConstructCommandParamsProjectAfterOptions"
+  ]
+}

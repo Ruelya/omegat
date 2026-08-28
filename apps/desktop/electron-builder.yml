@@ -1,0 +1,25 @@
+appId: org.omegat.OmegaT
+productName: OmegaT
+copyright: Copyright OmegaT contributors, GNU GPL v3+
+directories:
+  output: dist
+  buildResources: build
+files:
+  - dist-electron/**/*
+  - dist/**/*
+extraResources:
+  - from: ../../target/release/omegat-sidecar
+    to: omegat-sidecar
+linux:
+  target:
+    - deb
+    - rpm
+    - tar.gz
+  category: Office
+win:
+  target:
+    - nsis
+mac:
+  target:
+    - dmg
+  category: public.app-category.productivity

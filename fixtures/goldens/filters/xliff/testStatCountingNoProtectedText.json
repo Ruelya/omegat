@@ -1,0 +1,17 @@
+{
+  "id": "xliff",
+  "fixture": "xliff/filters3/file-XLIFFFilter-statcount.xlf",
+  "java_test": "org.omegat.filters.XLIFFFilterTest#testStatCountingNoProtectedText",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "first<m0>mark</m0> <m1>mark2</m1>CUSTOM"
+  ],
+  "word_count": 2,
+  "count_protected": false,
+  "count_custom_tags": true
+}
