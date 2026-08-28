@@ -483,9 +483,9 @@ impl SyncTransaction {
         let active = dir.join("active.json");
         let previous = dir.join(".active.previous.json");
         let path = if active.is_file() {
-            active
+            active.clone()
         } else if previous.is_file() {
-            previous
+            previous.clone()
         } else {
             return Ok(None);
         };
@@ -609,7 +609,7 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         transaction.file_remotes.clone(),
     )?;
     transaction.phase = "recovering".into();
-    for &index in &transaction.commit_started {
+    for index in transaction.commit_started.clone() {
         if transaction.published.contains(&index) {
             continue;
         }
