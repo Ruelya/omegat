@@ -1462,23 +1462,37 @@ fn pending_transaction_envelopes(
             .collect::<std::result::Result<Vec<_>, _>>()?,
     );
     envelopes.sort_by(|left, right| {
-        let key = |envelope: &Value| {
-            (
-                envelope
+        left.get("updated_unix_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX)
+            .cmp(
+                &right
                     .get("updated_unix_ms")
                     .and_then(Value::as_u64)
                     .unwrap_or(u64::MAX),
-                envelope
-                    .get("batch_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
-                envelope
-                    .pointer("/payload/operation")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
             )
-        };
-        key(left).cmp(&key(right))
+            .then_with(|| {
+                left.get("batch_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .cmp(
+                        right
+                            .get("batch_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                    )
+            })
+            .then_with(|| {
+                left.pointer("/payload/operation")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .cmp(
+                        right
+                            .pointer("/payload/operation")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                    )
+            })
     });
     Ok(envelopes)
 }
