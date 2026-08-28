@@ -3922,6 +3922,43 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
             synced["result"]["receipt"]["payload"]["operation"],
             fifo_heads[0].1
         );
+        let saved = rpc(
+            &mut owner_in,
+            &mut owner_out,
+            4,
+            "project.save",
+            json!({
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": fifo_heads[1].0,
+            }),
+        );
+        assert_eq!(
+            saved["result"]["receipt"]["payload"]["operation"],
+            fifo_heads[1].1
+        );
+        let closed = rpc(
+            &mut owner_in,
+            &mut owner_out,
+            5,
+            "project.close",
+            json!({
+                "transaction_project_root": root,
+                "transaction_generation": generation,
+                "transaction_batch_id": fifo_heads[2].0,
+            }),
+        );
+        assert_eq!(
+            closed["result"]["receipt"]["payload"]["operation"],
+            fifo_heads[2].1
+        );
+        rpc(
+            &mut owner_in,
+            &mut owner_out,
+            6,
+            "project.open",
+            json!({ "root": root }),
+        );
         std::fs::write(root.join("source/wanted.txt"), "raw owner conflict").unwrap();
         std::fs::write(root.join("source/decoy.txt"), "raw owner decoy").unwrap();
         let original_tmx = r#"<?xml version="1.0" encoding="UTF-8"?><tmx version="1.4"><body><tu><tuv xml:lang="en"><seg>raw owner conflict</seg></tuv><tuv xml:lang="fr"><seg>ours</seg></tuv></tu></body></tmx>"#;
@@ -3939,46 +3976,9 @@ fn waiting_raw_cancel_caller_takes_over_at_each_unfinished_boundary() {
         rpc(
             &mut owner_in,
             &mut owner_out,
-            4,
+            7,
             "project.reload",
             json!({}),
-        );
-        let saved = rpc(
-            &mut owner_in,
-            &mut owner_out,
-            5,
-            "project.save",
-            json!({
-                "transaction_project_root": root,
-                "transaction_generation": generation,
-                "transaction_batch_id": fifo_heads[1].0,
-            }),
-        );
-        assert_eq!(
-            saved["result"]["receipt"]["payload"]["operation"],
-            fifo_heads[1].1
-        );
-        let closed = rpc(
-            &mut owner_in,
-            &mut owner_out,
-            6,
-            "project.close",
-            json!({
-                "transaction_project_root": root,
-                "transaction_generation": generation,
-                "transaction_batch_id": fifo_heads[2].0,
-            }),
-        );
-        assert_eq!(
-            closed["result"]["receipt"]["payload"]["operation"],
-            fifo_heads[2].1
-        );
-        rpc(
-            &mut owner_in,
-            &mut owner_out,
-            7,
-            "project.open",
-            json!({ "root": root }),
         );
         let committed = rpc(
             &mut owner_in,
