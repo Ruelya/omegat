@@ -114,12 +114,24 @@ parks the terminal in the active queue, then archives it, cleans domain
 artifacts, and finally removes the queue row, so restart closes both publication
 crash windows without replaying product writes. Close, save, team
 sync/commit/resolve, refresh, and config callers share those invariants.
-Config-scoped root discovery uses the core fairness order. Sidecar replacement
-recovery performs legacy preparation before one cancellable multi-round owner
-claim and continues from that exact app/PID/generation under a revalidated
-blocking lock, avoiding both orphan live owners and false empty discovery
-results during another contender's short critical section.
-The real Linux packaged durable-FIFO stress runner passed both constituent
+Owner election, legacy-claim import, cancellable multi-generation waiting,
+released-owner tombstones, lock acquisition, workflow opening, and fail-closed
+cross-root discovery now live in a generic
+`DurableTransactionCoordinator`. Config and project/team callers no longer
+maintain parallel compatibility election loops. Sidecar replacement recovery
+performs legacy preparation before one cancellable multi-round claim and
+continues from that exact app/PID/generation under a revalidated blocking lock;
+an empty queue durably releases that claim. Receipt lookup also takes this
+blocking coordinator path, closing the committed-response race with a
+concurrent recoverer.
+One phase model covers all **22 project** and **4 config** writers. Core property
+matrices run every writer through all three acknowledgement publication/
+compaction crash boundaries, all ten legacy-history migration/segmentation/GC
+crash boundaries, and equal-revision active-replica divergence. Separate model
+tests cover multi-generation owner takeover, release, cancellation before lock
+preparation, fair cross-root ordering, invalid discovery records, and
+byte-different duplicate discovery records.
+The real Linux packaged durable-FIFO stress runner passed all three
 multi-Electron drivers and parses their reports rather than accepting only
 child exit status. It covers enqueue; all eight active recovery/primary write,
 fsync, rename, and parent-fsync boundaries; product publication; ten
@@ -130,7 +142,13 @@ hold at least three packaged Electron waiters concurrently and prove that a
 pre-existing third waiter takes over without launching another process. Per-
 contender claim markers are accepted only when they match the current durable
 owner app/PID/generation, including takeover between durable claim and renderer
-delivery. Windows and macOS packaged file-lock, atomic-rename,
+delivery. The third driver passed a seeded **24-step** random SIGKILL sequence
+over two project roots, mixing project-save deaths immediately before and after
+atomic product publication with config active-replica rename/parent-fsync and
+terminal-history deaths. Every row converged to one exact terminal decision,
+both project roots drained, active replicas converged, released-owner
+tombstones were observed, and no candidate files remained. Windows and macOS
+packaged file-lock, atomic-rename,
 directory-fsync, and Electron concurrency were not run because this runner is
 Linux-only.
 The raw NDJSON contract and real Linux packaged matrix also pass the
