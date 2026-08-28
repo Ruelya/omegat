@@ -1739,6 +1739,34 @@ try {
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: releasePath,
         })
       ));
+    const waitForDurableElection = (
+      label,
+      markerPath,
+      previousClaimId,
+      replacements,
+    ) =>
+      waitFor(label, async () => {
+        if (await pathExists(markerPath)) {
+          return JSON.parse(await readFile(markerPath, "utf8"));
+        }
+        if (!await pathExists(prepared.ownerPath)) return undefined;
+        const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+        if (
+          claim.claim_id === previousClaimId
+          || !replacements.some((replacement) =>
+            replacement.application.pid === claim.process_id
+          )
+        ) {
+          return undefined;
+        }
+        return {
+          batch_id: prepared.receiptBatchId,
+          operation: "entry.set",
+          app_instance: claim.app_instance,
+          owner_process_id: claim.process_id,
+          generation: claim.generation,
+        };
+      });
     const assertLosingReplacement = async (
       replacement,
       generation,
@@ -1788,12 +1816,11 @@ try {
       firstElectionTraces,
     );
     quorumReplacements = firstWave;
-    const firstElection = await waitFor(
+    const firstElection = await waitForDurableElection(
       `${point} first three-replacement election`,
-      async () =>
-        await pathExists(firstElectionMarker)
-          ? JSON.parse(await readFile(firstElectionMarker, "utf8"))
-          : undefined,
+      firstElectionMarker,
+      durableOwner.claim_id,
+      firstWave,
     );
     assert.equal(firstElection.batch_id, prepared.receiptBatchId);
     assert.equal(firstElection.operation, "entry.set");
@@ -1854,12 +1881,11 @@ try {
       secondElectionTraces,
     );
     quorumReplacements = secondWave;
-    const secondElection = await waitFor(
+    const secondElection = await waitForDurableElection(
       `${point} second three-replacement election`,
-      async () =>
-        await pathExists(secondElectionMarker)
-          ? JSON.parse(await readFile(secondElectionMarker, "utf8"))
-          : undefined,
+      secondElectionMarker,
+      firstDurableOwner.claim_id,
+      secondWave,
     );
     assert.equal(secondElection.batch_id, prepared.receiptBatchId);
     assert.equal(secondElection.operation, "entry.set");
@@ -3299,13 +3325,38 @@ try {
       ),
     );
     quorumReplacements = replacements;
-    const electionMarker = await waitFor(
+    const election = await waitFor(
       `${headKind} simultaneous replacement winner`,
-      async () =>
-        await pathExists(electionMarkerPath)
-          ? JSON.parse(await readFile(electionMarkerPath, "utf8"))
-          : undefined,
+      async () => {
+        if (await pathExists(electionMarkerPath)) {
+          return {
+            marker: JSON.parse(await readFile(electionMarkerPath, "utf8")),
+            rendererMarkerObserved: true,
+          };
+        }
+        if (!await pathExists(prepared.ownerPath)) return undefined;
+        const claim = JSON.parse(await readFile(prepared.ownerPath, "utf8"));
+        if (
+          claim.claim_id === oldDurableOwner.claim_id
+          || !replacements.some((replacement) =>
+            replacement.application.pid === claim.process_id
+          )
+        ) {
+          return undefined;
+        }
+        return {
+          marker: {
+            batch_id: prepared.headBatchId,
+            operation: prepared.operation,
+            app_instance: claim.app_instance,
+            owner_process_id: claim.process_id,
+            generation: claim.generation,
+          },
+          rendererMarkerObserved: false,
+        };
+      },
     );
+    const electionMarker = election.marker;
     assert.equal(electionMarker.batch_id, prepared.headBatchId);
     assert.equal(electionMarker.operation, prepared.operation);
     assert.notEqual(electionMarker.owner_process_id, killedOldOwner.browserPid);
@@ -3504,6 +3555,7 @@ try {
         claimId: durableWinner.claim_id,
         selectedBatchId: electionMarker.batch_id,
         dispatchOrder: [prepared.headBatchId, prepared.refreshBatchId],
+        rendererMarkerObserved: election.rendererMarkerObserved,
       },
       losers: {
         browserPids: losers.map((loser) => loser.application.pid),
