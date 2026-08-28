@@ -498,6 +498,10 @@ pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
     if !aff.exists() || !dic.exists() {
         return Ok(false);
     }
+    let installed_aff = dest.join(format!("{stem}.aff"));
+    let installed_dic = dest.join(format!("{stem}.dic"));
+    let aff_preexisting = installed_aff.exists();
+    let dic_preexisting = installed_dic.exists();
     let sequence = INSTALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let staging = dest.join(format!(
         ".{stem}.{}.{}.staging",
@@ -516,7 +520,6 @@ pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
         File::open(&staging)?.sync_all()?;
         spell_install_checkpoint(stem, "after_staging_fsync")?;
 
-        let installed_aff = dest.join(format!("{stem}.aff"));
         if installed_aff.exists() {
             std::fs::remove_file(&staged_aff)?;
         } else {
@@ -524,7 +527,6 @@ pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
         }
         spell_install_checkpoint(stem, "after_aff_rename")?;
 
-        let installed_dic = dest.join(format!("{stem}.dic"));
         if installed_dic.exists() {
             std::fs::remove_file(&staged_dic)?;
         } else {
@@ -535,6 +537,13 @@ pub fn install_lang(lang: &str, dest: &Path) -> std::io::Result<bool> {
     })();
     if let Err(error) = publish {
         let _ = std::fs::remove_dir_all(&staging);
+        if !aff_preexisting {
+            let _ = std::fs::remove_file(&installed_aff);
+        }
+        if !dic_preexisting {
+            let _ = std::fs::remove_file(&installed_dic);
+        }
+        let _ = File::open(dest).and_then(|directory| directory.sync_all());
         return Err(error);
     }
     std::fs::remove_dir(&staging)?;
