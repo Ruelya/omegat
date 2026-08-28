@@ -2467,6 +2467,8 @@ try {
     workDir,
     "close-contender-envelope-trace.ndjson",
   );
+  const closeContenderWaitPath = join(workDir, "close-contender-wait.json");
+  const closeContenderRetryPath = join(workDir, "close-contender-retry.ndjson");
   const closeHeadMarkerPath = join(workDir, "close-selected-head-sidecar-kill.json");
   const closeOwnerMarkerPath = join(workDir, "close-owner-claim.json");
   const closeDeadOwnerReleasePath = join(workDir, "close-dead-owner-release");
@@ -2681,10 +2683,32 @@ try {
   assert.notEqual(durableTakeoverClaim.claim_id, durableOwnerClaim.claim_id);
   launchedB = await launchPackaged(xvfb.display, closeConfig, null, {
     OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: closeContenderTracePath,
+    OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: closeContenderWaitPath,
+    OMEGAT_TEST_TRANSACTION_OWNER_RETRY_TRACE: closeContenderRetryPath,
   });
-  await waitFor("concurrent replacement owner rejection", () =>
-    launchedB.stderr().includes("owned by live app") ? true : undefined
+  const closeContenderWait = await waitFor(
+    "concurrent replacement owner wait",
+    async () =>
+      await pathExists(closeContenderWaitPath)
+        ? JSON.parse(await readFile(closeContenderWaitPath, "utf8"))
+        : undefined,
   );
+  assert.equal(
+    closeContenderWait.previous_owner_process_id,
+    takeoverClaim.owner_process_id,
+  );
+  const contenderRejection = await invokeRpcResult(
+    launchedB.client,
+    "transaction.receipt.pending",
+    {
+      root: closeProject,
+      app_instance: "lost-close-explicit-no-retry-contender",
+      owner_process_id: launchedB.application.pid,
+      generation: takeoverClaim.generation + 1,
+    },
+  );
+  assert.equal(contenderRejection.resolved, false);
+  assert.match(contenderRejection.error, /owned by live app/);
   assert.equal(
     await launchedB.client.evaluate(
       'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
