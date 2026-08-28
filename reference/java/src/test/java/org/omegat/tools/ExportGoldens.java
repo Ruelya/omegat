@@ -3784,6 +3784,16 @@ public final class ExportGoldens {
         writeJson(goldenRoot.resolve(rel), json);
     }
 
+    private static Map<String, Object> teamPathCase(String remote, String remotePrefix,
+            String localPrefix, String result) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("remote", remote);
+        row.put("remote_prefix", remotePrefix);
+        row.put("local_prefix", localPrefix);
+        row.put("result", result);
+        return row;
+    }
+
     private void exportStringUtilTests() throws Exception {
         writeCase("util/StringUtilTest#testIsSubstringAfter.json",
                 "org.omegat.util.StringUtilTest#testIsSubstringAfter",
@@ -4693,24 +4703,15 @@ public final class ExportGoldens {
         writeCase("remaining/RemoteRepositoryProvider2Test-testRelativeRemoteToAbsoluteLocal.json",
                 "org.omegat.core.team2.RemoteRepositoryProvider2Test#testRelativeRemoteToAbsoluteLocal",
                 Map.of("cases", List.of(
-                        Map.of("remote", "file.txt", "remote_prefix", "/", "local_prefix", "/",
-                                "result", "file.txt"),
-                        Map.of("remote", "file.txt", "remote_prefix", "", "local_prefix", "",
-                                "result", "file.txt"),
-                        Map.of("remote", "file.txt", "remote_prefix", "", "local_prefix", "/",
-                                "result", "file.txt"),
-                        Map.of("remote", "file.txt", "remote_prefix", "/", "local_prefix", "",
-                                "result", "file.txt"),
-                        Map.of("remote", "somedir/file.txt", "remote_prefix", "somedir",
-                                "local_prefix", "source", "result", "source/file.txt"),
-                        Map.of("remote", "somedir/file.txt", "remote_prefix", "somedir",
-                                "local_prefix", "source/", "result", "source/file.txt"),
-                        Map.of("remote", "somedir/file.txt", "remote_prefix", "somedir/",
-                                "local_prefix", "source", "result", "source/file.txt"),
-                        Map.of("remote", "somedir/file.txt", "remote_prefix", "/somedir/",
-                                "local_prefix", "source", "result", "source/file.txt"),
-                        Map.of("remote", "somedir/file.txt", "remote_prefix", "/",
-                                "local_prefix", "/source", "result", "source/somedir/file.txt"))));
+                        teamPathCase("file.txt", "/", "/", "file.txt"),
+                        teamPathCase("file.txt", "", "", "file.txt"),
+                        teamPathCase("file.txt", "", "/", "file.txt"),
+                        teamPathCase("file.txt", "/", "", "file.txt"),
+                        teamPathCase("somedir/file.txt", "somedir", "source", "source/file.txt"),
+                        teamPathCase("somedir/file.txt", "somedir", "source/", "source/file.txt"),
+                        teamPathCase("somedir/file.txt", "somedir/", "source", "source/file.txt"),
+                        teamPathCase("somedir/file.txt", "/somedir/", "source", "source/file.txt"),
+                        teamPathCase("somedir/file.txt", "/", "/source", "source/somedir/file.txt"))));
         writeCase("remaining/HTTPRemoteRepositoryTest-testRetrieveRetrievesFileSuccessfully.json",
                 "org.omegat.core.team2.impl.HTTPRemoteRepositoryTest#testRetrieveRetrievesFileSuccessfully",
                 Map.of("body", "Test file contents", "exists", true));
