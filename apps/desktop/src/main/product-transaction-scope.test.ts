@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   scopeProductTransaction,
   transactionEnvelopesForRenderer,
+  transactionReceiptIdentity,
 } from "./product-transaction-scope";
 
 describe("scopeProductTransaction", () => {
@@ -96,10 +97,14 @@ describe("scopeProductTransaction", () => {
 
 describe("transactionEnvelopesForRenderer", () => {
   const current = {
+    project_root: "/project",
+    generation: 7,
     batch_id: "current",
     payload: { operation: "team.mapping" },
   };
   const older = {
+    project_root: "/project",
+    generation: 7,
     batch_id: "older",
     payload: { operation: "project.external-refresh" },
   };
@@ -107,22 +112,15 @@ describe("transactionEnvelopesForRenderer", () => {
   it("keeps a caller-managed receipt on its operation-specific path", () => {
     expect(transactionEnvelopesForRenderer(
       [current],
-      { batchId: "current", operation: "team.mapping" },
-      true,
+      new Set([transactionReceiptIdentity(current)]),
     )).toEqual([]);
   });
 
   it("still publishes recovery, older FIFO, and raw bridge receipts", () => {
-    expect(transactionEnvelopesForRenderer([current], null, false)).toEqual([current]);
+    expect(transactionEnvelopesForRenderer([current], new Set())).toEqual([current]);
     expect(transactionEnvelopesForRenderer(
       [older],
-      { batchId: "current", operation: "team.mapping" },
-      true,
+      new Set([transactionReceiptIdentity(current)]),
     )).toEqual([older]);
-    expect(transactionEnvelopesForRenderer(
-      [current],
-      { batchId: "current", operation: "team.mapping" },
-      false,
-    )).toEqual([current]);
   });
 });

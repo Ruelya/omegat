@@ -14,10 +14,16 @@ import {
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import { isLongOperationMethod } from "../shared/rpc-operation";
-import type {
-  TransactionEnvelope,
-  TransactionOutcome,
+import {
+  isCallerManagedTransactionMethod,
+  type TransactionEnvelope,
+  type TransactionOutcome,
 } from "../shared/transaction-envelope";
+import {
+  scopeProductTransaction,
+  transactionEnvelopesForRenderer,
+  transactionReceiptIdentity,
+} from "./product-transaction-scope";
 import {
   createApplicationLifecycle,
   registerApplicationLifecycle,
@@ -27,10 +33,6 @@ import {
   ProjectFileWatcher,
   type ExternalProjectChange,
 } from "./project-file-watcher";
-import {
-  scopeProductTransaction,
-  transactionEnvelopesForRenderer,
-} from "./product-transaction-scope";
 import { SidecarRpcClient } from "./sidecar-rpc";
 
 let sidecar: ChildProcessWithoutNullStreams | null = null;
@@ -41,6 +43,22 @@ let stoppingSidecar = false;
 const isolatedMarkerSidecars = new Set<ChildProcessWithoutNullStreams>();
 const appInstance = randomUUID();
 let nextId = 1;
+let transactionRpcTail: Promise<void> = Promise.resolve();
+const callerManagedTransactionReceipts = new Set<string>();
+
+function enqueueTransactionRpc<T>(task: () => Promise<T>): Promise<T> {
+  const result = transactionRpcTail.then(task, task);
+  transactionRpcTail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function serializesTransactionRpc(method: string): boolean {
+  return isCallerManagedTransactionMethod(method)
+    || method === "project.external-refresh"
+    || method === "project.refresh.enqueue"
+    || method === "transaction.receipt.pending"
+    || method === "transaction.receipt.ack";
+}
 type DetachedTransactionScope = {
   root: string;
   generation: number;
@@ -301,7 +319,6 @@ async function publishPendingTransactionEnvelopes(
   generation: number,
   clientRequestId?: string | null,
   expectedReceipt?: { batchId: string; operation: string } | null,
-  callerManagesExpectedReceipt = false,
 ) {
   let result: {
     envelopes?: TransactionEnvelope[];
@@ -414,8 +431,7 @@ async function publishPendingTransactionEnvelopes(
   if (killSidecarAfterSelectedTransactionHead(envelopes)) return -1;
   const rendererEnvelopes = transactionEnvelopesForRenderer(
     envelopes,
-    expectedReceipt,
-    callerManagesExpectedReceipt,
+    callerManagedTransactionReceipts,
   );
   rendererEnvelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)
@@ -612,27 +628,28 @@ async function statefulClient(): Promise<SidecarRpcClient> {
 }
 
 async function persistExternalProjectChange(event: ExternalProjectChange) {
-  const persist = async () => {
-    const client = await statefulClient();
-    return client.request("project.refresh.enqueue", {
-      ...event,
-      app_instance: appInstance,
-    }) as Promise<{ batch?: TransactionEnvelope }>;
-  };
+  const persist = () =>
+    enqueueTransactionRpc(async () => {
+      const client = await statefulClient();
+      const result = await client.request("project.refresh.enqueue", {
+        ...event,
+        app_instance: appInstance,
+      }) as { batch?: TransactionEnvelope };
+      if (result.batch) {
+        await publishPendingTransactionEnvelopes(
+          client,
+          event.root,
+          event.generation,
+        );
+      }
+      return result;
+    });
   try {
-    let result: { batch?: TransactionEnvelope };
     try {
-      result = await persist();
+      await persist();
     } catch {
       if (sidecarRecovery) await sidecarRecovery;
-      result = await persist();
-    }
-    if (result.batch) {
-      await publishPendingTransactionEnvelopes(
-        await statefulClient(),
-        event.root,
-        event.generation,
-      );
+      await persist();
     }
   } catch (error) {
     process.stderr.write(
@@ -739,6 +756,20 @@ async function rpc(
     && typeof receipt.generation === "number"
   ) {
     if (
+      callerManagesTransactionReceipt
+      && "batch_id" in receipt
+      && typeof receipt.batch_id === "string"
+      && "payload" in receipt
+      && receipt.payload !== null
+      && typeof receipt.payload === "object"
+      && "operation" in receipt.payload
+      && typeof receipt.payload.operation === "string"
+    ) {
+      callerManagedTransactionReceipts.add(
+        transactionReceiptIdentity(receipt as TransactionEnvelope),
+      );
+    }
+    if (
       "payload" in receipt
       && receipt.payload !== null
       && typeof receipt.payload === "object"
@@ -768,7 +799,6 @@ async function rpc(
             operation: receipt.payload.operation,
           }
         : null,
-      callerManagesTransactionReceipt,
     );
   }
   const scopedExternalRefresh = method === "project.external-refresh"
@@ -823,6 +853,9 @@ function createWindow() {
   }
   Menu.setApplicationMenu(buildApplicationMenu(win));
   win.webContents.on("did-finish-load", () => {
+    // A renderer reload abandons its ephemeral direct-receipt ownership.
+    // The next project-watch handshake republishes any durable unacked head.
+    callerManagedTransactionReceipts.clear();
     win.webContents.send("menu:ready");
   });
 }
@@ -844,13 +877,17 @@ app.whenReady().then(() => {
       params: unknown,
       clientRequestId?: string,
       callerManagesTransactionReceipt?: boolean,
-    ) =>
-      rpc(
+    ) => {
+      const invoke = () => rpc(
         method,
         params,
         clientRequestId ?? null,
         callerManagesTransactionReceipt === true,
-      ),
+      );
+      return serializesTransactionRpc(method)
+        ? enqueueTransactionRpc(invoke)
+        : invoke();
+    },
   );
   ipcMain.handle("rpc-cancel", (_e, clientRequestId: string) =>
     rpcClient?.cancel(clientRequestId) ?? false
@@ -880,8 +917,10 @@ app.whenReady().then(() => {
         typeof generation === "number" ? generation : undefined,
       );
       await holdBeforeTransactionDispatch();
-      const client = await statefulClient();
-      await publishPendingTransactionEnvelopes(client, root, activeGeneration);
+      await enqueueTransactionRpc(async () => {
+        const client = await statefulClient();
+        await publishPendingTransactionEnvelopes(client, root, activeGeneration);
+      });
     }
   });
   ipcMain.handle(
@@ -929,15 +968,20 @@ app.whenReady().then(() => {
           `injected lost transaction acknowledgement for ${envelope.batch_id}`,
         );
       }
-      const result = await rpc("transaction.receipt.ack", {
-        root: envelope.project_root,
-        generation: envelope.generation,
-        batch_id: envelope.batch_id,
-        operation: envelope.payload.operation,
-        outcome,
-        app_instance: appInstance,
-        owner_process_id: process.pid,
-      });
+      const result = await enqueueTransactionRpc(() =>
+        rpc("transaction.receipt.ack", {
+          root: envelope.project_root,
+          generation: envelope.generation,
+          batch_id: envelope.batch_id,
+          operation: envelope.payload.operation,
+          outcome,
+          app_instance: appInstance,
+          owner_process_id: process.pid,
+        })
+      );
+      callerManagedTransactionReceipts.delete(
+        transactionReceiptIdentity(envelope),
+      );
       const trace = process.env.OMEGAT_TEST_TRANSACTION_ACK_TRACE;
       if (trace) {
         appendFileSync(trace, `${JSON.stringify({
@@ -951,14 +995,14 @@ app.whenReady().then(() => {
         setTimeout(() => scheduleDetachedTransactionRecovery(), 0);
       } else if (activeMatches) {
         setTimeout(() => {
-          void statefulClient()
-            .then((client) =>
-              publishPendingTransactionEnvelopes(
-                client,
-                envelope.project_root,
-                envelope.generation,
-              )
-            )
+          void enqueueTransactionRpc(async () => {
+            const client = await statefulClient();
+            return publishPendingTransactionEnvelopes(
+              client,
+              envelope.project_root,
+              envelope.generation,
+            );
+          })
             .catch((error) => {
               process.stderr.write(
                 `cannot publish transaction after receipt ack: ${String(error)}\n`,

@@ -30,24 +30,34 @@ export function scopeProductTransaction(
 }
 
 type TransactionReceiptIdentity = {
+  project_root: string;
+  generation: number;
   batch_id: string;
   payload: { operation: string };
 };
 
 /**
- * A caller-managed receipt returned by the current RPC belongs to that RPC's
- * renderer action. Publishing the same receipt on the recovery channel races
- * its operation-specific state update and acknowledgement. Older FIFO heads,
- * restart recovery, and raw bridge callers still use the channel.
+ * A caller-managed receipt belongs to its operation-specific renderer action.
+ * Publishing it on the recovery channel races that action's state update and
+ * acknowledgement. The in-memory ownership set disappears with Electron, so
+ * process restart still republishes every durable unacknowledged receipt.
  */
 export function transactionEnvelopesForRenderer<T extends TransactionReceiptIdentity>(
   envelopes: readonly T[],
-  directlyReturnedReceipt: { batchId: string; operation: string } | null | undefined,
-  callerManagesReceipt: boolean,
+  callerManagedReceipts: ReadonlySet<string>,
 ): T[] {
-  if (!directlyReturnedReceipt || !callerManagesReceipt) return [...envelopes];
   return envelopes.filter((envelope) =>
-    envelope.batch_id !== directlyReturnedReceipt.batchId
-    || envelope.payload.operation !== directlyReturnedReceipt.operation
+    !callerManagedReceipts.has(transactionReceiptIdentity(envelope))
   );
+}
+
+export function transactionReceiptIdentity(
+  receipt: TransactionReceiptIdentity,
+): string {
+  return JSON.stringify([
+    receipt.project_root,
+    receipt.generation,
+    receipt.batch_id,
+    receipt.payload.operation,
+  ]);
 }
