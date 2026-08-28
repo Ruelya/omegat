@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SortedOutput",
+  "sorted": true,
+  "keys": [
+    "org.omegat.gui.issues.IssuesTypeListModelTest#testCalculateData_SortedOutput"
+  ]
+}

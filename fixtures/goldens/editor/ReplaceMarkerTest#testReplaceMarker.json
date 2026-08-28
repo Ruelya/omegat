@@ -1,0 +1,13 @@
+{
+  "java_test": "org.omegat.gui.editor.mark.ReplaceMarkerTest#testReplaceMarker",
+  "source": "source text",
+  "needle": "text",
+  "marks": [
+    {
+      "startOffset": 7,
+      "endOffset": 11,
+      "entryPart": "TRANSLATION"
+    }
+  ],
+  "exported_by": "org.omegat.tools.ExportGoldens"
+}

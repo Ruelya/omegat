@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators",
+  "count": 0,
+  "keys": [
+    "org.omegat.core.machinetranslators.MachineTranslatorsManagerTest#testSetGlossaryMap_NoTranslators"
+  ]
+}

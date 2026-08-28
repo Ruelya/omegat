@@ -1,0 +1,8 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.core.search.SearcherTest#testSearchCheckEntryNotAuthor",
+  "hit": false,
+  "keys": [
+    "org.omegat.core.search.SearcherTest#testSearchCheckEntryNotAuthor"
+  ]
+}
