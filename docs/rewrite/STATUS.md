@@ -56,10 +56,10 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 - `WAVE_REQUIRED_TESTS` registers **148** in-scope `*Test` classes across
   R1–R10. Unassigned in-scope classes: **0**.
 
-**2026-08-28 verification:** core selected suites **160 passed**, filters
+**2026-08-28 verification:** core selected suites **161 passed**, filters
 **86 passed**, team **50 passed / 1 ignored**, script **10 passed**, CLI
 **4 passed**, sidecar contract **36 passed** plus sidecar journal/watcher unit
-**13 passed** and plugin filter **1 passed**, and desktop **25 files / 182 tests
+**13 passed** and plugin filter **1 passed**, and desktop **25 files / 183 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
 Project/team product transaction history now uses the shared immutable segmented
@@ -129,10 +129,28 @@ lock shim and private config lock shim are gone. A coordinator keyed by the
 canonical lock path fails same-thread re-entry before touching the OS lock, and
 the regression test proves that the outer callback completes, the inner
 callback never runs, and the coordinator can be reopened afterward.
+Project/team phase transitions no longer reopen a workflow inside the locked
+operation. Snapshot capture, mutation checkpoints, product publication,
+renderer-receipt retention, terminal rollback, and cleanup now carry the one
+mutable workflow owned by the outer coordinator callback through save, close,
+team sync/commit/resolve, and refresh. Renderer callers likewise use one
+publication-then-ack completion helper for every receipt-bearing operation.
+Synchronous close publication posts its acknowledgement without a microtask
+gap, so React's closed-state unwatch effect cannot erase main-process scope
+first; a renderer regression test fixes that ordering.
 One phase model covers all **22 project** and **4 config** writers. Core property
 matrices run every writer through all three acknowledgement publication/
 compaction crash boundaries, all ten legacy-history migration/segmentation/GC
 crash boundaries, and equal-revision active-replica divergence. A separate
+26-writer receipt model now performs one counted product write, disconnects the
+renderer at an acknowledgement boundary, moves and reopens the scope, retries
+the duplicate RPC, alternates successful acknowledgement and cancellation as
+the terminal race winner, and forces immutable generation/GC replacement.
+Every writer remains at one product call, an opposing terminal is rejected, the
+active queue is empty, and sparse lookup returns exactly the winning terminal
+after compaction. The segment-read counter used by that assertion is
+thread-local, preventing parallel history tests from contaminating its exact
+read bound. A separate
 reproducible random model runs four default seeds and 512 random scheduling
 steps per seed. Each seed creates a commit lane and a cancel lane for every
 writer (**52 transactions**), randomly interleaves enqueue, cancellation
@@ -152,8 +170,13 @@ fsync, rename, and parent-fsync boundaries; product publication; ten
 history/compaction kill points; sixteen history replica boundaries; all four
 lost-ack receipt classes; cancellation before and after owner claim; cross-root
 order and project-root movement; and consecutive owner deaths. The mixed rows
-hold at least three packaged Electron waiters concurrently and prove that a
-pre-existing third waiter takes over without launching another process. Per-
+now start both replacement Electrons while their predecessors are still alive:
+two pre-existing waiters survive consecutive owner deaths. The final waiter
+kills its sidecar after exact close-head selection, then the same browser
+acknowledges that close through a distinct replacement sidecar PID before the
+project moves. Other rows hold at least three packaged Electron waiters
+concurrently and prove that a pre-existing third waiter takes over without
+launching another process. Per-
 contender claim markers are accepted only when they match the current durable
 owner app/PID/generation, including takeover between durable claim and renderer
 delivery. The third driver now passes **3 seeds × 16 steps = 48** random
