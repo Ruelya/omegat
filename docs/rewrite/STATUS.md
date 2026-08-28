@@ -62,6 +62,9 @@ Adversarial audit **2026-08-27** (Java 6.2 tree vs this rewrite). Inventory:
 **7 passed** and plugin filter **1 passed**, and desktop **24 files / 174 tests
 passed** after a clean TypeScript check.
 Structural honesty is **18/18**.
+The sidecar contract and real Linux package both exercise pre-kill contender
+rejection at each product compaction checkpoint; the packaged result records
+`pendingRejected` and `acknowledgementRejected` before the old PID exits.
 The real Linux unpacked package restart E2E, including atomic refresh receipt
 recovery and cross-project transaction isolation, also passes; Windows and macOS
 packaged restart were not run in this Linux-only environment. A separate real
