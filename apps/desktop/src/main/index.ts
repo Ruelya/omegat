@@ -27,7 +27,10 @@ import {
   ProjectFileWatcher,
   type ExternalProjectChange,
 } from "./project-file-watcher";
-import { scopeProductTransaction } from "./product-transaction-scope";
+import {
+  scopeProductTransaction,
+  transactionEnvelopesForRenderer,
+} from "./product-transaction-scope";
 import { SidecarRpcClient } from "./sidecar-rpc";
 
 let sidecar: ChildProcessWithoutNullStreams | null = null;
@@ -408,10 +411,15 @@ async function publishPendingTransactionEnvelopes(
     );
   }
   if (killSidecarAfterSelectedTransactionHead(envelopes)) return -1;
-  envelopes.forEach((envelope) =>
+  const rendererEnvelopes = transactionEnvelopesForRenderer(
+    envelopes,
+    expectedReceipt,
+    Boolean(clientRequestId),
+  );
+  rendererEnvelopes.forEach((envelope) =>
     publishTransactionEnvelope(root, generation, envelope)
   );
-  return envelopes.length;
+  return rendererEnvelopes.length;
 }
 
 async function advanceDetachedTransactionRecovery(

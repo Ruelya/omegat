@@ -28,3 +28,26 @@ export function scopeProductTransaction(
     transaction_batch_id: `product-${method}-${createBatchId()}`,
   };
 }
+
+type TransactionReceiptIdentity = {
+  batch_id: string;
+  payload: { operation: string };
+};
+
+/**
+ * A receipt returned by the current RPC belongs to that RPC's renderer caller.
+ * Publishing the same receipt on the recovery channel races the caller's
+ * operation-specific state update and acknowledgement. Older FIFO heads,
+ * restart recovery, and deferred resolve receipts still use the channel.
+ */
+export function transactionEnvelopesForRenderer<T extends TransactionReceiptIdentity>(
+  envelopes: readonly T[],
+  directlyReturnedReceipt: { batchId: string; operation: string } | null | undefined,
+  deferredResponse: boolean,
+): T[] {
+  if (!directlyReturnedReceipt || deferredResponse) return [...envelopes];
+  return envelopes.filter((envelope) =>
+    envelope.batch_id !== directlyReturnedReceipt.batchId
+    || envelope.payload.operation !== directlyReturnedReceipt.operation
+  );
+}

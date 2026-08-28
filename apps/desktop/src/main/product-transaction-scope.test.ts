@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import { describe, expect, it } from "vitest";
-import { scopeProductTransaction } from "./product-transaction-scope";
+import {
+  scopeProductTransaction,
+  transactionEnvelopesForRenderer,
+} from "./product-transaction-scope";
 
 describe("scopeProductTransaction", () => {
   it("binds every persistent project operation to the watched generation", () => {
@@ -88,5 +91,38 @@ describe("scopeProductTransaction", () => {
       generation: 1,
     }, () => "unused")).toBe(params);
     expect(scopeProductTransaction("entry.set", params, null, () => "unused")).toBe(params);
+  });
+});
+
+describe("transactionEnvelopesForRenderer", () => {
+  const current = {
+    batch_id: "current",
+    payload: { operation: "team.mapping" },
+  };
+  const older = {
+    batch_id: "older",
+    payload: { operation: "project.external-refresh" },
+  };
+
+  it("keeps a directly returned receipt on its operation-specific caller path", () => {
+    expect(transactionEnvelopesForRenderer(
+      [current],
+      { batchId: "current", operation: "team.mapping" },
+      false,
+    )).toEqual([]);
+  });
+
+  it("still publishes recovery, older FIFO, and deferred resolve receipts", () => {
+    expect(transactionEnvelopesForRenderer([current], null, false)).toEqual([current]);
+    expect(transactionEnvelopesForRenderer(
+      [older],
+      { batchId: "current", operation: "team.mapping" },
+      false,
+    )).toEqual([older]);
+    expect(transactionEnvelopesForRenderer(
+      [current],
+      { batchId: "current", operation: "team.mapping" },
+      true,
+    )).toEqual([current]);
   });
 });

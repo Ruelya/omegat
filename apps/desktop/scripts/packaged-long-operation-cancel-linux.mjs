@@ -1046,6 +1046,22 @@ try {
   );
   assert.equal(configured.ok, true);
   assert.equal(configured.repositories.length, 2);
+  assert(configured.receipt, "team mapping did not return its durable receipt");
+  const mappingAck = await client.evaluate(
+    `(async () => {
+      return await window.omegat.acknowledgeTransactionReceipt(
+        ${JSON.stringify(configured.receipt)},
+        "succeeded"
+      );
+    })()`,
+    true,
+  );
+  assert.equal(mappingAck.ack.acknowledged, true);
+  assert.equal(
+    await pathExists(join(project, ".repositories", "transactions", "active.json")),
+    false,
+    "team mapping receipt was not settled before editing resumed",
+  );
 
   assert.equal(
     await client.evaluate(`(() => {
