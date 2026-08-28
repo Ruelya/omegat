@@ -310,6 +310,10 @@ async function setInput(client, selector, value) {
     return true;
   })()`);
   assert.equal(changed, true, `input not found: ${selector}`);
+  await client.evaluate(
+    "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+    true,
+  );
 }
 
 async function click(client, selector) {
