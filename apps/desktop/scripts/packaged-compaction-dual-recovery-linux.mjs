@@ -3235,6 +3235,10 @@ try {
       { length: 3 },
       (_, index) => join(workDir, `${label}-replacement-${index}-trace.ndjson`),
     );
+    const replacementWaitPaths = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${label}-replacement-${index}-wait.json`),
+    );
     const prepared = await prepareAtomicElectionProject(
       config,
       project,
@@ -3345,9 +3349,11 @@ try {
     );
 
     const replacements = await Promise.all(
-      replacementTracePaths.map((tracePath) =>
+      replacementTracePaths.map((tracePath, index) =>
         launchPackagedRenderer(xvfb.display, config, startupProject, {
           OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
+          OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER:
+            replacementWaitPaths[index],
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: prepared.operation,
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: electionMarkerPath,
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: electionReleasePath,
@@ -3439,40 +3445,44 @@ try {
         `${headKind} replacement delivered before the winner release`,
       );
     }
-    for (const [index, loser] of losers.entries()) {
-      const loserScope = {
-        root: project,
-        app_instance: `${label}-simultaneous-loser-${index}`,
-        owner_process_id: loser.application.pid,
-        generation: electionMarker.generation + index + 1,
-      };
-      const loserPending = await invokeRpcResult(
-        loser.client,
-        "transaction.receipt.pending",
-        loserScope,
+    const loserIndices = replacements
+      .map((_, index) => index)
+      .filter((index) =>
+        index !== winnerIndex
+        && replacements[index].application.pid !== preDeliveryClaimKill?.browserPid
       );
+    const loserWaitMarkers = await waitFor(
+      `${headKind} surviving replacement owner waits`,
+      async () => {
+        const markers = [];
+        for (const index of loserIndices) {
+          const base = replacementWaitPaths[index];
+          const candidates = [base, `${base}.${winner.application.pid}`];
+          let matched;
+          for (const candidate of candidates) {
+            if (!await pathExists(candidate)) continue;
+            const value = JSON.parse(await readFile(candidate, "utf8"));
+            if (value.previous_owner_process_id === winner.application.pid) {
+              matched = { index, path: candidate, value };
+              break;
+            }
+          }
+          if (!matched) return undefined;
+          markers.push(matched);
+        }
+        return markers;
+      },
+    );
+    assert.equal(loserWaitMarkers.length, losers.length);
+    for (const { index, value } of loserWaitMarkers) {
+      assert.equal(value.previous_owner_process_id, winner.application.pid);
       assert.equal(
-        loserPending.resolved,
-        false,
-        `${headKind} losing replacement obtained the product head`,
+        await replacements[index].client.evaluate(
+          'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+          true,
+        ),
+        "6.2.0",
       );
-      assert.match(loserPending.error, /locked by another process|owned by live app/);
-      const loserAck = await invokeRpcResult(
-        loser.client,
-        "transaction.receipt.ack",
-        {
-          ...loserScope,
-          batch_id: prepared.headBatchId,
-          operation: prepared.operation,
-          outcome: "succeeded",
-        },
-      );
-      assert.equal(
-        loserAck.resolved,
-        false,
-        `${headKind} losing replacement acknowledged the product head`,
-      );
-      assert.match(loserAck.error, /locked by another process|owned by live app/);
     }
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
@@ -3616,8 +3626,8 @@ try {
       losers: {
         browserPids: losers.map((loser) => loser.application.pid),
         deliveredEnvelopes: 0,
-        pendingRejected: true,
-        acknowledgementRejected: true,
+        pendingBlockedByLiveOwner: true,
+        ownerClaimUnchanged: true,
       },
       preKillContender: {
         pendingRejected: true,
