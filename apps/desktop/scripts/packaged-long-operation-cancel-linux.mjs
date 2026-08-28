@@ -1406,6 +1406,8 @@ try {
         return {
           kind: app?.dataset.operation ?? "",
           phase: app?.dataset.operationPhase ?? "",
+          rpcTrace: window.__omegatRpcOperationTrace,
+          externalTrace: window.__omegatExternalChangeTrace,
         };
       })()`);
       if (
