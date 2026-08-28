@@ -434,26 +434,40 @@ async function runFault(operation, point, markerName, drive, verify) {
     faultEnv(operation, point, marker),
   );
   await drive(launched.client);
+  const markerWaitStarted = Date.now();
   const markerOutcome = await waitFor(markerName, async () => {
     if (await pathExists(marker)) return { reached: true };
     const renderer = await launched.client.evaluate(`(() => {
       const app = document.querySelector(".app");
       const phase = app?.getAttribute("data-operation-phase") ?? "";
-      if (phase !== "failed") return null;
       return {
         operation: app?.getAttribute("data-operation") ?? "",
         phase,
         status: [...document.querySelectorAll(".status")]
           .map((node) => node.textContent?.trim() ?? "")
           .filter(Boolean),
+        segmentationOpen:
+          document.querySelector('[data-window-id="segmentation"]') !== null,
+        srxPath:
+          document.querySelector('[data-window-id="segmentation"] [data-setting="srx_path"]')
+            ?.value ?? "",
       };
     })()`);
-    return renderer ? { reached: false, renderer } : undefined;
+    if (renderer?.phase === "failed" || Date.now() - markerWaitStarted >= 2_000) {
+      const preferences = await pathExists(prefsPath)
+        ? JSON.parse(await readFile(prefsPath, "utf8"))
+        : null;
+      const journal = await pathExists(active)
+        ? JSON.parse(await readFile(active, "utf8"))
+        : null;
+      return { reached: false, renderer, preferences, journal };
+    }
+    return undefined;
   });
   assert.equal(
     markerOutcome.reached,
     true,
-    `${markerName} failed before checkpoint: ${JSON.stringify(markerOutcome.renderer)}`,
+    `${markerName} failed before checkpoint: ${JSON.stringify(markerOutcome)}`,
   );
   const status = point === "before_atomic_publish" ? "pending" : "sidecar_committed";
   const envelope = await activeEnvelope(active, status, operation);
