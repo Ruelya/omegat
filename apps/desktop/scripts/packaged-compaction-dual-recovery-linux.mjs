@@ -1577,6 +1577,14 @@ try {
       { length: 3 },
       (_, index) => join(workDir, `${scenario}-second-${index}-trace.ndjson`),
     );
+    const firstElectionWaits = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${scenario}-first-${index}-wait.json`),
+    );
+    const secondElectionWaits = Array.from(
+      { length: 3 },
+      (_, index) => join(workDir, `${scenario}-second-${index}-wait.json`),
+    );
     const prepared = await prepareProductCompactionProject(
       config,
       project,
@@ -1730,10 +1738,11 @@ try {
       `product ${point} old owner PID remained live before quorum election`,
     );
 
-    const launchElectionWave = (markerPath, releasePath, traces) =>
-      Promise.all(traces.map((tracePath) =>
-        launchPackagedRenderer(xvfb.display, config, project, {
+    const launchElectionWave = (markerPath, releasePath, traces, waits) =>
+      Promise.all(traces.map((tracePath, index) =>
+        launchPackagedRenderer(xvfb.display, config, null, {
           OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: tracePath,
+          OMEGAT_TEST_TRANSACTION_OWNER_RETRY_WAIT_MARKER: waits[index],
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "entry.set",
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: markerPath,
           OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: releasePath,
@@ -1771,53 +1780,59 @@ try {
           rendererMarkerObserved: false,
         };
       });
-    const assertLosingReplacement = async (
-      replacement,
-      generation,
+    const waitForLosingReplacements = async (
+      replacements,
+      waitPaths,
+      winner,
+      excludedProcessId,
       label,
     ) => {
-      const scope = {
-        root: project,
-        app_instance: `${scenario}-${label}`,
-        owner_process_id: replacement.application.pid,
-        generation,
-      };
-      const pending = await invokeRpcResult(
-        replacement.client,
-        "transaction.receipt.pending",
-        scope,
-      );
-      assert.equal(
-        pending.resolved,
-        false,
-        `product ${point} ${label} obtained the elected product head`,
-      );
-      assert.match(pending.error, /locked by another process|owned by live app/);
-      const acknowledgement = await invokeRpcResult(
-        replacement.client,
-        "transaction.receipt.ack",
-        {
-          ...scope,
-          batch_id: prepared.receiptBatchId,
-          operation: "entry.set",
-          outcome: "succeeded",
+      const loserIndices = replacements
+        .map((_, index) => index)
+        .filter((index) =>
+          replacements[index] !== winner
+          && replacements[index].application.pid !== excludedProcessId
+        );
+      const markers = await waitFor(
+        `product ${point} ${label} owner waits`,
+        async () => {
+          const found = [];
+          for (const index of loserIndices) {
+            const base = waitPaths[index];
+            const candidates = [base, `${base}.${winner.application.pid}`];
+            let matched;
+            for (const candidate of candidates) {
+              if (!await pathExists(candidate)) continue;
+              const value = JSON.parse(await readFile(candidate, "utf8"));
+              if (value.previous_owner_process_id === winner.application.pid) {
+                matched = { index, value };
+                break;
+              }
+            }
+            if (!matched) return undefined;
+            found.push(matched);
+          }
+          return found;
         },
       );
-      assert.equal(
-        acknowledgement.resolved,
-        false,
-        `product ${point} ${label} acknowledged the elected product head`,
-      );
-      assert.match(
-        acknowledgement.error,
-        /locked by another process|owned by live app/,
-      );
+      for (const { index, value } of markers) {
+        assert.equal(value.previous_owner_process_id, winner.application.pid);
+        assert.equal(
+          await replacements[index].client.evaluate(
+            'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
+            true,
+          ),
+          "6.2.0",
+        );
+      }
+      return loserIndices.map((index) => replacements[index]);
     };
 
     const firstWave = await launchElectionWave(
       firstElectionMarker,
       firstElectionRelease,
       firstElectionTraces,
+      firstElectionWaits,
     );
     quorumReplacements = firstWave;
     const firstElection = await waitForDurableElection(
@@ -1847,14 +1862,13 @@ try {
         `product ${point} first election delivered before winner release`,
       );
     }
-    const firstLosers = firstWave.filter((_, index) => index !== firstWinnerIndex);
-    await Promise.all(firstLosers.map((replacement, index) =>
-      assertLosingReplacement(
-        replacement,
-        firstElection.generation + index + 1,
-        `first-loser-${index}`,
-      )
-    ));
+    const firstLosers = await waitForLosingReplacements(
+      firstWave,
+      firstElectionWaits,
+      firstWinner,
+      null,
+      "first-wave losers",
+    );
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
       firstDurableOwner,
@@ -1883,6 +1897,7 @@ try {
       secondElectionMarker,
       secondElectionRelease,
       secondElectionTraces,
+      secondElectionWaits,
     );
     quorumReplacements = secondWave;
     let secondElection = await waitForDurableElection(
@@ -1924,18 +1939,13 @@ try {
     assert.equal(secondDurableOwner.app_instance, secondElection.app_instance);
     assert.equal(secondDurableOwner.generation, secondElection.generation);
     assert.notEqual(secondDurableOwner.claim_id, firstDurableOwner.claim_id);
-    const secondLosers = secondWave.filter((replacement, index) =>
-      index !== secondWinnerIndex
-      && replacement.application.pid
-        !== secondPreDeliveryClaimKill?.browserPid
+    const secondLosers = await waitForLosingReplacements(
+      secondWave,
+      secondElectionWaits,
+      winner,
+      secondPreDeliveryClaimKill?.browserPid,
+      "second-wave losers",
     );
-    await Promise.all(secondLosers.map((replacement, index) =>
-      assertLosingReplacement(
-        replacement,
-        secondElection.generation + index + 1,
-        `second-loser-${index}`,
-      )
-    ));
     assert.deepEqual(
       JSON.parse(await readFile(prepared.ownerPath, "utf8")),
       secondDurableOwner,
@@ -1955,21 +1965,9 @@ try {
       !await pathExists(prepared.activePath) ? true : undefined
     );
     const recovered = await workspaceState(winner.client);
-    assert.equal(recovered.project, project);
-    assert.equal(recovered.source, prepared.source);
-    assert.equal(recovered.translation, prepared.translation);
-    assert.equal(recovered.activeSurfaces, 1);
-    assert.deepEqual(JSON.parse(recovered.key), prepared.key);
-    const entries = await winner.client.evaluate(
-      'window.omegat.rpc("entry.list", {})',
-      true,
-    );
-    const wanted = entries.find((entry) => entry.key.file === prepared.key.file);
-    const decoy = entries.find((entry) => entry.key.file === prepared.decoyKey.file);
-    assert.deepEqual(wanted.key, prepared.key);
-    assert.equal(wanted.translation, prepared.translation);
-    assert.deepEqual(decoy.key, prepared.decoyKey);
-    assert.equal(decoy.translation, "");
+    assert.equal(recovered.project, null);
+    assert.equal(recovered.welcome, true);
+    assert.equal(recovered.activeSurfaces, 0);
 
     const restartTrace = parseNdjson(
       await readFile(secondElectionTraces[secondWinnerIndex], "utf8"),
@@ -2040,7 +2038,27 @@ try {
     assert.equal(takeoverOwner.process_id, winner.application.pid);
     assert.notEqual(takeoverOwner.process_id, durableOwner.process_id);
     assert.equal(takeoverOwner.claim_id, secondDurableOwner.claim_id);
-    assert.equal(takeoverOwner.generation, recovered.generation);
+    assert.equal(takeoverOwner.generation, secondElection.generation);
+
+    await Promise.all(secondWave.map((replacement) => terminatePackaged(replacement)));
+    quorumReplacements = [];
+    launchedA = await launchPackaged(xvfb.display, config, project);
+    const reopened = await workspaceState(launchedA.client);
+    assert.equal(reopened.project, project);
+    assert.equal(reopened.source, prepared.source);
+    assert.equal(reopened.translation, prepared.translation);
+    assert.equal(reopened.activeSurfaces, 1);
+    assert.deepEqual(JSON.parse(reopened.key), prepared.key);
+    const entries = await launchedA.client.evaluate(
+      'window.omegat.rpc("entry.list", {})',
+      true,
+    );
+    const wanted = entries.find((entry) => entry.key.file === prepared.key.file);
+    const decoy = entries.find((entry) => entry.key.file === prepared.decoyKey.file);
+    assert.deepEqual(wanted.key, prepared.key);
+    assert.equal(wanted.translation, prepared.translation);
+    assert.deepEqual(decoy.key, prepared.decoyKey);
+    assert.equal(decoy.translation, "");
 
     productCompactionResults.push({
       point,
@@ -2064,8 +2082,7 @@ try {
         simultaneousReplacementCount: firstWave.length,
         winnerClaimId: firstDurableOwner.claim_id,
         loserCount: firstLosers.length,
-        loserPendingRejected: true,
-        loserAcknowledgementRejected: true,
+        losersBlockedByLiveOwner: true,
         deliveredEnvelopes: 0,
         killedBeforeRendererDelivery: firstWinnerKilled,
       },
@@ -2073,19 +2090,19 @@ try {
         simultaneousReplacementCount: secondWave.length,
         winnerClaimId: secondDurableOwner.claim_id,
         loserCount: secondLosers.length,
-        loserPendingRejected: true,
-        loserAcknowledgementRejected: true,
+        losersBlockedByLiveOwner: true,
         recoveredBatchId: secondElection.batch_id,
         preDeliveryClaimKill: secondPreDeliveryClaimKill,
       },
       completeEntryKey: prepared.key,
-      document3Surfaces: recovered.activeSurfaces,
+      detachedDocument3Surfaces: recovered.activeSurfaces,
+      document3Surfaces: reopened.activeSurfaces,
       productTmxReplayed: false,
       teamRemoteWriteReplayed: false,
       replacementOwnerClaimId: takeoverOwner.claim_id,
     });
-    await Promise.all(secondWave.map((replacement) => terminatePackaged(replacement)));
-    quorumReplacements = [];
+    await terminatePackaged(launchedA);
+    launchedA = undefined;
   }
 
   for (const point of ["after_archive_fsync", "after_queue_rename"]) {
