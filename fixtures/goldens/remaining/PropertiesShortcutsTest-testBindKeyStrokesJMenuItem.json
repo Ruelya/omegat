@@ -1,0 +1,12 @@
+{
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "java_test": "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItem",
+  "accelerators": [
+    "ctrl pressed S",
+    null,
+    "ctrl pressed D"
+  ],
+  "keys": [
+    "org.omegat.gui.shortcuts.PropertiesShortcutsTest#testBindKeyStrokesJMenuItem"
+  ]
+}
