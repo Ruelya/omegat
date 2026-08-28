@@ -3715,13 +3715,10 @@ try {
             (replacement, index) =>
               tracedRpcState(replacement.client, traceKeys[index]),
           ));
-          return states.every((state) =>
-              state?.settled
-              && state.resolved === false
-              && /request cancelled/.test(state.error ?? "")
-            )
-            ? states
-            : undefined;
+          if (!states.every((state) => state?.settled)) {
+            throw new Error(`concurrent cancellation states: ${JSON.stringify(states)}`);
+          }
+          return states;
         },
       );
       for (const state of concurrentResults) {
