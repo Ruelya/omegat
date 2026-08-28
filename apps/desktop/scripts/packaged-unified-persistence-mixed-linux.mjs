@@ -709,6 +709,7 @@ async function runPreparedMixedQueueTakeovers(display, workDir, config) {
   let third;
   let projectB;
   let moved;
+  let moveSession;
   try {
     const configPatch = (batchId, patch) =>
       session.request("prefs.patch", {
@@ -882,6 +883,20 @@ async function runPreparedMixedQueueTakeovers(display, workDir, config) {
     assert(positions.every((position) => position >= 0));
     assert(positions[0] < positions[1] && positions[1] < positions[2]);
 
+    const relocationLimits = {
+      ...limits,
+      OMEGAT_TEST_PRODUCT_HISTORY_COMPACTION_SEGMENTS: "1024",
+    };
+    moveSession = new SidecarSession(config, relocationLimits);
+    await moveSession.request("project.open", { root: rootA });
+    const moveSave = await moveSession.request("project.save", {
+      transaction_project_root: rootA,
+      transaction_generation: 201,
+      transaction_batch_id: "prepared-move-save",
+    });
+    assert.equal(moveSave.receipt.status, "sidecar_committed");
+    await moveSession.close();
+
     const immutableBefore = {};
     for (const file of await readdir(projectPaths(rootA).archive)) {
       immutableBefore[file] = (await readFile(
@@ -891,7 +906,10 @@ async function runPreparedMixedQueueTakeovers(display, workDir, config) {
     await terminatePackaged(projectB);
     projectB = undefined;
     await rename(rootA, movedA);
-    moved = await launchPackaged(display, config, movedA, limits);
+    moved = await launchPackaged(display, config, movedA, relocationLimits);
+    await waitFor("moved project receipt drain", async () =>
+      !await pathExists(projectPaths(movedA).active) ? true : undefined
+    );
     assert.equal((await rpc(moved.client, "project.props")).root, movedA);
     const movedManifest = JSON.parse(
       await readFile(projectPaths(movedA).manifest, "utf8"),
@@ -921,6 +939,9 @@ async function runPreparedMixedQueueTakeovers(display, workDir, config) {
   } finally {
     if (session.child.exitCode === null) {
       session.child.kill("SIGKILL");
+    }
+    if (moveSession?.child.exitCode === null) {
+      moveSession.child.kill("SIGKILL");
     }
     await Promise.all([
       terminatePackaged(moved),
