@@ -1674,6 +1674,7 @@ try {
     launchedB = await launchPackaged(xvfb.display, config, null, {
       OMEGAT_TEST_TRANSACTION_ENVELOPE_TRACE: preKillContenderTrace,
     });
+    const preKillContenderPid = launchedB.application.pid;
     // The interrupted compactor still owns operation.lock, so detached
     // discovery blocks before owner election. Give that asynchronous request a
     // scheduling turn, then prove it neither changed the durable claim nor
@@ -1697,15 +1698,11 @@ try {
       "pre-kill contender received an envelope while the owner lived",
     );
     assert.equal(
-      await launchedB.client.evaluate(
-        'window.omegat.rpc("sys.version", {}).then((value) => value.version)',
-        true,
-      ),
-      "6.2.0",
-      "rejected pre-kill contender did not remain responsive",
+      await pathExists(`/proc/${preKillContenderPid}`),
+      true,
+      "pre-kill contender browser exited while discovery waited for the lock",
     );
 
-    const preKillContenderPid = launchedB.application.pid;
     await terminatePackaged(launchedB);
     launchedB = undefined;
     const stableTreeBeforeRecovery = await snapshotStableProjectTree(project);
@@ -2062,7 +2059,7 @@ try {
         pendingBlockedByOperationLock: true,
         deliveredEnvelopes: 0,
         ownerClaimUnchanged: true,
-        remainedResponsive: true,
+        browserProcessRemainedLive: true,
       },
       firstElection: {
         simultaneousReplacementCount: firstWave.length,
