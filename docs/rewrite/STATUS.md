@@ -634,7 +634,11 @@ its successful response reaches Electron. If Electron dies before its ack, the
 replacement renderer performs only an in-memory six-field rebind against the
 reopened sidecar and then completes the durable head, rather than replaying the
 already successful refresh. Sidecar and renderer fault-injection tests cover
-this exact response/ack gap.
+this exact response/ack gap. The Linux package run also changes a watched
+source, SIGKILLs Electron from the main-process boundary immediately after the
+successful sidecar response, verifies the durable `sidecar_committed` head,
+then restarts and observes the new `Document3` plus one completed batch with
+exactly one `project.external-refresh` request.
 A separate real Linux `linux-unpacked` E2E leaves both pending fingerprint and
 conflict envelopes in project A, SIGKILLs the packaged Electron process group
 including its sidecar, and starts project B with the same config. B exposes only

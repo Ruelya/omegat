@@ -1,7 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import { isLongOperationMethod } from "../shared/rpc-operation";
@@ -364,7 +370,22 @@ async function rpc(
   const endWrite = watchedProjectWriteMethods.has(method)
     ? projectFileWatcher.beginWriteSource(method)
     : () => undefined;
-  return client.request(method, requestParams, clientRequestId).finally(endWrite);
+  const result = await client.request(method, requestParams, clientRequestId)
+    .finally(endWrite);
+  const scopedExternalRefresh = method === "project.external-refresh"
+    && requestParams !== null
+    && typeof requestParams === "object"
+    && "transaction_batch_id" in requestParams;
+  if (scopedExternalRefresh) {
+    const trace = process.env.OMEGAT_TEST_EXTERNAL_REFRESH_TRACE;
+    if (trace) appendFileSync(trace, `${Date.now()}\n`);
+    if (process.env.OMEGAT_TEST_CRASH_AFTER_EXTERNAL_REFRESH_COMMIT === "1") {
+      // Packaged fault injection: the sidecar response and durable commit
+      // checkpoint exist, but IPC cannot acknowledge the renderer.
+      process.kill(process.pid, "SIGKILL");
+    }
+  }
+  return result;
 }
 
 function createWindow() {

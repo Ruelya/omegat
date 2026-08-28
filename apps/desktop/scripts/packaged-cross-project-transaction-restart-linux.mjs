@@ -234,7 +234,7 @@ async function descendants(rootPid) {
   return found;
 }
 
-async function launchPackaged(display, configDir, project) {
+async function launchPackaged(display, configDir, project, extraEnv = {}) {
   const port = await unusedPort();
   let stderr = "";
   const application = spawn(
@@ -247,6 +247,7 @@ async function launchPackaged(display, configDir, project) {
         DISPLAY: display,
         OMEGAT_CONFIG_DIR: configDir,
         OMEGAT_PROJECT: project,
+        ...extraEnv,
       },
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -330,10 +331,26 @@ await Promise.all([access(executable), access(sidecar)]);
 
 const workDir = await mkdtemp(join(tmpdir(), "omegat-cross-project-restart-e2e-"));
 const configDir = join(workDir, "config");
+const checkpointProject = join(workDir, "checkpoint-project");
 const projectA = join(workDir, "project-a");
 const projectB = join(workDir, "project-b");
+const checkpointSourceBefore = "CHECKPOINT SOURCE BEFORE COMMIT";
+const checkpointSourceAfter = "CHECKPOINT SOURCE AFTER SIDECAR COMMIT";
 const sourceA = "PROJECT A TRANSACTION SOURCE";
 const sourceB = "PROJECT B ISOLATED SOURCE";
+const checkpointTrace = join(workDir, "external-refresh-trace.ndjson");
+const checkpointJournal = join(
+  checkpointProject,
+  ".repositories",
+  "transactions",
+  "external-refresh.json",
+);
+const checkpointHistory = join(
+  checkpointProject,
+  ".repositories",
+  "transactions",
+  "external-refresh-history.ndjson",
+);
 const transactionDir = join(projectA, ".repositories", "transactions");
 const prepDir = join(projectA, ".repositories", "prep");
 const refreshJournal = join(transactionDir, "external-refresh.json");
@@ -347,6 +364,12 @@ let launched;
 try {
   await mkdir(configDir, { recursive: true });
   await rpcOnce(configDir, "project.create", {
+    root: checkpointProject,
+    source_lang: "en",
+    target_lang: "fr",
+    sentence_seg: false,
+  });
+  await rpcOnce(configDir, "project.create", {
     root: projectA,
     source_lang: "en",
     target_lang: "fr",
@@ -359,9 +382,88 @@ try {
     sentence_seg: false,
   });
   await Promise.all([
+    writeFile(
+      join(checkpointProject, "source", "checkpoint.txt"),
+      checkpointSourceBefore,
+      "utf8",
+    ),
     writeFile(join(projectA, "source", "a.txt"), sourceA, "utf8"),
     writeFile(join(projectB, "source", "b.txt"), sourceB, "utf8"),
   ]);
+
+  launched = await launchPackaged(
+    xvfb.display,
+    configDir,
+    checkpointProject,
+    {
+      OMEGAT_TEST_CRASH_AFTER_EXTERNAL_REFRESH_COMMIT: "1",
+      OMEGAT_TEST_EXTERNAL_REFRESH_TRACE: checkpointTrace,
+    },
+  );
+  assert.equal(launched.workspace.source, checkpointSourceBefore);
+  const checkpointProcesses = await descendants(launched.application.pid);
+  const checkpointSidecar = checkpointProcesses.find(({ command }) =>
+    command.includes("omegat-sidecar")
+  );
+  assert(
+    checkpointSidecar,
+    `checkpoint sidecar not found: ${JSON.stringify(checkpointProcesses)}`,
+  );
+  const checkpointBrowserPid = launched.application.pid;
+  await writeFile(
+    join(checkpointProject, "source", "checkpoint.txt"),
+    checkpointSourceAfter,
+    "utf8",
+  );
+  await waitFor(
+    "fault-injected Electron crash after sidecar commit",
+    () => processExited(checkpointBrowserPid),
+  );
+  await waitFor("fault-injected sidecar exit", () =>
+    processExited(checkpointSidecar.pid)
+  );
+  try {
+    process.kill(-checkpointBrowserPid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+  launched.client.close();
+  launched = undefined;
+  const checkpointEnvelope = JSON.parse(
+    await readFile(checkpointJournal, "utf8"),
+  ).batches[0];
+  assert.equal(checkpointEnvelope.status, "sidecar_committed");
+  const checkpointBatchId = checkpointEnvelope.batch_id;
+
+  launched = await launchPackaged(
+    xvfb.display,
+    configDir,
+    checkpointProject,
+    { OMEGAT_TEST_EXTERNAL_REFRESH_TRACE: checkpointTrace },
+  );
+  assert.equal(launched.workspace.source, checkpointSourceAfter);
+  await waitFor("renderer ack of recovered sidecar checkpoint", async () =>
+    await pathExists(checkpointJournal) ? undefined : true
+  );
+  await sleep(250);
+  const checkpointTraceRows = (await readFile(checkpointTrace, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean);
+  assert.equal(
+    checkpointTraceRows.length,
+    1,
+    "recovered renderer replayed project.external-refresh",
+  );
+  const checkpointRows = parseNdjson(
+    await readFile(checkpointHistory, "utf8"),
+  );
+  const completedCheckpoint = checkpointRows.find((row) =>
+    row.batch_id === checkpointBatchId
+  );
+  assert.equal(completedCheckpoint?.status, "completed");
+  const killedCheckpointRecovery = await killPackaged(launched);
+  launched = undefined;
 
   launched = await launchPackaged(xvfb.display, configDir, projectA);
   assert.equal(launched.workspace.source, sourceA);
@@ -494,6 +596,14 @@ try {
   console.log(JSON.stringify({
     result: "passed",
     package: executable,
+    checkpoint: {
+      batchId: checkpointBatchId,
+      status: completedCheckpoint.status,
+      externalRefreshRequests: checkpointTraceRows.length,
+      killedBrowserPid: checkpointBrowserPid,
+      killedSidecarPid: checkpointSidecar.pid,
+      recoveryShutdown: killedCheckpointRecovery,
+    },
     killedA,
     killedB,
     projectB: {
