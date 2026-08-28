@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -67,6 +68,79 @@ const rpcOutcome = (client, method, params = {}) =>
       return { resolved: false, error: String(error?.message ?? error) };
     }
   })()`, true);
+
+class SidecarSession {
+  constructor(configDir, extraEnv = {}) {
+    this.child = spawn(sidecar, [], {
+      env: {
+        ...process.env,
+        OMEGAT_CONFIG_DIR: configDir,
+        ...extraEnv,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.nextId = 1;
+    this.pending = new Map();
+    this.stdout = "";
+    this.stderr = "";
+    this.child.stdout.on("data", (chunk) => {
+      this.stdout += chunk.toString();
+      while (true) {
+        const newline = this.stdout.indexOf("\n");
+        if (newline < 0) break;
+        const line = this.stdout.slice(0, newline).trim();
+        this.stdout = this.stdout.slice(newline + 1);
+        if (!line) continue;
+        const message = JSON.parse(line);
+        if (message.id == null) continue;
+        const pending = this.pending.get(message.id);
+        if (!pending) continue;
+        this.pending.delete(message.id);
+        if (message.error) pending.reject(new Error(JSON.stringify(message.error)));
+        else pending.resolve(message.result);
+      }
+    });
+    this.child.stderr.on("data", (chunk) => {
+      this.stderr += chunk.toString();
+    });
+  }
+
+  request(method, params = {}) {
+    const id = this.nextId++;
+    return new Promise((resolveRequest, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`sidecar request timed out: ${method}\n${this.stderr}`));
+      }, 60_000);
+      timeout.unref();
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timeout);
+          resolveRequest(value);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+      this.child.stdin.write(
+        `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+      );
+    });
+  }
+
+  async close() {
+    if (this.child.exitCode !== null) return;
+    const exited = new Promise((resolveExit, reject) => {
+      this.child.once("error", reject);
+      this.child.once("exit", (code, signal) => resolveExit({ code, signal }));
+    });
+    this.child.stdin.end();
+    const result = await exited;
+    assert.equal(result.signal, null, `setup sidecar exited by ${result.signal}`);
+    assert.equal(result.code, 0, `setup sidecar failed: ${this.stderr}`);
+  }
+}
 
 async function startRpc(client, method, params) {
   const started = await client.evaluate(`(() => {
@@ -346,6 +420,25 @@ async function createProject(client, root, text) {
   await rpc(client, "project.reload");
 }
 
+async function createProjectInSession(session, root, text) {
+  await session.request("project.create", {
+    root,
+    source_lang: "en",
+    target_lang: "fr",
+    sentence_seg: false,
+  });
+  await writeFile(join(root, "source", "source.txt"), text, "utf8");
+  await session.request("project.reload");
+}
+
+function parseNdjson(raw) {
+  return raw
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
 async function acknowledge(client, root, appInstance, generation, receipt) {
   return rpc(client, "transaction.receipt.ack", {
     root,
@@ -595,6 +688,245 @@ async function runMixedQueueTakeovers(display, workDir, config) {
   }
 }
 
+async function runPreparedMixedQueueTakeovers(display, workDir, config) {
+  const rootA = join(workDir, "prepared-project-a");
+  const movedA = join(workDir, "prepared-project-a-moved");
+  const rootB = join(workDir, "prepared-project-b");
+  const remote = join(workDir, "prepared-remote");
+  const traceA = join(workDir, "prepared-project-a-acks.ndjson");
+  const traceB = join(workDir, "prepared-project-b-acks.ndjson");
+  const firstMarker = join(workDir, "prepared-owner-first.marker");
+  const firstRelease = join(workDir, "prepared-owner-first.release");
+  const secondMarker = join(workDir, "prepared-owner-second.marker");
+  const secondRelease = join(workDir, "prepared-owner-second.release");
+  await mkdir(join(remote, "target"), { recursive: true });
+  await writeFile(join(remote, "target", "team.txt"), "remote-before", "utf8");
+
+  const session = new SidecarSession(config, limits);
+  let first;
+  let second;
+  let third;
+  let projectB;
+  let moved;
+  try {
+    const configPatch = (batchId, patch) =>
+      session.request("prefs.patch", {
+        ...patch,
+        config_transaction_app_instance: "prepared-mixed-setup",
+        config_transaction_batch_id: batchId,
+        config_transaction_owner_process_id: session.child.pid,
+      });
+    await createProjectInSession(session, rootA, "prepared mixed source a");
+    await session.request("team.mapping", {
+      repositories: [{
+        repo_type: "file",
+        url: remote,
+        branch: null,
+        mappings: [{
+          local: "/target/team.txt",
+          repository: "/target/team.txt",
+          includes: [],
+          excludes: [],
+        }],
+      }],
+    });
+    await session.request("team.sync");
+    await configPatch("prepared-config-0", { theme: "prepared-before-close" });
+
+    const close = await session.request("project.close", {
+      transaction_project_root: rootA,
+      transaction_generation: 181,
+      transaction_batch_id: "prepared-close",
+    });
+    assert.equal(close.receipt.payload.operation, "project.close");
+    await session.request("project.open", { root: rootA });
+    await writeFile(join(rootA, "target", "team.txt"), "prepared-team-once", "utf8");
+    const team = await session.request("team.commit", {
+      which: "target",
+      transaction_project_root: rootA,
+      transaction_generation: 181,
+      transaction_batch_id: "prepared-team",
+    });
+    assert.equal(team.receipt.payload.operation, "commit-target");
+    await configPatch("prepared-config-1", { locale: "it" });
+    const save = await session.request("project.save", {
+      transaction_project_root: rootA,
+      transaction_generation: 181,
+      transaction_batch_id: "prepared-save",
+    });
+    assert.equal(save.receipt.payload.operation, "project.save");
+    await writeFile(join(rootA, "source", "source.txt"), "prepared refresh source", "utf8");
+    const refresh = await session.request("project.refresh.enqueue", {
+      root: rootA,
+      app_instance: "prepared-refresh-owner",
+      generation: 181,
+      paths: [join(rootA, "source", "source.txt")],
+      fingerprints: { "source/source.txt": "prepared-refresh" },
+      sources: ["native", "sidecar"],
+    });
+    assert.equal(refresh.batch.status, "pending");
+
+    await createProjectInSession(session, rootB, "prepared mixed source b");
+    const saveB = await session.request("project.save", {
+      transaction_project_root: rootB,
+      transaction_generation: 191,
+      transaction_batch_id: "prepared-save-b",
+    });
+    assert.equal(saveB.receipt.batch_id, "prepared-save-b");
+    await configPatch("prepared-config-2", { theme: "prepared-after-b" });
+    await session.close();
+
+    const expectedA = [
+      ["prepared-close", "sidecar_committed"],
+      ["prepared-team", "sidecar_committed"],
+      ["prepared-save", "sidecar_committed"],
+      [refresh.batch.batch_id, "pending"],
+    ];
+    assert.deepEqual(
+      JSON.parse(await readFile(projectPaths(rootA).active, "utf8"))
+        .batches.map((row) => [row.batch_id, row.status]),
+      expectedA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(projectPaths(rootB).active, "utf8"))
+        .batches.map((row) => [row.batch_id, row.status]),
+      [["prepared-save-b", "sidecar_committed"]],
+    );
+
+    first = await launchPackagedRenderer(display, config, rootA, {
+      ...limits,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "project.close",
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: firstMarker,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: firstRelease,
+    });
+    const firstClaim = await waitFor("first prepared owner claim", async () =>
+      await pathExists(firstMarker)
+        ? JSON.parse(await readFile(firstMarker, "utf8"))
+        : undefined
+    );
+    assert.equal(firstClaim.batch_id, "prepared-close");
+    const firstKilled = await killPackaged(first);
+    first = undefined;
+
+    second = await launchPackagedRenderer(display, config, rootA, {
+      ...limits,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_FOR: "project.close",
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_MARKER: secondMarker,
+      OMEGAT_TEST_HOLD_AFTER_TRANSACTION_OWNER_CLAIM_RELEASE: secondRelease,
+    });
+    const secondClaim = await waitFor("second prepared owner claim", async () =>
+      await pathExists(secondMarker)
+        ? JSON.parse(await readFile(secondMarker, "utf8"))
+        : undefined
+    );
+    assert.equal(secondClaim.batch_id, "prepared-close");
+    assert.notEqual(secondClaim.owner_process_id, firstClaim.owner_process_id);
+    const secondKilled = await killPackaged(second);
+    second = undefined;
+
+    third = await launchPackagedRenderer(display, config, rootA, {
+      ...limits,
+      OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceA,
+    });
+    await waitFor("prepared project A FIFO drain", async () =>
+      !await pathExists(projectPaths(rootA).active) ? true : undefined
+    );
+    const acknowledgedA = parseNdjson(await readFile(traceA, "utf8"))
+      .filter((row) => row.result === "acknowledged");
+    const operationsA = acknowledgedA.map((row) => row.operation);
+    assert.deepEqual(operationsA, [
+      "project.close",
+      "commit-target",
+      "project.save",
+      "project.external-refresh",
+    ]);
+    assert.deepEqual(
+      acknowledgedA.map((row) => row.batch_id),
+      expectedA.map(([batchId]) => batchId),
+    );
+    await terminatePackaged(third);
+    third = undefined;
+
+    projectB = await launchPackagedRenderer(display, config, rootB, {
+      ...limits,
+      OMEGAT_TEST_TRANSACTION_ACK_TRACE: traceB,
+    });
+    await waitFor("prepared project B FIFO drain", async () =>
+      !await pathExists(projectPaths(rootB).active) ? true : undefined
+    );
+    const acknowledgedB = parseNdjson(await readFile(traceB, "utf8"))
+      .filter((row) => row.result === "acknowledged");
+    assert.deepEqual(
+      acknowledgedB.map((row) => [row.batch_id, row.operation]),
+      [["prepared-save-b", "project.save"]],
+    );
+    assert.equal(
+      await readFile(join(remote, "target", "team.txt"), "utf8"),
+      "prepared-team-once",
+    );
+    assert.equal((await rpc(projectB.client, "prefs.get")).theme, "prepared-after-b");
+
+    const configState = await segmentedRows(configPaths(config));
+    const configIds = configState.rows.map((row) => row.batch_id);
+    const configOrder = [
+      "prepared-config-0",
+      "prepared-config-1",
+      "prepared-config-2",
+    ];
+    const positions = configOrder.map((batchId) => configIds.indexOf(batchId));
+    assert(positions.every((position) => position >= 0));
+    assert(positions[0] < positions[1] && positions[1] < positions[2]);
+
+    const immutableBefore = {};
+    for (const file of await readdir(projectPaths(rootA).archive)) {
+      immutableBefore[file] = (await readFile(
+        join(projectPaths(rootA).archive, file),
+      )).toString("base64");
+    }
+    await terminatePackaged(projectB);
+    projectB = undefined;
+    await rename(rootA, movedA);
+    moved = await launchPackagedRenderer(display, config, movedA, limits);
+    assert.equal((await rpc(moved.client, "project.props")).root, movedA);
+    const movedManifest = JSON.parse(
+      await readFile(projectPaths(movedA).manifest, "utf8"),
+    );
+    assert.equal(movedManifest.scope, movedA);
+    assert.deepEqual(
+      movedManifest,
+      JSON.parse(await readFile(projectPaths(movedA).manifestRecovery, "utf8")),
+    );
+    for (const [file, bytes] of Object.entries(immutableBefore)) {
+      assert.equal(
+        (await readFile(join(projectPaths(movedA).archive, file))).toString("base64"),
+        bytes,
+      );
+    }
+    await assertNoTemporaryFiles(projectPaths(movedA).directory);
+    return {
+      roots: [movedA, rootB],
+      projectAOrder: operationsA,
+      projectBOrder: acknowledgedB.map((row) => row.operation),
+      configOrder,
+      consecutiveOwnerTakeovers: [firstKilled, secondKilled],
+      projectMoveRebasedMutableMetadata: true,
+      immutableProjectSegmentsRetained: Object.keys(immutableBefore).length,
+      globalConfigProjectIsolation: true,
+    };
+  } finally {
+    if (session.child.exitCode === null) {
+      session.child.kill("SIGKILL");
+    }
+    await Promise.all([
+      terminatePackaged(moved),
+      terminatePackaged(projectB),
+      terminatePackaged(third),
+      terminatePackaged(second),
+      terminatePackaged(first),
+    ]);
+  }
+}
+
 async function runDeletedRootReplacement(display, workDir, config) {
   const deleted = join(workDir, "deleted-project");
   const replacement = join(workDir, "replacement-project");
@@ -819,7 +1151,7 @@ try {
     display.display,
     workDir,
   );
-  const mixedQueues = await runMixedQueueTakeovers(
+  const mixedQueues = await runPreparedMixedQueueTakeovers(
     display.display,
     workDir,
     migration.config,
