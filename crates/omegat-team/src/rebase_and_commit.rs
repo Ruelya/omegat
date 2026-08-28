@@ -68,11 +68,35 @@ pub fn resolve_for_key_cancellable(
     translation: Option<&str>,
     cancellation: &CancellationToken,
 ) -> Result<Vec<Conflict>> {
+    resolve_for_key_cancellable_scoped(
+        props,
+        source,
+        entry_key,
+        side,
+        translation,
+        cancellation,
+        0,
+        None,
+    )
+}
+
+pub fn resolve_for_key_cancellable_scoped(
+    props: &ProjectProperties,
+    source: &str,
+    entry_key: Option<&EntryKeyDto>,
+    side: &str,
+    translation: Option<&str>,
+    cancellation: &CancellationToken,
+    generation: u64,
+    batch_id: Option<&str>,
+) -> Result<Vec<Conflict>> {
     crate::remote_repository_provider::mutate_project_cancellable(
         props,
         "resolve-conflict",
         cancellation,
         "team.resolve.snapshot",
+        generation,
+        batch_id,
         |cancellation| {
             if cancellation.is_cancelled() {
                 return Err(crate::TeamError::Cancelled);

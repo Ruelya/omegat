@@ -29,6 +29,7 @@ mod team_settings;
 mod team_tool;
 mod team_utils;
 mod tmx_rebase;
+mod transaction_envelope;
 mod user_pass_dialog;
 
 pub use error::{Conflict, SyncReport, TeamError};
@@ -40,11 +41,13 @@ pub use prepared_file_info::PreparedFileInfo;
 pub use project_team_settings::{REPO_PREP, REPO_SUBDIR};
 pub use rebase_and_commit::{
     rebase_all, rebase_project, resolve, resolve_for_key, resolve_for_key_cancellable,
+    resolve_for_key_cancellable_scoped,
 };
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    commit_after_version, commit_project_files, commit_project_files_cancellable, get_version,
-    recover_interrupted_sync, switch_to_version, sync, sync_cancellable,
+    commit_after_version, commit_project_files, commit_project_files_cancellable,
+    commit_project_files_cancellable_scoped, get_version, recover_interrupted_sync,
+    switch_to_version, sync, sync_cancellable, sync_cancellable_scoped,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -53,6 +56,9 @@ pub use team_utils::{
     relative_remote_to_absolute_local, with_leading_slash, with_slashes, without_slashes,
 };
 pub use tmx_rebase::rebase_tmx;
+pub use transaction_envelope::{
+    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
+};
 pub use user_pass_dialog::UserPass;
 
 pub type Result<T> = error::Result<T>;
@@ -1144,18 +1150,19 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(rows.last().unwrap()["phase"], "recovered");
+        assert_eq!(rows.last().unwrap()["payload"]["phase"], "recovered");
         assert_eq!(
             rows.iter().any(|row| {
-                row["phase"] == "publishing"
-                    && row["commit_started"] == serde_json::json!([0])
-                    && row["published"] == serde_json::json!([])
+                row["payload"]["phase"] == "publishing"
+                    && row["payload"]["commit_started"] == serde_json::json!([0])
+                    && row["payload"]["published"] == serde_json::json!([])
             }),
             true
         );
         assert_eq!(
             rows.iter().any(|row| {
-                row["phase"] == "recovering" && row["published"] == serde_json::json!([0])
+                row["payload"]["phase"] == "recovering"
+                    && row["payload"]["published"] == serde_json::json!([0])
             }),
             true
         );

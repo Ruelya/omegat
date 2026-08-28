@@ -2,12 +2,14 @@
 
 //! Durable FIFO for filesystem fingerprints awaiting an external refresh.
 //!
-//! The journal deliberately lives beside the team transaction journal under
-//! `.repositories/transactions`, while a config-scoped pointer identifies the
-//! one project that was active in the Electron application.  This gives both
-//! recovery paths the same project-root and generation rules without making
-//! `omegat-core` depend on `omegat-team`.
+//! Refresh batches and team conflict transactions use the same versioned
+//! [`omegat_team::TransactionEnvelope`]. A config-scoped pointer identifies the
+//! one project that was active in Electron without making `omegat-core` depend
+//! on `omegat-team`.
 
+use omegat_team::{
+    TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -16,32 +18,34 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const FORMAT: u8 = 1;
+const QUEUE_VERSION: u8 = 2;
 const JOURNAL_FILE: &str = "external-refresh.json";
+const HISTORY_FILE: &str = "external-refresh-history.ndjson";
 const ACTIVE_FILE: &str = "external-refresh-active.json";
 static BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RefreshBatch {
-    pub id: String,
     pub paths: Vec<String>,
     pub fingerprints: BTreeMap<String, Option<String>>,
     pub sources: Vec<String>,
 }
 
+pub type RefreshEnvelope = TransactionEnvelope<RefreshBatch>;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct RefreshJournal {
-    format: u8,
+    version: u8,
     project_root: PathBuf,
     app_instance: String,
     generation: u64,
-    batches: Vec<RefreshBatch>,
+    batches: Vec<RefreshEnvelope>,
     updated_unix_ms: u128,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ActiveProject {
-    format: u8,
+    version: u8,
     project_root: PathBuf,
     app_instance: String,
     updated_unix_ms: u128,
@@ -62,6 +66,12 @@ fn journal_path(root: &Path) -> PathBuf {
     root.join(".repositories")
         .join("transactions")
         .join(JOURNAL_FILE)
+}
+
+fn history_path(root: &Path) -> PathBuf {
+    root.join(".repositories")
+        .join("transactions")
+        .join(HISTORY_FILE)
 }
 
 fn active_path(config_dir: &Path) -> PathBuf {
@@ -137,19 +147,44 @@ fn remove_file(path: &Path) -> Result<(), String> {
     }
 }
 
+fn append_history(root: &Path, envelope: &RefreshEnvelope) -> Result<(), String> {
+    let path = history_path(root);
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("refresh history has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("create refresh history {}: {error}", parent.display()))?;
+    let mut history = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("open refresh history {}: {error}", path.display()))?;
+    serde_json::to_writer(&mut history, envelope)
+        .map_err(|error| format!("serialize refresh history: {error}"))?;
+    history
+        .write_all(b"\n")
+        .and_then(|_| history.sync_all())
+        .map_err(|error| format!("write refresh history {}: {error}", path.display()))
+}
+
 fn load_journal(root: &Path) -> Result<Option<RefreshJournal>, String> {
     let Some(journal) = read_json::<RefreshJournal>(&journal_path(root))? else {
         return Ok(None);
     };
-    if journal.format != FORMAT {
+    if journal.version != QUEUE_VERSION {
         return Err(format!(
-            "unsupported refresh journal format {}",
-            journal.format
+            "unsupported refresh journal version {}",
+            journal.version
         ));
     }
     if normalized(&journal.project_root) != normalized(root) {
         remove_file(&journal_path(root))?;
         return Ok(None);
+    }
+    for envelope in &journal.batches {
+        envelope
+            .validate_for_root(root)
+            .map_err(|error| format!("refresh transaction envelope: {error}"))?;
     }
     Ok(Some(journal))
 }
@@ -158,7 +193,7 @@ fn write_active(config_dir: &Path, root: &Path, app_instance: &str) -> Result<()
     write_json(
         &active_path(config_dir),
         &ActiveProject {
-            format: FORMAT,
+            version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(root),
             app_instance: app_instance.to_string(),
             updated_unix_ms: unix_ms(),
@@ -166,19 +201,32 @@ fn write_active(config_dir: &Path, root: &Path, app_instance: &str) -> Result<()
     )
 }
 
+fn cancel_queue(root: &Path) -> Result<(), String> {
+    let Some(mut journal) = load_journal(root)? else {
+        return Ok(());
+    };
+    for envelope in &mut journal.batches {
+        if envelope.status.is_recoverable() {
+            envelope.transition(TransactionStatus::Cancelled, None);
+            append_history(root, envelope)?;
+        }
+    }
+    remove_file(&journal_path(root))
+}
+
 fn select_active_project(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
     if let Some(active) = read_json::<ActiveProject>(&active_path(config_dir))? {
-        if active.format != FORMAT {
+        if active.version != TRANSACTION_ENVELOPE_VERSION {
             return Err(format!(
-                "unsupported active refresh journal format {}",
-                active.format
+                "unsupported active refresh journal version {}",
+                active.version
             ));
         }
         if normalized(&active.project_root) != normalized(root) {
             // Opening a different root is a project-generation boundary.  A
             // batch from the formerly active root must never be replayed when
             // that project happens to be opened again later.
-            remove_file(&journal_path(&active.project_root))?;
+            cancel_queue(&active.project_root)?;
         }
     }
     write_active(config_dir, root, app_instance)
@@ -189,7 +237,7 @@ pub fn pending(
     root: &Path,
     app_instance: &str,
     generation: u64,
-) -> Result<Vec<RefreshBatch>, String> {
+) -> Result<Vec<RefreshEnvelope>, String> {
     select_active_project(config_dir, root, app_instance)?;
     let Some(mut journal) = load_journal(root)? else {
         return Ok(Vec::new());
@@ -197,7 +245,7 @@ pub fn pending(
     if journal.app_instance == app_instance && journal.generation != generation {
         // The same Electron process advanced its project generation.  This is
         // a reload/open boundary, not crash recovery.
-        remove_file(&journal_path(root))?;
+        cancel_queue(root)?;
         return Ok(Vec::new());
     }
     if journal.app_instance != app_instance {
@@ -205,8 +253,31 @@ pub fn pending(
         // project root.  Re-stamp its renderer generation before replay.
         journal.app_instance = app_instance.to_string();
         journal.generation = generation;
+        for envelope in &mut journal.batches {
+            envelope.restamp_generation(generation);
+        }
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
+    }
+    let terminal = journal
+        .batches
+        .iter()
+        .filter(|envelope| !envelope.status.is_recoverable())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !terminal.is_empty() {
+        for envelope in &terminal {
+            append_history(root, envelope)?;
+        }
+        journal
+            .batches
+            .retain(|envelope| envelope.status.is_recoverable());
+        if journal.batches.is_empty() {
+            remove_file(&journal_path(root))?;
+        } else {
+            journal.updated_unix_ms = unix_ms();
+            write_json(&journal_path(root), &journal)?;
+        }
     }
     Ok(journal.batches)
 }
@@ -219,39 +290,42 @@ pub fn enqueue(
     paths: Vec<String>,
     fingerprints: BTreeMap<String, Option<String>>,
     sources: Vec<String>,
-) -> Result<RefreshBatch, String> {
+) -> Result<RefreshEnvelope, String> {
     let _ = pending(config_dir, root, app_instance, generation)?;
     let mut journal = load_journal(root)?.unwrap_or_else(|| RefreshJournal {
-        format: FORMAT,
+        version: QUEUE_VERSION,
         project_root: normalized(root),
         app_instance: app_instance.to_string(),
         generation,
         batches: Vec::new(),
         updated_unix_ms: unix_ms(),
     });
-    if let Some(existing) = journal
-        .batches
-        .iter_mut()
-        .find(|batch| batch.fingerprints == fingerprints)
-    {
+    if let Some(existing) = journal.batches.iter_mut().find(|batch| {
+        batch.status == TransactionStatus::Pending && batch.payload.fingerprints == fingerprints
+    }) {
         for source in sources {
-            if !existing.sources.contains(&source) {
-                existing.sources.push(source);
+            if !existing.payload.sources.contains(&source) {
+                existing.payload.sources.push(source);
             }
         }
-        existing.sources.sort();
+        existing.payload.sources.sort();
+        existing.touch();
         let result = existing.clone();
         journal.updated_unix_ms = unix_ms();
         write_json(&journal_path(root), &journal)?;
         return Ok(result);
     }
     let sequence = BATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let batch = RefreshBatch {
-        id: format!("refresh-{}-{}-{sequence}", unix_ms(), std::process::id()),
-        paths,
-        fingerprints,
-        sources,
-    };
+    let batch = TransactionEnvelope::pending(
+        root,
+        generation,
+        format!("refresh-{}-{}-{sequence}", unix_ms(), std::process::id()),
+        RefreshBatch {
+            paths,
+            fingerprints,
+            sources,
+        },
+    );
     journal.batches.push(batch.clone());
     journal.updated_unix_ms = unix_ms();
     write_json(&journal_path(root), &journal)?;
@@ -264,16 +338,24 @@ pub fn complete(
     app_instance: &str,
     generation: u64,
     batch_id: &str,
-) -> Result<Vec<RefreshBatch>, String> {
+    status: TransactionStatus,
+    error_code: Option<i32>,
+) -> Result<Vec<RefreshEnvelope>, String> {
     let pending = pending(config_dir, root, app_instance, generation)?;
     let Some(first) = pending.first() else {
         return Ok(Vec::new());
     };
-    if first.id != batch_id {
-        return Err(format!("refresh FIFO head is {}, not {batch_id}", first.id));
+    if first.batch_id != batch_id {
+        return Err(format!(
+            "refresh FIFO head is {}, not {batch_id}",
+            first.batch_id
+        ));
     }
     let mut journal = load_journal(root)?
         .ok_or_else(|| "refresh journal disappeared before completion".to_string())?;
+    journal.batches[0].transition(status, error_code);
+    write_json(&journal_path(root), &journal)?;
+    append_history(root, &journal.batches[0])?;
     journal.batches.remove(0);
     if journal.batches.is_empty() {
         remove_file(&journal_path(root))?;
@@ -285,8 +367,55 @@ pub fn complete(
     Ok(remaining)
 }
 
+pub fn checkpoint_sidecar_commit(
+    config_dir: &Path,
+    root: &Path,
+    app_instance: &str,
+    generation: u64,
+    batch_id: &str,
+) -> Result<RefreshEnvelope, String> {
+    let pending = pending(config_dir, root, app_instance, generation)?;
+    let Some(first) = pending.first() else {
+        return Err(format!("refresh batch {batch_id} is no longer pending"));
+    };
+    if first.batch_id != batch_id {
+        return Err(format!(
+            "refresh FIFO head is {}, not {batch_id}",
+            first.batch_id
+        ));
+    }
+    if first.status == TransactionStatus::SidecarCommitted {
+        return Ok(first.clone());
+    }
+    let mut journal = load_journal(root)?
+        .ok_or_else(|| "refresh journal disappeared before checkpoint".to_string())?;
+    journal.batches[0].transition(TransactionStatus::SidecarCommitted, None);
+    let checkpoint = journal.batches[0].clone();
+    journal.updated_unix_ms = unix_ms();
+    write_json(&journal_path(root), &journal)?;
+    Ok(checkpoint)
+}
+
+pub fn request_cancelled(
+    config_dir: &Path,
+    root: &Path,
+    app_instance: &str,
+    generation: u64,
+    batch_id: &str,
+) -> Result<Vec<RefreshEnvelope>, String> {
+    complete(
+        config_dir,
+        root,
+        app_instance,
+        generation,
+        batch_id,
+        TransactionStatus::RequestCancelled,
+        Some(REQUEST_CANCELLED_CODE),
+    )
+}
+
 pub fn discard(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {
-    remove_file(&journal_path(root))?;
+    cancel_queue(root)?;
     if let Some(active) = read_json::<ActiveProject>(&active_path(config_dir))? {
         if normalized(&active.project_root) == normalized(root)
             && active.app_instance == app_instance
@@ -334,13 +463,28 @@ mod tests {
             vec!["sidecar".into()],
         )
         .unwrap();
+        let adopted = pending(&config, &first, "electron-two", 1).unwrap();
         assert_eq!(
-            pending(&config, &first, "electron-two", 1).unwrap(),
-            vec![one.clone(), two.clone()]
+            adopted
+                .iter()
+                .map(|batch| batch.batch_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![one.batch_id.as_str(), two.batch_id.as_str()]
         );
+        assert!(adopted.iter().all(|batch| batch.generation == 1));
         assert_eq!(
-            complete(&config, &first, "electron-two", 1, &one.id).unwrap(),
-            vec![two]
+            complete(
+                &config,
+                &first,
+                "electron-two",
+                1,
+                &one.batch_id,
+                TransactionStatus::RequestCancelled,
+                Some(REQUEST_CANCELLED_CODE),
+            )
+            .unwrap()[0]
+                .batch_id,
+            two.batch_id
         );
 
         assert!(pending(&config, &second, "electron-two", 2)
@@ -367,10 +511,33 @@ mod tests {
             vec!["native".into()],
         )
         .unwrap();
-        assert!(complete(&config, &root, "electron", 4, &batch.id)
-            .unwrap()
-            .is_empty());
+        checkpoint_sidecar_commit(&config, &root, "electron", 4, &batch.batch_id).unwrap();
+        assert_eq!(
+            pending(&config, &root, "electron", 4).unwrap()[0].status,
+            TransactionStatus::SidecarCommitted
+        );
+        assert!(complete(
+            &config,
+            &root,
+            "electron",
+            4,
+            &batch.batch_id,
+            TransactionStatus::Completed,
+            None,
+        )
+        .unwrap()
+        .is_empty());
         assert!(pending(&config, &root, "electron", 4).unwrap().is_empty());
+        let terminal: RefreshEnvelope = serde_json::from_str(
+            std::fs::read_to_string(history_path(&root))
+                .unwrap()
+                .lines()
+                .last()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(terminal.batch_id, batch.batch_id);
+        assert_eq!(terminal.status, TransactionStatus::Completed);
 
         enqueue(
             &config,

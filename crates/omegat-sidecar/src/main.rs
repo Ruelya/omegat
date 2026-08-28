@@ -409,6 +409,8 @@ impl App {
                 Ok(json!({"conflicts": omegat_team::list_conflicts(&s.props)}))
             }
             "team.resolve" => {
+                let (transaction_generation, transaction_batch_id) =
+                    transaction_scope(&params, &self.session()?.props.root)?;
                 let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
                 let rebind_key = params
                     .get("rebind_key")
@@ -432,13 +434,15 @@ impl App {
                     .and_then(|v| v.as_str())
                     .unwrap_or("ours");
                 let translation = params.get("translation").and_then(|v| v.as_str());
-                let left = omegat_team::resolve_for_key_cancellable(
+                let left = omegat_team::resolve_for_key_cancellable_scoped(
                     &self.session()?.props,
                     source,
                     rebind_key.as_ref(),
                     side,
                     translation,
                     cancellation,
+                    transaction_generation,
+                    transaction_batch_id.as_deref(),
                 )
                 .map_err(|error| match error {
                     omegat_team::TeamError::Cancelled => {
@@ -693,8 +697,15 @@ impl App {
                 Ok(json!({"ok": true}))
             }
             "team.sync" => {
+                let (transaction_generation, transaction_batch_id) =
+                    transaction_scope(&params, &self.session()?.props.root)?;
                 let s = self.session()?;
-                match omegat_team::sync_cancellable(&s.props, cancellation) {
+                match omegat_team::sync_cancellable_scoped(
+                    &s.props,
+                    cancellation,
+                    transaction_generation,
+                    transaction_batch_id.as_deref(),
+                ) {
                     Ok(r) => Ok(
                         json!({"action": r.action, "message": r.message, "conflicts": r.conflicts}),
                     ),
@@ -708,14 +719,18 @@ impl App {
                 }
             }
             "team.commit" => {
+                let (transaction_generation, transaction_batch_id) =
+                    transaction_scope(&params, &self.session()?.props.root)?;
                 let which = params
                     .get("which")
                     .and_then(|v| v.as_str())
                     .unwrap_or("target");
-                let r = omegat_team::commit_project_files_cancellable(
+                let r = omegat_team::commit_project_files_cancellable_scoped(
                     &self.session()?.props,
                     which,
                     cancellation,
+                    transaction_generation,
+                    transaction_batch_id.as_deref(),
                 )
                 .map_err(|error| match error {
                     omegat_team::TeamError::Cancelled => {
@@ -1251,6 +1266,56 @@ fn refresh_journal_err(error: String) -> (i32, String) {
     )
 }
 
+fn transaction_scope(
+    params: &Value,
+    session_root: &std::path::Path,
+) -> std::result::Result<(u64, Option<String>), (i32, String)> {
+    if let Some(root) = params.get("transaction_project_root") {
+        let root = root.as_str().filter(|value| !value.is_empty()).ok_or((
+            error_code::INVALID_PARAMS,
+            "transaction project root must be a non-empty string".into(),
+        ))?;
+        let normalized =
+            |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        if normalized(std::path::Path::new(root)) != normalized(session_root) {
+            return Err((
+                error_code::INVALID_PARAMS,
+                "transaction project root is not the open project".into(),
+            ));
+        }
+    }
+    let generation = params
+        .get("transaction_generation")
+        .map(|value| {
+            value.as_u64().ok_or((
+                error_code::INVALID_PARAMS,
+                "transaction generation must be an unsigned integer".into(),
+            ))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let batch_id = params
+        .get("transaction_batch_id")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or((
+                    error_code::INVALID_PARAMS,
+                    "transaction batch id must be a non-empty string".into(),
+                ))
+        })
+        .transpose()?;
+    if generation != 0 && batch_id.is_none() {
+        return Err((
+            error_code::INVALID_PARAMS,
+            "transaction generation requires a batch id".into(),
+        ));
+    }
+    Ok((generation, batch_id))
+}
+
 fn refresh_scope(
     params: &Value,
     open_root: Option<&std::path::Path>,
@@ -1373,12 +1438,22 @@ fn dispatch_refresh_journal(
                         error_code::INVALID_PARAMS,
                         "refresh completion requires a terminal outcome".into(),
                     ))?;
+                let (status, error_code) = if outcome == "cancelled" {
+                    (
+                        omegat_team::TransactionStatus::RequestCancelled,
+                        Some(error_code::REQUEST_CANCELLED),
+                    )
+                } else {
+                    (omegat_team::TransactionStatus::Completed, None)
+                };
                 let remaining = refresh_journal::complete(
                     config_dir,
                     &root,
                     &app_instance,
                     generation,
                     batch_id,
+                    status,
+                    error_code,
                 )
                 .map_err(refresh_journal_err)?;
                 Ok(json!({ "outcome": outcome, "remaining": remaining }))
@@ -1394,6 +1469,65 @@ fn dispatch_refresh_journal(
             )),
         }
     })())
+}
+
+fn settle_external_refresh_journal(
+    method: &str,
+    params: &Value,
+    config_dir: &std::path::Path,
+    open_root: Option<&std::path::Path>,
+    response_error_code: Option<i32>,
+) -> Result<(), String> {
+    if method != "project.external-refresh" {
+        return Ok(());
+    }
+    let Some(batch_id) = params
+        .get("transaction_batch_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    let root = params
+        .get("transaction_project_root")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "checkpoint requires transaction_project_root".to_string())?;
+    let open_root = open_root.ok_or_else(|| "checkpoint has no open project".to_string())?;
+    let normalized =
+        |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if normalized(&root) != normalized(open_root) {
+        return Err("checkpoint project root is not the open project".into());
+    }
+    let generation = params
+        .get("transaction_generation")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "checkpoint requires transaction_generation".to_string())?;
+    let app_instance = params
+        .get("app_instance")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "checkpoint requires app_instance".to_string())?;
+    match response_error_code {
+        None => refresh_journal::checkpoint_sidecar_commit(
+            config_dir,
+            &root,
+            app_instance,
+            generation,
+            batch_id,
+        )
+        .map(|_| ()),
+        Some(error_code::REQUEST_CANCELLED) => refresh_journal::request_cancelled(
+            config_dir,
+            &root,
+            app_instance,
+            generation,
+            batch_id,
+        )
+        .map(|_| ()),
+        Some(_) => Ok(()),
+    }
 }
 
 fn request_key(id: &Value) -> String {
@@ -1529,6 +1663,7 @@ fn main() {
         let watch_commands = watch_commands.clone();
         workers.push(thread::spawn(move || {
             let project_lifecycle_method = req.method.clone();
+            let transaction_params = req.params.clone();
             let project_input_write = writes_watched_project_input(&project_lifecycle_method);
             if project_input_write {
                 let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
@@ -1545,11 +1680,29 @@ fn main() {
                     active.as_deref(),
                 )
             };
-            let resp = match refresh_result {
-                Some(Ok(result)) => RpcResponse::ok(id, result),
-                Some(Err((code, message))) => RpcResponse::err(id, code, message),
+            let mut resp = match refresh_result {
+                Some(Ok(result)) => RpcResponse::ok(id.clone(), result),
+                Some(Err((code, message))) => RpcResponse::err(id.clone(), code, message),
                 None => app.lock().unwrap().handle(req, &cancellation),
             };
+            let checkpoint_result = {
+                let _journal = refresh_journal_lock.lock().unwrap();
+                let active = open_project.lock().unwrap();
+                settle_external_refresh_journal(
+                    &project_lifecycle_method,
+                    &transaction_params,
+                    &refresh_config_dir,
+                    active.as_deref(),
+                    resp.error.as_ref().map(|error| error.code),
+                )
+            };
+            if let Err(error) = checkpoint_result {
+                resp = RpcResponse::err(
+                    id.clone(),
+                    error_code::INTERNAL_ERROR,
+                    format!("external refresh checkpoint: {error}"),
+                );
+            }
             if project_input_write {
                 let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
                 let _ = watch_commands.send(project_watcher::WatchCommand::EndWrite(ready));
@@ -1565,8 +1718,7 @@ fn main() {
                             .and_then(|result| result.get("root"))
                             .and_then(Value::as_str)
                         {
-                            *open_project.lock().unwrap() =
-                                Some(std::path::PathBuf::from(root));
+                            *open_project.lock().unwrap() = Some(std::path::PathBuf::from(root));
                             let (ready, ready_rx) = std::sync::mpsc::sync_channel(0);
                             let _ = watch_commands.send(project_watcher::WatchCommand::Watch(
                                 std::path::PathBuf::from(root),

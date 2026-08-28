@@ -1302,6 +1302,9 @@ describe("app store", () => {
           side: "theirs",
           translation: undefined,
           rebind_key: wantedKey,
+          transaction_project_root: props.root,
+          transaction_generation: expect.any(Number),
+          transaction_batch_id: "operation-teamResolve-1",
           progress_token: "operation-teamResolve-1",
         });
         return { conflicts: [], rebind_key: wantedKey };
@@ -1646,7 +1649,11 @@ describe("app store", () => {
       sources: ["native"],
     });
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-    expect(refresh).toHaveBeenCalledWith(undefined, true);
+    expect(refresh).toHaveBeenCalledWith(undefined, true, {
+      root,
+      generation,
+      batchId: "revision-1-native",
+    });
 
     const sourceDirectory = `${root}/source`;
     notify?.({
@@ -1686,7 +1693,11 @@ describe("app store", () => {
     });
     finishFirst(false);
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
-    expect(refresh).toHaveBeenNthCalledWith(2, undefined, true);
+    expect(refresh).toHaveBeenNthCalledWith(2, undefined, true, {
+      root,
+      generation,
+      batchId: "revision-2",
+    });
 
     notify?.({
       id: "revision-3",
@@ -1765,16 +1776,119 @@ describe("app store", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(complete).not.toHaveBeenCalled();
 
-    // The main process republishes every pending batch after reopening the
-    // project in its replacement sidecar. The duplicate id unblocks, while
-    // the distinct second fingerprint stays behind the durable FIFO head.
-    notify?.(first);
+    // The sidecar committed the first refresh before it died, but the renderer
+    // had not acknowledged the rebind. The duplicate id upgrades the durable
+    // head to its checkpointed state, so recovery binds the reopened sidecar's
+    // authoritative entries without replaying project.external-refresh.
+    notify?.({ ...first, status: "sidecar_committed" });
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(3));
     await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
+    expect(refresh.mock.calls).toEqual([
+      [undefined, true, {
+        root,
+        generation,
+        batchId: "persisted-first",
+      }],
+      [],
+      [undefined, true, {
+        root,
+        generation,
+        batchId: "persisted-second",
+      }],
+    ]);
     expect(complete.mock.calls).toEqual([
       [root, generation, "persisted-first", "succeeded"],
       [root, generation, "persisted-second", "succeeded"],
     ]);
+    disconnect();
+  });
+
+  it("publishes a sidecar-committed checkpoint by memory rebind without replay", async () => {
+    const root = "/checkpoint-root";
+    const committed = {
+      ...sampleEntry,
+      source: "committed source",
+      translation: "committed translation",
+      key: {
+        ...sampleEntry.key,
+        file: "committed.txt",
+        source_text: "committed source",
+      },
+      file: "committed.txt",
+    };
+    const complete = vi.fn(async () => ({ remaining: [] }));
+    let notify: Parameters<NonNullable<typeof window.omegat.onProjectExternalChange>>[0]
+      | undefined;
+    window.omegat!.completeExternalRefresh = complete;
+    window.omegat!.onProjectExternalChange = (listener) => {
+      notify = listener;
+      return () => {
+        notify = undefined;
+      };
+    };
+    rpc.mockImplementation(async (method: string) => {
+      if (method === "entry.list") return [committed];
+      if (method === "stats.get") {
+        return {
+          files: 1,
+          segments: 1,
+          translated: 1,
+          unique_segments: 1,
+          source_words: 2,
+          target_words: 2,
+        };
+      }
+      if (
+        method === "matches.query"
+        || method === "glossary.query"
+        || method === "issues.list"
+      ) return [];
+      throw new Error(`unexpected RPC: ${method}`);
+    });
+    projectEvents.publishProject("load", root);
+    useApp.setState({
+      props: {
+        root,
+        source_lang: "en",
+        target_lang: "fr",
+        sentence_seg: true,
+        has_repositories: false,
+      },
+      entries: [{ ...sampleEntry, translation: "before" }],
+      document3: createDocument3(sampleEntry.source, "before"),
+      index: 0,
+    });
+    const generation = useApp.getState().projectEvent.projectGeneration;
+    const disconnect = connectExternalProjectEvents();
+
+    notify?.({
+      id: "checkpointed-batch",
+      root,
+      paths: [`${root}/source/committed.txt`],
+      fingerprints: { [`${root}/source/committed.txt`]: "committed" },
+      generation,
+      sources: ["native"],
+      envelopeVersion: 1,
+      envelopeProjectRoot: root,
+      status: "sidecar_committed",
+      errorCode: null,
+    });
+
+    await vi.waitFor(() =>
+      expect(complete).toHaveBeenCalledWith(
+        root,
+        generation,
+        "checkpointed-batch",
+        "succeeded",
+      )
+    );
+    expect(rpc.mock.calls.some(([method]) =>
+      method === "project.external-refresh"
+    )).toBe(false);
+    expect(useApp.getState().document3).toEqual(
+      createDocument3("committed source", "committed translation"),
+    );
+    expect(useApp.getState().entries).toEqual([committed]);
     disconnect();
   });
 

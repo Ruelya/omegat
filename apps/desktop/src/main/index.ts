@@ -91,10 +91,17 @@ function inspectDroppedPaths(paths: unknown) {
 }
 
 type RefreshBatch = {
-  id: string;
-  paths: string[];
-  fingerprints: Record<string, string | null>;
-  sources: Array<"native" | "sidecar">;
+  version: number;
+  project_root: string;
+  generation: number;
+  batch_id: string;
+  status: "pending" | "sidecar_committed";
+  error_code: number | null;
+  payload: {
+    paths: string[];
+    fingerprints: Record<string, string | null>;
+    sources: Array<"native" | "sidecar">;
+  };
 };
 
 function publishRefreshBatch(
@@ -102,11 +109,17 @@ function publishRefreshBatch(
   generation: number,
   batch: RefreshBatch,
 ) {
+  if (batch.generation !== generation) return;
   BrowserWindow.getAllWindows().forEach((window) => {
     window.webContents.send("project:external-change", {
+      id: batch.batch_id,
       root,
       generation,
-      ...batch,
+      envelopeProjectRoot: batch.project_root,
+      envelopeVersion: batch.version,
+      status: batch.status,
+      errorCode: batch.error_code,
+      ...batch.payload,
     });
   });
 }
@@ -329,10 +342,16 @@ async function rpc(
   // which in turn retains the cdylib crash/timeout worker boundary.
   if (method === "markers.query") return isolatedMarkerRpc(method, params);
   const client = await statefulClient();
+  const requestParams = method === "project.external-refresh"
+      && params !== null
+      && typeof params === "object"
+      && "transaction_batch_id" in params
+    ? { ...params, app_instance: appInstance }
+    : params;
   const endWrite = watchedProjectWriteMethods.has(method)
     ? projectFileWatcher.beginWriteSource(method)
     : () => undefined;
-  return client.request(method, params, clientRequestId).finally(endWrite);
+  return client.request(method, requestParams, clientRequestId).finally(endWrite);
 }
 
 function createWindow() {

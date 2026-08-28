@@ -345,6 +345,10 @@ declare global {
           fingerprints: Record<string, string | null>;
           generation: number;
           sources: Array<"native" | "sidecar">;
+          envelopeProjectRoot?: string;
+          envelopeVersion?: number;
+          status?: "pending" | "sidecar_committed";
+          errorCode?: number | null;
         }) => void,
       ) => () => void;
       saveText?: (name: string, text: string) => Promise<string | null>;

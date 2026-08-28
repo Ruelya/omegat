@@ -766,7 +766,13 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
         &mut stdout,
         2,
         "team.resolve",
-        json!({"source": "cancel me", "side": "theirs"}),
+        json!({
+            "source": "cancel me",
+            "side": "theirs",
+            "transaction_project_root": root,
+            "transaction_generation": 44,
+            "transaction_batch_id": "conflict-envelope-44"
+        }),
         "team.resolve.snapshot",
     );
     assert_eq!(
@@ -785,7 +791,56 @@ fn protocol_cancellation_rolls_back_team_conflict_resolution() {
             .to_string_lossy()
             .ends_with(".snapshot")));
 
-    let responsive = rpc(&mut stdin, &mut stdout, 3, "sys.version", json!({}));
+    let team_history = std::fs::read_to_string(
+        root.join(".repositories/transactions/history.ndjson"),
+    )
+    .unwrap();
+    let team_envelope: omegat_team::TransactionEnvelope<Value> =
+        serde_json::from_str(team_history.lines().last().unwrap()).unwrap();
+    assert_eq!(team_envelope.version, 1);
+    assert_eq!(team_envelope.project_root, root.canonicalize().unwrap());
+    assert_eq!(team_envelope.generation, 44);
+    assert_eq!(team_envelope.batch_id, "conflict-envelope-44");
+    assert_eq!(
+        team_envelope.status,
+        omegat_team::TransactionStatus::RequestCancelled
+    );
+    assert_eq!(team_envelope.error_code, Some(-32800));
+
+    let refresh = rpc(
+        &mut stdin,
+        &mut stdout,
+        3,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "unified-envelope-contract",
+            "generation": 44,
+            "paths": [root.join("source/0000.txt")],
+            "fingerprints": { "source/0000.txt": "after-conflict-cancel" },
+            "sources": ["native"]
+        }),
+    );
+    let refresh_envelope: omegat_team::TransactionEnvelope<Value> =
+        serde_json::from_value(refresh["result"]["batch"].clone()).unwrap();
+    let refresh_journal: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".repositories/transactions/external-refresh.json")).unwrap(),
+    )
+    .unwrap();
+    let persisted_refresh_envelope: omegat_team::TransactionEnvelope<Value> =
+        serde_json::from_value(refresh_journal["batches"][0].clone()).unwrap();
+    assert_eq!(persisted_refresh_envelope, refresh_envelope);
+    assert_eq!(refresh_envelope.version, team_envelope.version);
+    assert_eq!(refresh_envelope.project_root, team_envelope.project_root);
+    assert_eq!(refresh_envelope.generation, team_envelope.generation);
+    assert_eq!(
+        refresh_envelope.status,
+        omegat_team::TransactionStatus::Pending
+    );
+    assert_eq!(refresh_envelope.error_code, None);
+    assert!(refresh_envelope.batch_id.starts_with("refresh-"));
+
+    let responsive = rpc(&mut stdin, &mut stdout, 4, "sys.version", json!({}));
     assert_eq!(responsive["result"]["version"], "6.2.0");
     let _ = child.kill();
 }
@@ -840,18 +895,24 @@ fn project_open_recovers_only_its_interrupted_resolution_generation() {
     std::fs::write(
         transactions.join("active.json"),
         serde_json::to_vec_pretty(&json!({
-            "format": 1,
-            "id": "interrupted-resolution",
-            "operation": "resolve-conflict",
-            "phase": "mutating",
-            "snapshot": snapshot,
-            "prep_existed": true,
-            "file_remotes": [],
-            "repository_count": 0,
-            "rollback_versions": [],
-            "commit_started": [],
-            "published": [],
-            "updated_unix_ms": 1
+            "version": 1,
+            "project_root": root,
+            "generation": 8,
+            "batch_id": "interrupted-resolution",
+            "status": "pending",
+            "error_code": null,
+            "updated_unix_ms": 1,
+            "payload": {
+                "operation": "resolve-conflict",
+                "phase": "mutating",
+                "snapshot": snapshot,
+                "prep_existed": true,
+                "file_remotes": [],
+                "repository_count": 0,
+                "rollback_versions": [],
+                "commit_started": [],
+                "published": []
+            }
         }))
         .unwrap(),
     )
@@ -1007,8 +1068,11 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
             "sources": ["sidecar"]
         }),
     );
-    let first_id = first["result"]["batch"]["id"].as_str().unwrap().to_string();
-    let second_id = second["result"]["batch"]["id"]
+    let first_id = first["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let second_id = second["result"]["batch"]["batch_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -1040,7 +1104,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
             .as_array()
             .unwrap()
             .iter()
-            .map(|batch| batch["id"].as_str().unwrap())
+            .map(|batch| batch["batch_id"].as_str().unwrap())
             .collect::<Vec<_>>(),
         vec![first_id.as_str(), second_id.as_str()]
     );
@@ -1059,7 +1123,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
     );
     assert_eq!(completed["result"]["outcome"], "cancelled");
     assert_eq!(
-        completed["result"]["remaining"][0]["id"],
+        completed["result"]["remaining"][0]["batch_id"],
         second_id.as_str()
     );
     second_child.kill().unwrap();
@@ -1085,7 +1149,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         }),
     );
     assert_eq!(
-        still_pending["result"]["batches"][0]["id"],
+        still_pending["result"]["batches"][0]["batch_id"],
         second_id.as_str()
     );
     rpc(
@@ -1194,6 +1258,153 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
     );
     assert_eq!(old_root_does_not_revive["result"]["batches"], json!([]));
     let _ = third_child.kill();
+}
+
+#[test]
+fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
+    fn spawn_sidecar(
+        config: &std::path::Path,
+    ) -> (
+        std::process::Child,
+        std::process::ChildStdin,
+        BufReader<std::process::ChildStdout>,
+    ) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_omegat-sidecar"))
+            .env("OMEGAT_CONFIG_DIR", config)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        (child, stdin, stdout)
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let config = temp.path().join("config");
+    let root = temp.path().join("checkpoint-project");
+    let props = omegat_core::properties::ProjectProperties::create(
+        root.clone(),
+        "en".into(),
+        "fr".into(),
+        false,
+    );
+    props.ensure_dirs().unwrap();
+    props.write().unwrap();
+    std::fs::write(props.source_dir.join("before.txt"), "before checkpoint").unwrap();
+
+    let (mut first_child, mut first_in, mut first_out) = spawn_sidecar(&config);
+    rpc(
+        &mut first_in,
+        &mut first_out,
+        1,
+        "project.open",
+        json!({ "root": root }),
+    );
+    std::fs::write(
+        props.source_dir.join("committed.txt"),
+        "sidecar committed before renderer ack",
+    )
+    .unwrap();
+    let enqueued = rpc(
+        &mut first_in,
+        &mut first_out,
+        2,
+        "project.refresh.enqueue",
+        json!({
+            "root": root,
+            "app_instance": "electron-before-renderer-crash",
+            "generation": 12,
+            "paths": [props.source_dir.join("committed.txt")],
+            "fingerprints": { "source/committed.txt": "checkpoint-1" },
+            "sources": ["native"]
+        }),
+    );
+    let batch_id = enqueued["result"]["batch"]["batch_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let refreshed = rpc(
+        &mut first_in,
+        &mut first_out,
+        3,
+        "project.external-refresh",
+        json!({
+            "progress_token": "checkpoint-refresh",
+            "transaction_project_root": root,
+            "transaction_generation": 12,
+            "transaction_batch_id": batch_id,
+            "app_instance": "electron-before-renderer-crash"
+        }),
+    );
+    assert_eq!(refreshed["error"], Value::Null);
+    assert_eq!(refreshed["result"]["entries"], 2);
+    first_child.kill().unwrap();
+    first_child.wait().unwrap();
+
+    let (mut second_child, mut second_in, mut second_out) = spawn_sidecar(&config);
+    rpc(
+        &mut second_in,
+        &mut second_out,
+        4,
+        "project.open",
+        json!({ "root": root }),
+    );
+    let recovered = rpc(
+        &mut second_in,
+        &mut second_out,
+        5,
+        "project.refresh.pending",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-renderer-crash",
+            "generation": 1
+        }),
+    );
+    let checkpoint = &recovered["result"]["batches"][0];
+    assert_eq!(checkpoint["batch_id"], batch_id);
+    assert_eq!(checkpoint["status"], "sidecar_committed");
+    assert_eq!(checkpoint["generation"], 1);
+
+    let entries = rpc(&mut second_in, &mut second_out, 6, "entry.list", json!({}));
+    assert_eq!(entries["result"].as_array().unwrap().len(), 2);
+    assert!(entries["result"].as_array().unwrap().iter().any(|entry| {
+        entry["source"] == "sidecar committed before renderer ack"
+    }));
+
+    let completed = rpc(
+        &mut second_in,
+        &mut second_out,
+        7,
+        "project.refresh.complete",
+        json!({
+            "root": root,
+            "app_instance": "electron-after-renderer-crash",
+            "generation": 1,
+            "batch_id": batch_id,
+            "outcome": "succeeded"
+        }),
+    );
+    assert_eq!(completed["result"]["remaining"], json!([]));
+    let terminal: omegat_team::TransactionEnvelope<Value> = serde_json::from_str(
+        std::fs::read_to_string(
+            root.join(".repositories/transactions/external-refresh-history.ndjson"),
+        )
+        .unwrap()
+        .lines()
+        .last()
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(terminal.batch_id, batch_id);
+    assert_eq!(terminal.generation, 1);
+    assert_eq!(terminal.status, omegat_team::TransactionStatus::Completed);
+    assert_eq!(terminal.error_code, None);
+    assert!(!root
+        .join(".repositories/transactions/external-refresh.json")
+        .exists());
+    let _ = second_child.kill();
 }
 
 #[test]

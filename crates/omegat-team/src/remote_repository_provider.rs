@@ -7,6 +7,7 @@ use crate::rebase_and_commit::rebase_all;
 use crate::rebase_utils::save_bases;
 use crate::remote_repository_factory;
 use crate::team_settings::{clear_resolved, save_conflicts};
+use crate::transaction_envelope::{TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE};
 use crate::{team_enabled, SyncReport};
 use fs2::FileExt;
 use omegat_core::cancellation::CancellationToken;
@@ -119,13 +120,7 @@ struct SyncSnapshot {
 
 impl SyncSnapshot {
     fn capture(props: &ProjectProperties, base: PathBuf) -> Result<Self> {
-        Self::capture_cancellable(
-            props,
-            base,
-            true,
-            &CancellationToken::default(),
-            None,
-        )
+        Self::capture_cancellable(props, base, true, &CancellationToken::default(), None)
     }
 
     fn capture_cancellable(
@@ -167,9 +162,12 @@ impl SyncSnapshot {
         }
 
         let mut file_remotes = Vec::new();
-        for (repository_index, repo) in props.repositories.iter().enumerate().filter(|_| {
-            include_file_remotes
-        }) {
+        for (repository_index, repo) in props
+            .repositories
+            .iter()
+            .enumerate()
+            .filter(|_| include_file_remotes)
+        {
             if repo.repo_type != "file" || is_inplace(props, repo) {
                 continue;
             }
@@ -287,9 +285,7 @@ impl SyncSnapshot {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct SyncTransaction {
-    format: u8,
-    id: String,
+struct SyncTransactionPayload {
     operation: String,
     phase: String,
     snapshot: PathBuf,
@@ -299,29 +295,57 @@ struct SyncTransaction {
     rollback_versions: Vec<Option<String>>,
     commit_started: Vec<usize>,
     published: Vec<usize>,
-    updated_unix_ms: u128,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(transparent)]
+struct SyncTransaction(TransactionEnvelope<SyncTransactionPayload>);
+
+impl std::ops::Deref for SyncTransaction {
+    type Target = SyncTransactionPayload;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.payload
+    }
+}
+
+impl std::ops::DerefMut for SyncTransaction {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.payload
+    }
 }
 
 impl SyncTransaction {
-    fn begin(props: &ProjectProperties, operation: &str) -> Result<(Self, SyncSnapshot)> {
+    fn begin(
+        props: &ProjectProperties,
+        operation: &str,
+        generation: u64,
+        batch_id: Option<&str>,
+    ) -> Result<(Self, SyncSnapshot)> {
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
-        let snapshot_path = transaction_dir(props).join(format!("{id}.snapshot"));
+        let generated_id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
+        let id = batch_id
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| generated_id.clone());
+        let snapshot_path = transaction_dir(props).join(format!("{generated_id}.snapshot"));
         let snapshot = SyncSnapshot::capture(props, snapshot_path.clone())?;
-        let mut transaction = Self {
-            format: 1,
+        let mut transaction = Self(TransactionEnvelope::pending(
+            &props.root,
+            generation,
             id,
-            operation: operation.into(),
-            phase: "captured".into(),
-            snapshot: snapshot_path,
-            prep_existed: snapshot.prep_existed,
-            file_remotes: snapshot.file_remotes.clone(),
-            repository_count: props.repositories.len(),
-            rollback_versions: vec![None; props.repositories.len()],
-            commit_started: Vec::new(),
-            published: Vec::new(),
-            updated_unix_ms: unix_ms(),
-        };
+            SyncTransactionPayload {
+                operation: operation.into(),
+                phase: "captured".into(),
+                snapshot: snapshot_path,
+                prep_existed: snapshot.prep_existed,
+                file_remotes: snapshot.file_remotes.clone(),
+                repository_count: props.repositories.len(),
+                rollback_versions: vec![None; props.repositories.len()],
+                commit_started: Vec::new(),
+                published: Vec::new(),
+            },
+        ));
         transaction.persist(props)?;
         Ok((transaction, snapshot))
     }
@@ -331,24 +355,32 @@ impl SyncTransaction {
         operation: &str,
         cancellation: &CancellationToken,
         checkpoint: &'static str,
+        generation: u64,
+        batch_id: Option<&str>,
     ) -> Result<(Self, SyncSnapshot)> {
         let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
-        let snapshot_path = transaction_dir(props).join(format!("{id}.snapshot"));
-        let mut transaction = Self {
-            format: 1,
+        let generated_id = format!("{}-{}-{sequence}", unix_ms(), std::process::id());
+        let id = batch_id
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| generated_id.clone());
+        let snapshot_path = transaction_dir(props).join(format!("{generated_id}.snapshot"));
+        let mut transaction = Self(TransactionEnvelope::pending(
+            &props.root,
+            generation,
             id,
-            operation: operation.into(),
-            phase: "capturing".into(),
-            snapshot: snapshot_path.clone(),
-            prep_existed: prep_dir(props).exists(),
-            file_remotes: Vec::new(),
-            repository_count: props.repositories.len(),
-            rollback_versions: vec![None; props.repositories.len()],
-            commit_started: Vec::new(),
-            published: Vec::new(),
-            updated_unix_ms: unix_ms(),
-        };
+            SyncTransactionPayload {
+                operation: operation.into(),
+                phase: "capturing".into(),
+                snapshot: snapshot_path.clone(),
+                prep_existed: prep_dir(props).exists(),
+                file_remotes: Vec::new(),
+                repository_count: props.repositories.len(),
+                rollback_versions: vec![None; props.repositories.len()],
+                commit_started: Vec::new(),
+                published: Vec::new(),
+            },
+        ));
         transaction.persist(props)?;
         let snapshot = match SyncSnapshot::capture_cancellable(
             props,
@@ -359,7 +391,7 @@ impl SyncTransaction {
         ) {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                transaction.finish(props, "rolled-back")?;
+                transaction.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
         };
@@ -370,11 +402,18 @@ impl SyncTransaction {
     }
 
     fn persist(&mut self, props: &ProjectProperties) -> Result<()> {
-        self.updated_unix_ms = unix_ms();
+        self.0.touch();
+        self.0
+            .validate_for_root(&props.root)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         let dir = transaction_dir(props);
         std::fs::create_dir_all(&dir)?;
         let active = dir.join("active.json");
-        let temporary = dir.join(format!(".active-{}.tmp", self.id));
+        let temporary = dir.join(format!(
+            ".active-{}-{}.tmp",
+            std::process::id(),
+            SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
         let json = serde_json::to_vec_pretty(self)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
         {
@@ -405,13 +444,38 @@ impl SyncTransaction {
         Ok(())
     }
 
-    fn finish(mut self, props: &ProjectProperties, phase: &str) -> Result<()> {
+    fn finish(
+        mut self,
+        props: &ProjectProperties,
+        phase: &str,
+        status: TransactionStatus,
+        error_code: Option<i32>,
+    ) -> Result<()> {
         self.phase = phase.into();
+        self.0.transition(status, error_code);
         self.persist(props)?;
         remove_path(&transaction_dir(props).join("active.json"))?;
         remove_path(&transaction_dir(props).join(".active.previous.json"))?;
         remove_path(&self.snapshot)?;
         Ok(())
+    }
+
+    fn finish_for_error(
+        self,
+        props: &ProjectProperties,
+        phase: &str,
+        error: &TeamError,
+    ) -> Result<()> {
+        if matches!(error, TeamError::Cancelled) {
+            self.finish(
+                props,
+                phase,
+                TransactionStatus::RequestCancelled,
+                Some(REQUEST_CANCELLED_CODE),
+            )
+        } else {
+            self.finish(props, phase, TransactionStatus::Cancelled, None)
+        }
     }
 
     fn load(props: &ProjectProperties) -> Result<Option<Self>> {
@@ -427,11 +491,15 @@ impl SyncTransaction {
         };
         let transaction: Self = serde_json::from_str(&std::fs::read_to_string(&path)?)
             .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
-        if transaction.format != 1 {
-            return Err(TeamError::Command(format!(
-                "unsupported team transaction format {}",
-                transaction.format
-            )));
+        transaction
+            .0
+            .validate_for_root(&props.root)
+            .map_err(|error| TeamError::Command(format!("team transaction: {error}")))?;
+        if !transaction.0.status.is_recoverable() {
+            remove_path(&transaction.snapshot)?;
+            remove_path(&active)?;
+            remove_path(&previous)?;
+            return Ok(None);
         }
         Ok(Some(transaction))
     }
@@ -520,13 +588,18 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
     {
         return Err(TeamError::Command(format!(
             "team transaction {} expected {} repositories, found {}",
-            transaction.id,
+            transaction.0.batch_id,
             transaction.repository_count,
             props.repositories.len()
         )));
     }
     if transaction.phase == "capturing" {
-        transaction.finish(props, "recovered-capture")?;
+        transaction.finish(
+            props,
+            "recovered-capture",
+            TransactionStatus::Cancelled,
+            None,
+        )?;
         return Ok(true);
     }
     let snapshot = SyncSnapshot::open(
@@ -568,7 +641,7 @@ fn recover_interrupted_sync_locked(props: &ProjectProperties) -> Result<bool> {
         failures.push(format!("project: {error}"));
     }
     if failures.is_empty() {
-        transaction.finish(props, "recovered")?;
+        transaction.finish(props, "recovered", TransactionStatus::Cancelled, None)?;
         return Ok(true);
     }
     transaction.phase = "recovery-failed".into();
@@ -584,6 +657,8 @@ pub(crate) fn mutate_project_cancellable<T>(
     operation: &str,
     cancellation: &CancellationToken,
     checkpoint: &'static str,
+    generation: u64,
+    batch_id: Option<&str>,
     mutation: impl FnOnce(&CancellationToken) -> Result<T>,
 ) -> Result<T> {
     check_cancelled(cancellation)?;
@@ -591,8 +666,14 @@ pub(crate) fn mutate_project_cancellable<T>(
     check_cancelled(cancellation)?;
     recover_interrupted_sync_locked(props)?;
     check_cancelled(cancellation)?;
-    let (mut journal, snapshot) =
-        SyncTransaction::begin_local_cancellable(props, operation, cancellation, checkpoint)?;
+    let (mut journal, snapshot) = SyncTransaction::begin_local_cancellable(
+        props,
+        operation,
+        cancellation,
+        checkpoint,
+        generation,
+        batch_id,
+    )?;
     journal.phase = "mutating".into();
     journal.persist(props)?;
     let result = mutation(cancellation);
@@ -600,10 +681,10 @@ pub(crate) fn mutate_project_cancellable<T>(
         Ok(value) => {
             if let Err(error) = check_cancelled(cancellation) {
                 snapshot.restore_project_and_prep(props)?;
-                journal.finish(props, "rolled-back")?;
+                journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
-            journal.finish(props, "committed")?;
+            journal.finish(props, "committed", TransactionStatus::Completed, None)?;
             Ok(value)
         }
         Err(error) => {
@@ -614,7 +695,7 @@ pub(crate) fn mutate_project_cancellable<T>(
                     "{error}; project rollback failed: {rollback_error}"
                 )));
             }
-            journal.finish(props, "rolled-back")?;
+            journal.finish_for_error(props, "rolled-back", &error)?;
             Err(error)
         }
     }
@@ -627,6 +708,15 @@ pub fn sync(props: &ProjectProperties) -> Result<SyncReport> {
 pub fn sync_cancellable(
     props: &ProjectProperties,
     cancellation: &CancellationToken,
+) -> Result<SyncReport> {
+    sync_cancellable_scoped(props, cancellation, 0, None)
+}
+
+pub fn sync_cancellable_scoped(
+    props: &ProjectProperties,
+    cancellation: &CancellationToken,
+    generation: u64,
+    batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
     let _lock = acquire_project_transaction_lock(props)?;
@@ -655,7 +745,7 @@ pub fn sync_cancellable(
         return Ok(report);
     }
 
-    let (mut journal, snapshot) = SyncTransaction::begin(props, "sync")?;
+    let (mut journal, snapshot) = SyncTransaction::begin(props, "sync", generation, batch_id)?;
     let mut observed = vec![None; props.repositories.len()];
     let mut rollback_versions = vec![None; props.repositories.len()];
     let mut published = Vec::new();
@@ -769,7 +859,7 @@ pub fn sync_cancellable(
             }
         }
         if rollback_failures.is_empty() {
-            journal.finish(props, "rolled-back")?;
+            journal.finish_for_error(props, "rolled-back", &error)?;
             return Err(error);
         }
         journal.phase = "rollback-failed".into();
@@ -780,7 +870,7 @@ pub fn sync_cancellable(
         )));
     }
 
-    journal.finish(props, "committed")?;
+    journal.finish(props, "committed", TransactionStatus::Completed, None)?;
     for repo in &props.repositories {
         report
             .message
@@ -802,6 +892,16 @@ pub fn commit_project_files_cancellable(
     props: &ProjectProperties,
     which: &str,
     cancellation: &CancellationToken,
+) -> Result<SyncReport> {
+    commit_project_files_cancellable_scoped(props, which, cancellation, 0, None)
+}
+
+pub fn commit_project_files_cancellable_scoped(
+    props: &ProjectProperties,
+    which: &str,
+    cancellation: &CancellationToken,
+    generation: u64,
+    batch_id: Option<&str>,
 ) -> Result<SyncReport> {
     check_cancelled(cancellation)?;
     let _lock = acquire_project_transaction_lock(props)?;
@@ -825,7 +925,8 @@ pub fn commit_project_files_cancellable(
         return Err(TeamError::Command(format!("{label} directory missing")));
     }
     if !props.repositories.is_empty() {
-        let (mut journal, snapshot) = SyncTransaction::begin(props, &format!("commit-{label}"))?;
+        let (mut journal, snapshot) =
+            SyncTransaction::begin(props, &format!("commit-{label}"), generation, batch_id)?;
         let mut rollback_versions = vec![None; props.repositories.len()];
         let mut published = Vec::new();
         let mut commit_started = Vec::new();
@@ -880,7 +981,7 @@ pub fn commit_project_files_cancellable(
                 rollback_failures.push(format!("project: {rollback_error}"));
             }
             if rollback_failures.is_empty() {
-                journal.finish(props, "rolled-back")?;
+                journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
             journal.phase = "rollback-failed".into();
@@ -890,7 +991,7 @@ pub fn commit_project_files_cancellable(
                 rollback_failures.join(" | ")
             )));
         }
-        journal.finish(props, "committed")?;
+        journal.finish(props, "committed", TransactionStatus::Completed, None)?;
     } else if props.root.join(".git").exists() {
         check_cancelled(cancellation)?;
         crate::git2_ops::add_all(&props.root)?;

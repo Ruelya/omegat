@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld("omegat", {
       fingerprints: Record<string, string | null>;
       generation: number;
       sources: Array<"native" | "sidecar">;
+      envelopeProjectRoot?: string;
+      envelopeVersion?: number;
+      status?: "pending" | "sidecar_committed";
+      errorCode?: number | null;
     }) => void,
   ) => {
     const listener = (
@@ -60,6 +64,10 @@ contextBridge.exposeInMainWorld("omegat", {
         fingerprints: Record<string, string | null>;
         generation: number;
         sources: Array<"native" | "sidecar">;
+        envelopeProjectRoot?: string;
+        envelopeVersion?: number;
+        status?: "pending" | "sidecar_committed";
+        errorCode?: number | null;
       },
     ) => fn(event);
     ipcRenderer.on("project:external-change", listener);

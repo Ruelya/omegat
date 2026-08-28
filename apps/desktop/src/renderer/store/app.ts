@@ -243,6 +243,11 @@ type Screen = "welcome" | "workspace";
 type ProjectRebindRequest = {
   kind: "reload" | "external-refresh" | "memory";
   changedKeys?: readonly EntryKeyDto[];
+  transaction?: {
+    root: string;
+    generation: number;
+    batchId: string;
+  };
 };
 
 export type AppState = {
@@ -377,6 +382,7 @@ export type AppState = {
   refreshEntriesAfterExternalChange: (
     changedKeys?: readonly EntryKeyDto[],
     reloadFromDisk?: boolean,
+    transaction?: { root: string; generation: number; batchId: string },
   ) => Promise<boolean>;
   toggleTheme: () => void;
   setSearchForm: (patch: Partial<SearchForm>) => void;
@@ -554,6 +560,18 @@ export const useApp = create<AppState>((set, get) => ({
     }
     const method = LONG_OPERATION_METHODS[kind];
     const requestId = `operation-${kind}-${nextLongOperationId++}`;
+    const state = get();
+    const transactionParams = (
+        kind === "teamSync"
+        || kind === "teamCommit"
+        || kind === "teamResolve"
+      ) && state.props?.root
+      ? {
+          transaction_project_root: state.props.root,
+          transaction_generation: state.projectEvent.projectGeneration,
+          transaction_batch_id: requestId,
+        }
+      : {};
     set({
       longOperation: {
         requestId,
@@ -567,7 +585,7 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const result = await rpc<T>(
         method,
-        { ...params, progress_token: requestId },
+        { ...params, ...transactionParams, progress_token: requestId },
         undefined,
         requestId,
       );
@@ -763,7 +781,7 @@ export const useApp = create<AppState>((set, get) => ({
   reloadProject: async () => {
     await get().rebindProjectEntries({ kind: "reload" });
   },
-  rebindProjectEntries: async ({ kind, changedKeys }) => {
+  rebindProjectEntries: async ({ kind, changedKeys, transaction }) => {
     const root = get().props?.root;
     if (!root) return false;
     const initial = get();
@@ -800,6 +818,13 @@ export const useApp = create<AppState>((set, get) => ({
       } else if (kind === "external-refresh") {
         const result = await get().runLongOperation<{ props?: ProjectPropsDto }>(
           "externalRefresh",
+          transaction
+            ? {
+                transaction_project_root: transaction.root,
+                transaction_generation: transaction.generation,
+                transaction_batch_id: transaction.batchId,
+              }
+            : {},
         );
         refreshedProps = result.props ?? before.props;
       }
@@ -1225,10 +1250,15 @@ export const useApp = create<AppState>((set, get) => ({
     await rpc("wiki.import", { source });
     await get().reloadProject();
   },
-  refreshEntriesAfterExternalChange: async (changedKeys, reloadFromDisk = false) => {
+  refreshEntriesAfterExternalChange: async (
+    changedKeys,
+    reloadFromDisk = false,
+    transaction,
+  ) => {
     return get().rebindProjectEntries({
       kind: reloadFromDisk ? "external-refresh" : "memory",
       changedKeys,
+      transaction,
     });
   },
   setDraft: (v) => {
@@ -1623,6 +1653,7 @@ export function connectExternalProjectEvents(): () => void {
     generation: number;
     paths: string[];
     sources: Array<"native" | "sidecar">;
+    status: "pending" | "sidecar_committed";
     coalesced: boolean;
   }> = [];
   let draining = false;
@@ -1665,7 +1696,17 @@ export function connectExternalProjectEvents(): () => void {
         try {
           const refreshed = batch.coalesced
             ? null
-            : await state.refreshEntriesAfterExternalChange(undefined, true);
+            : batch.status === "sidecar_committed"
+              ? await state.refreshEntriesAfterExternalChange()
+              : await state.refreshEntriesAfterExternalChange(
+                  undefined,
+                  true,
+                  {
+                    root: batch.root,
+                    generation: batch.generation,
+                    batchId: batch.id,
+                  },
+                );
           const current = useApp.getState();
           if (
             current.props?.root !== batch.root
@@ -1747,13 +1788,16 @@ export function connectExternalProjectEvents(): () => void {
     fingerprints,
     generation,
     sources,
+    status,
   }) => {
     const state = useApp.getState();
     if (
       state.props?.root !== root
       || state.projectEvent.projectGeneration !== generation
     ) return;
-    if (pending.some((batch) => batch.id === id)) {
+    const existing = pending.find((batch) => batch.id === id);
+    if (existing) {
+      existing.status = status ?? existing.status;
       blocked = null;
       void drain();
       return;
@@ -1793,6 +1837,7 @@ export function connectExternalProjectEvents(): () => void {
         generation,
         paths: [...paths],
         sources: [...sources],
+        status: status ?? "pending",
         coalesced: true,
       });
     } else {
@@ -1802,6 +1847,7 @@ export function connectExternalProjectEvents(): () => void {
         generation,
         paths: changedPaths,
         sources: [...sources],
+        status: status ?? "pending",
         coalesced: false,
       });
     }
