@@ -367,26 +367,34 @@ struct SyncTransactionPayload {
 #[serde(transparent)]
 struct SyncTransaction(TransactionEnvelope<SyncTransactionPayload>);
 
-/// Small renderer-facing view of a durable team product receipt.
+/// Small renderer-facing view of any durable product transaction.
 ///
 /// The potentially large product manifest remains in `active.json`; the
 /// renderer needs only the envelope identity and receipt fingerprint to
-/// explicitly acknowledge that it consumed the committed team result.
+/// explicitly acknowledge that it consumed the committed product result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct TeamRendererReceipt {
+pub struct TransactionRendererReceipt {
     pub version: u8,
     pub project_root: PathBuf,
     pub generation: u64,
     pub batch_id: String,
     pub status: TransactionStatus,
-    pub operation: String,
+    pub error_code: Option<i32>,
+    pub updated_unix_ms: u128,
+    pub payload: TransactionRendererPayload,
     pub commit: TransactionCommit,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct TeamRendererAck {
+pub struct TransactionRendererPayload {
+    pub operation: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionRendererAck {
     pub version: u8,
     pub project_root: PathBuf,
     pub generation: u64,
@@ -584,26 +592,30 @@ impl SyncTransaction {
         Ok(())
     }
 
-    fn renderer_receipt(&self) -> Result<TeamRendererReceipt> {
+    fn renderer_receipt(&self) -> Result<TransactionRendererReceipt> {
         if self.0.status != TransactionStatus::SidecarCommitted {
             return Err(TeamError::Command(format!(
-                "team transaction {} is not awaiting renderer acknowledgement",
+                "transaction {} is not awaiting renderer acknowledgement",
                 self.0.batch_id
             )));
         }
         let commit = self.0.commit.clone().ok_or_else(|| {
             TeamError::Command(format!(
-                "team transaction {} has no product receipt",
+                "transaction {} has no product receipt",
                 self.0.batch_id
             ))
         })?;
-        Ok(TeamRendererReceipt {
+        Ok(TransactionRendererReceipt {
             version: self.0.version,
             project_root: self.0.project_root.clone(),
             generation: self.0.generation,
             batch_id: self.0.batch_id.clone(),
             status: self.0.status,
-            operation: self.operation.clone(),
+            error_code: self.0.error_code,
+            updated_unix_ms: self.0.updated_unix_ms,
+            payload: TransactionRendererPayload {
+                operation: self.operation.clone(),
+            },
             commit,
         })
     }
@@ -986,13 +998,18 @@ pub fn commit_product_transaction_cancellable<T>(
                 return Err(error);
             }
             product_transaction_checkpoint(operation, "before_atomic_publish")?;
-            if let Err(error) = journal.publish_product_commit(props, "committed", false) {
+            let await_renderer_ack = generation != 0 && batch_id.is_some();
+            if let Err(error) =
+                journal.publish_product_commit(props, "committed", await_renderer_ack)
+            {
                 snapshot.restore_project_and_prep(props)?;
                 journal.finish_for_error(props, "rolled-back", &error)?;
                 return Err(error);
             }
             product_transaction_checkpoint(operation, "after_atomic_publish")?;
-            journal.cleanup(props)?;
+            if !await_renderer_ack {
+                journal.cleanup(props)?;
+            }
             Ok(value)
         }
         Err(error) => {
@@ -1434,6 +1451,7 @@ fn acknowledged_receipt_in_history(
     props: &ProjectProperties,
     generation: u64,
     batch_id: &str,
+    operation: &str,
 ) -> Result<bool> {
     let path = transaction_dir(props).join("history.ndjson");
     let Ok(history) = std::fs::read_to_string(&path) else {
@@ -1445,21 +1463,22 @@ fn acknowledged_receipt_in_history(
         if transaction.0.batch_id == batch_id {
             return Ok(transaction.0.generation == generation
                 && transaction.0.status == TransactionStatus::Completed
-                && transaction.phase == "renderer-acknowledged");
+                && transaction.phase == "renderer-acknowledged"
+                && transaction.operation == operation);
         }
     }
     Ok(false)
 }
 
-/// Return the one committed team receipt that still requires renderer ack.
+/// Return the one committed product receipt that still requires renderer ack.
 ///
 /// A replacement renderer adopts the receipt under its current project
 /// generation. Pending pre-commit transactions are recovered separately and
 /// are never exposed as committed work.
-pub fn pending_renderer_receipt(
+pub fn pending_transaction_receipt(
     props: &ProjectProperties,
     generation: u64,
-) -> Result<Option<TeamRendererReceipt>> {
+) -> Result<Option<TransactionRendererReceipt>> {
     if generation == 0 {
         return Err(TeamError::Command(
             "renderer receipt generation must be non-zero".into(),
@@ -1480,19 +1499,20 @@ pub fn pending_renderer_receipt(
     transaction.renderer_receipt().map(Some)
 }
 
-/// Idempotently acknowledge a team receipt after renderer publication.
+/// Idempotently acknowledge a product receipt after renderer publication.
 ///
 /// Only this transition removes `active.json` and its rollback snapshot. If
 /// the acknowledgement response is lost, repeating the same RPC consults the
 /// durable completed history and performs no product write or compensation.
-pub fn acknowledge_renderer_receipt(
+pub fn acknowledge_transaction_receipt(
     props: &ProjectProperties,
     generation: u64,
     batch_id: &str,
-) -> Result<TeamRendererAck> {
-    if generation == 0 || batch_id.is_empty() {
+    operation: &str,
+) -> Result<TransactionRendererAck> {
+    if generation == 0 || batch_id.is_empty() || operation.is_empty() {
         return Err(TeamError::Command(
-            "renderer acknowledgement requires generation and batch id".into(),
+            "renderer acknowledgement requires generation, batch id, and operation".into(),
         ));
     }
     let _lock = acquire_project_transaction_lock(props)?;
@@ -1500,26 +1520,32 @@ pub fn acknowledge_renderer_receipt(
         transaction.validate_repository_shape(props)?;
         if transaction.0.batch_id != batch_id {
             return Err(TeamError::Conflict(format!(
-                "team renderer receipt is {}, not {batch_id}",
+                "renderer receipt is {}, not {batch_id}",
                 transaction.0.batch_id
             )));
         }
         if transaction.0.generation != generation {
             return Err(TeamError::Conflict(format!(
-                "team renderer receipt {} belongs to generation {}, not {generation}",
+                "renderer receipt {} belongs to generation {}, not {generation}",
                 transaction.0.batch_id, transaction.0.generation
+            )));
+        }
+        if transaction.operation != operation {
+            return Err(TeamError::Conflict(format!(
+                "renderer receipt {batch_id} is for {}, not {operation}",
+                transaction.operation
             )));
         }
         if transaction.0.status != TransactionStatus::SidecarCommitted {
             return Err(TeamError::Conflict(format!(
-                "team transaction {batch_id} is not awaiting renderer acknowledgement"
+                "transaction {batch_id} is not awaiting renderer acknowledgement"
             )));
         }
         transaction.phase = "renderer-acknowledged".into();
         transaction.0.transition(TransactionStatus::Completed, None);
         transaction.persist(props)?;
         transaction.cleanup(props)?;
-        return Ok(TeamRendererAck {
+        return Ok(TransactionRendererAck {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(&props.root),
             generation,
@@ -1528,8 +1554,8 @@ pub fn acknowledge_renderer_receipt(
             already_acknowledged: false,
         });
     }
-    if acknowledged_receipt_in_history(props, generation, batch_id)? {
-        return Ok(TeamRendererAck {
+    if acknowledged_receipt_in_history(props, generation, batch_id, operation)? {
+        return Ok(TransactionRendererAck {
             version: TRANSACTION_ENVELOPE_VERSION,
             project_root: normalized(&props.root),
             generation,
@@ -1539,7 +1565,7 @@ pub fn acknowledge_renderer_receipt(
         });
     }
     Err(TeamError::Conflict(format!(
-        "unknown team renderer receipt {batch_id}"
+        "unknown renderer receipt {batch_id}"
     )))
 }
 

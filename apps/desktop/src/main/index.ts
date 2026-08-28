@@ -11,6 +11,10 @@ import {
 import { basename, dirname, join } from "node:path";
 import { detectLocale, setLocale } from "../renderer/i18n";
 import { isLongOperationMethod } from "../shared/rpc-operation";
+import type {
+  TransactionEnvelope,
+  TransactionOutcome,
+} from "../shared/transaction-envelope";
 import {
   createApplicationLifecycle,
   registerApplicationLifecycle,
@@ -98,38 +102,6 @@ function inspectDroppedPaths(paths: unknown) {
   return { kind: "files" as const, paths: safe };
 }
 
-type RefreshBatch = {
-  version: number;
-  project_root: string;
-  generation: number;
-  batch_id: string;
-  status: "pending" | "sidecar_committed";
-  error_code: number | null;
-  payload: {
-    paths: string[];
-    fingerprints: Record<string, string | null>;
-    sources: Array<"native" | "sidecar">;
-    committed_result?: {
-      entry_list: unknown[];
-      props: unknown;
-      stats: unknown;
-    };
-  };
-};
-
-type TeamRendererReceipt = {
-  version: number;
-  project_root: string;
-  generation: number;
-  batch_id: string;
-  status: "sidecar_committed";
-  operation: string;
-  commit: {
-    manifest_sha256: string;
-    manifest_items: number;
-  };
-};
-
 function normalizedProjectRoot(root: string): string {
   try {
     return realpathSync(root);
@@ -138,81 +110,38 @@ function normalizedProjectRoot(root: string): string {
   }
 }
 
-function publishRefreshBatch(
+function publishTransactionEnvelope(
   root: string,
   generation: number,
-  batch: RefreshBatch,
+  envelope: TransactionEnvelope,
 ) {
   if (
-    batch.version !== 1
-    || batch.generation !== generation
-    || normalizedProjectRoot(batch.project_root) !== normalizedProjectRoot(root)
-    || !["pending", "sidecar_committed"].includes(batch.status)
+    envelope.version !== 1
+    || envelope.generation !== generation
+    || normalizedProjectRoot(envelope.project_root) !== normalizedProjectRoot(root)
+    || !["pending", "sidecar_committed"].includes(envelope.status)
+    || typeof envelope.payload?.operation !== "string"
   ) return;
   BrowserWindow.getAllWindows().forEach((window) => {
-    window.webContents.send("project:external-change", {
-      id: batch.batch_id,
-      root,
-      generation,
-      envelopeProjectRoot: batch.project_root,
-      envelopeVersion: batch.version,
-      status: batch.status,
-      errorCode: batch.error_code,
-      ...batch.payload,
-    });
+    window.webContents.send("transaction:envelope", envelope);
   });
 }
 
-function publishTeamReceipt(
-  root: string,
-  generation: number,
-  receipt: TeamRendererReceipt,
-) {
-  if (
-    receipt.version !== 1
-    || receipt.generation !== generation
-    || receipt.status !== "sidecar_committed"
-    || normalizedProjectRoot(receipt.project_root) !== normalizedProjectRoot(root)
-  ) return;
-  BrowserWindow.getAllWindows().forEach((window) => {
-    window.webContents.send("team:receipt", receipt);
-  });
-}
-
-async function publishPendingTeamReceipt(
+async function publishPendingTransactionEnvelopes(
   client: SidecarRpcClient,
   root: string,
   generation: number,
 ) {
-  const result = await client.request("team.receipt.pending", {
-    root,
-    generation,
-  }) as { receipt?: TeamRendererReceipt | null };
-  if (!result.receipt) return false;
-  publishTeamReceipt(root, generation, result.receipt);
-  return true;
-}
-
-async function pendingRefreshBatches(
-  client: SidecarRpcClient,
-  root: string,
-  generation: number,
-): Promise<RefreshBatch[]> {
-  const result = await client.request("project.refresh.pending", {
+  const result = await client.request("transaction.receipt.pending", {
     root,
     generation,
     app_instance: appInstance,
-  }) as { batches?: RefreshBatch[] };
-  return Array.isArray(result.batches) ? result.batches : [];
-}
-
-async function publishPendingRefreshBatches(
-  client: SidecarRpcClient,
-  root: string,
-  generation: number,
-) {
-  const batches = await pendingRefreshBatches(client, root, generation);
-  batches.forEach((batch) => publishRefreshBatch(root, generation, batch));
+  }) as { envelopes?: TransactionEnvelope[] };
+  const envelopes = Array.isArray(result.envelopes) ? result.envelopes : [];
+  envelopes.forEach((envelope) =>
+    publishTransactionEnvelope(root, generation, envelope)
+  );
+  return envelopes.length;
 }
 
 function scheduleSidecarRecovery() {
@@ -238,18 +167,11 @@ function scheduleSidecarRecovery() {
       projectFileWatcher.currentProject()?.root === watched.root
       && projectFileWatcher.currentProject()?.generation === watched.generation
     ) {
-      const teamReceiptPending = await publishPendingTeamReceipt(
+      await publishPendingTransactionEnvelopes(
         client,
         watched.root,
         watched.generation,
       );
-      if (!teamReceiptPending) {
-        await publishPendingRefreshBatches(
-          client,
-          watched.root,
-          watched.generation,
-        );
-      }
     }
   })().catch((error) => {
     process.stderr.write(`sidecar recovery failed: ${String(error)}\n`);
@@ -339,10 +261,10 @@ async function persistExternalProjectChange(event: ExternalProjectChange) {
     return client.request("project.refresh.enqueue", {
       ...event,
       app_instance: appInstance,
-    }) as Promise<{ batch?: RefreshBatch }>;
+    }) as Promise<{ batch?: TransactionEnvelope }>;
   };
   try {
-    let result: { batch?: RefreshBatch };
+    let result: { batch?: TransactionEnvelope };
     try {
       result = await persist();
     } catch {
@@ -350,7 +272,7 @@ async function persistExternalProjectChange(event: ExternalProjectChange) {
       result = await persist();
     }
     if (result.batch) {
-      publishRefreshBatch(event.root, event.generation, result.batch);
+      publishTransactionEnvelope(event.root, event.generation, result.batch);
     }
   } catch (error) {
     process.stderr.write(
@@ -435,6 +357,25 @@ async function rpc(
     : () => undefined;
   const result = await client.request(method, requestParams, clientRequestId)
     .finally(endWrite);
+  const receipt = result !== null
+      && typeof result === "object"
+      && "receipt" in result
+    ? result.receipt
+    : null;
+  if (
+    receipt !== null
+    && typeof receipt === "object"
+    && "project_root" in receipt
+    && "generation" in receipt
+    && typeof receipt.project_root === "string"
+    && typeof receipt.generation === "number"
+  ) {
+    publishTransactionEnvelope(
+      receipt.project_root,
+      receipt.generation,
+      receipt as TransactionEnvelope,
+    );
+  }
   const scopedExternalRefresh = method === "project.external-refresh"
     && requestParams !== null
     && typeof requestParams === "object"
@@ -518,65 +459,54 @@ app.whenReady().then(() => {
         typeof generation === "number" ? generation : undefined,
       );
       const client = await statefulClient();
-      const teamReceiptPending =
-        await publishPendingTeamReceipt(client, root, activeGeneration);
-      if (!teamReceiptPending) {
-        await publishPendingRefreshBatches(client, root, activeGeneration);
-      }
+      await publishPendingTransactionEnvelopes(client, root, activeGeneration);
     }
   });
   ipcMain.handle(
-    "project-refresh-complete",
+    "transaction-receipt-ack",
     async (
       _e,
-      root: string,
-      generation: number,
-      batchId: string,
-      outcome: "succeeded" | "cancelled" | "coalesced",
+      envelope: TransactionEnvelope,
+      outcome: TransactionOutcome = "succeeded",
     ) => {
       const active = projectFileWatcher.currentProject();
       if (
-        !active
-        || active.root !== root
-        || active.generation !== generation
+        envelope.payload.operation !== "project.close"
+        && (
+          !active
+          || normalizedProjectRoot(active.root)
+            !== normalizedProjectRoot(envelope.project_root)
+          || active.generation !== envelope.generation
+        )
       ) {
-        return { remaining: [] };
+        throw new Error("transaction receipt is not scoped to the watched project");
       }
-      return rpc("project.refresh.complete", {
-        root,
-        generation,
-        batch_id: batchId,
+      const result = await rpc("transaction.receipt.ack", {
+        root: envelope.project_root,
+        generation: envelope.generation,
+        batch_id: envelope.batch_id,
+        operation: envelope.payload.operation,
         outcome,
         app_instance: appInstance,
       });
-    },
-  );
-  ipcMain.handle(
-    "team-receipt-ack",
-    async (
-      _e,
-      root: string,
-      generation: number,
-      batchId: string,
-    ) => {
-      const result = await rpc("team.receipt.ack", {
-        root,
-        generation,
-        batch_id: batchId,
-      });
-      const active = projectFileWatcher.currentProject();
       if (
-        active?.root === root
-        && active.generation === generation
+        active
+        && normalizedProjectRoot(active.root)
+          === normalizedProjectRoot(envelope.project_root)
+        && active.generation === envelope.generation
       ) {
         setTimeout(() => {
           void statefulClient()
             .then((client) =>
-              publishPendingRefreshBatches(client, root, generation)
+              publishPendingTransactionEnvelopes(
+                client,
+                envelope.project_root,
+                envelope.generation,
+              )
             )
             .catch((error) => {
               process.stderr.write(
-                `cannot publish refresh after team receipt ack: ${String(error)}\n`,
+                `cannot publish transaction after receipt ack: ${String(error)}\n`,
               );
             });
         }, 0);

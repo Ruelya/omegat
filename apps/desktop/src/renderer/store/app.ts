@@ -43,7 +43,8 @@ import type {
   SearchHitDto,
   StatsDto,
   TeamConflict,
-  TeamRendererReceipt,
+  TransactionEnvelope,
+  TransactionOutcome,
   WindowId,
 } from "../lib/types";
 import { applyDocumentLocale, detectLocale, t } from "../i18n";
@@ -779,21 +780,23 @@ export const useApp = create<AppState>((set, get) => ({
       ) {
         await get().commitCurrent();
       }
-      await rpc("project.close");
+      const closed = await rpc<{
+        ok: boolean;
+        receipt?: TransactionEnvelope | null;
+      }>("project.close");
     } catch (error) {
       dockLifecycle.beginProject(before.props?.root ?? null, "load");
       set({ error: String(error) });
       throw error;
     }
-    const { locale, theme, version } = get();
-    set({
-      ...initialState,
-      locale,
-      theme,
-      version,
-      firstRun: false,
-      screen: "welcome",
-    });
+    publishClosedRendererState();
+    if (closed.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(
+        closed.receipt,
+        "succeeded",
+        true,
+      );
+    }
   },
   reloadProject: async () => {
     await get().rebindProjectEntries({ kind: "reload" });
@@ -1133,13 +1136,13 @@ export const useApp = create<AppState>((set, get) => ({
       const r = await get().runLongOperation<{
         action: string;
         message: string;
-        receipt?: TeamRendererReceipt | null;
+        receipt?: TransactionEnvelope | null;
       }>(
         "teamSync",
       );
       set({ teamMessage: `${r.action}: ${r.message}` });
       await get().refreshEntriesAfterExternalChange(undefined, true);
-      if (r.receipt) await acknowledgeTeamReceiptOrDefer(r.receipt);
+      if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
     } catch (e) {
       if (isAbortError(e)) {
         set({ teamMessage: "sync cancelled" });
@@ -1170,14 +1173,14 @@ export const useApp = create<AppState>((set, get) => ({
       const r = await get().runLongOperation<{
         action: string;
         message: string;
-        receipt?: TeamRendererReceipt | null;
+        receipt?: TransactionEnvelope | null;
       }>(
         "teamCommit",
         { which },
       );
       set({ teamMessage: `${r.action}: ${r.message}` });
       get().logLine(`commit ${which}`);
-      if (r.receipt) await acknowledgeTeamReceiptOrDefer(r.receipt);
+      if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
     } catch (error) {
       if (!isAbortError(error)) throw error;
       set({ teamMessage: `commit ${which} cancelled` });
@@ -1195,7 +1198,10 @@ export const useApp = create<AppState>((set, get) => ({
     const src = source ?? conflict?.source ?? "";
     const activeKey = before.entries[before.index]?.key;
     const rebindKey = entryKey ?? conflict?.entry_key ?? activeKey;
-    let r: { conflicts: TeamConflict[] };
+    let r: {
+      conflicts: TeamConflict[];
+      receipt?: TransactionEnvelope | null;
+    };
     try {
       r = await get().runLongOperation<{ conflicts: TeamConflict[] }>(
         "teamResolve",
@@ -1224,6 +1230,7 @@ export const useApp = create<AppState>((set, get) => ({
       ),
       teamMessage: `keep ${side}${src ? ` (${src})` : ""}`,
     });
+    if (r.receipt) await acknowledgeTransactionEnvelopeOrDefer(r.receipt);
     await get().patchPrefs({ team_conflict_resolution: side });
   },
   resolveEditConflict: async (side, translation) => {
@@ -1508,6 +1515,9 @@ export const useApp = create<AppState>((set, get) => ({
             }
           : {}),
       });
+      if (result.receipt) {
+        await acknowledgeTransactionEnvelopeOrDefer(result.receipt);
+      }
       return result.entry;
     } catch (error) {
       if (!isOptimisticLock(error)) throw error;
@@ -1548,13 +1558,19 @@ export const useApp = create<AppState>((set, get) => ({
     ) {
       await get().commitCurrent();
     }
-    await rpc("project.save");
+    const saved = await rpc<{
+      ok: boolean;
+      receipt?: TransactionEnvelope | null;
+    }>("project.save");
     const root = get().props?.root ?? "";
     const d = get().document3;
     set({
       document3: { ...d, dirty: false },
       status: t("save"),
     });
+    if (saved.receipt) {
+      await acknowledgeTransactionEnvelopeOrDefer(saved.receipt);
+    }
     get().logLine(`saved TMX ${root}/omegat/project_save.tmx`);
     get().logLine(`Document3 range ${d.translationStart}-${d.translationEnd}`);
   },
@@ -1686,87 +1702,78 @@ export function connectRpcOperationEvents(): () => void {
   }) ?? (() => undefined);
 }
 
-async function acknowledgeTeamReceipt(receipt: TeamRendererReceipt): Promise<boolean> {
+async function acknowledgeTransactionEnvelope(
+  envelope: TransactionEnvelope,
+  outcome: TransactionOutcome = "succeeded",
+  allowClosedProject = false,
+): Promise<boolean> {
   const state = useApp.getState();
   if (
-    receipt.version !== 1
-    || receipt.status !== "sidecar_committed"
-    || state.props?.root !== receipt.project_root
-    || state.projectEvent.projectGeneration !== receipt.generation
+    envelope.version !== 1
+    || !["pending", "sidecar_committed"].includes(envelope.status)
+    || typeof envelope.payload?.operation !== "string"
+    || (
+      !allowClosedProject
+      && (
+        state.props?.root !== envelope.project_root
+        || state.projectEvent.projectGeneration !== envelope.generation
+      )
+    )
   ) {
     return false;
   }
-  const result = await window.omegat?.acknowledgeTeamReceipt?.(
-    receipt.project_root,
-    receipt.generation,
-    receipt.batch_id,
+  const result = await window.omegat?.acknowledgeTransactionReceipt?.(
+    envelope,
+    outcome,
   );
   return result?.ack.acknowledged === true;
 }
 
-async function acknowledgeTeamReceiptOrDefer(
-  receipt: TeamRendererReceipt,
+async function acknowledgeTransactionEnvelopeOrDefer(
+  envelope: TransactionEnvelope,
+  outcome: TransactionOutcome = "succeeded",
+  allowClosedProject = false,
 ): Promise<void> {
   try {
-    if (!await acknowledgeTeamReceipt(receipt)) {
-      throw new Error("renderer receipt scope changed before acknowledgement");
+    if (!await acknowledgeTransactionEnvelope(envelope, outcome, allowClosedProject)) {
+      throw new Error("renderer transaction scope changed before acknowledgement");
     }
   } catch (error) {
     const current = useApp.getState();
     if (
-      current.props?.root === receipt.project_root
-      && current.projectEvent.projectGeneration === receipt.generation
+      allowClosedProject
+      || (
+        current.props?.root === envelope.project_root
+        && current.projectEvent.projectGeneration === envelope.generation
+      )
     ) {
       useApp.setState({
-        error: `team receipt acknowledgement pending: ${String(error)}`,
+        error: `transaction receipt acknowledgement pending: ${String(error)}`,
       });
     }
   }
 }
 
-export function connectTeamReceiptEvents(): () => void {
-  const inFlight = new Set<string>();
-  return window.omegat?.onTeamReceipt?.((receipt) => {
-    const identity = `${receipt.generation}\0${receipt.project_root}\0${receipt.batch_id}`;
-    if (inFlight.has(identity)) return;
-    const state = useApp.getState();
-    if (
-      receipt.version !== 1
-      || receipt.status !== "sidecar_committed"
-      || state.props?.root !== receipt.project_root
-      || state.projectEvent.projectGeneration !== receipt.generation
-    ) return;
-    inFlight.add(identity);
-    void (async () => {
-      // A replacement sidecar has already reopened the committed product.
-      // Re-list and publish its exact complete-key state before acknowledging;
-      // never replay the team write or its compensation path.
-      const rebound = await useApp.getState().refreshEntriesAfterExternalChange();
-      if (!rebound) return;
-      await acknowledgeTeamReceipt(receipt);
-    })().catch((error) => {
-      const current = useApp.getState();
-      if (
-        current.props?.root === receipt.project_root
-        && current.projectEvent.projectGeneration === receipt.generation
-      ) {
-        useApp.setState({
-          error: `team receipt acknowledgement pending: ${String(error)}`,
-        });
-      }
-    }).finally(() => {
-      inFlight.delete(identity);
-    });
-  }) ?? (() => undefined);
+function publishClosedRendererState() {
+  const { locale, theme, version } = useApp.getState();
+  useApp.setState({
+    ...initialState,
+    locale,
+    theme,
+    version,
+    firstRun: false,
+    screen: "welcome",
+  });
 }
 
-export function connectExternalProjectEvents(): () => void {
+export function connectTransactionEnvelopeEvents(): () => void {
   let observedProject = "";
   const observedFingerprints = new Map<
     string,
     { fingerprint: string | null; sources: Set<"native" | "sidecar"> }
   >();
   const pending: Array<{
+    envelope: TransactionEnvelope;
     id: string;
     root: string;
     generation: number;
@@ -1854,10 +1861,8 @@ export function connectExternalProjectEvents(): () => void {
             blocked = "retry";
             return;
           }
-          await window.omegat?.completeExternalRefresh?.(
-            batch.root,
-            batch.generation,
-            batch.id,
+          await window.omegat?.acknowledgeTransactionReceipt?.(
+            batch.envelope,
             outcome,
           );
           pending.shift();
@@ -1908,24 +1913,68 @@ export function connectExternalProjectEvents(): () => void {
       void drain();
     }, 0);
   });
-  const unsubscribeExternal = window.omegat?.onProjectExternalChange?.(({
-    id,
-    root,
-    paths,
-    fingerprints,
-    generation,
-    sources,
-    status,
-    committed_result,
-  }) => {
+  const productInFlight = new Set<string>();
+  const unsubscribeEnvelopes = window.omegat?.onTransactionEnvelope?.((envelope) => {
+    const {
+      batch_id: id,
+      project_root: root,
+      generation,
+      status,
+      payload,
+    } = envelope;
     const state = useApp.getState();
     if (
-      state.props?.root !== root
+      envelope.version !== 1
+      || !["pending", "sidecar_committed"].includes(status)
+      || state.props?.root !== root
       || state.projectEvent.projectGeneration !== generation
     ) return;
+    if (payload.operation !== "project.external-refresh") {
+      if (status !== "sidecar_committed") return;
+      const identity = `${generation}\0${root}\0${id}`;
+      if (productInFlight.has(identity)) return;
+      productInFlight.add(identity);
+      void (async () => {
+        if (payload.operation === "project.close") {
+          publishClosedRendererState();
+          await acknowledgeTransactionEnvelopeOrDefer(
+            envelope,
+            "succeeded",
+            true,
+          );
+          return;
+        }
+        // The replacement sidecar has already reopened the committed product.
+        // Publish its complete-key state before ack; never replay the write.
+        const rebound = await useApp.getState().refreshEntriesAfterExternalChange();
+        if (!rebound) return;
+        await acknowledgeTransactionEnvelopeOrDefer(envelope);
+      })().catch((error) => {
+        const current = useApp.getState();
+        if (
+          current.props?.root === root
+          && current.projectEvent.projectGeneration === generation
+        ) {
+          useApp.setState({
+            error: `transaction receipt acknowledgement pending: ${String(error)}`,
+          });
+        }
+      }).finally(() => {
+        productInFlight.delete(identity);
+      });
+      return;
+    }
+    const paths = payload.paths ?? [];
+    const fingerprints = payload.fingerprints ?? {};
+    const sources = payload.sources ?? [];
+    const committed_result = payload.committed_result as
+      | CommittedRefreshResult
+      | undefined;
+    if (paths.length === 0 || sources.length === 0) return;
     const existing = pending.find((batch) => batch.id === id);
     if (existing) {
-      existing.status = status ?? existing.status;
+      existing.envelope = envelope;
+      existing.status = status as "pending" | "sidecar_committed";
       existing.committedResult = committed_result ?? existing.committedResult;
       blocked = null;
       void drain();
@@ -1961,23 +2010,25 @@ export function connectExternalProjectEvents(): () => void {
     });
     if (changedPaths.length === 0) {
       pending.push({
+        envelope,
         id,
         root,
         generation,
         paths: [...paths],
         sources: [...sources],
-        status: status ?? "pending",
+        status: status as "pending" | "sidecar_committed",
         committedResult: committed_result,
         coalesced: true,
       });
     } else {
       pending.push({
+        envelope,
         id,
         root,
         generation,
         paths: changedPaths,
         sources: [...sources],
-        status: status ?? "pending",
+        status: status as "pending" | "sidecar_committed",
         committedResult: committed_result,
         coalesced: false,
       });
@@ -1985,7 +2036,7 @@ export function connectExternalProjectEvents(): () => void {
     void drain();
   }) ?? (() => undefined);
   return () => {
-    unsubscribeExternal();
+    unsubscribeEnvelopes();
     unsubscribeOperation();
     if (operationResumeTimer) clearTimeout(operationResumeTimer);
   };

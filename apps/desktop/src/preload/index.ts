@@ -1,18 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { RpcOperationEvent } from "../shared/rpc-operation";
-
-type TeamRendererReceipt = {
-  version: number;
-  project_root: string;
-  generation: number;
-  batch_id: string;
-  status: "sidecar_committed";
-  operation: string;
-  commit: {
-    manifest_sha256: string;
-    manifest_items: number;
-  };
-};
+import type {
+  TransactionAck,
+  TransactionEnvelope,
+  TransactionOutcome,
+} from "../shared/transaction-envelope";
 
 contextBridge.exposeInMainWorld("omegat", {
   rpc: (method: string, params?: unknown, clientRequestId?: string) =>
@@ -42,79 +34,20 @@ contextBridge.exposeInMainWorld("omegat", {
   watchProject: (root: string, generation: number) =>
     ipcRenderer.invoke("project-watch", root, generation) as Promise<void>,
   unwatchProject: () => ipcRenderer.invoke("project-unwatch") as Promise<void>,
-  completeExternalRefresh: (
-    root: string,
-    generation: number,
-    batchId: string,
-    outcome: "succeeded" | "cancelled" | "coalesced",
+  acknowledgeTransactionReceipt: (
+    envelope: TransactionEnvelope,
+    outcome: TransactionOutcome = "succeeded",
   ) => ipcRenderer.invoke(
-    "project-refresh-complete",
-    root,
-    generation,
-    batchId,
+    "transaction-receipt-ack",
+    envelope,
     outcome,
-  ) as Promise<{ remaining: unknown[] }>,
-  acknowledgeTeamReceipt: (
-    root: string,
-    generation: number,
-    batchId: string,
-  ) => ipcRenderer.invoke(
-    "team-receipt-ack",
-    root,
-    generation,
-    batchId,
   ) as Promise<{
-    ack: {
-      acknowledged: boolean;
-      already_acknowledged: boolean;
-    };
+    ack: TransactionAck;
   }>,
-  onTeamReceipt: (fn: (receipt: TeamRendererReceipt) => void) => {
-    const listener = (_: unknown, receipt: TeamRendererReceipt) => fn(receipt);
-    ipcRenderer.on("team:receipt", listener);
-    return () => ipcRenderer.removeListener("team:receipt", listener);
-  },
-  onProjectExternalChange: (
-    fn: (event: {
-      id: string;
-      root: string;
-      paths: string[];
-      fingerprints: Record<string, string | null>;
-      generation: number;
-      sources: Array<"native" | "sidecar">;
-      envelopeProjectRoot?: string;
-      envelopeVersion?: number;
-      status?: "pending" | "sidecar_committed";
-      errorCode?: number | null;
-      committed_result?: {
-        entry_list: unknown[];
-        props: unknown;
-        stats: unknown;
-      };
-    }) => void,
-  ) => {
-    const listener = (
-      _: unknown,
-      event: {
-        id: string;
-        root: string;
-        paths: string[];
-        fingerprints: Record<string, string | null>;
-        generation: number;
-        sources: Array<"native" | "sidecar">;
-        envelopeProjectRoot?: string;
-        envelopeVersion?: number;
-        status?: "pending" | "sidecar_committed";
-        errorCode?: number | null;
-        committed_result?: {
-          entry_list: unknown[];
-          props: unknown;
-          stats: unknown;
-        };
-      },
-    ) => fn(event);
-    ipcRenderer.on("project:external-change", listener);
-    return () => ipcRenderer.removeListener("project:external-change", listener);
+  onTransactionEnvelope: (fn: (envelope: TransactionEnvelope) => void) => {
+    const listener = (_: unknown, envelope: TransactionEnvelope) => fn(envelope);
+    ipcRenderer.on("transaction:envelope", listener);
+    return () => ipcRenderer.removeListener("transaction:envelope", listener);
   },
   saveText: (name: string, text: string) => ipcRenderer.invoke("save-text", name, text) as Promise<string | null>,
   quit: () => ipcRenderer.invoke("app-quit") as Promise<void>,

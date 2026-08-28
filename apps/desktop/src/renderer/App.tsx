@@ -6,9 +6,8 @@ import { useMenuBindings } from "./menus/useMenuBindings";
 import { PrefsWindow } from "./prefs/PrefsWindow";
 import { SearchWindow } from "./search/SearchWindow";
 import {
-  connectExternalProjectEvents,
   connectRpcOperationEvents,
-  connectTeamReceiptEvents,
+  connectTransactionEnvelopeEvents,
   useApp,
 } from "./store/app";
 import { Welcome } from "./welcome/Welcome";
@@ -48,9 +47,8 @@ export function App() {
     })();
   }, []);
 
-  useEffect(() => connectExternalProjectEvents(), []);
+  useEffect(() => connectTransactionEnvelopeEvents(), []);
   useEffect(() => connectRpcOperationEvents(), []);
-  useEffect(() => connectTeamReceiptEvents(), []);
 
   useEffect(() => {
     const root = app.props?.root;

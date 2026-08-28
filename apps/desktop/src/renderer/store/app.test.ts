@@ -8,23 +8,52 @@ import { toSearchParams } from "../lib/search-params";
 import { dispatchMenuAction } from "../menus/actions";
 import type { RpcOperationEvent } from "../../shared/rpc-operation";
 import {
-  connectExternalProjectEvents,
   connectRpcOperationEvents,
-  connectTeamReceiptEvents,
+  connectTransactionEnvelopeEvents,
   resetAppState,
   useApp,
 } from "./app";
-import type { TeamRendererReceipt } from "../lib/types";
+import type { TransactionEnvelope } from "../lib/types";
 
 const rpc = vi.fn();
 const cancelRpc = vi.fn(async (_requestId: string) => true);
 let rpcOperationListener: ((event: RpcOperationEvent) => void) | null = null;
-let teamReceiptListener: ((receipt: TeamRendererReceipt) => void) | null = null;
-const acknowledgeTeamReceipt = vi.fn(async () => ({
+let transactionEnvelopeListener: ((envelope: TransactionEnvelope) => void) | null = null;
+const acknowledgeTransactionReceipt = vi.fn(async () => ({
   ack: { acknowledged: true, already_acknowledged: false },
 }));
 const refreshEntriesAfterExternalChange =
   useApp.getState().refreshEntriesAfterExternalChange;
+
+type ExternalChangeEvent = {
+  id: string;
+  root: string;
+  paths: string[];
+  fingerprints: Record<string, string | null>;
+  generation: number;
+  sources: Array<"native" | "sidecar">;
+  status?: "pending" | "sidecar_committed";
+  committed_result?: TransactionEnvelope["payload"]["committed_result"];
+};
+
+function refreshEnvelope(event: ExternalChangeEvent): TransactionEnvelope {
+  return {
+    version: 1,
+    project_root: event.root,
+    generation: event.generation,
+    batch_id: event.id,
+    status: event.status ?? "pending",
+    error_code: null,
+    updated_unix_ms: 1,
+    payload: {
+      operation: "project.external-refresh",
+      paths: event.paths,
+      fingerprints: event.fingerprints,
+      sources: event.sources,
+      committed_result: event.committed_result,
+    },
+  };
+}
 
 function installBridge() {
   const mem = new Map<string, string>();
@@ -47,11 +76,13 @@ function installBridge() {
           if (rpcOperationListener === listener) rpcOperationListener = null;
         };
       },
-      acknowledgeTeamReceipt,
-      onTeamReceipt: (listener: (receipt: TeamRendererReceipt) => void) => {
-        teamReceiptListener = listener;
+      acknowledgeTransactionReceipt,
+      onTransactionEnvelope: (listener: (envelope: TransactionEnvelope) => void) => {
+        transactionEnvelopeListener = listener;
         return () => {
-          if (teamReceiptListener === listener) teamReceiptListener = null;
+          if (transactionEnvelopeListener === listener) {
+            transactionEnvelopeListener = null;
+          }
         };
       },
       pickDir: async () => null,
@@ -96,9 +127,9 @@ describe("app store", () => {
   beforeEach(() => {
     rpc.mockReset();
     cancelRpc.mockClear();
-    acknowledgeTeamReceipt.mockClear();
+    acknowledgeTransactionReceipt.mockClear();
     rpcOperationListener = null;
-    teamReceiptListener = null;
+    transactionEnvelopeListener = null;
     installBridge();
     resetAppState();
     useApp.setState({ refreshEntriesAfterExternalChange });
@@ -885,17 +916,19 @@ describe("app store", () => {
     });
   });
 
-  it("acks a team receipt only after its renderer rebind succeeds", async () => {
+  it("acks a transaction receipt only after its renderer rebind succeeds", async () => {
     const root = "/team-receipt";
     projectEvents.publishProject("load", root);
     const generation = useApp.getState().projectEvent.projectGeneration;
-    const receipt: TeamRendererReceipt = {
+    const receipt: TransactionEnvelope = {
       version: 1,
       project_root: root,
       generation,
       batch_id: "operation-teamSync-1",
       status: "sidecar_committed",
-      operation: "sync",
+      error_code: null,
+      updated_unix_ms: 1,
+      payload: { operation: "sync" },
       commit: {
         manifest_sha256: "a".repeat(64),
         manifest_items: 4,
@@ -913,7 +946,7 @@ describe("app store", () => {
       order.push("renderer-rebound");
       return true;
     });
-    acknowledgeTeamReceipt.mockImplementationOnce(async () => {
+    acknowledgeTransactionReceipt.mockImplementationOnce(async () => {
       order.push("renderer-acked");
       return {
         ack: { acknowledged: true, already_acknowledged: false },
@@ -937,11 +970,7 @@ describe("app store", () => {
       "renderer-rebound",
       "renderer-acked",
     ]);
-    expect(acknowledgeTeamReceipt).toHaveBeenCalledWith(
-      root,
-      generation,
-      "operation-teamSync-1",
-    );
+    expect(acknowledgeTransactionReceipt).toHaveBeenCalledWith(receipt, "succeeded");
     expect(useApp.getState().longOperation?.phase).toBe("succeeded");
   });
 
@@ -949,20 +978,22 @@ describe("app store", () => {
     const root = "/team-receipt-restart";
     projectEvents.publishProject("load", root);
     const generation = useApp.getState().projectEvent.projectGeneration;
-    const receipt: TeamRendererReceipt = {
+    const receipt: TransactionEnvelope = {
       version: 1,
       project_root: root,
       generation,
       batch_id: "team-after-sidecar-restart",
       status: "sidecar_committed",
-      operation: "commit-source",
+      error_code: null,
+      updated_unix_ms: 1,
+      payload: { operation: "commit-source" },
       commit: {
         manifest_sha256: "b".repeat(64),
         manifest_items: 3,
       },
     };
     const rebind = vi.fn(async () => true);
-    acknowledgeTeamReceipt
+    acknowledgeTransactionReceipt
       .mockRejectedValueOnce(new Error("sidecar exited before ack"))
       .mockResolvedValueOnce({
         ack: { acknowledged: true, already_acknowledged: true },
@@ -977,16 +1008,18 @@ describe("app store", () => {
       },
       refreshEntriesAfterExternalChange: rebind,
     });
-    const disconnect = connectTeamReceiptEvents();
+    const disconnect = connectTransactionEnvelopeEvents();
 
-    teamReceiptListener?.(receipt);
+    transactionEnvelopeListener?.(receipt);
     await vi.waitFor(() =>
       expect(useApp.getState().error).toContain(
-        "team receipt acknowledgement pending",
+        "transaction receipt acknowledgement pending",
       )
     );
-    teamReceiptListener?.(receipt);
-    await vi.waitFor(() => expect(acknowledgeTeamReceipt).toHaveBeenCalledTimes(2));
+    transactionEnvelopeListener?.(receipt);
+    await vi.waitFor(() =>
+      expect(acknowledgeTransactionReceipt).toHaveBeenCalledTimes(2)
+    );
 
     expect(rebind).toHaveBeenCalledTimes(2);
     expect(rpc.mock.calls.some(([method]) =>
@@ -1709,12 +1742,10 @@ describe("app store", () => {
     const root = "/active-operation-root";
     const complete = vi.fn(async () => ({ remaining: [] }));
     const refresh = vi.fn(async () => true);
-    let notify: Parameters<
-      NonNullable<typeof window.omegat.onProjectExternalChange>
-    >[0] | undefined;
-    window.omegat!.completeExternalRefresh = complete;
-    window.omegat!.onProjectExternalChange = (listener) => {
-      notify = listener;
+    let notify: ((event: ExternalChangeEvent) => void) | undefined;
+    window.omegat!.acknowledgeTransactionReceipt = complete;
+    window.omegat!.onTransactionEnvelope = (listener) => {
+      notify = (event) => listener(refreshEnvelope(event));
       return () => {
         notify = undefined;
       };
@@ -1739,7 +1770,7 @@ describe("app store", () => {
       },
     });
     const generation = useApp.getState().projectEvent.projectGeneration;
-    const disconnect = connectExternalProjectEvents();
+    const disconnect = connectTransactionEnvelopeEvents();
 
     notify?.({
       id: "wait-for-team-resolve",
@@ -1761,9 +1792,11 @@ describe("app store", () => {
     await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
     await vi.waitFor(() =>
       expect(complete).toHaveBeenCalledWith(
-        root,
-        generation,
-        "wait-for-team-resolve",
+        expect.objectContaining({
+          project_root: root,
+          generation,
+          batch_id: "wait-for-team-resolve",
+        }),
         "succeeded",
       )
     );
@@ -1783,16 +1816,9 @@ describe("app store", () => {
     const refresh = vi.fn()
       .mockImplementationOnce(() => first)
       .mockImplementationOnce(() => second);
-    let notify: ((event: {
-      id: string;
-      root: string;
-      paths: string[];
-      fingerprints: Record<string, string | null>;
-      generation: number;
-      sources: Array<"native" | "sidecar">;
-    }) => void) | undefined;
-    window.omegat!.onProjectExternalChange = (listener) => {
-      notify = listener;
+    let notify: ((event: ExternalChangeEvent) => void) | undefined;
+    window.omegat!.onTransactionEnvelope = (listener) => {
+      notify = (event) => listener(refreshEnvelope(event));
       return () => {
         notify = undefined;
       };
@@ -1809,7 +1835,7 @@ describe("app store", () => {
       refreshEntriesAfterExternalChange: refresh,
     });
     const generation = useApp.getState().projectEvent.projectGeneration;
-    const disconnect = connectExternalProjectEvents();
+    const disconnect = connectTransactionEnvelopeEvents();
 
     notify?.({
       id: "stale",
@@ -1902,16 +1928,14 @@ describe("app store", () => {
   it("retries the durable FIFO head by batch id after a sidecar restart", async () => {
     const root = "/restart-root";
     const complete = vi.fn(async () => ({ remaining: [] }));
-    window.omegat!.completeExternalRefresh = complete;
+    window.omegat!.acknowledgeTransactionReceipt = complete;
     const refresh = vi.fn()
       .mockRejectedValueOnce(new Error("sidecar exited (SIGKILL)"))
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(true);
-    let notify: Parameters<
-      NonNullable<typeof window.omegat.onProjectExternalChange>
-    >[0] | undefined;
-    window.omegat!.onProjectExternalChange = (listener) => {
-      notify = listener;
+    let notify: ((event: ExternalChangeEvent) => void) | undefined;
+    window.omegat!.onTransactionEnvelope = (listener) => {
+      notify = (event) => listener(refreshEnvelope(event));
       return () => {
         notify = undefined;
       };
@@ -1928,7 +1952,7 @@ describe("app store", () => {
       refreshEntriesAfterExternalChange: refresh,
     });
     const generation = useApp.getState().projectEvent.projectGeneration;
-    const disconnect = connectExternalProjectEvents();
+    const disconnect = connectTransactionEnvelopeEvents();
     const first = {
       id: "persisted-first",
       root,
@@ -1973,9 +1997,12 @@ describe("app store", () => {
         batchId: "persisted-second",
       }],
     ]);
-    expect(complete.mock.calls).toEqual([
-      [root, generation, "persisted-first", "succeeded"],
-      [root, generation, "persisted-second", "succeeded"],
+    expect(complete.mock.calls.map(([envelope, outcome]) => [
+      envelope.batch_id,
+      outcome,
+    ])).toEqual([
+      ["persisted-first", "succeeded"],
+      ["persisted-second", "succeeded"],
     ]);
     disconnect();
   });
@@ -2002,11 +2029,10 @@ describe("app store", () => {
       target_words: 2,
     };
     const complete = vi.fn(async () => ({ remaining: [] }));
-    let notify: Parameters<NonNullable<typeof window.omegat.onProjectExternalChange>>[0]
-      | undefined;
-    window.omegat!.completeExternalRefresh = complete;
-    window.omegat!.onProjectExternalChange = (listener) => {
-      notify = listener;
+    let notify: ((event: ExternalChangeEvent) => void) | undefined;
+    window.omegat!.acknowledgeTransactionReceipt = complete;
+    window.omegat!.onTransactionEnvelope = (listener) => {
+      notify = (event) => listener(refreshEnvelope(event));
       return () => {
         notify = undefined;
       };
@@ -2034,7 +2060,7 @@ describe("app store", () => {
       completerAuto: false,
     });
     const generation = useApp.getState().projectEvent.projectGeneration;
-    const disconnect = connectExternalProjectEvents();
+    const disconnect = connectTransactionEnvelopeEvents();
 
     notify?.({
       id: "checkpointed-batch",
@@ -2043,10 +2069,7 @@ describe("app store", () => {
       fingerprints: { [`${root}/source/committed.txt`]: "committed" },
       generation,
       sources: ["native"],
-      envelopeVersion: 1,
-      envelopeProjectRoot: root,
       status: "sidecar_committed",
-      errorCode: null,
       committed_result: {
         entry_list: [committed],
         props: {

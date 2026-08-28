@@ -700,10 +700,9 @@ try {
     'Number(document.querySelector(".app")?.dataset.projectGeneration ?? 0)',
   );
   const duplicateSyncAck = await launched.client.evaluate(
-    `window.omegat.acknowledgeTeamReceipt(
-      ${JSON.stringify(project)},
-      ${JSON.stringify(syncGeneration)},
-      ${JSON.stringify(syncCommitted.batch_id)}
+    `window.omegat.acknowledgeTransactionReceipt(
+      ${JSON.stringify({ ...syncCommitted, generation: syncGeneration })},
+      "succeeded"
     )`,
     true,
   );
@@ -801,10 +800,9 @@ try {
     'Number(document.querySelector(".app")?.dataset.projectGeneration ?? 0)',
   );
   const duplicateCommitAck = await launched.client.evaluate(
-    `window.omegat.acknowledgeTeamReceipt(
-      ${JSON.stringify(project)},
-      ${JSON.stringify(commitGeneration)},
-      ${JSON.stringify(commitCommitted.batch_id)}
+    `window.omegat.acknowledgeTransactionReceipt(
+      ${JSON.stringify({ ...commitCommitted, generation: commitGeneration })},
+      "succeeded"
     )`,
     true,
   );

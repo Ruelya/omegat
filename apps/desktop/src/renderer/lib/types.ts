@@ -1,4 +1,14 @@
 import type { RpcOperationEvent } from "../../shared/rpc-operation";
+import type {
+  TransactionAck,
+  TransactionEnvelope,
+  TransactionOutcome,
+} from "../../shared/transaction-envelope";
+export type {
+  TransactionAck,
+  TransactionEnvelope,
+  TransactionOutcome,
+} from "../../shared/transaction-envelope";
 
 export type VersionInfo = { name: string; version: string; protocol: string; rewrite: boolean };
 export type EntryKeyDto = {
@@ -27,23 +37,12 @@ export type EntryDto = {
 export type EntrySetResult = {
   entry: EntryDto;
   updated: EntryDto[];
+  receipt?: TransactionEnvelope | null;
 };
 export type CommittedRefreshResult = {
   entry_list: EntryDto[];
   props: ProjectPropsDto;
   stats: StatsDto;
-};
-export type TeamRendererReceipt = {
-  version: number;
-  project_root: string;
-  generation: number;
-  batch_id: string;
-  status: "sidecar_committed";
-  operation: string;
-  commit: {
-    manifest_sha256: string;
-    manifest_items: number;
-  };
 };
 export type EditorConflict = {
   index: number;
@@ -348,39 +347,14 @@ declare global {
       >;
       watchProject?: (root: string, generation: number) => Promise<void>;
       unwatchProject?: () => Promise<void>;
-      completeExternalRefresh?: (
-        root: string,
-        generation: number,
-        batchId: string,
-        outcome: "succeeded" | "cancelled" | "coalesced",
-      ) => Promise<{ remaining: unknown[] }>;
-      acknowledgeTeamReceipt?: (
-        root: string,
-        generation: number,
-        batchId: string,
+      acknowledgeTransactionReceipt?: (
+        envelope: TransactionEnvelope,
+        outcome?: TransactionOutcome,
       ) => Promise<{
-        ack: {
-          acknowledged: boolean;
-          already_acknowledged: boolean;
-        };
+        ack: TransactionAck;
       }>;
-      onTeamReceipt?: (
-        fn: (receipt: TeamRendererReceipt) => void,
-      ) => () => void;
-      onProjectExternalChange?: (
-        fn: (event: {
-          id: string;
-          root: string;
-          paths: string[];
-          fingerprints: Record<string, string | null>;
-          generation: number;
-          sources: Array<"native" | "sidecar">;
-          envelopeProjectRoot?: string;
-          envelopeVersion?: number;
-          status?: "pending" | "sidecar_committed";
-          errorCode?: number | null;
-          committed_result?: CommittedRefreshResult;
-        }) => void,
+      onTransactionEnvelope?: (
+        fn: (envelope: TransactionEnvelope) => void,
       ) => () => void;
       saveText?: (name: string, text: string) => Promise<string | null>;
       quit?: () => Promise<void>;

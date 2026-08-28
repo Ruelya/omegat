@@ -23,9 +23,9 @@ const METHODS: &[&str] = &[
     "project.reload",
     "project.external-refresh",
     "project.refresh.enqueue",
-    "project.refresh.pending",
-    "project.refresh.complete",
     "project.refresh.discard",
+    "transaction.receipt.pending",
+    "transaction.receipt.ack",
     "project.props",
     "entry.list",
     "entry.get",
@@ -53,8 +53,6 @@ const METHODS: &[&str] = &[
     "finder.run",
     "team.sync",
     "team.commit",
-    "team.receipt.pending",
-    "team.receipt.ack",
     "team.conflicts",
     "team.resolve",
     "team.mapping",
@@ -346,6 +344,23 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
     );
     assert_eq!(set["result"]["entry"]["key"], wanted["key"]);
     assert_eq!(set["result"]["entry"]["translation"], "Occurrence durable");
+    assert_eq!(set["result"]["receipt"]["status"], "sidecar_committed");
+    assert_eq!(set["result"]["receipt"]["payload"]["operation"], "entry.set");
+    let set_ack = rpc(
+        &mut stdin,
+        &mut stdout,
+        41,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "contract-editor",
+            "generation": 23,
+            "batch_id": "editor-set-23",
+            "operation": "entry.set",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(set_ack["result"]["ack"]["acknowledged"], true);
 
     let history_path = root.join(".repositories/transactions/history.ndjson");
     let history = std::fs::read_to_string(&history_path).unwrap();
@@ -395,6 +410,25 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
         }),
     );
     assert_eq!(save["result"]["ok"], true);
+    assert_eq!(
+        save["result"]["receipt"]["payload"]["operation"],
+        "project.save"
+    );
+    let save_ack = rpc(
+        &mut stdin,
+        &mut stdout,
+        51,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "contract-editor",
+            "generation": 23,
+            "batch_id": "document-save-23",
+            "operation": "project.save",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(save_ack["result"]["ack"]["acknowledged"], true);
     let staged = rpc(
         &mut stdin,
         &mut stdout,
@@ -419,6 +453,25 @@ fn editor_set_save_and_close_share_durable_product_receipts() {
         }),
     );
     assert_eq!(close["result"]["ok"], true);
+    assert_eq!(
+        close["result"]["receipt"]["payload"]["operation"],
+        "project.close"
+    );
+    let close_ack = rpc(
+        &mut stdin,
+        &mut stdout,
+        71,
+        "transaction.receipt.ack",
+        json!({
+            "root": root,
+            "app_instance": "contract-editor",
+            "generation": 23,
+            "batch_id": "project-close-23",
+            "operation": "project.close",
+            "outcome": "succeeded",
+        }),
+    );
+    assert_eq!(close_ack["result"]["ack"]["acknowledged"], true);
 
     let history = std::fs::read_to_string(history_path).unwrap();
     for (batch, operation) in [
@@ -532,7 +585,7 @@ fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
     assert_eq!(receipt["batch_id"], "renderer-team-ack");
     assert_eq!(receipt["generation"], 11);
     assert_eq!(receipt["status"], "sidecar_committed");
-    assert_eq!(receipt["operation"], "commit-source");
+    assert_eq!(receipt["payload"]["operation"], "commit-source");
     assert_eq!(
         std::fs::read_to_string(remote.join("source/shared.txt")).unwrap(),
         "renderer-ack-candidate"
@@ -555,24 +608,34 @@ fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
         &mut second_in,
         &mut second_out,
         6,
-        "team.receipt.pending",
-        json!({ "root": root, "generation": 12 }),
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "contract-team",
+            "generation": 12,
+        }),
     );
     assert_eq!(
-        pending["result"]["receipt"]["batch_id"],
+        pending["result"]["envelopes"][0]["batch_id"],
         "renderer-team-ack"
     );
-    assert_eq!(pending["result"]["receipt"]["generation"], 12);
-    assert_eq!(pending["result"]["receipt"]["status"], "sidecar_committed");
+    assert_eq!(pending["result"]["envelopes"][0]["generation"], 12);
+    assert_eq!(
+        pending["result"]["envelopes"][0]["status"],
+        "sidecar_committed"
+    );
     let acknowledged = rpc(
         &mut second_in,
         &mut second_out,
         7,
-        "team.receipt.ack",
+        "transaction.receipt.ack",
         json!({
             "root": root,
+            "app_instance": "contract-team",
             "generation": 12,
             "batch_id": "renderer-team-ack",
+            "operation": "commit-source",
+            "outcome": "succeeded",
         }),
     );
     assert_eq!(acknowledged["result"]["ack"]["acknowledged"], true);
@@ -596,11 +659,14 @@ fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
         &mut third_in,
         &mut third_out,
         9,
-        "team.receipt.ack",
+        "transaction.receipt.ack",
         json!({
             "root": root,
+            "app_instance": "contract-team",
             "generation": 12,
             "batch_id": "renderer-team-ack",
+            "operation": "commit-source",
+            "outcome": "succeeded",
         }),
     );
     assert_eq!(duplicate["result"]["ack"]["acknowledged"], true);
@@ -611,19 +677,26 @@ fn team_renderer_receipt_ack_survives_sidecar_restart_and_is_idempotent() {
         &mut third_in,
         &mut third_out,
         10,
-        "team.receipt.pending",
-        json!({ "root": root, "generation": 12 }),
+        "transaction.receipt.pending",
+        json!({
+            "root": root,
+            "app_instance": "contract-team",
+            "generation": 12,
+        }),
     );
-    assert_eq!(no_pending["result"]["receipt"], Value::Null);
+    assert_eq!(no_pending["result"]["envelopes"], json!([]));
     let unknown = rpc(
         &mut third_in,
         &mut third_out,
         11,
-        "team.receipt.ack",
+        "transaction.receipt.ack",
         json!({
             "root": root,
+            "app_instance": "contract-team",
             "generation": 12,
             "batch_id": "unknown-receipt",
+            "operation": "commit-source",
+            "outcome": "succeeded",
         }),
     );
     assert_eq!(unknown["error"]["code"], -32005);
@@ -1440,7 +1513,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut second_in,
         &mut second_out,
         5,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
@@ -1448,7 +1521,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         }),
     );
     assert_eq!(
-        recovered["result"]["batches"]
+        recovered["result"]["envelopes"]
             .as_array()
             .unwrap()
             .iter()
@@ -1460,20 +1533,17 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut second_in,
         &mut second_out,
         6,
-        "project.refresh.complete",
+        "transaction.receipt.ack",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
             "generation": 1,
             "batch_id": first_id,
+            "operation": "project.external-refresh",
             "outcome": "cancelled"
         }),
     );
-    assert_eq!(completed["result"]["outcome"], "cancelled");
-    assert_eq!(
-        completed["result"]["remaining"][0]["batch_id"],
-        second_id.as_str()
-    );
+    assert_eq!(completed["result"]["ack"]["acknowledged"], true);
     second_child.kill().unwrap();
     second_child.wait().unwrap();
 
@@ -1489,7 +1559,7 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut third_in,
         &mut third_out,
         8,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
@@ -1497,19 +1567,20 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         }),
     );
     assert_eq!(
-        still_pending["result"]["batches"][0]["batch_id"],
+        still_pending["result"]["envelopes"][0]["batch_id"],
         second_id.as_str()
     );
     rpc(
         &mut third_in,
         &mut third_out,
         9,
-        "project.refresh.complete",
+        "transaction.receipt.ack",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
             "generation": 1,
             "batch_id": second_id,
+            "operation": "project.external-refresh",
             "outcome": "succeeded"
         }),
     );
@@ -1517,14 +1588,14 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut third_in,
         &mut third_out,
         10,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
             "generation": 1
         }),
     );
-    assert_eq!(completed_stays_gone["result"]["batches"], json!([]));
+    assert_eq!(completed_stays_gone["result"]["envelopes"], json!([]));
 
     rpc(
         &mut third_in,
@@ -1544,14 +1615,14 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut third_in,
         &mut third_out,
         12,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
             "generation": 2
         }),
     );
-    assert_eq!(stale_generation["result"]["batches"], json!([]));
+    assert_eq!(stale_generation["result"]["envelopes"], json!([]));
 
     rpc(
         &mut third_in,
@@ -1578,14 +1649,14 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut third_in,
         &mut third_out,
         15,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": other,
             "app_instance": "electron-after-kill",
             "generation": 3
         }),
     );
-    assert_eq!(other_pending["result"]["batches"], json!([]));
+    assert_eq!(other_pending["result"]["envelopes"], json!([]));
     rpc(
         &mut third_in,
         &mut third_out,
@@ -1597,14 +1668,14 @@ fn fingerprint_fifo_survives_sidecar_restarts_and_rejects_stale_projects() {
         &mut third_in,
         &mut third_out,
         17,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": root,
             "app_instance": "electron-after-kill",
             "generation": 4
         }),
     );
-    assert_eq!(old_root_does_not_revive["result"]["batches"], json!([]));
+    assert_eq!(old_root_does_not_revive["result"]["envelopes"], json!([]));
     let _ = third_child.kill();
 }
 
@@ -1793,7 +1864,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         json!({
             "jsonrpc": "2.0",
             "id": 6,
-            "method": "project.refresh.pending",
+            "method": "transaction.receipt.pending",
             "params": refresh_scope(
                 &compact_root,
                 "electron-interrupted-compaction",
@@ -1832,11 +1903,11 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         &mut second_in,
         &mut second_out,
         6,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         refresh_scope(&compact_root, "electron-after-compaction", 1),
     );
     assert_eq!(
-        compacted["result"]["batches"]
+        compacted["result"]["envelopes"]
             .as_array()
             .unwrap()
             .iter()
@@ -1845,24 +1916,27 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         vec![receipt_batch.as_str(), pending_batch.as_str()]
     );
     assert_eq!(
-        compacted["result"]["batches"][0]["status"],
+        compacted["result"]["envelopes"][0]["status"],
         "sidecar_committed"
     );
-    assert_eq!(compacted["result"]["batches"][0]["commit"], receipt);
-    assert_eq!(compacted["result"]["batches"][1]["status"], "pending");
+    assert_eq!(compacted["result"]["envelopes"][0]["commit"], receipt);
+    assert_eq!(compacted["result"]["envelopes"][1]["status"], "pending");
     assert_eq!(
-        compacted["result"]["batches"][1].get("commit"),
+        compacted["result"]["envelopes"][1].get("commit"),
         None,
         "pending FIFO tail gained a receipt during compaction"
     );
-    assert!(compacted["result"]["batches"]
+    assert!(compacted["result"]["envelopes"]
         .as_array()
         .unwrap()
         .iter()
         .all(|batch| batch["generation"] == 1));
     let compacted_on_disk: Value =
         serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
-    assert_eq!(compacted_on_disk["batches"], compacted["result"]["batches"]);
+    assert_eq!(
+        compacted_on_disk["batches"],
+        compacted["result"]["envelopes"]
+    );
     let history: Vec<Value> = std::fs::read_to_string(&history_path)
         .unwrap()
         .lines()
@@ -1879,27 +1953,28 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         &mut second_in,
         &mut second_out,
         7,
-        "project.refresh.complete",
+        "transaction.receipt.ack",
         json!({
             "root": compact_root,
             "app_instance": "electron-after-compaction",
             "generation": 1,
             "batch_id": receipt_batch,
+            "operation": "project.external-refresh",
             "outcome": "succeeded",
         }),
     );
     assert_eq!(
-        acknowledged_receipt["result"]["remaining"][0]["batch_id"],
-        pending_batch
+        acknowledged_receipt["result"]["ack"]["acknowledged"],
+        true
     );
     let stale_generation = rpc(
         &mut second_in,
         &mut second_out,
         8,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         refresh_scope(&compact_root, "electron-after-compaction", 2),
     );
-    assert_eq!(stale_generation["result"]["batches"], json!([]));
+    assert_eq!(stale_generation["result"]["envelopes"], json!([]));
 
     let cross_project = rpc(
         &mut second_in,
@@ -1930,10 +2005,10 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         &mut second_in,
         &mut second_out,
         11,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         refresh_scope(&other_root, "electron-after-compaction", 3),
     );
-    assert_eq!(other_pending["result"]["batches"], json!([]));
+    assert_eq!(other_pending["result"]["envelopes"], json!([]));
     rpc(
         &mut second_in,
         &mut second_out,
@@ -1945,10 +2020,10 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
         &mut second_in,
         &mut second_out,
         13,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         refresh_scope(&compact_root, "electron-after-compaction", 4),
     );
-    assert_eq!(not_revived["result"]["batches"], json!([]));
+    assert_eq!(not_revived["result"]["envelopes"], json!([]));
     let terminal_history = std::fs::read_to_string(&history_path).unwrap();
     assert!(terminal_history.lines().any(|line| {
         let row: Value = serde_json::from_str(line).unwrap();
@@ -1991,7 +2066,7 @@ fn refresh_journal_rejects_unknown_and_future_envelopes_and_compacts_only_acked_
             &mut child_in,
             &mut child_out,
             21,
-            "project.refresh.pending",
+            "transaction.receipt.pending",
             refresh_scope(root, "malformed-reader", 1),
         );
         assert_eq!(rejected["error"]["code"], -32603);
@@ -2106,14 +2181,14 @@ fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
         &mut second_in,
         &mut second_out,
         5,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": root,
             "app_instance": "electron-after-renderer-crash",
             "generation": 1
         }),
     );
-    let checkpoint = &recovered["result"]["batches"][0];
+    let checkpoint = &recovered["result"]["envelopes"][0];
     assert_eq!(checkpoint["batch_id"], batch_id);
     assert_eq!(checkpoint["status"], "sidecar_committed");
     assert_eq!(checkpoint["generation"], 1);
@@ -2145,16 +2220,17 @@ fn sidecar_commit_checkpoint_recovers_rebind_without_replaying_refresh() {
         &mut second_in,
         &mut second_out,
         7,
-        "project.refresh.complete",
+        "transaction.receipt.ack",
         json!({
             "root": root,
             "app_instance": "electron-after-renderer-crash",
             "generation": 1,
             "batch_id": batch_id,
+            "operation": "project.external-refresh",
             "outcome": "succeeded"
         }),
     );
-    assert_eq!(completed["result"]["remaining"], json!([]));
+    assert_eq!(completed["result"]["ack"]["acknowledged"], true);
     let terminal: omegat_team::TransactionEnvelope<Value> = serde_json::from_str(
         std::fs::read_to_string(
             root.join(".repositories/transactions/external-refresh-history.ndjson"),
@@ -2310,14 +2386,14 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         &mut replay_in,
         &mut replay_out,
         5,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": before_root,
             "app_instance": "electron-replay",
             "generation": 1
         }),
     );
-    assert_eq!(replay_pending["result"]["batches"][0]["status"], "pending");
+    assert_eq!(replay_pending["result"]["envelopes"][0]["status"], "pending");
     let replayed = rpc(
         &mut replay_in,
         &mut replay_out,
@@ -2350,12 +2426,13 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         &mut replay_in,
         &mut replay_out,
         7,
-        "project.refresh.complete",
+        "transaction.receipt.ack",
         json!({
             "root": before_root,
             "app_instance": "electron-replay",
             "generation": 1,
             "batch_id": before_batch,
+            "operation": "project.external-refresh",
             "outcome": "succeeded"
         }),
     );
@@ -2390,7 +2467,7 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         &mut rebound_in,
         &mut rebound_out,
         9,
-        "project.refresh.pending",
+        "transaction.receipt.pending",
         json!({
             "root": after_root,
             "app_instance": "electron-rebind",
@@ -2398,11 +2475,11 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         }),
     );
     assert_eq!(
-        rebound_pending["result"]["batches"][0]["status"],
+        rebound_pending["result"]["envelopes"][0]["status"],
         "sidecar_committed"
     );
     assert_eq!(
-        rebound_pending["result"]["batches"][0]["payload"]["committed_result"]["entry_list"][0]
+        rebound_pending["result"]["envelopes"][0]["payload"]["committed_result"]["entry_list"][0]
             ["source"],
         "committed exactly once before crash"
     );
@@ -2421,12 +2498,13 @@ fn refresh_product_result_and_checkpoint_share_one_fault_injected_publish() {
         &mut rebound_in,
         &mut rebound_out,
         11,
-        "project.refresh.complete",
+        "transaction.receipt.ack",
         json!({
             "root": after_root,
             "app_instance": "electron-rebind",
             "generation": 1,
             "batch_id": after_batch,
+            "operation": "project.external-refresh",
             "outcome": "succeeded"
         }),
     );

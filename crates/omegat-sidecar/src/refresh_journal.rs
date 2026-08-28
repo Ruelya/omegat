@@ -8,8 +8,8 @@
 //! on `omegat-team`.
 
 use omegat_team::{
-    write_json_atomic, TransactionEnvelope, TransactionStatus, REQUEST_CANCELLED_CODE,
-    TRANSACTION_ENVELOPE_VERSION,
+    write_json_atomic, TransactionEnvelope, TransactionRendererAck, TransactionStatus,
+    REQUEST_CANCELLED_CODE, TRANSACTION_ENVELOPE_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +29,8 @@ static BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RefreshBatch {
+    #[serde(default = "external_refresh_operation")]
+    pub operation: String,
     pub paths: Vec<String>,
     pub fingerprints: BTreeMap<String, Option<String>>,
     pub sources: Vec<String>,
@@ -37,6 +39,10 @@ pub struct RefreshBatch {
 }
 
 pub type RefreshEnvelope = TransactionEnvelope<RefreshBatch>;
+
+fn external_refresh_operation() -> String {
+    "project.external-refresh".into()
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -178,6 +184,12 @@ fn load_journal(root: &Path) -> Result<Option<RefreshJournal>, String> {
         envelope
             .validate_for_root(root)
             .map_err(|error| format!("refresh transaction envelope: {error}"))?;
+        if envelope.payload.operation != external_refresh_operation() {
+            return Err(format!(
+                "refresh transaction {} has operation {}",
+                envelope.batch_id, envelope.payload.operation
+            ));
+        }
         match envelope.status {
             TransactionStatus::Pending if envelope.payload.committed_result.is_some() => {
                 return Err(format!(
@@ -349,6 +361,7 @@ pub fn enqueue(
         generation,
         format!("refresh-{}-{}-{sequence}", unix_ms(), std::process::id()),
         RefreshBatch {
+            operation: external_refresh_operation(),
             paths,
             fingerprints,
             sources,
@@ -454,6 +467,83 @@ pub fn request_cancelled(
         TransactionStatus::RequestCancelled,
         Some(REQUEST_CANCELLED_CODE),
     )
+}
+
+fn acknowledged_in_history(
+    root: &Path,
+    generation: u64,
+    batch_id: &str,
+) -> Result<bool, String> {
+    let Ok(history) = std::fs::read_to_string(history_path(root)) else {
+        return Ok(false);
+    };
+    for line in history.lines().rev().filter(|line| !line.trim().is_empty()) {
+        let envelope: RefreshEnvelope = serde_json::from_str(line)
+            .map_err(|error| format!("parse refresh history: {error}"))?;
+        if envelope.batch_id == batch_id {
+            return Ok(
+                envelope.generation == generation
+                    && !envelope.status.is_recoverable()
+                    && envelope.payload.operation == external_refresh_operation(),
+            );
+        }
+    }
+    Ok(false)
+}
+
+pub fn acknowledge(
+    config_dir: &Path,
+    root: &Path,
+    app_instance: &str,
+    generation: u64,
+    batch_id: &str,
+    outcome: &str,
+) -> Result<TransactionRendererAck, String> {
+    let pending = pending(config_dir, root, app_instance, generation)?;
+    if let Some(first) = pending.first() {
+        if first.batch_id != batch_id {
+            return Err(format!(
+                "refresh renderer receipt is {}, not {batch_id}",
+                first.batch_id
+            ));
+        }
+        let (status, error_code) = if outcome == "cancelled" {
+            (
+                TransactionStatus::RequestCancelled,
+                Some(REQUEST_CANCELLED_CODE),
+            )
+        } else {
+            (TransactionStatus::Completed, None)
+        };
+        complete(
+            config_dir,
+            root,
+            app_instance,
+            generation,
+            batch_id,
+            status,
+            error_code,
+        )?;
+        return Ok(TransactionRendererAck {
+            version: TRANSACTION_ENVELOPE_VERSION,
+            project_root: normalized(root),
+            generation,
+            batch_id: batch_id.to_string(),
+            acknowledged: true,
+            already_acknowledged: false,
+        });
+    }
+    if acknowledged_in_history(root, generation, batch_id)? {
+        return Ok(TransactionRendererAck {
+            version: TRANSACTION_ENVELOPE_VERSION,
+            project_root: normalized(root),
+            generation,
+            batch_id: batch_id.to_string(),
+            acknowledged: true,
+            already_acknowledged: true,
+        });
+    }
+    Err(format!("unknown refresh renderer receipt {batch_id}"))
 }
 
 pub fn discard(config_dir: &Path, root: &Path, app_instance: &str) -> Result<(), String> {

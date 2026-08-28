@@ -148,7 +148,7 @@ impl App {
         operation: &str,
         params: &Value,
         cancellation: &CancellationToken,
-    ) -> std::result::Result<(), (i32, String)> {
+    ) -> std::result::Result<Option<omegat_team::TransactionRendererReceipt>, (i32, String)> {
         let root = self.session()?.props.root.clone();
         let (generation, batch_id) = transaction_scope(params, &root)?;
         let session = self.session_mut()?;
@@ -167,7 +167,12 @@ impl App {
             session.restore_checkpoint(checkpoint);
             return Err(product_transaction_err(error));
         }
-        Ok(())
+        if generation == 0 {
+            Ok(None)
+        } else {
+            omegat_team::pending_transaction_receipt(&props, generation)
+                .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))
+        }
     }
 
     fn set_entry_product_transaction(
@@ -195,7 +200,18 @@ impl App {
             session.restore_checkpoint(checkpoint);
             return Err(product_transaction_err(error));
         }
-        Ok(serde_json::to_value(updated).unwrap())
+        let receipt = if generation == 0 {
+            None
+        } else {
+            omegat_team::pending_transaction_receipt(&props, generation)
+                .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+        };
+        let mut value = serde_json::to_value(updated).unwrap();
+        value
+            .as_object_mut()
+            .expect("entry set result is an object")
+            .insert("receipt".into(), serde_json::to_value(receipt).unwrap());
+        Ok(value)
     }
 
     fn dispatch(
@@ -278,15 +294,18 @@ impl App {
                 Ok(serde_json::to_value(dto).unwrap())
             }
             "project.close" => {
-                if self.session.is_some() {
-                    self.save_product_transaction("project.close", &params, cancellation)?;
-                }
+                let receipt = if self.session.is_some() {
+                    self.save_product_transaction("project.close", &params, cancellation)?
+                } else {
+                    None
+                };
                 self.session = None;
-                Ok(json!({"ok": true}))
+                Ok(json!({"ok": true, "receipt": receipt}))
             }
             "project.save" => {
-                self.save_product_transaction("project.save", &params, cancellation)?;
-                Ok(json!({"ok": true}))
+                let receipt =
+                    self.save_product_transaction("project.save", &params, cancellation)?;
+                Ok(json!({"ok": true, "receipt": receipt}))
             }
             "project.compile" => {
                 let file = params.get("file").and_then(|v| v.as_str());
@@ -519,7 +538,20 @@ impl App {
                     }
                     other => (error_code::TEAM_CONFLICT, other.to_string()),
                 })?;
-                Ok(json!({"conflicts": left, "rebind_key": rebind_key}))
+                let receipt = if transaction_generation == 0 {
+                    None
+                } else {
+                    omegat_team::pending_transaction_receipt(
+                        &self.session()?.props,
+                        transaction_generation,
+                    )
+                    .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+                };
+                Ok(json!({
+                    "conflicts": left,
+                    "rebind_key": rebind_key,
+                    "receipt": receipt,
+                }))
             }
             "wiki.import" => {
                 let src = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -779,7 +811,7 @@ impl App {
                         let receipt = if transaction_generation == 0 {
                             None
                         } else {
-                            omegat_team::pending_renderer_receipt(&s.props, transaction_generation)
+                            omegat_team::pending_transaction_receipt(&s.props, transaction_generation)
                                 .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
                         };
                         Ok(json!({
@@ -821,7 +853,7 @@ impl App {
                 let receipt = if transaction_generation == 0 {
                     None
                 } else {
-                    omegat_team::pending_renderer_receipt(
+                            omegat_team::pending_transaction_receipt(
                         &self.session()?.props,
                         transaction_generation,
                     )
@@ -832,30 +864,6 @@ impl App {
                     "message": r.message,
                     "receipt": receipt,
                 }))
-            }
-            "team.receipt.pending" => {
-                let (generation, _) =
-                    renderer_receipt_scope(&params, &self.session()?.props.root, false)?;
-                let receipt =
-                    omegat_team::pending_renderer_receipt(&self.session()?.props, generation)
-                        .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?;
-                Ok(json!({ "receipt": receipt }))
-            }
-            "team.receipt.ack" => {
-                let (generation, batch_id) =
-                    renderer_receipt_scope(&params, &self.session()?.props.root, true)?;
-                let ack = omegat_team::acknowledge_renderer_receipt(
-                    &self.session()?.props,
-                    generation,
-                    batch_id.as_deref().expect("required receipt batch id"),
-                )
-                .map_err(|error| match error {
-                    omegat_team::TeamError::Conflict(message) => {
-                        (error_code::TEAM_CONFLICT, message)
-                    }
-                    other => (error_code::INTERNAL_ERROR, other.to_string()),
-                })?;
-                Ok(json!({ "ack": ack }))
             }
             "script.run" => {
                 let src = params
@@ -1469,34 +1477,51 @@ fn transaction_scope(
     Ok((generation, batch_id))
 }
 
-fn renderer_receipt_scope(
+fn transaction_receipt_scope(
     params: &Value,
-    session_root: &std::path::Path,
+    open_root: Option<&std::path::Path>,
     require_batch_id: bool,
-) -> std::result::Result<(u64, Option<String>), (i32, String)> {
+) -> std::result::Result<
+    (std::path::PathBuf, String, u64, Option<String>, Option<String>),
+    (i32, String),
+> {
     let root = params
         .get("root")
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
         .ok_or((
             error_code::INVALID_PARAMS,
-            "team renderer receipt requires root".into(),
+            "transaction receipt requires root".into(),
         ))?;
     let normalized =
         |path: &std::path::Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if normalized(std::path::Path::new(root)) != normalized(session_root) {
-        return Err((
-            error_code::INVALID_PARAMS,
-            "team renderer receipt root is not the open project".into(),
-        ));
+    if let Some(open_root) = open_root {
+        if normalized(&root) != normalized(open_root) {
+            return Err((
+                error_code::INVALID_PARAMS,
+                "transaction receipt root is not the open project".into(),
+            ));
+        }
+    } else if !require_batch_id {
+        return Err((error_code::PROJECT_NOT_OPEN, "no project".into()));
     }
+    let app_instance = params
+        .get("app_instance")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or((
+            error_code::INVALID_PARAMS,
+            "transaction receipt requires app_instance".into(),
+        ))?;
     let generation = params
         .get("generation")
         .and_then(Value::as_u64)
         .filter(|generation| *generation != 0)
         .ok_or((
             error_code::INVALID_PARAMS,
-            "team renderer receipt requires a non-zero generation".into(),
+            "transaction receipt requires a non-zero generation".into(),
         ))?;
     let batch_id = params
         .get("batch_id")
@@ -1507,17 +1532,36 @@ fn renderer_receipt_scope(
                 .map(str::to_string)
                 .ok_or((
                     error_code::INVALID_PARAMS,
-                    "team renderer acknowledgement batch id must be non-empty".into(),
+                    "transaction acknowledgement batch id must be non-empty".into(),
                 ))
         })
         .transpose()?;
     if require_batch_id && batch_id.is_none() {
         return Err((
             error_code::INVALID_PARAMS,
-            "team renderer acknowledgement requires batch_id".into(),
+            "transaction acknowledgement requires batch_id".into(),
         ));
     }
-    Ok((generation, batch_id))
+    let operation = params
+        .get("operation")
+        .map(|value| {
+            value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .ok_or((
+                    error_code::INVALID_PARAMS,
+                    "transaction acknowledgement operation must be non-empty".into(),
+                ))
+        })
+        .transpose()?;
+    if require_batch_id && operation.is_none() {
+        return Err((
+            error_code::INVALID_PARAMS,
+            "transaction acknowledgement requires operation".into(),
+        ));
+    }
+    Ok((root, app_instance, generation, batch_id, operation))
 }
 
 fn refresh_scope(
@@ -1564,10 +1608,78 @@ fn dispatch_refresh_journal(
     config_dir: &std::path::Path,
     open_root: Option<&std::path::Path>,
 ) -> Option<std::result::Result<Value, (i32, String)>> {
-    if !method.starts_with("project.refresh.") {
+    if !method.starts_with("project.refresh.") && !method.starts_with("transaction.receipt.") {
         return None;
     }
     Some((|| {
+        if method.starts_with("transaction.receipt.") {
+            let require_batch_id = method == "transaction.receipt.ack";
+            let (root, app_instance, generation, batch_id, operation) =
+                transaction_receipt_scope(&params, open_root, require_batch_id)?;
+            let props = omegat_core::properties::ProjectProperties::load(&root).map_err(core_err)?;
+            return match method {
+                "transaction.receipt.pending" => {
+                    if let Some(receipt) =
+                        omegat_team::pending_transaction_receipt(&props, generation)
+                            .map_err(|error| (error_code::INTERNAL_ERROR, error.to_string()))?
+                    {
+                        Ok(json!({ "envelopes": [receipt] }))
+                    } else {
+                        let envelopes = refresh_journal::pending(
+                            config_dir,
+                            &root,
+                            &app_instance,
+                            generation,
+                        )
+                        .map_err(refresh_journal_err)?;
+                        Ok(json!({ "envelopes": envelopes }))
+                    }
+                }
+                "transaction.receipt.ack" => {
+                    let batch_id = batch_id.as_deref().expect("required transaction batch id");
+                    let operation = operation.as_deref().expect("required transaction operation");
+                    let ack = if operation == "project.external-refresh" {
+                        let outcome = params
+                            .get("outcome")
+                            .and_then(Value::as_str)
+                            .filter(|value| {
+                                matches!(*value, "succeeded" | "cancelled" | "coalesced")
+                            })
+                            .ok_or((
+                                error_code::INVALID_PARAMS,
+                                "refresh acknowledgement requires a terminal outcome".into(),
+                            ))?;
+                        refresh_journal::acknowledge(
+                            config_dir,
+                            &root,
+                            &app_instance,
+                            generation,
+                            batch_id,
+                            outcome,
+                        )
+                        .map_err(|error| (error_code::TEAM_CONFLICT, error))?
+                    } else {
+                        omegat_team::acknowledge_transaction_receipt(
+                            &props,
+                            generation,
+                            batch_id,
+                            operation,
+                        )
+                        .map_err(|error| match error {
+                            omegat_team::TeamError::Conflict(message) => {
+                                (error_code::TEAM_CONFLICT, message)
+                            }
+                            other => (error_code::INTERNAL_ERROR, other.to_string()),
+                        })?
+                    };
+                    Ok(json!({ "ack": ack }))
+                }
+                _ => Err((
+                    error_code::METHOD_NOT_FOUND,
+                    format!("unknown method {method}"),
+                )),
+            };
+        }
         let (root, app_instance, generation) = refresh_scope(&params, open_root)?;
         match method {
             "project.refresh.enqueue" => {
@@ -1615,49 +1727,6 @@ fn dispatch_refresh_journal(
                 )
                 .map_err(refresh_journal_err)?;
                 Ok(json!({ "batch": batch }))
-            }
-            "project.refresh.pending" => {
-                let batches =
-                    refresh_journal::pending(config_dir, &root, &app_instance, generation)
-                        .map_err(refresh_journal_err)?;
-                Ok(json!({ "batches": batches }))
-            }
-            "project.refresh.complete" => {
-                let batch_id = params
-                    .get("batch_id")
-                    .and_then(Value::as_str)
-                    .filter(|value| !value.is_empty())
-                    .ok_or((
-                        error_code::INVALID_PARAMS,
-                        "refresh completion requires batch_id".into(),
-                    ))?;
-                let outcome = params
-                    .get("outcome")
-                    .and_then(Value::as_str)
-                    .filter(|value| matches!(*value, "succeeded" | "cancelled" | "coalesced"))
-                    .ok_or((
-                        error_code::INVALID_PARAMS,
-                        "refresh completion requires a terminal outcome".into(),
-                    ))?;
-                let (status, error_code) = if outcome == "cancelled" {
-                    (
-                        omegat_team::TransactionStatus::RequestCancelled,
-                        Some(error_code::REQUEST_CANCELLED),
-                    )
-                } else {
-                    (omegat_team::TransactionStatus::Completed, None)
-                };
-                let remaining = refresh_journal::complete(
-                    config_dir,
-                    &root,
-                    &app_instance,
-                    generation,
-                    batch_id,
-                    status,
-                    error_code,
-                )
-                .map_err(refresh_journal_err)?;
-                Ok(json!({ "outcome": outcome, "remaining": remaining }))
             }
             "project.refresh.discard" => {
                 refresh_journal::discard(config_dir, &root, &app_instance)

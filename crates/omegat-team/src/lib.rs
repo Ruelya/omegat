@@ -45,11 +45,12 @@ pub use rebase_and_commit::{
 };
 pub use remote_repository_factory::detect_repository_type;
 pub use remote_repository_provider::{
-    acknowledge_renderer_receipt, commit_after_version, commit_product_transaction_cancellable,
-    commit_project_files, commit_project_files_cancellable,
-    commit_project_files_cancellable_scoped, get_version, pending_renderer_receipt,
-    recover_interrupted_sync, switch_to_version, sync, sync_cancellable, sync_cancellable_scoped,
-    TeamRendererAck, TeamRendererReceipt,
+    acknowledge_transaction_receipt, commit_after_version,
+    commit_product_transaction_cancellable, commit_project_files,
+    commit_project_files_cancellable, commit_project_files_cancellable_scoped, get_version,
+    pending_transaction_receipt, recover_interrupted_sync, switch_to_version, sync,
+    sync_cancellable, sync_cancellable_scoped, TransactionRendererAck,
+    TransactionRendererPayload, TransactionRendererReceipt,
 };
 pub use repositories_credentials_panel::{CredentialsPanel, RepositoryCredentials};
 pub use team_settings::list_conflicts;
@@ -1415,19 +1416,23 @@ mod tests {
         assert_eq!(unacknowledged["generation"], 16);
         assert_eq!(unacknowledged["batch_id"], "mixed-receipt");
 
-        let adopted = pending_renderer_receipt(&props, 17).unwrap().unwrap();
+        let adopted = pending_transaction_receipt(&props, 17).unwrap().unwrap();
         assert_eq!(adopted.generation, 17);
         assert_eq!(adopted.batch_id, "mixed-receipt");
         assert_eq!(adopted.status, TransactionStatus::SidecarCommitted);
         assert!(active.exists(), "unacknowledged receipt was compacted");
 
-        let first_ack = acknowledge_renderer_receipt(&props, 17, "mixed-receipt").unwrap();
+        let first_ack =
+            acknowledge_transaction_receipt(&props, 17, "mixed-receipt", "commit-source")
+                .unwrap();
         assert!(first_ack.acknowledged);
         assert!(!first_ack.already_acknowledged);
         assert!(!active.exists());
         let history_after_first =
             std::fs::read(props.root.join(".repositories/transactions/history.ndjson")).unwrap();
-        let duplicate = acknowledge_renderer_receipt(&props, 17, "mixed-receipt").unwrap();
+        let duplicate =
+            acknowledge_transaction_receipt(&props, 17, "mixed-receipt", "commit-source")
+                .unwrap();
         assert!(duplicate.acknowledged);
         assert!(duplicate.already_acknowledged);
         assert_eq!(
