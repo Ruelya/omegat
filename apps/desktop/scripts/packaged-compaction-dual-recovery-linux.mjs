@@ -5737,6 +5737,9 @@ try {
 } catch (error) {
   if (launchedA?.stderr()) process.stderr.write(launchedA.stderr());
   if (launchedB?.stderr()) process.stderr.write(launchedB.stderr());
+  for (const replacement of quorumReplacements) {
+    if (replacement?.stderr()) process.stderr.write(replacement.stderr());
+  }
   throw error;
 } finally {
   await terminatePackaged(launchedA);
