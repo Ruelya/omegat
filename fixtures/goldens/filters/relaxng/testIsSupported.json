@@ -1,0 +1,22 @@
+{
+  "id": "relaxng",
+  "java_test": "org.omegat.filters.RelaxNGFilterTest#testIsSupported",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "sources": [
+
+  ],
+  "supported": [
+    {
+      "fixture": "relaxng/relaxng.rng",
+      "ok": true
+    },
+    {
+      "fixture": "relaxng/relaxng-invalid.rng",
+      "ok": false
+    },
+    {
+      "fixture": "relaxng/relaxng-invalid-ns.rng",
+      "ok": false
+    }
+  ]
+}

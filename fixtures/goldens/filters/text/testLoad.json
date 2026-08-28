@@ -1,0 +1,27 @@
+{
+  "id": "text",
+  "fixture": "text/file-TextFilter-multiple.txt",
+  "java_test": "org.omegat.filters.TextFilterTest#testLoad",
+  "exported_by": "org.omegat.tools.ExportGoldens",
+  "options": {
+
+  },
+  "source_lang": "en",
+  "target_lang": "be",
+  "sources": [
+    "line1\n",
+    "line2\n",
+    "line3\n"
+  ],
+  "ids": [
+    "",
+    "",
+    ""
+  ],
+  "paths": [
+    "",
+    "",
+    ""
+  ],
+  "empty_write_text": "line1\n\nline2\n\nline3\n"
+}
