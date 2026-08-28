@@ -181,8 +181,14 @@ async function segmentedRows(paths) {
   return rows;
 }
 
+const finalStatuses = new Set([
+  "completed",
+  "cancelled",
+  "request_cancelled",
+  "failed",
+]);
 const terminalRows = (rows) =>
-  rows.filter(({ status }) => status !== "pending");
+  rows.filter(({ status }) => finalStatuses.has(status));
 
 async function assertOneTerminal(paths, batchId, operation, status = "completed") {
   const rows = await segmentedRows(paths);
