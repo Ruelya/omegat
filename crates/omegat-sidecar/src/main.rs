@@ -2434,6 +2434,7 @@ fn writes_watched_project_input(method: &str) -> bool {
     matches!(
         method,
         "entry.set"
+            | "project.open"
             | "project.save"
             | "project.reload"
             | "project.compile"
