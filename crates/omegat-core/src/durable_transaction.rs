@@ -471,6 +471,10 @@ pub struct DurableOwnerElection {
 pub enum DurableOwnerElectionError {
     Busy,
     Live(DurableOwnerClaim),
+    RetryRejected {
+        previous_owner_process_id: u32,
+        current_owner: DurableOwnerClaim,
+    },
     Cancelled,
     TimedOut(Option<DurableOwnerClaim>),
     Durable(String),
@@ -484,6 +488,15 @@ impl std::fmt::Display for DurableOwnerElectionError {
                 formatter,
                 "transaction dispatcher is owned by live app {} (pid {})",
                 claim.app_instance, claim.process_id
+            ),
+            Self::RetryRejected {
+                previous_owner_process_id,
+                current_owner,
+            } => write!(
+                formatter,
+                "replacement retry after owner pid {previous_owner_process_id} exited was rejected: \
+                 transaction dispatcher is owned by live app {} (pid {})",
+                current_owner.app_instance, current_owner.process_id
             ),
             Self::Cancelled => formatter.write_str("durable owner election was cancelled"),
             Self::TimedOut(Some(claim)) => write!(
@@ -580,7 +593,13 @@ where
                 }
                 let options = retry.expect("checked above");
                 if previous_owner_process_ids.len() >= options.max_owner_deaths {
-                    return Err(DurableOwnerElectionError::Live(claim));
+                    return Err(DurableOwnerElectionError::RetryRejected {
+                        previous_owner_process_id: previous_owner_process_ids
+                            .last()
+                            .copied()
+                            .unwrap_or(claim.process_id),
+                        current_owner: claim,
+                    });
                 }
                 owner_waiting(&claim).map_err(DurableOwnerElectionError::Durable)?;
                 last_live_owner = Some(claim.clone());

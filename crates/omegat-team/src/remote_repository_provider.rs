@@ -1779,6 +1779,14 @@ pub fn claim_transaction_dispatch_with_retry_cancellable(
             "transaction dispatcher is owned by live app {} (pid {})",
             claim.app_instance, claim.process_id
         )),
+        DurableOwnerElectionError::RetryRejected {
+            previous_owner_process_id,
+            current_owner,
+        } => TeamError::Conflict(format!(
+            "replacement retry after owner pid {previous_owner_process_id} exited was rejected: \
+             transaction dispatcher is owned by live app {} (pid {})",
+            current_owner.app_instance, current_owner.process_id
+        )),
         DurableOwnerElectionError::TimedOut(Some(claim)) => TeamError::Conflict(format!(
             "timed out waiting for transaction dispatcher {} (pid {})",
             claim.app_instance, claim.process_id
@@ -3367,6 +3375,12 @@ pub fn cancel_transaction_receipt(
                 .map_err(|error| {
                     TeamError::Command(format!("team transaction workflow: {error}"))
                 })?;
+            coordinator
+                .workflow_mut()
+                .append_history(transaction.clone(), &mut product_history_checkpoint)
+                .map_err(|error| {
+                    TeamError::Command(format!("team transaction workflow: {error}"))
+                })?;
         } else if transaction.phase != "renderer-rollback-durable" {
             return Err(TeamError::Command(format!(
                 "pending cancellation {} has invalid phase {}",
@@ -3381,12 +3395,18 @@ pub fn cancel_transaction_receipt(
         );
         coordinator
             .workflow_mut()
-            .upsert(transaction)
+            .upsert(transaction.clone())
             .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
         coordinator
             .workflow_mut()
             .persist_queue()
             .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+        coordinator
+            .workflow_mut()
+            .append_history(transaction.clone(), &mut product_history_checkpoint)
+            .map_err(|error| {
+                TeamError::Command(format!("team transaction workflow: {error}"))
+            })?;
         resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
         return compact_terminal_product_transactions_in(props, coordinator.workflow_mut());
     }
@@ -3456,6 +3476,10 @@ pub fn cancel_transaction_receipt(
         .workflow_mut()
         .persist_queue()
         .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    coordinator
+        .workflow_mut()
+        .append_history(transaction.clone(), &mut product_history_checkpoint)
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     resolve_cancellation_checkpoint("after_rollback_fsync")?;
 
     transaction.phase = "renderer-cancelled".into();
@@ -3465,11 +3489,15 @@ pub fn cancel_transaction_receipt(
     );
     coordinator
         .workflow_mut()
-        .upsert(transaction)
+        .upsert(transaction.clone())
         .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     coordinator
         .workflow_mut()
         .persist_queue()
+        .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
+    coordinator
+        .workflow_mut()
+        .append_history(transaction.clone(), &mut product_history_checkpoint)
         .map_err(|error| TeamError::Command(format!("team transaction workflow: {error}")))?;
     resolve_cancellation_checkpoint("after_terminal_queue_rename")?;
     compact_terminal_product_transactions_in(props, coordinator.workflow_mut())
