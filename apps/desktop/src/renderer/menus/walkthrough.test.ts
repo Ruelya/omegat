@@ -194,7 +194,6 @@ describe("P8 keyboard walkthrough", () => {
     expect(log).toEqual([
       "create",
       "open",
-      "prefs.translated=true",
       "commit:0:Un <x0/> deux",
       "commit:1:Deuxieme",
       "commit:2:Troisieme",
